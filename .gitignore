@@ -1,0 +1,127 @@
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.orig
+.history/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Dart, Flutter, and Pub
+**/.dart_tool/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/build/
+**/coverage/
+**/doc/api/
+**/flutter_export_environment.sh
+**/ephemeral/
+**/.plugin_symlinks/
+**/app.*.symbols
+**/app.*.map.json
+
+# Flutter platform build outputs
+**/android/.gradle/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Runner.xcworkspace/xcuserdata/
+**/ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+**/ios/Runner.xcodeproj/xcuserdata/
+**/ios/Flutter/Generated.xcconfig
+**/macos/Flutter/ephemeral/
+**/macos/Pods/
+**/macos/Runner.xcworkspace/xcuserdata/
+**/macos/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+**/macos/Runner.xcodeproj/xcuserdata/
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/
+
+# Android and Gradle
+.gradle/
+**/.gradle/
+**/gradle-app.setting
+**/captures/
+**/outputs/
+**/.cxx/
+**/local.properties
+
+# Apple tooling
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+
+# Rust
+target/
+
+# Go
+go.work.sum
+*.test
+*.out
+coverage.out
+
+# Node and plugin SDK tooling
+node_modules/
+**/node_modules/
+**/dist/
+**/.turbo/
+**/.vite/
+**/.rollup.cache/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+
+# Operit2 local runtime data
+.operit/
+.operit2/
+runtime-data/
+workspace-data/
+local-data/
+cache/
+tmp/
+
+# Plugin packaging outputs
+plugins/**/build/
+plugins/**/out/
+plugins/**/.cache/
+plugins/**/.temp/
+plugins/**/*.pack.log
+
+# Archives generated during local packaging
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
