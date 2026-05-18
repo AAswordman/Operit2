@@ -1,0 +1,13 @@
+pub const TOOLPKG_EVENT_PROMPT_INPUT: &str = "prompt_input";
+pub const TOOLPKG_EVENT_PROMPT_HISTORY: &str = "prompt_history";
+pub const TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY: &str = "prompt_estimate_history";
+pub const TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE: &str = "system_prompt_compose";
+pub const TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE: &str = "tool_prompt_compose";
+pub const TOOLPKG_EVENT_PROMPT_FINALIZE: &str = "prompt_finalize";
+pub const TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE: &str = "prompt_estimate_finalize";
+pub const TOOLPKG_EVENT_SUMMARY_GENERATE: &str = "summary_generate";
+pub const TOOLPKG_EVENT_MESSAGE_PROCESSING: &str = "message_processing";
+pub const TOOLPKG_EVENT_TOOL_LIFECYCLE: &str = "tool_lifecycle";
+pub const TOOLPKG_EVENT_XML_RENDER: &str = "xml_render";
+pub const TOOLPKG_EVENT_CHAT_VIEW: &str = "chat_view";
+pub const TOOLPKG_EVENT_INPUT_MENU_TOGGLE: &str = "input_menu_toggle";

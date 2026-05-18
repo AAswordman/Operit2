@@ -1,0 +1,11 @@
+pub mod HotStream;
+pub mod RevisableTextStream;
+pub mod Stream;
+pub mod StreamBuilders;
+pub mod StreamGroup;
+pub mod StreamKmpGraph;
+pub mod StreamKmpMatchResult;
+pub mod StreamOperators;
+pub mod StringExtensions;
+pub mod TextStreamRevisionTracker;
+pub mod plugins;

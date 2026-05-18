@@ -125,3 +125,6 @@ plugins/**/*.pack.log
 *.tar.gz
 *.tgz
 *.7z
+
+
+AGENTS.md

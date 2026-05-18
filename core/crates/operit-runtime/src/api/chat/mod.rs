@@ -1,0 +1,11 @@
+#[path = "AIForegroundService.rs"]
+pub mod AIForegroundService;
+#[path = "ChatRuntimeHolder.rs"]
+pub mod ChatRuntimeHolder;
+#[path = "ChatRuntimeSlot.rs"]
+pub mod ChatRuntimeSlot;
+#[path = "EnhancedAIService.rs"]
+pub mod EnhancedAIService;
+pub mod enhance;
+pub mod library;
+pub mod llmprovider;
