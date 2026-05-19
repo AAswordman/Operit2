@@ -3,6 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::api::chat::enhance::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult,
 };
+use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::data::preferences::CharacterCardToolAccessResolver::{
+    CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
+};
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
@@ -105,15 +110,23 @@ impl ToolExecutionManager {
     }
 
     pub fn checkToolPermission(
+        toolHandler: &AIToolHandler,
         invocation: &ToolInvocation,
         toolExposureMode: ToolExposureMode,
         roleCardToolAccess: Option<&ResolvedCharacterCardToolAccess>,
     ) -> (bool, Option<ToolResult>) {
         let resolvedTarget = Self::resolveToolTarget(&invocation.tool);
+        let permissionTool =
+            if toolExposureMode == ToolExposureMode::CLI && invocation.tool.name == CLI_PROXY_TOOL_NAME {
+                invocation.tool.clone()
+            } else {
+                resolvedTarget.tool.clone()
+            };
 
         if toolExposureMode == ToolExposureMode::CLI
             && (invocation.tool.name == CLI_SEARCH_TOOL_NAME || invocation.tool.name == CLI_PROXY_TOOL_NAME)
         {
+            toolHandler.notifyToolPermissionChecked(&permissionTool, true, Some("CLI public tool"));
             return (true, None);
         }
 
@@ -131,6 +144,48 @@ impl ToolExecutionManager {
             }
         }
 
+        let hasPromptForPermission = !invocation.rawText.contains("deny_tool");
+        if hasPromptForPermission {
+            let toolPermissionSystem = toolHandler.getToolPermissionSystem();
+            match toolPermissionSystem.checkToolPermission(&permissionTool) {
+                Ok(true) => {
+                    toolHandler.notifyToolPermissionChecked(&permissionTool, true, None);
+                    return (true, None);
+                }
+                Ok(false) => {
+                    let error = "User cancelled the tool execution.".to_string();
+                    toolHandler.notifyToolPermissionChecked(&permissionTool, false, Some(&error));
+                    return (
+                        false,
+                        Some(ToolResult {
+                            toolName: resolvedTarget.displayName,
+                            success: false,
+                            result: String::new(),
+                            error: Some(error),
+                        }),
+                    );
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    toolHandler.notifyToolPermissionChecked(&permissionTool, false, Some(&message));
+                    return (
+                        false,
+                        Some(ToolResult {
+                            toolName: resolvedTarget.displayName,
+                            success: false,
+                            result: String::new(),
+                            error: Some(message),
+                        }),
+                    );
+                }
+            }
+        }
+
+        toolHandler.notifyToolPermissionChecked(
+            &permissionTool,
+            true,
+            Some("Permission check bypassed by deny_tool tag."),
+        );
         if invocation.rawText.contains("deny_tool") {
             return (true, None);
         }
@@ -140,6 +195,8 @@ impl ToolExecutionManager {
 
     pub fn executeInvocations(
         invocations: &[ToolInvocation],
+        toolHandler: &mut AIToolHandler,
+        packageManager: &PackageManager,
         executors: &mut BTreeMap<String, Box<dyn ToolExecutor>>,
         jsPackageNames: &BTreeSet<String>,
         callerName: Option<String>,
@@ -149,21 +206,12 @@ impl ToolExecutionManager {
     ) -> (Vec<String>, Vec<ToolResult>) {
         let mut emitted = Vec::new();
         let mut results = Vec::new();
-        let parallelizableToolNames = BTreeSet::from([
-            "list_files".to_string(),
-            "read_file".to_string(),
-            "read_file_part".to_string(),
-            "read_file_full".to_string(),
-            "file_exists".to_string(),
-            "find_files".to_string(),
-            "file_info".to_string(),
-            "grep_code".to_string(),
-            "calculate".to_string(),
-            "ffmpeg_info".to_string(),
-            "visit_web".to_string(),
-            "download_file".to_string(),
-        ]);
-
+        toolHandler.registerDefaultTools();
+        let roleCardToolAccess = CharacterCardToolAccessResolver::getInstance().resolve(
+            callerCardId.as_deref(),
+            packageManager,
+            None,
+        );
         let injectedInvocations = invocations
             .iter()
             .map(|invocation| {
@@ -177,23 +225,49 @@ impl ToolExecutionManager {
             })
             .collect::<Vec<_>>();
 
-        let mut ordered = injectedInvocations.clone();
-        ordered.sort_by_key(|invocation| {
-            if parallelizableToolNames.contains(&invocation.tool.name) {
-                0
-            } else {
-                1
-            }
-        });
-
-        for invocation in ordered {
+        for invocation in injectedInvocations {
             if let Some(deniedResult) =
                 Self::buildToolExposureDeniedResult(&invocation, toolExposureMode.clone())
             {
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
                 emitted.push(ensureEndsWithNewline(
                     &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
                 ));
                 results.push(deniedResult);
+                continue;
+            }
+
+            if roleCardToolAccess.customEnabled
+                && !Self::isInvocationAllowedForRoleCard(&invocation, &roleCardToolAccess)
+            {
+                let deniedResult = ToolResult {
+                    toolName: Self::resolveToolTarget(&invocation.tool).displayName,
+                    success: false,
+                    result: String::new(),
+                    error: Some("Character card tool access denied.".to_string()),
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
+                emitted.push(ensureEndsWithNewline(
+                    &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
+                ));
+                results.push(deniedResult);
+                continue;
+            }
+
+            toolHandler.notifyToolCallRequested(&invocation.tool);
+            let (hasPermission, errorResult) = Self::checkToolPermission(
+                toolHandler,
+                &invocation,
+                toolExposureMode.clone(),
+                Some(&roleCardToolAccess),
+            );
+            if !hasPermission {
+                if let Some(deniedResult) = errorResult {
+                    emitted.push(ensureEndsWithNewline(
+                        &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
+                    ));
+                    results.push(deniedResult);
+                }
                 continue;
             }
 
@@ -204,29 +278,35 @@ impl ToolExecutionManager {
                     &resolved.tool.name,
                     Some(&errorMessage),
                 );
-                emitted.push(ensureEndsWithNewline(&content));
-                results.push(ToolResult {
+                let deniedResult = ToolResult {
                     toolName: resolved.displayName,
                     success: false,
                     result: String::new(),
                     error: Some(errorMessage),
-                });
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
+                emitted.push(ensureEndsWithNewline(&content));
+                results.push(deniedResult);
                 continue;
             };
 
+            toolHandler.notifyToolExecutionStarted(&invocation.tool);
             let collected = Self::executeToolSafely(&invocation, executor.as_mut());
             for result in &collected {
+                toolHandler.notifyToolExecutionResult(&invocation.tool, result);
                 emitted.push(ensureEndsWithNewline(
                     &ConversationMarkupManager::formatToolResultForMessage(result),
                 ));
             }
             if collected.is_empty() {
-                results.push(ToolResult {
+                let emptyResult = ToolResult {
                     toolName: resolved.displayName,
                     success: false,
                     result: String::new(),
                     error: Some("The tool execution returned no results.".to_string()),
-                });
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &emptyResult);
+                results.push(emptyResult);
             } else {
                 let last = collected.last().expect("collected not empty");
                 let combinedResultString = collected
@@ -245,13 +325,16 @@ impl ToolExecutionManager {
                     .join("\n")
                     .trim()
                     .to_string();
-                results.push(ToolResult {
+                let finalResult = ToolResult {
                     toolName: resolved.displayName,
                     success: last.success,
                     result: combinedResultString,
                     error: last.error.clone(),
-                });
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &finalResult);
+                results.push(finalResult);
             }
+            toolHandler.notifyToolExecutionFinished(&invocation.tool);
         }
 
         (emitted, results)
@@ -384,15 +467,15 @@ impl ToolExecutionManager {
         }
 
         if toolName == "use_package" {
-            if !roleCardToolAccess.allowedBuiltinTools.contains("use_package") {
+            if !roleCardToolAccess.isBuiltinToolAllowed("use_package") {
                 return false;
             }
             let sourceName = Self::getParameterValue(&invocation.tool, "package_name").unwrap_or_default();
-            return sourceName.is_empty() || roleCardToolAccess.allowedExternalSources.contains(&sourceName);
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
         }
 
         if toolName == PACKAGE_PROXY_TOOL_NAME {
-            if !roleCardToolAccess.allowedBuiltinTools.contains("package_proxy") {
+            if !roleCardToolAccess.isBuiltinToolAllowed("package_proxy") {
                 return false;
             }
             let resolvedTargetName = resolvedTarget.name.trim();
@@ -404,10 +487,10 @@ impl ToolExecutionManager {
 
         if toolName.contains(':') {
             let sourceName = toolName.split(':').next().unwrap_or("").trim();
-            return sourceName.is_empty() || roleCardToolAccess.allowedExternalSources.contains(sourceName);
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName);
         }
 
-        roleCardToolAccess.allowedBuiltinTools.contains(toolName)
+        roleCardToolAccess.isBuiltinToolAllowed(toolName)
     }
 
     fn isResolvedTargetAllowedForRoleCard(
@@ -420,14 +503,13 @@ impl ToolExecutionManager {
         }
         if resolvedTargetName == "use_package" {
             let sourceName = Self::getParameterValue(resolvedTarget, "package_name").unwrap_or_default();
-            return sourceName.is_empty()
-                || roleCardToolAccess.allowedExternalSources.contains(&sourceName);
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
         }
         if resolvedTargetName.contains(':') {
             let sourceName = resolvedTargetName.split(':').next().unwrap_or("").trim();
-            return sourceName.is_empty() || roleCardToolAccess.allowedExternalSources.contains(sourceName);
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName);
         }
-        roleCardToolAccess.allowedBuiltinTools.contains(resolvedTargetName)
+        roleCardToolAccess.isBuiltinToolAllowed(resolvedTargetName)
     }
 
     fn resolveProxyParameters(tool: &AITool) -> Vec<ToolParameter> {
@@ -551,13 +633,6 @@ pub trait ToolExecutor: Send {
 pub struct ToolValidationResult {
     pub valid: bool,
     pub errorMessage: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ResolvedCharacterCardToolAccess {
-    pub customEnabled: bool,
-    pub allowedBuiltinTools: BTreeSet<String>,
-    pub allowedExternalSources: BTreeSet<String>,
 }
 
 fn ensureEndsWithNewline(content: &str) -> String {

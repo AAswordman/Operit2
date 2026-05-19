@@ -520,6 +520,111 @@ impl StandardFileSystemTools {
         }
     }
 
+    #[allow(non_snake_case)]
+    pub fn zipFiles(&self, tool: &AITool) -> ToolResult {
+        let source = parameterValue(tool, "source");
+        let destination = parameterValue(tool, "destination");
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &source, &tool.name, "source")
+        {
+            return result;
+        }
+        if let Some(result) = PathValidator::validateHostPath(
+            self.host.as_ref(),
+            &destination,
+            &tool.name,
+            "destination",
+        ) {
+            return result;
+        }
+        match self.host.zipFiles(&source, &destination) {
+            Ok(()) => success(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!("Successfully compressed {source} to {destination}"),
+                ),
+            ),
+            Err(errorValue) => {
+                let message = errorValue.message;
+                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn unzipFiles(&self, tool: &AITool) -> ToolResult {
+        let source = parameterValue(tool, "source");
+        let destination = parameterValue(tool, "destination");
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &source, &tool.name, "source")
+        {
+            return result;
+        }
+        if let Some(result) = PathValidator::validateHostPath(
+            self.host.as_ref(),
+            &destination,
+            &tool.name,
+            "destination",
+        ) {
+            return result;
+        }
+        match self.host.unzipFiles(&source, &destination) {
+            Ok(()) => success(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!("Successfully extracted {source} to {destination}"),
+                ),
+            ),
+            Err(errorValue) => {
+                let message = errorValue.message;
+                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn openFile(&self, tool: &AITool) -> ToolResult {
+        let path = parameterValue(tool, "path");
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
+        {
+            return result;
+        }
+        match self.host.openFile(&path) {
+            Ok(()) => success(
+                tool,
+                fileOperationDataToString(self.envLabel(), &format!("Requested open for {path}")),
+            ),
+            Err(errorValue) => {
+                let message = errorValue.message;
+                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn shareFile(&self, tool: &AITool) -> ToolResult {
+        let path = parameterValue(tool, "path");
+        let title = optionalParameterValue(tool, "title").unwrap_or_else(|| "Share File".to_string());
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
+        {
+            return result;
+        }
+        match self.host.shareFile(&path, &title) {
+            Ok(()) => success(
+                tool,
+                fileOperationDataToString(self.envLabel(), &format!("Requested share for {path}")),
+            ),
+            Err(errorValue) => {
+                let message = errorValue.message;
+                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+            }
+        }
+    }
+
     fn envLabel(&self) -> &str {
         self.host.envLabel()
     }
@@ -549,6 +654,10 @@ pub enum FileSystemToolOperation {
     GrepCode,
     CreateFile,
     EditFile,
+    ZipFiles,
+    UnzipFiles,
+    OpenFile,
+    ShareFile,
 }
 
 impl ToolExecutor for FileSystemToolExecutor {
@@ -587,6 +696,10 @@ impl ToolExecutor for FileSystemToolExecutor {
             FileSystemToolOperation::GrepCode => self.tools.grepCode(tool),
             FileSystemToolOperation::CreateFile => self.tools.createFile(tool),
             FileSystemToolOperation::EditFile => self.tools.editFile(tool),
+            FileSystemToolOperation::ZipFiles => self.tools.zipFiles(tool),
+            FileSystemToolOperation::UnzipFiles => self.tools.unzipFiles(tool),
+            FileSystemToolOperation::OpenFile => self.tools.openFile(tool),
+            FileSystemToolOperation::ShareFile => self.tools.shareFile(tool),
         };
         vec![result]
     }
@@ -613,6 +726,10 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
         }
         FileSystemToolOperation::CreateFile => &["path", "new"],
         FileSystemToolOperation::EditFile => &["path", "old", "new"],
+        FileSystemToolOperation::ZipFiles | FileSystemToolOperation::UnzipFiles => {
+            &["source", "destination"]
+        }
+        FileSystemToolOperation::OpenFile | FileSystemToolOperation::ShareFile => &["path"],
     }
 }
 

@@ -3,7 +3,10 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts};
+use super::AIService::{
+    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    TokenCounts,
+};
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
@@ -685,14 +688,7 @@ impl AIService for OpenAIResponsesProvider {
             }
         }
 
-        Ok(AiResponseStream {
-            chunks,
-            token_counts: TokenCounts {
-                input: self.inputTokenCount,
-                cached_input: self.cachedInputTokenCount,
-                output: self.outputTokenCount,
-            },
-        })
+        Ok(response_stream_from_chunks(chunks))
     }
 }
 

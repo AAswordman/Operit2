@@ -3,7 +3,10 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts};
+use super::AIService::{
+    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    TokenCounts,
+};
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -309,7 +312,8 @@ impl AIService for ClaudeProvider {
                 }
             }
         }
-        Ok(AiResponseStream { chunks, token_counts })
+        let _ = token_counts;
+        Ok(response_stream_from_chunks(chunks))
     }
 
     async fn calculate_input_tokens(&self, chat_history: &[PromptTurn], available_tools: &[ToolPrompt]) -> Result<i32, AiServiceError> {
@@ -394,7 +398,7 @@ impl ClaudeProvider {
         self.inputTokenCount = token_counts.input;
         self.cachedInputTokenCount = token_counts.cached_input;
         self.outputTokenCount = token_counts.output;
-        Ok(AiResponseStream { chunks, token_counts })
+        Ok(response_stream_from_chunks(chunks))
     }
 
     #[allow(clippy::too_many_arguments)]

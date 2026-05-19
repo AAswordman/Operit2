@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
+use crate::core::config::SystemToolPromptsInternal::SystemToolPromptsInternal;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolParameterSchema {
@@ -158,7 +159,7 @@ impl SystemToolPrompts {
             chat_model_has_direct_video,
             saf_bookmark_names,
         );
-        categories.extend(internal_tool_categories_en());
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesEn());
         categories
     }
 
@@ -207,7 +208,7 @@ impl SystemToolPrompts {
             chat_model_has_direct_video,
             saf_bookmark_names,
         );
-        categories.extend(internal_tool_categories_cn());
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesCn());
         categories
     }
 
@@ -599,14 +600,6 @@ fn memory_tools_cn() -> SystemToolPromptCategory {
     ]);
     category.category_footer = "\n注意：记忆库和用户人格画像可能会在当前回复完成后自动更新。若需要立即管理记忆或更新用户偏好，请直接使用对应工具。".to_string();
     category
-}
-
-fn internal_tool_categories_en() -> Vec<SystemToolPromptCategory> {
-    vec![category("Internal Tools", vec![tool("package_proxy", "Call a tool provided by an activated package.", vec![param("tool_name", "string", "actual package tool name", true, None), param("params", "object", "target tool arguments as JSON object", true, None)])])]
-}
-
-fn internal_tool_categories_cn() -> Vec<SystemToolPromptCategory> {
-    vec![category("内部工具", vec![tool("package_proxy", "调用已激活包提供的工具。", vec![param("tool_name", "string", "真实包工具名", true, None), param("params", "object", "目标工具参数 JSON 对象", true, None)])])]
 }
 
 fn adjust_read_file_tool(

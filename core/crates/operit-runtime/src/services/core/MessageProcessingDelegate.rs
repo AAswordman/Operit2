@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageExecution};
 use crate::core::chat::AIMessageManager::{
@@ -17,6 +18,9 @@ use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow};
+use crate::util::stream::HotStream::{mutable_shared_stream, MutableSharedStream, MutableSharedStreamImpl};
+use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 
 pub const STREAM_SCROLL_THROTTLE_MS: i64 = 200;
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
@@ -34,20 +38,9 @@ impl TextFieldValue {
 }
 
 #[derive(Clone, Debug)]
-pub struct SharedStream<T> {
-    pub values: Vec<T>,
-}
-
-impl<T> SharedStream<T> {
-    pub fn new() -> Self {
-        Self { values: Vec::new() }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub sendJob: Option<String>,
-    pub responseStream: Option<SharedStream<String>>,
+    pub responseStream: Option<MutableSharedStreamImpl<String>>,
     pub streamCollectionJob: Option<String>,
     pub stateCollectionJob: Option<String>,
     pub currentTurnOptions: ChatTurnOptions,
@@ -162,13 +155,19 @@ pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
     pub userMessage: TextFieldValue,
+    pub userMessageFlow: MutableStateFlow<TextFieldValue>,
     pub isLoading: bool,
+    pub isLoadingFlow: MutableStateFlow<bool>,
     pub activeStreamingChatIds: HashSet<String>,
+    pub activeStreamingChatIdsFlow: MutableStateFlow<HashSet<String>>,
     pub inputProcessingStateByChatId: HashMap<String, InputProcessingState>,
+    pub inputProcessingStateByChatIdFlow: MutableStateFlow<HashMap<String, InputProcessingState>>,
     pub scrollToBottomEvent: Vec<()>,
     pub nonFatalErrorEvent: Vec<String>,
     pub turnCompleteCounterByChatId: HashMap<String, i64>,
+    pub turnCompleteCounterByChatIdFlow: MutableStateFlow<HashMap<String, i64>>,
     pub currentTurnToolInvocationCountByChatId: HashMap<String, i32>,
+    pub currentTurnToolInvocationCountByChatIdFlow: MutableStateFlow<HashMap<String, i32>>,
     pub chatRuntimes: HashMap<String, ChatRuntime>,
     pub lastScrollEmitMsByChatKey: HashMap<String, i64>,
     pub suppressIdleCompletedStateByChatId: HashMap<String, bool>,
@@ -185,13 +184,19 @@ impl MessageProcessingDelegate {
             functionalConfigManager,
             modelConfigManager,
             userMessage: TextFieldValue::new(String::new()),
+            userMessageFlow: mutableStateFlow(TextFieldValue::new(String::new())),
             isLoading: false,
+            isLoadingFlow: mutableStateFlow(false),
             activeStreamingChatIds: HashSet::new(),
+            activeStreamingChatIdsFlow: mutableStateFlow(HashSet::new()),
             inputProcessingStateByChatId: HashMap::new(),
+            inputProcessingStateByChatIdFlow: mutableStateFlow(HashMap::new()),
             scrollToBottomEvent: Vec::new(),
             nonFatalErrorEvent: Vec::new(),
             turnCompleteCounterByChatId: HashMap::new(),
+            turnCompleteCounterByChatIdFlow: mutableStateFlow(HashMap::new()),
             currentTurnToolInvocationCountByChatId: HashMap::new(),
+            currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(HashMap::new()),
             chatRuntimes: HashMap::new(),
             lastScrollEmitMsByChatKey: HashMap::new(),
             suppressIdleCompletedStateByChatId: HashMap::new(),
@@ -207,13 +212,19 @@ impl MessageProcessingDelegate {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
             userMessage: self.userMessage.clone(),
+            userMessageFlow: mutableStateFlow(self.userMessage.clone()),
             isLoading: self.isLoading,
+            isLoadingFlow: mutableStateFlow(self.isLoading),
             activeStreamingChatIds: self.activeStreamingChatIds.clone(),
+            activeStreamingChatIdsFlow: mutableStateFlow(self.activeStreamingChatIds.clone()),
             inputProcessingStateByChatId: self.inputProcessingStateByChatId.clone(),
+            inputProcessingStateByChatIdFlow: mutableStateFlow(self.inputProcessingStateByChatId.clone()),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
             turnCompleteCounterByChatId: self.turnCompleteCounterByChatId.clone(),
+            turnCompleteCounterByChatIdFlow: mutableStateFlow(self.turnCompleteCounterByChatId.clone()),
             currentTurnToolInvocationCountByChatId: self.currentTurnToolInvocationCountByChatId.clone(),
+            currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(self.currentTurnToolInvocationCountByChatId.clone()),
             chatRuntimes: self.chatRuntimes.clone(),
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
@@ -261,6 +272,9 @@ impl MessageProcessingDelegate {
             .filter(|(key, runtime)| key.as_str() != "__DEFAULT_CHAT__" && runtime.isLoading)
             .map(|(key, _)| key.clone())
             .collect();
+        self.isLoadingFlow.set_value(self.isLoading);
+        self.activeStreamingChatIdsFlow
+            .set_value(self.activeStreamingChatIds.clone());
     }
 
     #[allow(non_snake_case)]
@@ -277,6 +291,8 @@ impl MessageProcessingDelegate {
     pub fn setChatInputProcessingState(&mut self, chatId: Option<String>, state: InputProcessingState) {
         let key = Self::chatKey(chatId);
         self.inputProcessingStateByChatId.insert(key, state);
+        self.inputProcessingStateByChatIdFlow
+            .set_value(self.inputProcessingStateByChatId.clone());
     }
 
     #[allow(non_snake_case)]
@@ -376,7 +392,7 @@ impl MessageProcessingDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn getResponseStream(&self, chatId: String) -> Option<SharedStream<String>> {
+    pub fn getResponseStream(&self, chatId: String) -> Option<MutableSharedStreamImpl<String>> {
         self.chatRuntimes
             .get(&Self::chatKey(Some(chatId)))
             .and_then(|runtime| runtime.responseStream.clone())
@@ -411,7 +427,7 @@ impl MessageProcessingDelegate {
                 partialContent: runtime
                     .responseStream
                     .as_ref()
-                    .map(|stream| stream.values.join(""))
+                    .map(|stream| stream.replay_cache().join(""))
                     .unwrap_or_default(),
                 turnOptions: runtime.currentTurnOptions.clone(),
             }
@@ -452,11 +468,41 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub fn updateUserMessage(&mut self, message: String) {
         self.userMessage = TextFieldValue::new(message);
+        self.userMessageFlow.set_value(self.userMessage.clone());
     }
 
     #[allow(non_snake_case)]
     pub fn updateUserMessageValue(&mut self, value: TextFieldValue) {
         self.userMessage = value;
+        self.userMessageFlow.set_value(self.userMessage.clone());
+    }
+
+    pub fn userMessageFlow(&self) -> MutableStateFlow<TextFieldValue> {
+        self.userMessageFlow.clone()
+    }
+
+    pub fn isLoadingFlow(&self) -> MutableStateFlow<bool> {
+        self.isLoadingFlow.clone()
+    }
+
+    pub fn activeStreamingChatIdsFlow(&self) -> MutableStateFlow<HashSet<String>> {
+        self.activeStreamingChatIdsFlow.clone()
+    }
+
+    pub fn inputProcessingStateByChatIdFlow(
+        &self,
+    ) -> MutableStateFlow<HashMap<String, InputProcessingState>> {
+        self.inputProcessingStateByChatIdFlow.clone()
+    }
+
+    pub fn turnCompleteCounterByChatIdFlow(&self) -> MutableStateFlow<HashMap<String, i64>> {
+        self.turnCompleteCounterByChatIdFlow.clone()
+    }
+
+    pub fn currentTurnToolInvocationCountByChatIdFlow(
+        &self,
+    ) -> MutableStateFlow<HashMap<String, i32>> {
+        self.currentTurnToolInvocationCountByChatIdFlow.clone()
     }
 
     #[allow(non_snake_case)]
@@ -485,17 +531,23 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub fn resetCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         self.currentTurnToolInvocationCountByChatId.insert(chatId, 0);
+        self.currentTurnToolInvocationCountByChatIdFlow
+            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
     }
 
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         let value = self.currentTurnToolInvocationCountByChatId.get(&chatId).copied().unwrap_or(0) + 1;
         self.currentTurnToolInvocationCountByChatId.insert(chatId, value);
+        self.currentTurnToolInvocationCountByChatIdFlow
+            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
     }
 
     #[allow(non_snake_case)]
     pub fn clearCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         self.currentTurnToolInvocationCountByChatId.remove(&chatId);
+        self.currentTurnToolInvocationCountByChatIdFlow
+            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
     }
 
     #[allow(non_snake_case)]
@@ -506,13 +558,14 @@ impl MessageProcessingDelegate {
         let chatId = request.chatId.clone();
         self.resetCurrentTurnToolInvocationCount(chatId.clone());
         {
+            let responseStream = mutable_shared_stream(usize::MAX);
             let runtime = self.runtimeFor(Some(chatId.clone()));
             runtime.currentTurnOptions = request.turnOptions.clone();
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
             runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
             runtime.firstResponseElapsed = None;
             runtime.isLoading = true;
-            runtime.responseStream = Some(SharedStream::new());
+            runtime.responseStream = Some(responseStream);
         }
         self.setInputProcessingStateForChat(
             chatId.clone(),
@@ -538,6 +591,13 @@ impl MessageProcessingDelegate {
                 request.messageContent
             };
 
+        let responseStream = self
+            .runtimeFor(Some(chatId.clone()))
+            .responseStream
+            .clone()
+            .expect("response stream must exist before send");
+        let firstResponseElapsed = Arc::new(Mutex::new(None::<i64>));
+        let firstResponseElapsedForChunk = firstResponseElapsed.clone();
         let execution = AIMessageManager::sendMessage(AIMessageSendRequest {
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
@@ -563,16 +623,35 @@ impl MessageProcessingDelegate {
             chatModelIndexOverride: request.chatModelIndexOverride,
             preferenceProfileIdOverride: request.preferenceProfileIdOverride,
             disableWarning: request.turnOptions.disableWarning,
+            callbacks: None,
+            onStreamChunk: Some(Arc::new(move |chunk: String| {
+                responseStream.emit(chunk);
+                if let Ok(mut guard) = firstResponseElapsedForChunk.lock() {
+                    if guard.is_none() {
+                        *guard = Some(messageTimingNow().startedAtMs as i64);
+                    }
+                }
+            })),
+            onToolInvocation: None,
         })
         .await?;
+        let toolInvocationCount =
+            ChatMarkupRegex::tool_call_matches(&execution.responseChunks.join("")).len() as i32;
+        if toolInvocationCount > 0 {
+            self.currentTurnToolInvocationCountByChatId
+                .insert(chatId.clone(), toolInvocationCount);
+        }
+        self.runtimeFor(Some(chatId.clone())).firstResponseElapsed =
+            firstResponseElapsed.lock().ok().and_then(|guard| *guard);
 
         let (provider, modelName) = split_provider_model(&execution.providerModel);
         let completedElapsed = messageTimingNow().startedAtMs as i64;
         let runtime = self.runtimeFor(Some(chatId.clone())).clone();
+        let finalContent = responseStream.replay_cache().join("");
         let aiMessage = Self::withTurnMetrics(
             ChatMessage {
                 sender: "ai".to_string(),
-                content: execution.responseChunks.join(""),
+                content: finalContent,
                 timestamp: ChatMessageTimestampAllocator::next(),
                 roleName: currentRoleName,
                 provider,
@@ -581,6 +660,7 @@ impl MessageProcessingDelegate {
                 outputTokens: execution.tokenSnapshot.outputTokens,
                 cachedInputTokens: execution.tokenSnapshot.cachedInputTokens,
                 displayMode: ChatMessageDisplayMode::NORMAL,
+                contentStream: Some(responseStream.clone()),
                 ..ChatMessage::new("ai".to_string())
             },
             runtime.requestSentAt,
@@ -648,6 +728,8 @@ impl MessageProcessingDelegate {
         if let Some(chatId) = chatId {
             let next = self.turnCompleteCounterByChatId.get(&chatId).copied().unwrap_or(0) + 1;
             self.turnCompleteCounterByChatId.insert(chatId, next);
+            self.turnCompleteCounterByChatIdFlow
+                .set_value(self.turnCompleteCounterByChatId.clone());
         }
     }
 
@@ -661,6 +743,8 @@ impl MessageProcessingDelegate {
         self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
         let next = self.turnCompleteCounterByChatId.get(&chatId).copied().unwrap_or(0) + 1;
         self.turnCompleteCounterByChatId.insert(chatId.clone(), next);
+        self.turnCompleteCounterByChatIdFlow
+            .set_value(self.turnCompleteCounterByChatId.clone());
         self.cleanupRuntimeAfterSend(chatId, turnOptions);
     }
 

@@ -3,8 +3,12 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts};
+use super::AIService::{
+    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    TokenCounts,
+};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::ModelParameter;
@@ -403,6 +407,8 @@ impl OpenAIProvider {
     pub async fn process_streaming_response(
         &mut self,
         response: reqwest::Response,
+        on_stream_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_tool_invocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<AiResponseStream, AiServiceError> {
         let mut state = StreamingState {
             chunks: Vec::new(),
@@ -433,26 +439,28 @@ impl OpenAIProvider {
             while let Some(newline_index) = state.pending_line.find('\n') {
                 let line = state.pending_line[..newline_index].trim().to_string();
                 state.pending_line = state.pending_line[newline_index + 1..].to_string();
-                self.process_streaming_line(&line, &mut state)?;
+                let before_len = state.chunks.len();
+                self.process_streaming_line(&line, &mut state, on_tool_invocation.as_ref())?;
+                emit_new_chunks(&state, before_len, on_stream_chunk.as_ref());
             }
         }
 
         let pending = state.pending_line.trim().to_string();
         if !pending.is_empty() {
-            self.process_streaming_line(&pending, &mut state)?;
+            let before_len = state.chunks.len();
+            self.process_streaming_line(&pending, &mut state, on_tool_invocation.as_ref())?;
+            emit_new_chunks(&state, before_len, on_stream_chunk.as_ref());
         }
 
         self.apply_token_counts(state.usage.clone());
-        Ok(AiResponseStream {
-            chunks: state.chunks,
-            token_counts: state.usage,
-        })
+        Ok(response_stream_from_chunks(state.chunks))
     }
 
     fn process_streaming_line(
         &self,
         line: &str,
         state: &mut StreamingState,
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<(), AiServiceError> {
         if !line.starts_with("data:") {
             return Ok(());
@@ -467,10 +475,10 @@ impl OpenAIProvider {
             serde_json::from_str(data).map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
 
         if json_response.get("type").and_then(Value::as_str).is_some() {
-            return self.processResponsesStreamingEvent(&json_response, state);
+            return self.processResponsesStreamingEvent(&json_response, state, on_tool_invocation);
         }
 
-        self.processResponseChunk(&json_response, state)
+        self.processResponseChunk(&json_response, state, on_tool_invocation)
     }
 
     fn createToolCallAccumulator(index: i32) -> Value {
@@ -510,6 +518,7 @@ impl OpenAIProvider {
         index: i32,
         deltaCall: &Value,
         state: &mut StreamingState,
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) {
         state
             .accumulatedToolCalls
@@ -536,6 +545,9 @@ impl OpenAIProvider {
                 accumulated["function"]["name"] = json!(name);
             }
             if state.toolCallState.nameEmitted.get(&index).copied() != Some(true) {
+                if let Some(callback) = on_tool_invocation {
+                    callback(name.to_string());
+                }
                 let toolTagName = state.toolCallState.getTagName(index);
                 let toolStartTag = if state.toolCallState.emitted.get(&index).copied() != Some(true) {
                     state.toolCallState.emitted.insert(index, true);
@@ -633,6 +645,7 @@ impl OpenAIProvider {
         &self,
         toolCallsDeltas: &[Value],
         state: &mut StreamingState,
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) {
         if state.isInReasoningMode {
             state.isInReasoningMode = false;
@@ -651,7 +664,7 @@ impl OpenAIProvider {
                 }
             }
             state.lastProcessedToolIndex = Some(index);
-            self.processToolCallChunk(index, deltaCall, state);
+            self.processToolCallChunk(index, deltaCall, state, on_tool_invocation);
         }
     }
 
@@ -764,6 +777,7 @@ impl OpenAIProvider {
         &self,
         jsonResponse: &Value,
         state: &mut StreamingState,
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<(), AiServiceError> {
         let usage = jsonResponse.get("usage");
         let choices = jsonResponse.get("choices").and_then(Value::as_array);
@@ -783,7 +797,7 @@ impl OpenAIProvider {
             };
             if let Some(toolCallsDeltas) = delta.get("tool_calls").and_then(Value::as_array) {
                 if !toolCallsDeltas.is_empty() && self.enable_tool_call {
-                    self.processToolCallsDelta(toolCallsDeltas, state);
+                    self.processToolCallsDelta(toolCallsDeltas, state, on_tool_invocation);
                 }
             }
             if !finishReason.is_empty() {
@@ -829,6 +843,7 @@ impl OpenAIProvider {
         &self,
         jsonResponse: &Value,
         state: &mut StreamingState,
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<(), AiServiceError> {
         let eventType = jsonResponse.get("type").and_then(Value::as_str).unwrap_or("");
 
@@ -891,7 +906,12 @@ impl OpenAIProvider {
                 }
                 deltaCall.insert("type".to_string(), json!("function"));
                 deltaCall.insert("function".to_string(), Value::Object(functionObj));
-                self.processToolCallChunk(outputIndex, &Value::Object(deltaCall), state);
+                self.processToolCallChunk(
+                    outputIndex,
+                    &Value::Object(deltaCall),
+                    state,
+                    on_tool_invocation,
+                );
                 state.lastProcessedToolIndex = Some(outputIndex);
             }
             "response.function_call_arguments.delta" => {
@@ -916,7 +936,7 @@ impl OpenAIProvider {
                     "type": "function",
                     "function": Value::Object(functionObj),
                 });
-                self.processToolCallChunk(outputIndex, &deltaCall, state);
+                self.processToolCallChunk(outputIndex, &deltaCall, state, on_tool_invocation);
                 state.lastProcessedToolIndex = Some(outputIndex);
             }
             "response.function_call_arguments.done" => {
@@ -1126,7 +1146,13 @@ impl OpenAIProvider {
         }
 
         if request.stream {
-            return self.process_streaming_response(response).await;
+            return self
+                .process_streaming_response(
+                    response,
+                    request.on_stream_chunk.clone(),
+                    request.on_tool_invocation.clone(),
+                )
+                .await;
         }
 
         let json_response: Value = response
@@ -1156,10 +1182,7 @@ impl OpenAIProvider {
         }
         chunks.extend(extract_tool_calls_xml_chunks(&json_response));
 
-        Ok(AiResponseStream {
-            chunks,
-            token_counts,
-        })
+        Ok(response_stream_from_chunks(chunks))
     }
 
 }
@@ -1238,4 +1261,17 @@ fn convertToolCallsToXmlChunks(tool_calls: &[Value]) -> Vec<String> {
         .map(|tool_call| StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string()))
         .filter(|content| !content.trim().is_empty())
         .collect()
+}
+
+fn emit_new_chunks(
+    state: &StreamingState,
+    before_len: usize,
+    callback: Option<&Arc<dyn Fn(String) + Send + Sync>>,
+) {
+    let Some(callback) = callback else {
+        return;
+    };
+    for chunk in state.chunks.iter().skip(before_len) {
+        callback(chunk.clone());
+    }
 }

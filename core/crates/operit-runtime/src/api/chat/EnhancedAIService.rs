@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use regex::Regex;
+use operit_store::PreferencesDataStore::MutableStateFlow;
+use operit_store::PreferencesDataStore::mutableStateFlow;
 use serde_json::{json, Value};
 
 use crate::api::chat::enhance::ConversationService::{
@@ -25,6 +28,7 @@ use crate::core::config::SystemPromptConfig::{
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::climode::CliToolModeSupport::ToolExposureMode as ResolvedToolExposureMode;
+use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::ModelConfigData::ModelConfigData;
@@ -45,7 +49,7 @@ pub struct EnhancedAIService {
     pub conversation_service: ConversationService,
     pub file_binding_service: FileBindingServiceMirror,
     pub tool_handler: AIToolHandler,
-    pub input_processing_state: InputProcessingState,
+    pub input_processing_state: MutableStateFlow<InputProcessingState>,
     pub per_request_token_counts: Option<(i32, i32)>,
     pub request_window_estimate: Option<i32>,
     pub api_preferences: ApiPreferencesMirror,
@@ -79,6 +83,8 @@ pub trait SendMessageCallbacks {
     fn onTokenLimitExceeded(&self) {}
 
     fn onToolInvocation(&self, _toolName: String) {}
+
+    fn onInputProcessingStateChanged(&self, _state: InputProcessingState) {}
 }
 
 pub struct SendMessageOptions<'a> {
@@ -104,7 +110,8 @@ pub struct SendMessageOptions<'a> {
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
     pub callbacks: Option<&'a dyn SendMessageCallbacks>,
-    pub onToolInvocation: Option<fn(String)>,
+    pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub onStreamChunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub notifyReplyOverride: Option<bool>,
     pub chatModelConfigIdOverride: Option<String>,
     pub chatModelIndexOverride: Option<i32>,
@@ -139,6 +146,7 @@ impl<'a> SendMessageOptions<'a> {
             proxySenderName: None,
             callbacks: None,
             onToolInvocation: None,
+            onStreamChunk: None,
             notifyReplyOverride: None,
             chatModelConfigIdOverride: None,
             chatModelIndexOverride: None,
@@ -418,7 +426,7 @@ impl EnhancedAIService {
             conversation_service,
             file_binding_service: FileBindingServiceMirror,
             tool_handler: AIToolHandler::default(),
-            input_processing_state: InputProcessingState::Idle,
+            input_processing_state: mutableStateFlow(InputProcessingState::Idle),
             per_request_token_counts: None,
             request_window_estimate: None,
             api_preferences: ApiPreferencesMirror,
@@ -813,7 +821,11 @@ impl EnhancedAIService {
     }
 
     pub fn setInputProcessingState(&mut self, newState: InputProcessingState) {
-        self.input_processing_state = newState;
+        self.input_processing_state.set_value(newState);
+    }
+
+    pub fn inputProcessingState(&self) -> MutableStateFlow<InputProcessingState> {
+        self.input_processing_state.clone()
     }
 
     pub fn startAiService(
@@ -946,6 +958,7 @@ impl EnhancedAIService {
         let onNonFatalError = options.onNonFatalError;
         let onTokenLimitExceeded = options.onTokenLimitExceeded;
         let onToolInvocation = options.onToolInvocation;
+        let onStreamChunk = options.onStreamChunk;
 
         self.accumulated_input_token_count = 0;
         self.accumulated_output_token_count = 0;
@@ -1127,6 +1140,8 @@ impl EnhancedAIService {
             available_tools: availableTools.clone(),
             preserve_think_in_history: false,
             enable_retry: true,
+            on_stream_chunk: onStreamChunk.clone(),
+            on_tool_invocation: onToolInvocation.clone(),
         }).await?;
 
         lifecycle.push(SendMessageLifecycleStage::StartAssistantResponseRound);
@@ -1238,7 +1253,7 @@ impl EnhancedAIService {
         avatarUri: Option<String>,
         roleCardId: Option<String>,
         chatId: Option<String>,
-        onToolInvocation: Option<fn(String)>,
+        onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
@@ -1380,6 +1395,8 @@ impl EnhancedAIService {
                 available_tools: availableTools,
                 preserve_think_in_history: false,
                 enable_retry: true,
+                on_stream_chunk: None,
+                on_tool_invocation: onToolInvocation.clone(),
             })
             .await?;
 
@@ -1446,7 +1463,7 @@ impl EnhancedAIService {
         avatarUri: Option<String>,
         roleCardId: Option<String>,
         chatId: Option<String>,
-        onToolInvocation: Option<fn(String)>,
+        onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
@@ -1694,7 +1711,7 @@ impl EnhancedAIService {
         avatarUri: Option<String>,
         roleCardId: Option<String>,
         chatId: Option<String>,
-        onToolInvocation: Option<fn(String)>,
+        onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
@@ -1706,7 +1723,7 @@ impl EnhancedAIService {
         runtime: &mut SendMessageRuntime<'_>,
     ) -> Result<AiResponseStream, AiServiceError> {
         for invocation in &toolInvocations {
-            if let Some(callback) = onToolInvocation {
+            if let Some(callback) = onToolInvocation.as_ref() {
                 callback(invocation.tool.name.clone());
             }
         }
@@ -1728,6 +1745,8 @@ impl EnhancedAIService {
         };
         let (emittedToolResultMessages, allToolResults) = ToolExecutionManager::executeInvocations(
             &toolInvocations,
+            &mut self.tool_handler,
+            &PackageManager::default(),
             &mut executors,
             &BTreeSet::new(),
             characterName.clone(),
@@ -2020,7 +2039,7 @@ impl EnhancedAIService {
     pub fn cancelConversation(&mut self, service: &mut dyn AIService) {
         self.invalidateAllExecutionContexts("cancelConversation".to_string());
         service.cancel_streaming();
-        self.input_processing_state = InputProcessingState::Idle;
+        self.input_processing_state.set_value(InputProcessingState::Idle);
         self.per_request_token_counts = None;
         self.accumulated_input_token_count = 0;
         self.accumulated_output_token_count = 0;

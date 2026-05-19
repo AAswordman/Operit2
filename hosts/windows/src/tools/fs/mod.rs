@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 use operit_host_api::{
@@ -9,6 +9,8 @@ use operit_host_api::{
     GrepCodeResult, GrepFileMatch, GrepLineMatch, HostError, HostResult,
 };
 use regex::RegexBuilder;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsFileSystemHost;
@@ -258,21 +260,17 @@ impl FileSystemHost for WindowsFileSystemHost {
             caseInsensitive: request.caseInsensitive,
         };
         let candidates = self.findFiles(fileRequest)?;
+        let mut matches = Vec::new();
         let mut filesSearched = 0usize;
-        let mut grouped: BTreeMap<String, Vec<GrepLineMatch>> = BTreeMap::new();
         let mut totalMatches = 0usize;
-
         for filePath in candidates {
-            let target = Path::new(&filePath);
-            if !target.is_file() {
-                continue;
-            }
-            let content = match fs::read_to_string(target) {
-                Ok(value) => value,
+            filesSearched += 1;
+            let content = match fs::read_to_string(&filePath) {
+                Ok(content) => content,
                 Err(_) => continue,
             };
-            filesSearched += 1;
-            let lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+            let mut lineMatches = Vec::new();
+            let lines = content.lines().collect::<Vec<_>>();
             for (index, line) in lines.iter().enumerate() {
                 if regex.is_match(line) {
                     totalMatches += 1;
@@ -284,78 +282,155 @@ impl FileSystemHost for WindowsFileSystemHost {
                     } else {
                         None
                     };
-                    grouped.entry(filePath.clone()).or_default().push(GrepLineMatch {
+                    lineMatches.push(GrepLineMatch {
                         lineNumber,
-                        lineContent: line.clone(),
+                        lineContent: (*line).to_string(),
                         matchContext,
                     });
-                    if totalMatches >= request.maxResults {
-                        return Ok(build_grep_result(grouped, totalMatches, filesSearched));
+                    if lineMatches.len() >= request.maxResults {
+                        break;
                     }
                 }
             }
+            if !lineMatches.is_empty() {
+                matches.push(GrepFileMatch {
+                    filePath,
+                    lineMatches,
+                });
+            }
         }
-
-        Ok(build_grep_result(grouped, totalMatches, filesSearched))
+        Ok(GrepCodeResult {
+            matches,
+            totalMatches,
+            filesSearched,
+        })
     }
-}
 
-impl WindowsFileSystemHost {
-    fn validateReadableFile(&self, path: &str) -> HostResult<()> {
-        self.validatePath(path, "path")?;
-        let target = Path::new(path);
-        if !target.exists() || !target.is_file() {
+    fn zipFiles(&self, source: &str, destination: &str) -> HostResult<()> {
+        self.validatePath(source, "source")?;
+        self.validatePath(destination, "destination")?;
+        let sourcePath = Path::new(source);
+        if !sourcePath.exists() {
+            return Err(HostError::new(format!("Source path does not exist: {source}")));
+        }
+        ensure_parent_directory(destination)?;
+        let destinationFile = File::create(destination)?;
+        let mut zipWriter = ZipWriter::new(destinationFile);
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated);
+        if sourcePath.is_dir() {
+            let baseName = sourcePath
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "root".to_string());
+            zip_directory(sourcePath, sourcePath, &baseName, &mut zipWriter, options)?;
+        } else {
+            let fileName = sourcePath
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .ok_or_else(|| HostError::new(format!("Invalid source path: {source}")))?;
+            zip_file(sourcePath, &fileName, &mut zipWriter, options)?;
+        }
+        zipWriter
+            .finish()
+            .map_err(|error| HostError::new(format!("Error finalizing zip archive: {error}")))?;
+        Ok(())
+    }
+
+    fn unzipFiles(&self, source: &str, destination: &str) -> HostResult<()> {
+        self.validatePath(source, "source")?;
+        self.validatePath(destination, "destination")?;
+        validate_readable_file(self, source)?;
+        fs::create_dir_all(destination)?;
+        let sourceFile = File::open(source)?;
+        let mut archive = ZipArchive::new(sourceFile)
+            .map_err(|error| HostError::new(format!("Error opening zip archive: {error}")))?;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| HostError::new(format!("Error reading zip entry: {error}")))?;
+            let enclosedPath = entry
+                .enclosed_name()
+                .ok_or_else(|| HostError::new("Zip entry contains invalid path"))?
+                .to_path_buf();
+            let outputPath = Path::new(destination).join(enclosedPath);
+            if entry.is_dir() {
+                fs::create_dir_all(&outputPath)?;
+                continue;
+            }
+            if let Some(parent) = outputPath.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut outputFile = File::create(&outputPath)?;
+            std::io::copy(&mut entry, &mut outputFile)?;
+        }
+        Ok(())
+    }
+
+    fn openFile(&self, path: &str) -> HostResult<()> {
+        self.validateReadableFile(path)?;
+        let status = Command::new("cmd")
+            .args(["/C", "start", "", path])
+            .status()?;
+        if !status.success() {
             return Err(HostError::new(format!(
-                "File does not exist or is not a regular file: {path}"
+                "Failed to open file with system default application: {path}"
             )));
         }
         Ok(())
     }
+
+    fn shareFile(&self, path: &str, _title: &str) -> HostResult<()> {
+        self.validateReadableFile(path)?;
+        Err(HostError::new(
+            "File sharing is not supported in Windows host yet",
+        ))
+    }
 }
 
 fn ensure_parent_directory(path: &str) -> HostResult<()> {
-    let target = Path::new(path);
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent)?;
     }
     Ok(())
 }
 
-fn permissions_string(path: &Path, metadata: &fs::Metadata) -> String {
+fn validate_readable_file(host: &WindowsFileSystemHost, path: &str) -> HostResult<()> {
+    host.validatePath(path, "path")?;
+    let target = Path::new(path);
+    if !target.exists() {
+        return Err(HostError::new(format!("File does not exist: {path}")));
+    }
+    if !target.is_file() {
+        return Err(HostError::new(format!("Path is not a file: {path}")));
+    }
+    Ok(())
+}
+
+impl WindowsFileSystemHost {
+    fn validateReadableFile(&self, path: &str) -> HostResult<()> {
+        validate_readable_file(self, path)
+    }
+}
+
+fn permissions_string(_path: &Path, metadata: &fs::Metadata) -> String {
     let canRead = 'r';
     let canWrite = if metadata.permissions().readonly() {
         '-'
     } else {
         'w'
     };
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    let canExecute = if metadata.is_dir()
-        || matches!(
-            extension.as_deref(),
-            Some("exe") | Some("bat") | Some("cmd") | Some("ps1") | Some("com")
-        ) {
-        'x'
-    } else {
-        '-'
-    };
-    format!("{canRead}{canWrite}{canExecute}{canRead}-{canExecute}{canRead}-{canExecute}")
+    let canExecute = if metadata.is_dir() { 'x' } else { '-' };
+    format!("{canRead}{canWrite}{canExecute}")
 }
 
 fn modified_string(metadata: &fs::Metadata) -> String {
-    let modified = match metadata.modified() {
-        Ok(value) => value,
-        Err(_) => UNIX_EPOCH,
-    };
-    let millis = match modified.duration_since(UNIX_EPOCH) {
-        Ok(value) => value.as_millis(),
-        Err(_) => 0,
-    };
-    format!("unix:{millis}")
+    metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_default()
 }
 
 fn copy_directory(source: &Path, destination: &Path) -> HostResult<()> {
@@ -375,48 +450,78 @@ fn copy_directory(source: &Path, destination: &Path) -> HostResult<()> {
     Ok(())
 }
 
-fn collect_matching_files(
+fn zip_directory(
+    root: &Path,
     current: &Path,
-    request: &FindFilesRequest,
-    depth: i32,
-    files: &mut Vec<String>,
+    zipPrefix: &str,
+    zipWriter: &mut ZipWriter<File>,
+    options: SimpleFileOptions,
 ) -> HostResult<()> {
-    if current.is_file() {
-        if path_matches(current, request) {
-            files.push(path_to_string(current));
-        }
-        return Ok(());
-    }
-    if !current.is_dir() {
-        return Ok(());
-    }
-    if request.maxDepth >= 0 && depth > request.maxDepth {
-        return Ok(());
+    let relative = current
+        .strip_prefix(root)
+        .map_err(|error| HostError::new(format!("Error building zip path: {error}")))?;
+    let entryName = if relative.as_os_str().is_empty() {
+        zipPrefix.to_string()
+    } else {
+        format!("{zipPrefix}/{}", relative.to_string_lossy().replace('\\', "/"))
+    };
+    if !entryName.is_empty() {
+        zipWriter
+            .add_directory(format!("{entryName}/"), options)
+            .map_err(|error| HostError::new(format!("Error writing zip directory: {error}")))?;
     }
     for entry in fs::read_dir(current)? {
         let entry = entry?;
-        let entryPath = entry.path();
-        if entryPath.is_file() {
-            if path_matches(&entryPath, request) {
-                files.push(path_to_string(&entryPath));
-            }
-        } else if entryPath.is_dir() {
-            collect_matching_files(&entryPath, request, depth + 1, files)?;
+        let path = entry.path();
+        if path.is_dir() {
+            zip_directory(root, &path, zipPrefix, zipWriter, options)?;
+        } else {
+            let fileRelative = path
+                .strip_prefix(root)
+                .map_err(|error| HostError::new(format!("Error building zip path: {error}")))?;
+            let fileName = format!(
+                "{zipPrefix}/{}",
+                fileRelative.to_string_lossy().replace('\\', "/")
+            );
+            zip_file(&path, &fileName, zipWriter, options)?;
         }
     }
     Ok(())
 }
 
-fn path_matches(path: &Path, request: &FindFilesRequest) -> bool {
-    let candidate = if request.usePathPattern {
-        path_to_string(path)
-    } else {
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_default()
-    };
-    glob_matches(&request.pattern, &candidate, request.caseInsensitive)
+fn zip_file(
+    path: &Path,
+    entryName: &str,
+    zipWriter: &mut ZipWriter<File>,
+    options: SimpleFileOptions,
+) -> HostResult<()> {
+    zipWriter
+        .start_file(entryName, options)
+        .map_err(|error| HostError::new(format!("Error writing zip entry: {error}")))?;
+    let mut file = File::open(path)?;
+    std::io::copy(&mut file, zipWriter)?;
+    Ok(())
+}
+
+fn collect_matching_files(
+    root: &Path,
+    request: &FindFilesRequest,
+    depth: i32,
+    output: &mut Vec<String>,
+) -> HostResult<()> {
+    if request.maxDepth >= 0 && depth > request.maxDepth {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let entryPath = entry.path();
+        if entryPath.is_dir() {
+            collect_matching_files(&entryPath, request, depth + 1, output)?;
+        } else if glob_matches(&request.pattern, &entryPath.to_string_lossy(), request.caseInsensitive) {
+            output.push(entryPath.to_string_lossy().to_string());
+        }
+    }
+    Ok(())
 }
 
 fn glob_matches(pattern: &str, value: &str, caseInsensitive: bool) -> bool {
@@ -438,50 +543,24 @@ fn glob_match_bytes(pattern: &[u8], value: &[u8]) -> bool {
     let mut valueIndex = 0usize;
     let mut starIndex = None;
     let mut matchIndex = 0usize;
-
     while valueIndex < value.len() {
-        if patternIndex < pattern.len()
-            && (pattern[patternIndex] == b'?' || pattern[patternIndex] == value[valueIndex])
-        {
+        if patternIndex < pattern.len() && (pattern[patternIndex] == b'?' || pattern[patternIndex] == value[valueIndex]) {
             patternIndex += 1;
             valueIndex += 1;
         } else if patternIndex < pattern.len() && pattern[patternIndex] == b'*' {
             starIndex = Some(patternIndex);
             matchIndex = valueIndex;
             patternIndex += 1;
-        } else if let Some(star) = starIndex {
-            patternIndex = star + 1;
+        } else if let Some(starIndexValue) = starIndex {
+            patternIndex = starIndexValue + 1;
             matchIndex += 1;
             valueIndex = matchIndex;
         } else {
             return false;
         }
     }
-
     while patternIndex < pattern.len() && pattern[patternIndex] == b'*' {
         patternIndex += 1;
     }
     patternIndex == pattern.len()
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().to_string()
-}
-
-fn build_grep_result(
-    grouped: BTreeMap<String, Vec<GrepLineMatch>>,
-    totalMatches: usize,
-    filesSearched: usize,
-) -> GrepCodeResult {
-    GrepCodeResult {
-        matches: grouped
-            .into_iter()
-            .map(|(filePath, lineMatches)| GrepFileMatch {
-                filePath,
-                lineMatches,
-            })
-            .collect(),
-        totalMatches,
-        filesSearched,
-    }
 }

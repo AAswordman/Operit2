@@ -3,12 +3,16 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts};
+use super::AIService::{
+    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    TokenCounts,
+};
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::util::stream::HotStream::SharedStream;
 
 pub struct DeepseekProvider {
     pub api_endpoint: String,
@@ -249,7 +253,13 @@ impl AIService for DeepseekProvider {
         }
 
         if request.stream {
-            return self.process_streaming_response(response).await;
+            return self
+                .process_streaming_response(
+                    response,
+                    request.on_stream_chunk.clone(),
+                    request.on_tool_invocation.clone(),
+                )
+                .await;
         }
 
         let json_response: Value = response
@@ -279,10 +289,7 @@ impl AIService for DeepseekProvider {
         }
         chunks.extend(extract_tool_calls_xml_chunks(&json_response));
 
-        Ok(AiResponseStream {
-            chunks,
-            token_counts,
-        })
+        Ok(response_stream_from_chunks(chunks))
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
@@ -330,6 +337,8 @@ impl DeepseekProvider {
     async fn process_streaming_response(
         &mut self,
         response: reqwest::Response,
+        on_stream_chunk: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
+        on_tool_invocation: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<AiResponseStream, AiServiceError> {
         let mut parent = OpenAIProvider::new(
             self.api_endpoint.clone(),
@@ -339,9 +348,15 @@ impl DeepseekProvider {
             self.custom_headers.clone(),
             self.enable_tool_call,
         );
-        let result = parent.process_streaming_response(response).await?;
-        self.apply_token_counts(result.token_counts.clone());
-        Ok(result)
+        let result = parent
+            .process_streaming_response(response, on_stream_chunk, on_tool_invocation)
+            .await?;
+        self.apply_token_counts(TokenCounts {
+            input: parent.input_token_count(),
+            cached_input: parent.cached_input_token_count(),
+            output: parent.output_token_count(),
+        });
+        Ok(response_stream_from_chunks(result.replay_cache()))
     }
 }
 

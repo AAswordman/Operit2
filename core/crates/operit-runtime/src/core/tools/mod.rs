@@ -13,6 +13,9 @@ pub mod ToolPackage;
 #[path = "ToolProgressBus.rs"]
 pub mod ToolProgressBus;
 
+#[path = "ToolPermissionSystem.rs"]
+pub mod ToolPermissionSystem;
+
 #[path = "ToolRegistration.rs"]
 pub mod ToolRegistration;
 

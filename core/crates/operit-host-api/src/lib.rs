@@ -115,4 +115,8 @@ pub trait FileSystemHost: Send + Sync {
     fn findFiles(&self, request: FindFilesRequest) -> HostResult<Vec<String>>;
     fn fileInfo(&self, path: &str) -> HostResult<FileInfo>;
     fn grepCode(&self, request: GrepCodeRequest) -> HostResult<GrepCodeResult>;
+    fn zipFiles(&self, source: &str, destination: &str) -> HostResult<()>;
+    fn unzipFiles(&self, source: &str, destination: &str) -> HostResult<()>;
+    fn openFile(&self, path: &str) -> HostResult<()>;
+    fn shareFile(&self, path: &str, title: &str) -> HostResult<()>;
 }

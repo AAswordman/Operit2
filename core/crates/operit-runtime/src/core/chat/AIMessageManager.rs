@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::chat::EnhancedAIService::{
-    EnhancedAIService, SendMessageExecution, SendMessageOptions, SendMessageRuntime,
+    EnhancedAIService, SendMessageCallbacks, SendMessageExecution, SendMessageOptions,
+    SendMessageRuntime,
 };
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::AttachmentInfo::AttachmentInfo;
@@ -60,6 +62,9 @@ pub struct SendMessageRequest<'a> {
     pub chatModelIndexOverride: Option<i32>,
     pub preferenceProfileIdOverride: Option<String>,
     pub disableWarning: bool,
+    pub callbacks: Option<&'a dyn SendMessageCallbacks>,
+    pub onStreamChunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 pub struct StableContextWindowRequest<'a> {
@@ -196,6 +201,9 @@ impl AIMessageManager {
         options.chatModelIndexOverride = request.chatModelIndexOverride;
         options.preferenceProfileIdOverride = request.preferenceProfileIdOverride;
         options.disableWarning = request.disableWarning;
+        options.callbacks = request.callbacks;
+        options.onStreamChunk = request.onStreamChunk;
+        options.onToolInvocation = request.onToolInvocation;
 
         let result = request
             .enhancedAiService

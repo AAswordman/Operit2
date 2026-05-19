@@ -16,6 +16,33 @@ pub enum PreferencesDataStoreError {
 
 pub type FlowResult<T> = Result<T, PreferencesDataStoreError>;
 
+pub trait FlowLike<T>: Clone
+where
+    T: Clone,
+{
+    fn first(&self) -> FlowResult<T>;
+
+    fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T);
+}
+
+pub trait StateFlowLike<T>: FlowLike<T>
+where
+    T: Clone,
+{
+    fn value(&self) -> T;
+}
+
+pub trait MutableStateFlowLike<T>: StateFlowLike<T>
+where
+    T: Clone + PartialEq,
+{
+    fn set_value(&self, value: T);
+
+    fn compare_and_set(&self, expect: T, update: T) -> bool;
+}
+
 #[derive(Clone)]
 pub struct Flow<T> {
     producer: Arc<dyn Fn() -> FlowResult<T> + Send + Sync>,
@@ -33,6 +60,14 @@ impl<T> Flow<T> {
 
     pub fn first(&self) -> FlowResult<T> {
         (self.producer)()
+    }
+
+    pub fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T),
+    {
+        collector(self.first()?);
+        Ok(())
     }
 
     pub fn firstWhere<P>(&self, predicate: P) -> FlowResult<Option<T>>
@@ -74,6 +109,22 @@ impl<T> Flow<T> {
         T: Clone + Send + 'static,
     {
         StateFlow::new(self.clone(), initialValue)
+    }
+}
+
+impl<T> FlowLike<T> for Flow<T>
+where
+    T: Clone,
+{
+    fn first(&self) -> FlowResult<T> {
+        Flow::first(self)
+    }
+
+    fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T),
+    {
+        Flow::collect(self, collector)
     }
 }
 
@@ -141,6 +192,124 @@ where
     }
 }
 
+impl<T> FlowLike<T> for StateFlow<T>
+where
+    T: Clone,
+{
+    fn first(&self) -> FlowResult<T> {
+        StateFlow::first(self)
+    }
+
+    fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T),
+    {
+        StateFlow::collect(self, collector)
+    }
+}
+
+impl<T> StateFlowLike<T> for StateFlow<T>
+where
+    T: Clone,
+{
+    fn value(&self) -> T {
+        StateFlow::value(self)
+    }
+}
+
+#[derive(Clone)]
+pub struct MutableStateFlow<T> {
+    value: Arc<Mutex<T>>,
+}
+
+impl<T> MutableStateFlow<T>
+where
+    T: Clone + PartialEq,
+{
+    pub fn new(initialValue: T) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(initialValue)),
+        }
+    }
+
+    pub fn value(&self) -> T {
+        self.value
+            .lock()
+            .expect("MutableStateFlow value mutex must not be poisoned")
+            .clone()
+    }
+
+    pub fn first(&self) -> FlowResult<T> {
+        Ok(self.value())
+    }
+
+    pub fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T),
+    {
+        collector(self.value());
+        Ok(())
+    }
+
+    pub fn set_value(&self, value: T) {
+        *self
+            .value
+            .lock()
+            .expect("MutableStateFlow value mutex must not be poisoned") = value;
+    }
+
+    pub fn compare_and_set(&self, expect: T, update: T) -> bool {
+        let mut guard = self
+            .value
+            .lock()
+            .expect("MutableStateFlow value mutex must not be poisoned");
+        if *guard == expect {
+            *guard = update;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl<T> FlowLike<T> for MutableStateFlow<T>
+where
+    T: Clone + PartialEq,
+{
+    fn first(&self) -> FlowResult<T> {
+        MutableStateFlow::first(self)
+    }
+
+    fn collect<F>(&self, collector: F) -> FlowResult<()>
+    where
+        F: Fn(T),
+    {
+        MutableStateFlow::collect(self, collector)
+    }
+}
+
+impl<T> StateFlowLike<T> for MutableStateFlow<T>
+where
+    T: Clone + PartialEq,
+{
+    fn value(&self) -> T {
+        MutableStateFlow::value(self)
+    }
+}
+
+impl<T> MutableStateFlowLike<T> for MutableStateFlow<T>
+where
+    T: Clone + PartialEq,
+{
+    fn set_value(&self, value: T) {
+        MutableStateFlow::set_value(self, value);
+    }
+
+    fn compare_and_set(&self, expect: T, update: T) -> bool {
+        MutableStateFlow::compare_and_set(self, expect, update)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PreferencesKey {
     pub name: String,
@@ -180,6 +349,14 @@ impl Preferences {
 #[allow(non_snake_case)]
 pub fn emptyPreferences() -> Preferences {
     Preferences::default()
+}
+
+#[allow(non_snake_case)]
+pub fn mutableStateFlow<T>(initialValue: T) -> MutableStateFlow<T>
+where
+    T: Clone + PartialEq,
+{
+    MutableStateFlow::new(initialValue)
 }
 
 #[derive(Clone, Debug)]

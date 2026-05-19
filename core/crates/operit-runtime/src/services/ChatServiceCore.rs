@@ -6,9 +6,9 @@ use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::core::MessageProcessingDelegate::{
-    MessageProcessingDelegate, SharedStream, TextFieldValue,
-};
+use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
+use crate::util::stream::HotStream::MutableSharedStreamImpl;
+use operit_store::PreferencesDataStore::MutableStateFlow;
 
 pub trait ChatServiceUiBridge {}
 
@@ -108,7 +108,7 @@ impl ChatServiceCore {
         self.messageProcessingDelegate.updateUserMessage(message);
     }
 
-    pub fn getResponseStream(&self, chatId: String) -> Option<SharedStream<String>> {
+    pub fn getResponseStream(&self, chatId: String) -> Option<MutableSharedStreamImpl<String>> {
         self.messageProcessingDelegate.getResponseStream(chatId)
     }
 
@@ -170,8 +170,16 @@ impl ChatServiceCore {
         &self.messageProcessingDelegate.userMessage
     }
 
+    pub fn userMessageFlow(&self) -> MutableStateFlow<TextFieldValue> {
+        self.messageProcessingDelegate.userMessageFlow()
+    }
+
     pub fn isLoading(&self) -> bool {
         self.messageProcessingDelegate.isLoading
+    }
+
+    pub fn isLoadingFlow(&self) -> MutableStateFlow<bool> {
+        self.messageProcessingDelegate.isLoadingFlow()
     }
 
     pub fn activeStreamingChatIds(&self) -> Vec<String> {
@@ -182,14 +190,30 @@ impl ChatServiceCore {
             .collect()
     }
 
+    pub fn activeStreamingChatIdsFlow(&self) -> MutableStateFlow<std::collections::HashSet<String>> {
+        self.messageProcessingDelegate.activeStreamingChatIdsFlow()
+    }
+
     pub fn inputProcessingStateByChatId(&self) -> &std::collections::HashMap<String, InputProcessingState> {
         &self.messageProcessingDelegate.inputProcessingStateByChatId
+    }
+
+    pub fn inputProcessingStateByChatIdFlow(
+        &self,
+    ) -> MutableStateFlow<std::collections::HashMap<String, InputProcessingState>> {
+        self.messageProcessingDelegate.inputProcessingStateByChatIdFlow()
     }
 
     pub fn currentTurnToolInvocationCountByChatId(&self) -> &std::collections::HashMap<String, i32> {
         &self
             .messageProcessingDelegate
             .currentTurnToolInvocationCountByChatId
+    }
+
+    pub fn currentTurnToolInvocationCountByChatIdFlow(
+        &self,
+    ) -> MutableStateFlow<std::collections::HashMap<String, i32>> {
+        self.messageProcessingDelegate.currentTurnToolInvocationCountByChatIdFlow()
     }
 
     pub fn chatHistory(&self) -> &Vec<ChatMessage> {

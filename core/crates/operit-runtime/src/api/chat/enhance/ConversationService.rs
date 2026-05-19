@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
+use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
@@ -13,6 +14,9 @@ use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::ModelParameter::ModelParameter;
+use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+
+const APPLY_FILE_TOOL_NAME: &str = "apply_file";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolExposureMode {
@@ -162,6 +166,10 @@ impl ConversationService {
         let mut cursor = 0;
         while let Some(open_offset) = content[cursor..].find('<') {
             let open_start = cursor + open_offset;
+            let text = &content[cursor..open_start];
+            if !text.trim().is_empty() {
+                tags.push(vec!["text".to_string(), text.to_string()]);
+            }
             let open_end = match content[open_start..].find('>') {
                 Some(value) => open_start + value,
                 None => break,
@@ -180,11 +188,16 @@ impl ConversationService {
             let body_start = open_end + 1;
             if let Some(close_offset) = content[body_start..].find(&close_tag) {
                 let body_end = body_start + close_offset;
-                tags.push(vec![tag_name, content[body_start..body_end].to_string()]);
-                cursor = body_end + close_tag.len();
+                let end = body_end + close_tag.len();
+                tags.push(vec![tag_name, content[open_start..end].to_string()]);
+                cursor = end;
             } else {
                 cursor = open_end + 1;
             }
+        }
+        let tail = &content[cursor..];
+        if !tail.trim().is_empty() {
+            tags.push(vec!["text".to_string(), tail.to_string()]);
         }
         tags
     }
@@ -212,17 +225,111 @@ impl ConversationService {
     pub fn process_chat_message_with_tools(
         &self,
         content: &str,
-        _xml_tags: &[Vec<String>],
+        xml_tags: &[Vec<String>],
         prepared_history: &mut Vec<PromptTurn>,
         _index: usize,
         _history_size: usize,
     ) {
-        prepared_history.push(PromptTurn {
-            kind: PromptTurnKind::ASSISTANT,
-            content: content.to_string(),
-            tool_name: None,
-            metadata: Default::default(),
-        });
+        if xml_tags.is_empty() {
+            prepared_history.push(PromptTurn {
+                kind: PromptTurnKind::ASSISTANT,
+                content: content.to_string(),
+                tool_name: None,
+                metadata: Default::default(),
+            });
+            return;
+        }
+
+        let mut segments = Vec::new();
+        for tag in xml_tags {
+            let tag_name = tag.get(0).cloned().unwrap_or_default();
+            let normalized_tag_name = ChatMarkupRegex::normalize_tool_like_tag_name(Some(&tag_name))
+                .unwrap_or_else(|| tag_name.clone());
+            let tag_content = tag.get(1).cloned().unwrap_or_default();
+
+            match normalized_tag_name.as_str() {
+                "text" => {
+                    if !tag_content.trim().is_empty() {
+                        segments.push(PromptTurn::new(PromptTurnKind::ASSISTANT, tag_content));
+                    }
+                }
+                "think" | "thinking" => {
+                    segments.push(PromptTurn::new(PromptTurnKind::ASSISTANT, tag_content));
+                }
+                "status" => {
+                    let kind = if tag_content.contains("type=\"complete\"")
+                        || tag_content.contains("type=\"wait_for_user_need\"")
+                    {
+                        PromptTurnKind::ASSISTANT
+                    } else {
+                        PromptTurnKind::USER
+                    };
+                    segments.push(PromptTurn::new(kind, tag_content));
+                }
+                "tool_result" => {
+                    segments.push(PromptTurn::new(
+                        PromptTurnKind::TOOL_RESULT,
+                        self.normalize_tool_result_markup_for_model(&tag_content),
+                    ));
+                }
+                "tool" => {
+                    segments.push(PromptTurn::new(PromptTurnKind::TOOL_CALL, tag_content));
+                }
+                _ => {
+                    segments.push(PromptTurn::new(PromptTurnKind::ASSISTANT, tag_content));
+                }
+            }
+        }
+
+        let mut merged_segments = Vec::new();
+        let mut current_kind: Option<PromptTurnKind> = None;
+        let mut current_content = String::new();
+        let mut current_tool_name: Option<String> = None;
+        let mut current_metadata: HashMap<String, Value> = HashMap::new();
+
+        for segment in segments {
+            let should_merge_current = current_kind
+                .as_ref()
+                .map(|kind| {
+                    *kind == segment.kind
+                        && segment.kind != PromptTurnKind::TOOL_CALL
+                        && segment.kind != PromptTurnKind::TOOL_RESULT
+                })
+                .unwrap_or(false);
+            if should_merge_current {
+                current_content.push('\n');
+                current_content.push_str(&segment.content);
+            } else {
+                if !current_content.is_empty() {
+                    if let Some(kind) = current_kind.clone() {
+                        merged_segments.push(PromptTurn {
+                            kind,
+                            content: current_content.trim().to_string(),
+                            tool_name: current_tool_name.clone(),
+                            metadata: current_metadata.clone(),
+                        });
+                    }
+                    current_content.clear();
+                }
+                current_kind = Some(segment.kind.clone());
+                current_tool_name = segment.tool_name.clone();
+                current_metadata = segment.metadata.clone();
+                current_content.push_str(&segment.content);
+            }
+        }
+
+        if !current_content.is_empty() {
+            if let Some(kind) = current_kind {
+                merged_segments.push(PromptTurn {
+                    kind,
+                    content: current_content.trim().to_string(),
+                    tool_name: current_tool_name,
+                    metadata: current_metadata,
+                });
+            }
+        }
+
+        prepared_history.extend(merged_segments);
     }
 
     pub fn build_preferences_text(&self, profile_items: &[(String, String)]) -> String {
@@ -352,6 +459,8 @@ impl ConversationService {
                 available_tools: Vec::new(),
                 preserve_think_in_history: false,
                 enable_retry: true,
+                on_stream_chunk: None,
+                on_tool_invocation: None,
             })
             .await?;
         let mut summaryContent = removeThinkingContent(&chunks.join("").trim().to_string());
@@ -413,8 +522,64 @@ impl ConversationService {
     }
 
     fn normalize_tool_result_markup_for_model(&self, content: &str) -> String {
-        content.replace("<tool_result", "<tool_result").replace("</tool_result>", "</tool_result>")
+        let blocks = ChatMarkupRegex::tool_result_blocks(content);
+        if blocks.is_empty() {
+            return content.to_string();
+        }
+
+        let mut normalized = String::new();
+        let mut cursor = 0usize;
+        for block in blocks {
+            normalized.push_str(&content[cursor..block.start]);
+            let tool_name = attr_value(&block.raw, "name").unwrap_or_default();
+            if !tool_name.eq_ignore_ascii_case(APPLY_FILE_TOOL_NAME) {
+                normalized.push_str(&block.raw);
+                cursor = block.end;
+                continue;
+            }
+
+            let Some(request_content) = self.extract_apply_file_request_content(&block.body) else {
+                normalized.push_str(&block.raw);
+                cursor = block.end;
+                continue;
+            };
+
+            let opening_end = block.raw.find('>').unwrap_or(block.raw.len());
+            let opening_tag = &block.raw[..=opening_end];
+            normalized.push_str(opening_tag);
+            normalized.push_str("<content>");
+            normalized.push_str(&request_content);
+            normalized.push_str("</content></");
+            normalized.push_str(&block.tag_name);
+            normalized.push('>');
+            cursor = block.end;
+        }
+        normalized.push_str(&content[cursor..]);
+        normalized
     }
+
+    fn extract_apply_file_request_content(&self, tool_result_body: &str) -> Option<String> {
+        let content_body = extract_xml_tag_body_case_insensitive(tool_result_body, "content")
+            .unwrap_or(tool_result_body);
+        let file_request_content_regex = Regex::new(
+            r#"(?is)<file-request-content\b[^>]*><!\[CDATA\[(.*?)\]\]></file-request-content>"#,
+        )
+        .expect("file request content regex must compile");
+        file_request_content_regex
+            .captures(content_body)
+            .and_then(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
+    }
+}
+
+fn extract_xml_tag_body_case_insensitive<'a>(content: &'a str, tag_name: &str) -> Option<&'a str> {
+    let lower = content.to_ascii_lowercase();
+    let open_prefix = format!("<{}", tag_name.to_ascii_lowercase());
+    let open_start = lower.find(&open_prefix)?;
+    let open_end = lower[open_start..].find('>')? + open_start;
+    let close_tag = format!("</{}>", tag_name.to_ascii_lowercase());
+    let body_start = open_end + 1;
+    let close_start = lower[body_start..].find(&close_tag)? + body_start;
+    Some(&content[body_start..close_start])
 }
 
 fn build_prepare_history_metadata(

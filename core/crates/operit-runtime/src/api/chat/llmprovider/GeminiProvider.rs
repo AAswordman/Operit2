@@ -4,7 +4,10 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts};
+use super::AIService::{
+    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    TokenCounts,
+};
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -444,14 +447,7 @@ impl GeminiProvider {
         if chunks.is_empty() {
             chunks.push(" ".to_string());
         }
-        Ok(AiResponseStream {
-            chunks,
-            token_counts: TokenCounts {
-                input: self.inputTokenCount,
-                cached_input: self.cachedInputTokenCount,
-                output: self.outputTokenCount,
-            },
-        })
+        Ok(response_stream_from_chunks(chunks))
     }
 
     fn process_response_line(&mut self, line: &str, chunks: &mut Vec<String>) -> Result<(), AiServiceError> {
@@ -648,14 +644,7 @@ impl AIService for GeminiProvider {
             chunks.push("</think>".to_string());
             self.isInThinkingMode = false;
         }
-        Ok(AiResponseStream {
-            chunks,
-            token_counts: TokenCounts {
-                input: self.inputTokenCount,
-                cached_input: self.cachedInputTokenCount,
-                output: self.outputTokenCount,
-            },
-        })
+        Ok(response_stream_from_chunks(chunks))
     }
 
     async fn calculate_input_tokens(&self, chat_history: &[PromptTurn], available_tools: &[ToolPrompt]) -> Result<i32, AiServiceError> {

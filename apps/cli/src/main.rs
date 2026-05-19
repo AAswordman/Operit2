@@ -1,10 +1,11 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use operit_host_windows::WindowsFileSystemHost;
+use operit_host_windows_native::WindowsFileSystemHost;
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
 use operit_runtime::data::model::CharacterCard::{
@@ -30,9 +31,13 @@ use operit_runtime::api::chat::enhance::ConversationService::ConversationService
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
+
+mod tui;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -48,25 +53,51 @@ async fn main() -> ExitCode {
 async fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
-        print_usage();
+        return tui::run_tui_command(&[]).await;
+    }
+
+    match args[0].as_str() {
+        "help" | "-h" | "--help" => {
+            print_root_usage();
+            Ok(())
+        }
+        "cli" => run_cli_root(&args[1..]).await,
+        "tui" => tui::run_tui_command(&args[1..]).await,
+        value if value.starts_with('-') => tui::run_tui_command(&args).await,
+        _ => {
+            print_root_usage();
+            Ok(())
+        }
+    }
+}
+
+async fn run_cli_root(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_cli_usage();
         return Ok(());
     }
 
     let mut application = create_cli_application();
     application.onCreate()?;
 
-    match args[0].as_str() {
+    let result = match args[0].as_str() {
         "model" => run_model_command(&args[1..]),
         "chat" => run_chat_command(&args[1..]).await,
+        "shell" => run_shell_command(&args[1..]).await,
         "tag" => run_tag_command(&args[1..]),
         "character" => run_character_command(&args[1..]),
         "group" => run_group_command(&args[1..]),
         "active-prompt" => run_active_prompt_command(&args[1..]),
         _ => {
-            print_usage();
+            print_cli_usage();
             Ok(())
         }
-    }
+    };
+    result.map_err(rewrite_cli_usage_message)
+}
+
+fn rewrite_cli_usage_message(message: String) -> String {
+    message.replace("usage: operit2 ", "usage: operit2 cli ")
 }
 
 fn run_model_command(args: &[String]) -> Result<(), String> {
@@ -1053,6 +1084,7 @@ async fn run_chat_command(args: &[String]) -> Result<(), String> {
         "bind-character" => bind_chat_character(&args[1..]),
         "bind-group" => bind_chat_group_card(&args[1..]),
         "set-group" => set_chat_group(&args[1..]),
+        "shell" => run_shell_command(&args[1..]).await,
         "send" => {
             let sendArgs = parse_chat_send_args(&args[1..])?;
             send_chat_message(sendArgs).await
@@ -1260,11 +1292,30 @@ fn parse_chat_new_args(args: &[String]) -> Result<(Option<String>, Option<String
 }
 
 #[derive(Clone, Debug)]
-struct ChatSendArgs {
+pub(crate) struct ChatSendArgs {
     chatId: Option<String>,
     message: String,
     attachmentPaths: Vec<String>,
     replyToTimestamp: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ShellArgs {
+    chatId: Option<String>,
+    characterCardName: Option<String>,
+    characterGroupId: Option<String>,
+    group: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ChatSendResult {
+    chatId: String,
+    aiMessage: ChatMessage,
+}
+
+pub(crate) enum ShellLoopControl {
+    Continue,
+    Exit,
 }
 
 fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
@@ -1311,7 +1362,325 @@ fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
     })
 }
 
-async fn send_chat_message(sendArgs: ChatSendArgs) -> Result<(), String> {
+pub(crate) fn parse_shell_args(args: &[String]) -> Result<ShellArgs, String> {
+    let usage = "usage: operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]";
+    let mut shellArgs = ShellArgs {
+        chatId: None,
+        characterCardName: None,
+        characterGroupId: None,
+        group: None,
+    };
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--chat" => {
+                index += 1;
+                shellArgs.chatId = Some(args.get(index).ok_or_else(|| usage.to_string())?.clone());
+            }
+            "--character" => {
+                index += 1;
+                shellArgs.characterCardName = args.get(index).cloned().and_then(nonBlankString);
+            }
+            "--group-card" => {
+                index += 1;
+                shellArgs.characterGroupId = args.get(index).cloned().and_then(nonBlankString);
+            }
+            "--group" => {
+                index += 1;
+                shellArgs.group = args.get(index).cloned().and_then(nonBlankString);
+            }
+            _ => return Err(usage.to_string()),
+        }
+        index += 1;
+    }
+    if shellArgs.chatId.is_some()
+        && (shellArgs.characterCardName.is_some()
+            || shellArgs.characterGroupId.is_some()
+            || shellArgs.group.is_some())
+    {
+        return Err(usage.to_string());
+    }
+    Ok(shellArgs)
+}
+
+pub(crate) async fn run_shell_command(args: &[String]) -> Result<(), String> {
+    let shellArgs = parse_shell_args(args)?;
+    let mut application = create_cli_application();
+    application.onCreate()?;
+    let mut queuedAttachmentPaths = Vec::<String>::new();
+    let initialChatId = initialize_shell_chat(&mut application, &shellArgs)?;
+    println!("interactive shell ready");
+    println!("chat={initialChatId}");
+    println!("type /help for commands");
+    loop {
+        let currentChatId = current_shell_chat_id(&mut application)?;
+        print!("operit2[{}]> ", short_chat_label(&currentChatId));
+        io::stdout().flush().map_err(|error| error.to_string())?;
+        let mut line = String::new();
+        let readBytes = io::stdin()
+            .read_line(&mut line)
+            .map_err(|error| error.to_string())?;
+        if readBytes == 0 {
+            println!();
+            break;
+        }
+        let input = line.trim();
+        if input.is_empty() {
+            continue;
+        }
+        if input.starts_with('/') {
+            match handle_shell_command(
+                input,
+                &mut application,
+                &mut queuedAttachmentPaths,
+            )
+            .await?
+            {
+                ShellLoopControl::Continue => continue,
+                ShellLoopControl::Exit => break,
+            }
+        } else {
+            let sendArgs = ChatSendArgs {
+                chatId: Some(currentChatId),
+                message: input.to_string(),
+                attachmentPaths: queuedAttachmentPaths.clone(),
+                replyToTimestamp: None,
+            };
+            match send_chat_message_with_application(&mut application, sendArgs).await {
+                Ok(result) => {
+                    print_chat_send_result(&result);
+                    queuedAttachmentPaths.clear();
+                }
+                Err(error) => eprintln!("{error}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn initialize_shell_chat(
+    application: &mut OperitApplication,
+    shellArgs: &ShellArgs,
+) -> Result<String, String> {
+    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+    core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    if let Some(chatId) = shellArgs.chatId.clone() {
+        ensure_chat_exists(&chatId)?;
+        core.switchChat(chatId.clone());
+        Ok(chatId)
+    } else {
+        core.createNewChat(
+            shellArgs.characterCardName.clone(),
+            shellArgs.group.clone(),
+            true,
+            true,
+            shellArgs.characterGroupId.clone(),
+        );
+        core.currentChatId()
+            .clone()
+            .ok_or_else(|| "core did not create chat".to_string())
+    }
+}
+
+pub(crate) fn ensure_chat_exists(chatId: &str) -> Result<(), String> {
+    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
+    let exists = manager
+        .chatHistoriesFlow()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|chat| chat.id == chatId);
+    if exists {
+        Ok(())
+    } else {
+        Err(format!("chat not found: {chatId}"))
+    }
+}
+
+pub(crate) fn current_shell_chat_id(application: &mut OperitApplication) -> Result<String, String> {
+    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+    core.currentChatId()
+        .clone()
+        .ok_or_else(|| "no active chat in shell".to_string())
+}
+
+async fn handle_shell_command(
+    input: &str,
+    application: &mut OperitApplication,
+    queuedAttachmentPaths: &mut Vec<String>,
+) -> Result<ShellLoopControl, String> {
+    let parts = split_shell_command_line(input)?;
+    if parts.is_empty() {
+        return Ok(ShellLoopControl::Continue);
+    }
+    let command = parts[0].trim_start_matches('/');
+    let args = &parts[1..];
+    match command {
+        "help" => {
+            print_shell_usage();
+        }
+        "exit" | "quit" => {
+            return Ok(ShellLoopControl::Exit);
+        }
+        "chat" | "current" => {
+            println!("{}", current_shell_chat_id(application)?);
+        }
+        "new" => {
+            let shellArgs = parse_shell_args(args)?;
+            if shellArgs.chatId.is_some() {
+                return Err("shell /new does not accept --chat".to_string());
+            }
+            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            core.createNewChat(
+                shellArgs.characterCardName,
+                shellArgs.group,
+                true,
+                true,
+                shellArgs.characterGroupId,
+            );
+            let chatId = core
+                .currentChatId()
+                .clone()
+                .ok_or_else(|| "core did not create chat".to_string())?;
+            println!("chat={chatId}");
+        }
+        "switch" => {
+            let chatId = args
+                .get(0)
+                .ok_or_else(|| "usage: /switch <chat-id>".to_string())?
+                .clone();
+            ensure_chat_exists(&chatId)?;
+            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            core.switchChat(chatId.clone());
+            println!("chat={chatId}");
+        }
+        "show" => {
+            let chatId = current_shell_chat_id(application)?;
+            let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
+            let chat = manager
+                .chatHistoriesFlow()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|chat| chat.id == chatId)
+                .ok_or_else(|| format!("chat not found: {chatId}"))?;
+            print_chat_history_header(&chat);
+            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            for message in core.chatHistory() {
+                print_chat_message(message);
+            }
+        }
+        "attach" => {
+            let path = args
+                .get(0)
+                .ok_or_else(|| "usage: /attach <path>".to_string())?
+                .clone();
+            queuedAttachmentPaths.push(path.clone());
+            println!("queued attachment: {path}");
+        }
+        "attachments" => {
+            if queuedAttachmentPaths.is_empty() {
+                println!("attachments=none");
+            } else {
+                for path in queuedAttachmentPaths.iter() {
+                    println!("{path}");
+                }
+            }
+        }
+        "clear-attachments" => {
+            queuedAttachmentPaths.clear();
+            println!("attachments cleared");
+        }
+        "send" => {
+            let message = args.join(" ");
+            if message.trim().is_empty() {
+                return Err("usage: /send <message>".to_string());
+            }
+            let chatId = current_shell_chat_id(application)?;
+            let sendArgs = ChatSendArgs {
+                chatId: Some(chatId),
+                message,
+                attachmentPaths: queuedAttachmentPaths.clone(),
+                replyToTimestamp: None,
+            };
+            match send_chat_message_with_application(application, sendArgs).await {
+                Ok(result) => {
+                    print_chat_send_result(&result);
+                    queuedAttachmentPaths.clear();
+                }
+                Err(error) => eprintln!("{error}"),
+            }
+        }
+        _ => {
+            return Err(format!("unknown shell command: /{command}"));
+        }
+    }
+    Ok(ShellLoopControl::Continue)
+}
+
+fn split_shell_command_line(input: &str) -> Result<Vec<String>, String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None::<char>;
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(activeQuote) => {
+                if ch == activeQuote {
+                    quote = None;
+                } else if ch == '\\' && activeQuote == '"' {
+                    match chars.next() {
+                        Some(next) => current.push(next),
+                        None => current.push('\\'),
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => match ch {
+                '"' | '\'' => quote = Some(ch),
+                '\\' => match chars.next() {
+                    Some(next) => current.push(next),
+                    None => current.push('\\'),
+                },
+                ch if ch.is_whitespace() => {
+                    if !current.is_empty() {
+                        parts.push(std::mem::take(&mut current));
+                    }
+                }
+                _ => current.push(ch),
+            },
+        }
+    }
+    if quote.is_some() {
+        return Err("unterminated quote".to_string());
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    Ok(parts)
+}
+
+fn short_chat_label(chatId: &str) -> String {
+    chatId.chars().take(8).collect()
+}
+
+fn print_shell_usage() {
+    println!("/help");
+    println!("/exit");
+    println!("/quit");
+    println!("/chat");
+    println!("/new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("/switch <chat-id>");
+    println!("/show");
+    println!("/attach <path>");
+    println!("/attachments");
+    println!("/clear-attachments");
+    println!("/send <message>");
+}
+
+pub(crate) async fn send_chat_message_with_application(
+    application: &mut OperitApplication,
+    sendArgs: ChatSendArgs,
+) -> Result<ChatSendResult, String> {
     let modelConfigManager = ModelConfigManager::default();
     let functionalConfigManager = FunctionalConfigManager::default();
     modelConfigManager
@@ -1324,8 +1693,6 @@ async fn send_chat_message(sendArgs: ChatSendArgs) -> Result<(), String> {
         .getConfigMappingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let turnOptions = ChatTurnOptions::default();
-    let mut application = create_cli_application();
-    application.onCreate()?;
     let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
     core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
     if let Some(chatId) = sendArgs.chatId.as_ref() {
@@ -1388,21 +1755,37 @@ async fn send_chat_message(sendArgs: ChatSendArgs) -> Result<(), String> {
         .iter()
         .rev()
         .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-        .ok_or_else(|| "core did not produce ai message for current turn".to_string())?;
-    print!("{}", aiMessage.content);
+        .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
+        .clone();
+    Ok(ChatSendResult {
+        chatId: currentChatId,
+        aiMessage,
+    })
+}
+
+fn print_chat_send_result(result: &ChatSendResult) {
+    print!("{}", result.aiMessage.content);
     println!();
     eprintln!(
-        "provider={} modelName={} inputTokens={} cachedInputTokens={} outputTokens={}",
-        aiMessage.provider,
-        aiMessage.modelName,
-        aiMessage.inputTokens,
-        aiMessage.cachedInputTokens,
-        aiMessage.outputTokens
+        "chat={} provider={} modelName={} inputTokens={} cachedInputTokens={} outputTokens={}",
+        result.chatId,
+        result.aiMessage.provider,
+        result.aiMessage.modelName,
+        result.aiMessage.inputTokens,
+        result.aiMessage.cachedInputTokens,
+        result.aiMessage.outputTokens
     );
+}
+
+async fn send_chat_message(sendArgs: ChatSendArgs) -> Result<(), String> {
+    let mut application = create_cli_application();
+    application.onCreate()?;
+    let result = send_chat_message_with_application(&mut application, sendArgs).await?;
+    print_chat_send_result(&result);
     Ok(())
 }
 
-fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
+pub(crate) fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
     let metadata = fs::metadata(path).map_err(|error| format!("attachment metadata failed: {path}: {error}"))?;
     let fileName = Path::new(path)
         .file_name()
@@ -1419,7 +1802,7 @@ fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
     })
 }
 
-fn guess_mime_type(path: &str) -> &'static str {
+pub(crate) fn guess_mime_type(path: &str) -> &'static str {
     match Path::new(path)
         .extension()
         .and_then(|value| value.to_str())
@@ -1437,103 +1820,115 @@ fn guess_mime_type(path: &str) -> &'static str {
     }
 }
 
-fn print_usage() {
-    println!("operit2 model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
-    println!("operit2 tag <list|show|create|update|delete>");
-    println!("operit2 character <init|list|show|create|update|delete|set-active|combine|reset-default>");
-    println!("operit2 group <init|list|show|create|update|delete|set-active|duplicate>");
-    println!("operit2 active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
-    println!("operit2 chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|send>");
-    println!("operit2 chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 chat list");
-    println!("operit2 chat show <chat-id> [--runtime]");
-    println!("operit2 chat current");
-    println!("operit2 chat switch <chat-id>");
-    println!("operit2 chat stats");
-    println!("operit2 chat bind-character <chat-id> <character-card-name>");
-    println!("operit2 chat bind-group <chat-id> <character-group-id>");
-    println!("operit2 chat set-group <chat-id> <group-name>");
-    println!("operit2 chat send [--chat <chat-id>] <message>");
+fn print_root_usage() {
+    println!("operit2");
+    println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli <model|chat|tag|character|group|active-prompt|shell>");
+    println!();
+    print_cli_usage();
+}
+
+fn print_cli_usage() {
+    println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
+    println!("operit2 cli tag <list|show|create|update|delete>");
+    println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
+    println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
+    println!("operit2 cli active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
+    println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|shell|send>");
+    println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli chat list");
+    println!("operit2 cli chat show <chat-id> [--runtime]");
+    println!("operit2 cli chat current");
+    println!("operit2 cli chat switch <chat-id>");
+    println!("operit2 cli chat stats");
+    println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
+    println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
+    println!("operit2 cli chat set-group <chat-id> <group-name>");
+    println!("operit2 cli chat shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli chat send [--chat <chat-id>] <message>");
 }
 
 fn print_model_usage() {
-    println!("operit2 model init");
-    println!("operit2 model list");
-    println!("operit2 model show [config-id]");
-    println!("operit2 model set <endpoint> <model-name> [config-id]");
-    println!("operit2 model set-key <api-key> [config-id]");
-    println!("operit2 model api-settings-full <api-key> <endpoint> <model-name> <provider-type> <provider-type-id> <mnn-forward-type> <mnn-thread-count> <llama-thread-count> <llama-context-size> <llama-gpu-layers> <enable-direct-image-processing> <enable-direct-audio-processing> <enable-direct-video-processing> <enable-google-search> <enable-tool-call> [config-id]");
-    println!("operit2 model custom-headers <custom-headers-json> [config-id]");
-    println!("operit2 model request-queue <request-limit-per-minute> <max-concurrent-requests> [config-id]");
-    println!("operit2 model api-key-pool <use-multiple-api-keys> <api-key-pool-json> [config-id]");
-    println!("operit2 model custom-parameters <parameters-json> [config-id]");
-    println!("operit2 model parameters <parameters-json> [config-id]");
-    println!("operit2 model tool-call <enable-tool-call> [config-id]");
-    println!("operit2 model direct-image <enable-direct-image-processing> [config-id]");
-    println!("operit2 model direct-audio <enable-direct-audio-processing> [config-id]");
-    println!("operit2 model direct-video <enable-direct-video-processing> [config-id]");
-    println!("operit2 model google-search <enable-google-search> [config-id]");
-    println!("operit2 model params [config-id]");
-    println!("operit2 model context-show [config-id]");
-    println!("operit2 model context-set <context-length> <max-context-length> <enable-max-context-mode> [config-id]");
-    println!("operit2 model summary-show [config-id]");
-    println!("operit2 model summary-set <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold> [config-id]");
-    println!("operit2 model function-list");
-    println!("operit2 model function-show <function-type>");
-    println!("operit2 model function-set <function-type> <config-id> [model-index]");
-    println!("operit2 model function-reset [function-type]");
+    println!("operit2 cli model init");
+    println!("operit2 cli model list");
+    println!("operit2 cli model show [config-id]");
+    println!("operit2 cli model set <endpoint> <model-name> [config-id]");
+    println!("operit2 cli model set-key <api-key> [config-id]");
+    println!("operit2 cli model api-settings-full <api-key> <endpoint> <model-name> <provider-type> <provider-type-id> <mnn-forward-type> <mnn-thread-count> <llama-thread-count> <llama-context-size> <llama-gpu-layers> <enable-direct-image-processing> <enable-direct-audio-processing> <enable-direct-video-processing> <enable-google-search> <enable-tool-call> [config-id]");
+    println!("operit2 cli model custom-headers <custom-headers-json> [config-id]");
+    println!("operit2 cli model request-queue <request-limit-per-minute> <max-concurrent-requests> [config-id]");
+    println!("operit2 cli model api-key-pool <use-multiple-api-keys> <api-key-pool-json> [config-id]");
+    println!("operit2 cli model custom-parameters <parameters-json> [config-id]");
+    println!("operit2 cli model parameters <parameters-json> [config-id]");
+    println!("operit2 cli model tool-call <enable-tool-call> [config-id]");
+    println!("operit2 cli model direct-image <enable-direct-image-processing> [config-id]");
+    println!("operit2 cli model direct-audio <enable-direct-audio-processing> [config-id]");
+    println!("operit2 cli model direct-video <enable-direct-video-processing> [config-id]");
+    println!("operit2 cli model google-search <enable-google-search> [config-id]");
+    println!("operit2 cli model params [config-id]");
+    println!("operit2 cli model context-show [config-id]");
+    println!("operit2 cli model context-set <context-length> <max-context-length> <enable-max-context-mode> [config-id]");
+    println!("operit2 cli model summary-show [config-id]");
+    println!("operit2 cli model summary-set <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold> [config-id]");
+    println!("operit2 cli model function-list");
+    println!("operit2 cli model function-show <function-type>");
+    println!("operit2 cli model function-set <function-type> <config-id> [model-index]");
+    println!("operit2 cli model function-reset [function-type]");
 }
 
 fn print_chat_usage() {
-    println!("operit2 chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 chat list");
-    println!("operit2 chat show <chat-id> [--runtime]");
-    println!("operit2 chat current");
-    println!("operit2 chat switch <chat-id>");
-    println!("operit2 chat stats");
-    println!("operit2 chat bind-character <chat-id> <character-card-name>");
-    println!("operit2 chat bind-group <chat-id> <character-group-id>");
-    println!("operit2 chat set-group <chat-id> <group-name>");
-    println!("operit2 chat send [--chat <chat-id>] <message>");
+    println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli chat list");
+    println!("operit2 cli chat show <chat-id> [--runtime]");
+    println!("operit2 cli chat current");
+    println!("operit2 cli chat switch <chat-id>");
+    println!("operit2 cli chat stats");
+    println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
+    println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
+    println!("operit2 cli chat set-group <chat-id> <group-name>");
+    println!("operit2 cli chat shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("operit2 cli chat send [--chat <chat-id>] <message>");
 }
 
 fn print_tag_usage() {
-    println!("operit2 tag list");
-    println!("operit2 tag show <id>");
-    println!("operit2 tag create <name> [prompt-content] [description] [tag-type]");
-    println!("operit2 tag update <id> <field> <value>");
-    println!("operit2 tag delete <id>");
+    println!("operit2 cli tag list");
+    println!("operit2 cli tag show <id>");
+    println!("operit2 cli tag create <name> [prompt-content] [description] [tag-type]");
+    println!("operit2 cli tag update <id> <field> <value>");
+    println!("operit2 cli tag delete <id>");
 }
 
 fn print_character_usage() {
-    println!("operit2 character init");
-    println!("operit2 character list");
-    println!("operit2 character show <id>");
-    println!("operit2 character create <name> [character-setting]");
-    println!("operit2 character update <id> <field> <value>");
-    println!("operit2 character delete <id>");
-    println!("operit2 character set-active <id>");
-    println!("operit2 character combine <id> [CHAT|VOICE] [tag-id-csv]");
-    println!("operit2 character reset-default");
+    println!("operit2 cli character init");
+    println!("operit2 cli character list");
+    println!("operit2 cli character show <id>");
+    println!("operit2 cli character create <name> [character-setting]");
+    println!("operit2 cli character update <id> <field> <value>");
+    println!("operit2 cli character delete <id>");
+    println!("operit2 cli character set-active <id>");
+    println!("operit2 cli character combine <id> [CHAT|VOICE] [tag-id-csv]");
+    println!("operit2 cli character reset-default");
 }
 
 fn print_group_usage() {
-    println!("operit2 group init");
-    println!("operit2 group list");
-    println!("operit2 group show <id>");
-    println!("operit2 group create <name> [description]");
-    println!("operit2 group update <id> <field> <value>");
-    println!("operit2 group delete <id>");
-    println!("operit2 group set-active <id>");
-    println!("operit2 group duplicate <source-id> [new-name]");
+    println!("operit2 cli group init");
+    println!("operit2 cli group list");
+    println!("operit2 cli group show <id>");
+    println!("operit2 cli group create <name> [description]");
+    println!("operit2 cli group update <id> <field> <value>");
+    println!("operit2 cli group delete <id>");
+    println!("operit2 cli group set-active <id>");
+    println!("operit2 cli group duplicate <source-id> [new-name]");
 }
 
 fn print_active_prompt_usage() {
-    println!("operit2 active-prompt show");
-    println!("operit2 active-prompt set-card <id>");
-    println!("operit2 active-prompt set-group <id>");
-    println!("operit2 active-prompt activate-for-chat [character-card-name] [character-group-id]");
-    println!("operit2 active-prompt resolved-card");
+    println!("operit2 cli active-prompt show");
+    println!("operit2 cli active-prompt set-card <id>");
+    println!("operit2 cli active-prompt set-group <id>");
+    println!("operit2 cli active-prompt activate-for-chat [character-card-name] [character-group-id]");
+    println!("operit2 cli active-prompt resolved-card");
 }
 
 fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {
@@ -1753,7 +2148,12 @@ fn currentTimeMillis() -> i64 {
 }
 
 fn create_cli_application() -> OperitApplication {
-    OperitApplication::newWithContext(OperitApplicationContext::withFileSystemHost(Arc::new(
+    let application = OperitApplication::newWithContext(OperitApplicationContext::withFileSystemHost(Arc::new(
         WindowsFileSystemHost::new(),
-    )))
+    )));
+    let handler = AIToolHandler::getInstance(application.applicationContext.clone());
+    handler
+        .getToolPermissionSystem()
+        .setPermissionRequester(|_tool, _description| PermissionRequestResult::ALLOW);
+    application
 }

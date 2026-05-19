@@ -3,7 +3,6 @@ members = [
     "crates/operit-host-api",
     "crates/operit-store",
     "crates/operit-runtime",
-    "crates/operit-cli",
 ]
 resolver = "2"
 

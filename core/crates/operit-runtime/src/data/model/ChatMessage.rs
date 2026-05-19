@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use super::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use crate::util::stream::HotStream::MutableSharedStreamImpl;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -24,6 +25,8 @@ pub struct ChatMessage {
     pub isFavorite: bool,
     #[serde(skip)]
     pub isVariantPreview: bool,
+    #[serde(skip)]
+    pub contentStream: Option<MutableSharedStreamImpl<String>>,
 }
 
 impl ChatMessage {
@@ -56,6 +59,7 @@ impl ChatMessage {
             displayMode: ChatMessageDisplayMode::NORMAL,
             isFavorite: false,
             isVariantPreview: false,
+            contentStream: None,
         }
     }
 }
