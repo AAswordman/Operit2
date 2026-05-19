@@ -1,14 +1,28 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use serde_json::Value;
+
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::AIMessageManager;
+use crate::core::config::FunctionalPrompts::FunctionalPrompts;
+use crate::data::model::ActivePrompt::ActivePrompt;
+use crate::data::model::AttachmentInfo::AttachmentInfo;
+use crate::data::model::CharacterCard::CharacterCard;
+use crate::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use crate::data::model::ChatMessage::ChatMessage;
+use crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
+use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
+use crate::data::preferences::ActivePromptManager::ActivePromptManager;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageProcessingDelegate::{
-    BuildUserMessageContentForSendRequest, MessageProcessingDelegate,
+    BuildUserMessageContentForGroupOrchestrationRequest, BuildUserMessageContentForSendRequest,
+    MessageProcessingDelegate,
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
@@ -26,10 +40,24 @@ pub struct PendingAutoContinuationRequest {
     pub waitJob: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlannedMember {
+    id: String,
+    speak: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlannedRounds {
+    rounds: Vec<Vec<PlannedMember>>,
+}
+
 pub struct MessageCoordinationDelegate {
     pub chatHistoryDelegate: ChatHistoryDelegate,
     pub messageProcessingDelegate: MessageProcessingDelegate,
     pub tokenStatisticsDelegate: TokenStatisticsDelegate,
+    pub characterCardManager: CharacterCardManager,
+    pub characterGroupCardManager: CharacterGroupCardManager,
+    pub activePromptManager: ActivePromptManager,
     pub isSummarizing: bool,
     pub isUpdatingMemory: bool,
     pub summarizingChatId: Option<String>,
@@ -54,6 +82,9 @@ impl MessageCoordinationDelegate {
             chatHistoryDelegate,
             messageProcessingDelegate,
             tokenStatisticsDelegate: TokenStatisticsDelegate::default(),
+            characterCardManager: CharacterCardManager::getInstance(),
+            characterGroupCardManager: CharacterGroupCardManager::getInstance(),
+            activePromptManager: ActivePromptManager::getInstance(),
             isSummarizing: false,
             isUpdatingMemory: false,
             summarizingChatId: None,
@@ -177,6 +208,8 @@ impl MessageCoordinationDelegate {
         proxySenderNameOverride: Option<String>,
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) {
         if chatIdOverride.as_ref().map(|id| id.trim().is_empty()).unwrap_or(true)
@@ -184,6 +217,37 @@ impl MessageCoordinationDelegate {
         {
             self.chatHistoryDelegate
                 .createNewChat(None, None, None, true, true, None);
+        }
+        if self.shouldRunGroupOrchestration(
+            promptFunctionType.clone(),
+            false,
+            false,
+            false,
+            roleCardIdOverride.clone(),
+            proxySenderNameOverride.clone(),
+            messageTextOverride.clone(),
+            chatIdOverride.clone(),
+        ) {
+            let chatId = self
+                .chatHistoryDelegate
+                .currentChatId
+                .clone()
+                .unwrap_or_else(|| {
+                    self.chatHistoryDelegate
+                        .createNewChat(None, None, None, true, true, None);
+                    self.chatHistoryDelegate.currentChatId.clone().unwrap_or_default()
+                });
+            if self
+                .orchestrateGroupConversation(
+                    enhancedAiService,
+                    chatId,
+                    promptFunctionType.clone(),
+                    turnOptions.clone(),
+                )
+                .await
+            {
+                return;
+            }
         }
         self.sendMessageInternal(
             enhancedAiService,
@@ -197,8 +261,11 @@ impl MessageCoordinationDelegate {
             chatModelConfigIdOverride,
             chatModelIndexOverride,
             None,
+            attachments,
+            replyToMessage,
             false,
             None,
+            false,
             turnOptions,
         )
         .await;
@@ -257,6 +324,8 @@ impl MessageCoordinationDelegate {
                 promptFunctionType: self.currentPromptFunctionType.clone(),
                 roleCardId: String::new(),
                 currentRoleName: targetMessage.roleName,
+                attachments: Vec::new(),
+                replyToMessage: None,
                 enableThinking: false,
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
@@ -282,8 +351,11 @@ impl MessageCoordinationDelegate {
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
         preferenceProfileIdOverride: Option<String>,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
         isGroupOrchestrationTurn: bool,
         groupParticipantNamesText: Option<String>,
+        suppressUserMessageInHistory: bool,
         turnOptions: ChatTurnOptions,
     ) {
         self.currentPromptFunctionType = promptFunctionType.clone();
@@ -311,22 +383,40 @@ impl MessageCoordinationDelegate {
             .cloned();
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
         let workspaceEnv = currentChat.and_then(|chat| chat.workspaceEnv);
-        let roleCardId = roleCardIdOverride.clone().unwrap_or_default();
+        let roleCardId = match roleCardIdOverride
+            .clone()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            Some(roleCardId) => roleCardId,
+            None => match ActivePromptManager::getInstance().resolveActiveCardIdForSend() {
+                Ok(roleCardId) => roleCardId,
+                Err(error) => {
+                    self.messageProcessingDelegate.setInputProcessingStateForChat(
+                        chatId.clone(),
+                        InputProcessingState::Error {
+                            message: error.to_string(),
+                        },
+                    );
+                    return;
+                }
+            },
+        };
         let messageContent = self
             .messageProcessingDelegate
             .buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
                 messageText,
                 proxySenderNameOverride,
-                attachments: Vec::new(),
+                attachments: attachments.clone(),
                 workspacePath: workspacePath.clone(),
                 workspaceEnv: workspaceEnv.clone(),
-                replyToMessage: None,
+                replyToMessage: replyToMessage.clone(),
                 chatId: chatId.clone(),
                 roleCardId: roleCardId.clone(),
                 chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
             })
             .unwrap_or_default();
-        if !isContinuation {
+        if !isContinuation && !suppressUserMessageInHistory {
             self.chatHistoryDelegate.addMessageToChat(
                 ChatMessage::new_with_content("user".to_string(), messageContent.clone()),
                 Some(chatId.clone()),
@@ -346,6 +436,8 @@ impl MessageCoordinationDelegate {
                 currentRoleName: None,
                 characterName: None,
                 avatarUri: None,
+                attachments,
+                replyToMessage,
                 enableThinking: false,
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
@@ -398,6 +490,523 @@ impl MessageCoordinationDelegate {
         }
         self.isUpdatingMemory = true;
         self.isUpdatingMemory = false;
+    }
+
+    #[allow(non_snake_case)]
+    fn shouldRunGroupOrchestration(
+        &self,
+        promptFunctionType: PromptFunctionType,
+        isContinuation: bool,
+        isAutoContinuation: bool,
+        skipSummaryCheck: bool,
+        roleCardIdOverride: Option<String>,
+        proxySenderNameOverride: Option<String>,
+        messageTextOverride: Option<String>,
+        chatIdOverride: Option<String>,
+    ) -> bool {
+        if promptFunctionType != PromptFunctionType::CHAT {
+            return false;
+        }
+        if isContinuation || isAutoContinuation || skipSummaryCheck {
+            return false;
+        }
+        if roleCardIdOverride
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if proxySenderNameOverride
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if messageTextOverride
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if chatIdOverride
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        matches!(
+            self.activePromptManager.getActivePrompt(),
+            Ok(ActivePrompt::CharacterGroup { .. })
+        )
+    }
+
+    #[allow(non_snake_case)]
+    async fn orchestrateGroupConversation(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+        chatId: String,
+        promptFunctionType: PromptFunctionType,
+        turnOptions: ChatTurnOptions,
+    ) -> bool {
+        let Some(group) = self.resolveTargetGroupForChat(&chatId) else {
+            return false;
+        };
+        let mut orderedMembers = group.members.clone();
+        orderedMembers.sort_by_key(|member| member.orderIndex);
+        orderedMembers.retain(|member| !member.characterCardId.trim().is_empty());
+        if orderedMembers.is_empty() {
+            return false;
+        }
+        let existingBinding = self
+            .chatHistoryDelegate
+            .chatHistories
+            .iter()
+            .find(|history| history.id == chatId)
+            .and_then(|history| history.characterGroupId.clone());
+        if existingBinding.as_deref() != Some(group.id.as_str()) {
+            self.chatHistoryDelegate
+                .updateChatCharacterBinding(chatId.clone(), None, Some(group.id.clone()));
+        }
+
+        let originalUserText = self.messageProcessingDelegate.userMessage.text.trim().to_string();
+        if originalUserText.is_empty() {
+            return false;
+        }
+        self.messageProcessingDelegate.updateUserMessage(String::new());
+        self.messageProcessingDelegate.setInputProcessingStateForChat(
+            chatId.clone(),
+            InputProcessingState::Processing {
+                message: "role response planner planning".to_string(),
+            },
+        );
+
+        let currentChat = self
+            .chatHistoryDelegate
+            .chatHistories
+            .iter()
+            .find(|history| history.id == chatId)
+            .cloned();
+        let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
+        let workspaceEnv = currentChat.and_then(|chat| chat.workspaceEnv);
+        if !self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
+            self.chatHistoryDelegate
+                .updateChatTitle(chatId.clone(), originalUserText.clone());
+        }
+
+        let finalUserMessageContent = match self
+            .messageProcessingDelegate
+            .buildUserMessageContentForGroupOrchestration(
+                BuildUserMessageContentForGroupOrchestrationRequest {
+                    messageText: originalUserText.clone(),
+                    attachments: Vec::new(),
+                    workspacePath: workspacePath.clone(),
+                    workspaceEnv: workspaceEnv.clone(),
+                    replyToMessage: None,
+                    chatId: chatId.clone(),
+                    roleCardId: CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string(),
+                },
+            ) {
+            Ok(content) => content,
+            Err(error) => {
+                self.messageProcessingDelegate.setInputProcessingStateForChat(
+                    chatId,
+                    InputProcessingState::Error {
+                        message: error.to_string(),
+                    },
+                );
+                return true;
+            }
+        };
+        self.chatHistoryDelegate.addMessageToChat(
+            ChatMessage {
+                sender: "user".to_string(),
+                content: finalUserMessageContent,
+                roleName: "用户".to_string(),
+                displayMode: if turnOptions.hideUserMessage {
+                    ChatMessageDisplayMode::HIDDEN_PLACEHOLDER
+                } else {
+                    ChatMessageDisplayMode::NORMAL
+                },
+                ..ChatMessage::new("user".to_string())
+            },
+            Some(chatId.clone()),
+        );
+
+        let mut timeline = Vec::<(String, String)>::new();
+        if !originalUserText.trim().is_empty() {
+            timeline.push(("用户".to_string(), originalUserText.clone()));
+        }
+
+        let memberCardsById = orderedMembers
+            .iter()
+            .filter_map(|member| {
+                self.characterCardManager
+                    .getCharacterCard(&member.characterCardId)
+                    .ok()
+                    .map(|card| (member.characterCardId.clone(), card))
+            })
+            .collect::<HashMap<_, _>>();
+        let groupParticipantNamesText =
+            self.buildGroupParticipantNamesText(&orderedMembers, &memberCardsById);
+        let Some(plannedRounds) = self
+            .planResponseOrder(enhancedAiService, &originalUserText, &orderedMembers, &memberCardsById)
+            .await
+        else {
+            self.messageProcessingDelegate.setInputProcessingStateForChat(
+                chatId,
+                InputProcessingState::Error {
+                    message: "role response planner failed".to_string(),
+                },
+            );
+            return true;
+        };
+        if plannedRounds.rounds.is_empty()
+            || plannedRounds
+                .rounds
+                .iter()
+                .all(|round| round.iter().all(|member| !member.speak))
+        {
+            self.messageProcessingDelegate.setInputProcessingStateForChat(
+                chatId,
+                InputProcessingState::Completed,
+            );
+            return true;
+        }
+
+        for (roundIndex, roundMembers) in plannedRounds.rounds.iter().enumerate() {
+            for (memberIndex, plannedMember) in roundMembers.iter().enumerate() {
+                if !plannedMember.speak {
+                    continue;
+                }
+                let Some(member) = orderedMembers
+                    .iter()
+                    .find(|member| member.characterCardId == plannedMember.id)
+                    .cloned()
+                else {
+                    continue;
+                };
+                let Some(memberCard) = memberCardsById.get(&member.characterCardId).cloned() else {
+                    continue;
+                };
+                self.messageProcessingDelegate.setInputProcessingStateForChat(
+                    chatId.clone(),
+                    InputProcessingState::Processing {
+                        message: format!("{} replying", memberCard.name),
+                    },
+                );
+                let beforeLastAiTimestamp = self
+                    .chatHistoryDelegate
+                    .getRuntimeChatHistory(chatId.clone())
+                    .iter()
+                    .filter(|message| message.sender == "ai")
+                    .map(|message| message.timestamp)
+                    .max()
+                    .unwrap_or(i64::MIN);
+                let targetTurnCounter =
+                    self.messageProcessingDelegate.getTurnCompleteCounter(chatId.clone()) + 1;
+                let isFirstMemberOfFirstRound = roundIndex == 0 && memberIndex == 0;
+                let memberMessage = if isFirstMemberOfFirstRound {
+                    originalUserText.clone()
+                } else {
+                    String::new()
+                };
+                self.sendMessageInternal(
+                    enhancedAiService,
+                    promptFunctionType.clone(),
+                    !isFirstMemberOfFirstRound,
+                    false,
+                    Some(member.characterCardId),
+                    Some(chatId.clone()),
+                    Some(memberMessage),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                    None,
+                    true,
+                    Some(groupParticipantNamesText.clone()),
+                    true,
+                    turnOptions.clone(),
+                )
+                .await;
+                if !self.awaitTurnComplete(chatId.clone(), targetTurnCounter, 180_000).await {
+                    continue;
+                }
+                let newAiMessage = self
+                    .chatHistoryDelegate
+                    .getRuntimeChatHistory(chatId.clone())
+                    .into_iter()
+                    .rev()
+                    .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp);
+                if let Some(newAiMessage) = newAiMessage {
+                    if !newAiMessage.content.trim().is_empty() {
+                        let effectiveSpeech = extractEffectiveSpeechContent(&newAiMessage.content);
+                        if !effectiveSpeech.trim().is_empty() {
+                            timeline.push((
+                                format!("AI({})", memberCard.name),
+                                shrinkForMemberPrompt(&effectiveSpeech, 220),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        self.maybeSummarizeAfterGroupRound(
+            enhancedAiService,
+            chatId,
+            promptFunctionType,
+        )
+        .await;
+        true
+    }
+
+    #[allow(non_snake_case)]
+    async fn planResponseOrder(
+        &self,
+        enhancedAiService: &mut EnhancedAIService,
+        userText: &str,
+        members: &[GroupMemberConfig],
+        memberCardsById: &HashMap<String, CharacterCard>,
+    ) -> Option<PlannedRounds> {
+        let memberLines = members
+            .iter()
+            .filter_map(|member| {
+                let card = memberCardsById.get(&member.characterCardId)?;
+                Some(format!("- id: {}, name: {}", member.characterCardId, card.name))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = FunctionalPrompts::buildGroupRoleResponsePlannerPrompt(&memberLines, userText, false);
+        let mut options = SendMessageOptions::new();
+        options.message = prompt;
+        options.functionType = FunctionType::ROLE_RESPONSE_PLANNER;
+        options.promptFunctionType = PromptFunctionType::CHAT;
+        options.enableThinking = false;
+        options.stream = false;
+        let execution = enhancedAiService.sendMessage(options).await.ok()?;
+        let rawContent = removeThinkingContent(&execution.responseChunks.join("")).trim().to_string();
+        self.parsePlannedRounds(
+            &rawContent,
+            members
+                .iter()
+                .map(|member| member.characterCardId.clone())
+                .collect(),
+            memberCardsById
+                .values()
+                .map(|card| (card.name.trim().to_string(), card.id.clone()))
+                .collect(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    fn parsePlannedRounds(
+        &self,
+        rawContent: &str,
+        memberIds: std::collections::HashSet<String>,
+        memberNameToId: HashMap<String, String>,
+    ) -> Option<PlannedRounds> {
+        if rawContent.trim().is_empty() {
+            return None;
+        }
+        let trimmed = rawContent.trim();
+        let jsonText = if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            trimmed.to_string()
+        } else if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+            if end > start {
+                trimmed[start..=end].to_string()
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            trimmed.to_string()
+        };
+        let obj = serde_json::from_str::<Value>(&jsonText).ok()?;
+        let resolveId = |value: Option<&str>| -> Option<String> {
+            let trimmedValue = value.unwrap_or_default().trim();
+            if trimmedValue.is_empty() {
+                return None;
+            }
+            if memberIds.contains(trimmedValue) {
+                return Some(trimmedValue.to_string());
+            }
+            memberNameToId.get(trimmedValue).cloned()
+        };
+        let parseMember = |item: &Value| -> Option<PlannedMember> {
+            match item {
+                Value::String(value) => resolveId(Some(value)).map(|id| PlannedMember { id, speak: true }),
+                Value::Object(map) => {
+                    let id = resolveId(
+                        map.get("id")
+                            .and_then(Value::as_str)
+                            .or_else(|| map.get("memberId").and_then(Value::as_str))
+                            .or_else(|| map.get("roleId").and_then(Value::as_str))
+                            .or_else(|| map.get("name").and_then(Value::as_str)),
+                    )?;
+                    let skip = map.get("skip").and_then(Value::as_bool).unwrap_or(false);
+                    let speak = map.get("speak").and_then(Value::as_bool).unwrap_or(!skip);
+                    Some(PlannedMember { id, speak })
+                }
+                _ => None,
+            }
+        };
+        if let Some(roundsArray) = obj.get("rounds").and_then(Value::as_array) {
+            let mut rounds = Vec::new();
+            for roundItem in roundsArray {
+                let Some(roundArray) = roundItem.as_array() else {
+                    continue;
+                };
+                let mut roundMembers = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for item in roundArray {
+                    let Some(member) = parseMember(item) else {
+                        continue;
+                    };
+                    if seen.insert(member.id.clone()) {
+                        roundMembers.push(member);
+                    }
+                }
+                if !roundMembers.is_empty() {
+                    rounds.push(roundMembers);
+                }
+            }
+            return Some(PlannedRounds { rounds });
+        }
+        let orderArray = obj
+            .get("order")
+            .and_then(Value::as_array)
+            .or_else(|| obj.get("plan").and_then(Value::as_array))
+            .or_else(|| obj.get("members").and_then(Value::as_array))?;
+        let mut members = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for item in orderArray {
+            let Some(member) = parseMember(item) else {
+                continue;
+            };
+            if seen.insert(member.id.clone()) {
+                members.push(member);
+            }
+        }
+        Some(PlannedRounds { rounds: vec![members] })
+    }
+
+    #[allow(non_snake_case)]
+    fn buildGroupParticipantNamesText(
+        &self,
+        members: &[GroupMemberConfig],
+        memberCardsById: &HashMap<String, CharacterCard>,
+    ) -> String {
+        let mut orderedMembers = members.to_vec();
+        orderedMembers.sort_by_key(|member| member.orderIndex);
+        let mut participantNames = Vec::new();
+        for member in orderedMembers {
+            let Some(card) = memberCardsById.get(&member.characterCardId) else {
+                continue;
+            };
+            let name = card.name.trim();
+            if !name.is_empty() && !participantNames.iter().any(|entry| entry == name) {
+                participantNames.push(name.to_string());
+            }
+        }
+        participantNames.push("用户（用户）".to_string());
+        participantNames.join("、")
+    }
+
+    #[allow(non_snake_case)]
+    fn resolveTargetGroupForChat(&self, chatId: &str) -> Option<CharacterGroupCard> {
+        let activePrompt = self.activePromptManager.getActivePrompt().ok()?;
+        let activeGroupId = match activePrompt {
+            ActivePrompt::CharacterGroup { id } if !id.trim().is_empty() => id,
+            _ => return None,
+        };
+        let _boundGroupId = self
+            .chatHistoryDelegate
+            .chatHistories
+            .iter()
+            .find(|history| history.id == chatId)
+            .and_then(|history| history.characterGroupId.clone())
+            .filter(|value| !value.trim().is_empty());
+        self.characterGroupCardManager
+            .getCharacterGroupCard(&activeGroupId)
+            .ok()
+            .flatten()
+    }
+
+    #[allow(non_snake_case)]
+    async fn awaitTurnComplete(&self, chatId: String, targetCounter: i64, timeoutMs: u64) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(timeoutMs) {
+            if self.messageProcessingDelegate.getTurnCompleteCounter(chatId.clone()) >= targetCounter {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        self.messageProcessingDelegate.getTurnCompleteCounter(chatId) >= targetCounter
+    }
+
+    #[allow(non_snake_case)]
+    async fn maybeSummarizeAfterGroupRound(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+        chatId: String,
+        promptFunctionType: PromptFunctionType,
+    ) {
+        let configId = match self.currentChatModelConfigIdOverride.clone() {
+            Some(configId) if !configId.trim().is_empty() => configId,
+            _ => match self
+                .messageProcessingDelegate
+                .functionalConfigManager
+                .getConfigIdForFunction(FunctionType::CHAT)
+            {
+                Ok(configId) => configId,
+                Err(_) => return,
+            },
+        };
+        let chatContextSettings = match self
+            .messageProcessingDelegate
+            .modelConfigManager
+            .getModelConfig(&configId)
+        {
+            Ok(config) => config,
+            Err(_) => return,
+        };
+        if !chatContextSettings.enableSummary {
+            return;
+        }
+        let currentMessages = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
+        let currentTokens = self
+            .tokenStatisticsDelegate
+            .getLastCurrentWindowSize(Some(chatId.clone()));
+        let maxTokens = (chatContextSettings.contextLength * 1024.0) as i32;
+        let shouldSummarize = AIMessageManager::shouldGenerateSummary(
+            currentMessages.clone(),
+            currentTokens,
+            maxTokens,
+            chatContextSettings.summaryTokenThreshold as f64,
+            chatContextSettings.enableSummary,
+            chatContextSettings.enableSummaryByMessageCount,
+            chatContextSettings.summaryMessageCountThreshold,
+        );
+        if shouldSummarize {
+            self.summarizeHistory(
+                enhancedAiService,
+                false,
+                Some(promptFunctionType),
+                Some(chatId),
+                self.currentChatModelConfigIdOverride.clone(),
+                self.currentChatModelIndexOverride,
+                self.currentPreferenceProfileIdOverride.clone(),
+                None,
+                true,
+                false,
+                None,
+            )
+            .await;
+        }
     }
 
     pub async fn manuallySummarizeConversation(&mut self, enhancedAiService: &mut EnhancedAIService) {
@@ -694,8 +1303,11 @@ impl MessageCoordinationDelegate {
                         effectiveChatModelConfigIdOverride,
                         effectiveChatModelIndexOverride,
                         effectivePreferenceProfileIdOverride,
+                        Vec::new(),
+                        None,
                         isGroupOrchestrationTurn,
                         groupParticipantNamesText,
+                        false,
                         ChatTurnOptions::default(),
                     )
                     .await;
@@ -737,4 +1349,85 @@ impl MessageCoordinationDelegate {
     }
 
     pub fn setUiBridge(&mut self) {}
+}
+
+#[allow(non_snake_case)]
+fn removeThinkingContent(input: &str) -> String {
+    let mut output = String::new();
+    let mut rest = input;
+    loop {
+        let Some(start) = rest.find("<think>") else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..start]);
+        let afterStart = &rest[start + "<think>".len()..];
+        let Some(end) = afterStart.find("</think>") else {
+            break;
+        };
+        rest = &afterStart[end + "</think>".len()..];
+    }
+    output
+}
+
+#[allow(non_snake_case)]
+fn extractEffectiveSpeechContent(content: &str) -> String {
+    let withoutThinking = removeThinkingContent(content);
+    let withoutStatus = removeTagBlocks(&withoutThinking, "status");
+    removeSelfClosingTags(&withoutStatus, "status").trim().to_string()
+}
+
+#[allow(non_snake_case)]
+fn shrinkForMemberPrompt(content: &str, maxLength: usize) -> String {
+    let normalized = content.replace('\n', " ").trim().to_string();
+    if normalized.chars().count() <= maxLength {
+        normalized
+    } else {
+        let prefix = normalized.chars().take(maxLength).collect::<String>();
+        format!("{prefix}...")
+    }
+}
+
+#[allow(non_snake_case)]
+fn removeTagBlocks(content: &str, tagName: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let openTag = format!("<{tagName}");
+    let closeTag = format!("</{tagName}>");
+    while let Some(openOffset) = content[cursor..].find(&openTag) {
+        let openStart = cursor + openOffset;
+        output.push_str(&content[cursor..openStart]);
+        let Some(openEndOffset) = content[openStart..].find('>') else {
+            cursor = openStart;
+            break;
+        };
+        let bodyStart = openStart + openEndOffset + 1;
+        let Some(closeOffset) = content[bodyStart..].find(&closeTag) else {
+            cursor = bodyStart;
+            break;
+        };
+        cursor = bodyStart + closeOffset + closeTag.len();
+        output.push(' ');
+    }
+    output.push_str(&content[cursor..]);
+    output
+}
+
+#[allow(non_snake_case)]
+fn removeSelfClosingTags(content: &str, tagName: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let openTag = format!("<{tagName}");
+    while let Some(openOffset) = content[cursor..].find(&openTag) {
+        let openStart = cursor + openOffset;
+        output.push_str(&content[cursor..openStart]);
+        let Some(endOffset) = content[openStart..].find("/>") else {
+            cursor = openStart;
+            break;
+        };
+        cursor = openStart + endOffset + 2;
+        output.push(' ');
+    }
+    output.push_str(&content[cursor..]);
+    output
 }

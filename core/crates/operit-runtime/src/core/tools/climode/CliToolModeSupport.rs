@@ -1,3 +1,5 @@
+use crate::data::model::ModelConfigData::ApiProviderType;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolExposureMode {
     FULL,
@@ -24,3 +26,16 @@ pub struct HiddenToolCatalogEntry {
 }
 
 pub struct CliToolModeSupport;
+
+impl ToolExposureMode {
+    pub fn resolve(provider_type: ApiProviderType) -> Self {
+        match provider_type {
+            ApiProviderType::LMSTUDIO
+            | ApiProviderType::OLLAMA
+            | ApiProviderType::OPENAI_LOCAL
+            | ApiProviderType::MNN
+            | ApiProviderType::LLAMA_CPP => Self::CLI,
+            _ => Self::FULL,
+        }
+    }
+}

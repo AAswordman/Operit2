@@ -198,6 +198,61 @@ impl ModelConfigManager {
         })
     }
 
+    pub fn updateToolCall(
+        &self,
+        configId: &str,
+        enableToolCall: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableToolCall = enableToolCall;
+            config
+        })
+    }
+
+    pub fn updateDirectImageProcessing(
+        &self,
+        configId: &str,
+        enableDirectImageProcessing: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableDirectImageProcessing = enableDirectImageProcessing;
+            config
+        })
+    }
+
+    pub fn updateDirectAudioProcessing(
+        &self,
+        configId: &str,
+        enableDirectAudioProcessing: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableDirectAudioProcessing = enableDirectAudioProcessing;
+            config
+        })
+    }
+
+    pub fn updateDirectVideoProcessing(
+        &self,
+        configId: &str,
+        enableDirectVideoProcessing: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableDirectVideoProcessing = enableDirectVideoProcessing;
+            config
+        })
+    }
+
+    pub fn updateGoogleSearch(
+        &self,
+        configId: &str,
+        enableGoogleSearch: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableGoogleSearch = enableGoogleSearch;
+            config
+        })
+    }
+
     pub fn updateModelConfigWithModelIndex(
         &self,
         configId: &str,
@@ -268,6 +323,147 @@ impl ModelConfigManager {
             config.mnnThreadCount = mnnThreadCount;
             config
         })
+    }
+
+    pub fn updateApiSettingsFull(
+        &self,
+        configId: &str,
+        apiKey: String,
+        apiEndpoint: String,
+        modelName: String,
+        apiProviderType: ApiProviderType,
+        apiProviderTypeId: String,
+        mnnForwardType: i32,
+        mnnThreadCount: i32,
+        llamaThreadCount: i32,
+        llamaContextSize: i32,
+        llamaGpuLayers: i32,
+        enableDirectImageProcessing: bool,
+        enableDirectAudioProcessing: bool,
+        enableDirectVideoProcessing: bool,
+        enableGoogleSearch: bool,
+        enableToolCall: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.apiKey = apiKey;
+            config.apiEndpoint = apiEndpoint;
+            config.modelName = modelName;
+            config.apiProviderType = apiProviderType;
+            config.apiProviderTypeId = apiProviderTypeId;
+            config.mnnForwardType = mnnForwardType;
+            config.mnnThreadCount = mnnThreadCount;
+            config.llamaThreadCount = llamaThreadCount.max(1);
+            config.llamaContextSize = llamaContextSize.max(1);
+            config.llamaGpuLayers = llamaGpuLayers.max(0);
+            config.enableDirectImageProcessing = enableDirectImageProcessing;
+            config.enableDirectAudioProcessing = enableDirectAudioProcessing;
+            config.enableDirectVideoProcessing = enableDirectVideoProcessing;
+            config.enableGoogleSearch = enableGoogleSearch;
+            config.enableToolCall = enableToolCall;
+            config
+        })
+    }
+
+    pub fn updateCustomHeaders(
+        &self,
+        configId: &str,
+        customHeaders: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.customHeaders = customHeaders;
+            config
+        })
+    }
+
+    pub fn updateRequestQueueSettings(
+        &self,
+        configId: &str,
+        requestLimitPerMinute: i32,
+        maxConcurrentRequests: i32,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.requestLimitPerMinute = requestLimitPerMinute.max(0);
+            config.maxConcurrentRequests = maxConcurrentRequests.max(0);
+            config
+        })
+    }
+
+    pub fn updateApiKeyPoolSettings(
+        &self,
+        configId: &str,
+        useMultipleApiKeys: bool,
+        apiKeyPool: Vec<ApiKeyInfo>,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.useMultipleApiKeys = useMultipleApiKeys;
+            config.apiKeyPool = apiKeyPool;
+            config
+        })
+    }
+
+    pub fn updateCustomParameters(
+        &self,
+        configId: &str,
+        parametersJson: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.hasCustomParameters = !parametersJson.trim().is_empty() && parametersJson != "[]";
+            config.customParameters = parametersJson;
+            config
+        })
+    }
+
+    pub fn updateParameters(
+        &self,
+        configId: &str,
+        parameters: Vec<ModelParameter<serde_json::Value>>,
+    ) -> Result<(), ModelConfigError> {
+        let customParams = parameters
+            .iter()
+            .filter(|parameter| parameter.isCustom)
+            .map(|parameter| self.modelParameterToCustomParameterData(parameter.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let customParamsJson = if customParams.is_empty() {
+            "[]".to_string()
+        } else {
+            serde_json::to_string(&customParams)?
+        };
+
+        self.updateConfigInternal(configId, |mut current| {
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "max_tokens") {
+                current.maxTokens = parameter.currentValue.as_i64().unwrap() as i32;
+                current.maxTokensEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "temperature") {
+                current.temperature = parameter.currentValue.as_f64().unwrap() as f32;
+                current.temperatureEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "top_p") {
+                current.topP = parameter.currentValue.as_f64().unwrap() as f32;
+                current.topPEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "top_k") {
+                current.topK = parameter.currentValue.as_i64().unwrap() as i32;
+                current.topKEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "presence_penalty") {
+                current.presencePenalty = parameter.currentValue.as_f64().unwrap() as f32;
+                current.presencePenaltyEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "frequency_penalty") {
+                current.frequencyPenalty = parameter.currentValue.as_f64().unwrap() as f32;
+                current.frequencyPenaltyEnabled = parameter.isEnabled;
+            }
+            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "repetition_penalty") {
+                current.repetitionPenalty = parameter.currentValue.as_f64().unwrap() as f32;
+                current.repetitionPenaltyEnabled = parameter.isEnabled;
+            }
+            current.customParameters = customParamsJson;
+            current.hasCustomParameters = !customParams.is_empty();
+            current
+        })?;
+
+        Ok(())
     }
 
     pub fn updateConfigKeyIndex(&self, configId: &str, newIndex: i32) -> Result<ModelConfigData, ModelConfigError> {
@@ -417,6 +613,38 @@ impl ModelConfigManager {
         })
     }
 
+    pub fn updateContextSettings(
+        &self,
+        configId: &str,
+        contextLength: f32,
+        maxContextLength: f32,
+        enableMaxContextMode: bool,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.contextLength = contextLength;
+            config.maxContextLength = maxContextLength;
+            config.enableMaxContextMode = enableMaxContextMode;
+            config
+        })
+    }
+
+    pub fn updateSummarySettings(
+        &self,
+        configId: &str,
+        enableSummary: bool,
+        summaryTokenThreshold: f32,
+        enableSummaryByMessageCount: bool,
+        summaryMessageCountThreshold: i32,
+    ) -> Result<ModelConfigData, ModelConfigError> {
+        self.updateConfigInternal(configId, |mut config| {
+            config.enableSummary = enableSummary;
+            config.summaryTokenThreshold = summaryTokenThreshold;
+            config.enableSummaryByMessageCount = enableSummaryByMessageCount;
+            config.summaryMessageCountThreshold = summaryMessageCountThreshold;
+            config
+        })
+    }
+
     fn loadConfigFromDataStore(&self, configId: &str) -> Result<ModelConfigData, ModelConfigError> {
         let preferences = self.modelConfigDataStore.data()?;
         let configKey = self.configKey(configId);
@@ -540,6 +768,75 @@ impl ModelConfigManager {
             category,
             isCustom: true,
         })
+    }
+
+    fn modelParameterToCustomParameterData(
+        &self,
+        parameter: ModelParameter<serde_json::Value>,
+    ) -> Result<CustomParameterData, ModelConfigError> {
+        Ok(CustomParameterData {
+            id: parameter.id,
+            name: parameter.name,
+            apiName: parameter.apiName,
+            description: parameter.description,
+            defaultValue: Self::customParameterValueToString(&parameter.defaultValue, &parameter.valueType)?,
+            currentValue: Self::customParameterValueToString(&parameter.currentValue, &parameter.valueType)?,
+            isEnabled: parameter.isEnabled,
+            valueType: Self::parameterValueTypeName(&parameter.valueType).to_string(),
+            minValue: parameter
+                .minValue
+                .map(|value| Self::customParameterValueToString(&value, &parameter.valueType))
+                .transpose()?,
+            maxValue: parameter
+                .maxValue
+                .map(|value| Self::customParameterValueToString(&value, &parameter.valueType))
+                .transpose()?,
+            category: Self::parameterCategoryName(&parameter.category).to_string(),
+        })
+    }
+
+    fn parameterValueTypeName(valueType: &ParameterValueType) -> &'static str {
+        match valueType {
+            ParameterValueType::INT => "INT",
+            ParameterValueType::FLOAT => "FLOAT",
+            ParameterValueType::STRING => "STRING",
+            ParameterValueType::BOOLEAN => "BOOLEAN",
+            ParameterValueType::OBJECT => "OBJECT",
+        }
+    }
+
+    fn parameterCategoryName(category: &ParameterCategory) -> &'static str {
+        match category {
+            ParameterCategory::GENERATION => "GENERATION",
+            ParameterCategory::CREATIVITY => "CREATIVITY",
+            ParameterCategory::REPETITION => "REPETITION",
+            ParameterCategory::OTHER => "OTHER",
+        }
+    }
+
+    fn customParameterValueToString(
+        value: &serde_json::Value,
+        valueType: &ParameterValueType,
+    ) -> Result<String, ModelConfigError> {
+        match valueType {
+            ParameterValueType::INT => value
+                .as_i64()
+                .map(|parsed| parsed.to_string())
+                .ok_or_else(|| ModelConfigError::CustomParameterConversion("INT".to_string())),
+            ParameterValueType::FLOAT => value
+                .as_f64()
+                .map(|parsed| parsed.to_string())
+                .ok_or_else(|| ModelConfigError::CustomParameterConversion("FLOAT".to_string())),
+            ParameterValueType::STRING => value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| ModelConfigError::CustomParameterConversion("STRING".to_string())),
+            ParameterValueType::BOOLEAN => value
+                .as_bool()
+                .map(|parsed| parsed.to_string())
+                .ok_or_else(|| ModelConfigError::CustomParameterConversion("BOOLEAN".to_string())),
+            ParameterValueType::OBJECT => Ok(value.to_string()),
+        }
     }
 
     fn parseParameterValueType(value: &str) -> Result<ParameterValueType, ModelConfigError> {

@@ -472,9 +472,25 @@ fn getWorkspaceGuidelines(
 
 fn build_cli_mode_prompt(use_english: bool) -> String {
     if use_english {
-        "Tools are exposed through the CLI tool mode. Follow the CLI mode contract instead of emitting XML tool calls.".to_string()
+        let intro = r#"CLI TOOL MODE
+- Only two public tools are available: `search` and `proxy`.
+- `search` only searches the hidden tool catalog. It does not read files, search code, or browse the web.
+- All real capabilities are hidden behind `proxy`.
+- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params."#;
+        let category = r#"Public tools:
+- search: Search the hidden tool catalog only. Use this first to discover hidden tool names and parameter shapes. Parameters: query (tool capability or hidden tool name to search for), limit (optional, max results to return, default 8)
+- proxy: Execute a hidden tool after you discover its target tool name and parameter shape via search. Parameters: tool_name (hidden target tool name, for example read_file or packageName:toolName), params (JSON object of parameters to forward to the hidden target tool)"#;
+        format!("{intro}\n\n{category}")
     } else {
-        "工具通过 CLI 工具模式暴露。请遵循 CLI 模式约定，不要输出 XML 工具调用。".to_string()
+        let intro = r#"CLI 工具模式
+- 当前只有两个公开工具：`search` 和 `proxy`。
+- `search` 只搜索隐藏工具目录，不会直接读文件、搜代码或访问网页。
+- 所有真实能力都隐藏在 `proxy` 后面。
+- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。"#;
+        let category = r#"公开工具:
+- search: 仅搜索隐藏工具目录。先用它发现隐藏工具名和参数形态。 Parameters: query (要搜索的工具能力或隐藏工具名), limit (可选，返回的最大结果数, default 8)
+- proxy: 在 search 发现目标工具名和参数形态后，代理执行隐藏工具。 Parameters: tool_name (隐藏目标工具名，例如 read_file 或 packageName:toolName), params (转发给隐藏目标工具的 JSON 参数对象)"#;
+        format!("{intro}\n\n{category}")
     }
 }
 

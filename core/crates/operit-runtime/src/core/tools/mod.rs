@@ -21,5 +21,8 @@ pub mod ToolResultDataClasses;
 
 pub mod climode;
 
+#[path = "defaultTool/mod.rs"]
+pub mod defaultTool;
+
 #[path = "packTool/mod.rs"]
 pub mod packTool;

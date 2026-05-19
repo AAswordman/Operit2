@@ -1,21 +1,78 @@
-use super::AIService::AIService;
+use async_trait::async_trait;
+use serde_json::Value;
+
+use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest};
+use super::DeepseekProvider::DeepseekProvider;
 
 pub struct KimiProvider {
-    pub api_endpoint: String,
-    pub model_name: String,
-    pub provider_type: String,
-    pub supports_vision: bool,
-    pub supports_audio: bool,
-    pub supports_video: bool,
-    pub enable_tool_call: bool,
+    inner: DeepseekProvider,
 }
 
 impl KimiProvider {
-    pub fn create_request_body(&self) {}
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        api_endpoint: String,
+        api_key: String,
+        model_name: String,
+        provider_type: String,
+        custom_headers: Vec<(String, String)>,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Self {
+        Self {
+            inner: DeepseekProvider::new(
+                api_endpoint,
+                api_key,
+                model_name,
+                provider_type,
+                custom_headers,
+                enable_tool_call,
+            ),
+        }
+    }
+
+    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+        self.inner.create_request_body(request)
+    }
 }
 
+#[async_trait]
 impl AIService for KimiProvider {
+    fn input_token_count(&self) -> i32 {
+        self.inner.input_token_count()
+    }
+
+    fn cached_input_token_count(&self) -> i32 {
+        self.inner.cached_input_token_count()
+    }
+
+    fn output_token_count(&self) -> i32 {
+        self.inner.output_token_count()
+    }
+
     fn provider_model(&self) -> String {
-        format!("{}:{}", self.provider_type, self.model_name)
+        self.inner.provider_model()
+    }
+
+    fn reset_token_counts(&mut self) {
+        self.inner.reset_token_counts();
+    }
+
+    fn cancel_streaming(&mut self) {
+        self.inner.cancel_streaming();
+    }
+
+    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+        self.inner.send_message(request).await
+    }
+
+    async fn calculate_input_tokens(
+        &self,
+        chat_history: &[crate::core::chat::hooks::PromptTurn::PromptTurn],
+        available_tools: &[crate::data::model::ToolPrompt::ToolPrompt],
+    ) -> Result<i32, AiServiceError> {
+        self.inner.calculate_input_tokens(chat_history, available_tools).await
     }
 }

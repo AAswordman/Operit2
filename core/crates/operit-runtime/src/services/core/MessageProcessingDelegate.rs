@@ -14,6 +14,7 @@ use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 
@@ -114,6 +115,8 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub currentRoleName: Option<String>,
     pub characterName: Option<String>,
     pub avatarUri: Option<String>,
+    pub attachments: Vec<AttachmentInfo>,
+    pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
     pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
@@ -144,6 +147,8 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub promptFunctionType: PromptFunctionType,
     pub roleCardId: String,
     pub currentRoleName: String,
+    pub attachments: Vec<AttachmentInfo>,
+    pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
     pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
@@ -517,10 +522,26 @@ impl MessageProcessingDelegate {
         );
         self.updateGlobalLoadingState();
 
+        let characterName = CharacterCardManager::getInstance()
+            .getCharacterCard(&request.roleCardId)
+            .ok()
+            .map(|card| card.name)
+            .filter(|name| !name.trim().is_empty());
+        let currentRoleName = characterName.clone().unwrap_or_else(|| "Operit".to_string());
+        let requestMessageContent =
+            if request.isGroupOrchestrationTurn
+                && !request.messageContent.trim_start().is_empty()
+                && !request.messageContent.trim_start().starts_with("[From user]")
+            {
+                format!("[From user]\n{}", request.messageContent)
+            } else {
+                request.messageContent
+            };
+
         let execution = AIMessageManager::sendMessage(AIMessageSendRequest {
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
-            messageContent: request.messageContent,
+            messageContent: requestMessageContent,
             chatHistory: request.chatHistory,
             workspacePath: request.workspacePath,
             workspaceEnv: request.workspaceEnv,
@@ -529,10 +550,10 @@ impl MessageProcessingDelegate {
             enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
             maxTokens: request.maxTokens,
             tokenUsageThreshold: request.tokenUsageThreshold,
-            characterName: request.characterName.clone(),
+            characterName: characterName.clone(),
             avatarUri: request.avatarUri,
             roleCardId: request.roleCardId.clone(),
-            currentRoleName: request.currentRoleName,
+            currentRoleName: Some(currentRoleName.clone()),
             splitHistoryByRole: true,
             groupOrchestrationMode: request.isGroupOrchestrationTurn,
             groupParticipantNamesText: request.groupParticipantNamesText,
@@ -553,7 +574,7 @@ impl MessageProcessingDelegate {
                 sender: "ai".to_string(),
                 content: execution.responseChunks.join(""),
                 timestamp: ChatMessageTimestampAllocator::next(),
-                roleName: request.characterName.clone().unwrap_or_else(|| "AI".to_string()),
+                roleName: currentRoleName,
                 provider,
                 modelName,
                 inputTokens: execution.tokenSnapshot.inputTokens,
@@ -595,6 +616,8 @@ impl MessageProcessingDelegate {
                 currentRoleName: Some(request.currentRoleName),
                 characterName: None,
                 avatarUri: None,
+                attachments: request.attachments,
+                replyToMessage: request.replyToMessage,
                 enableThinking: request.enableThinking,
                 enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
                 maxTokens: request.maxTokens,

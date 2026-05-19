@@ -1,0 +1,10 @@
+[package]
+name = "operit-host-windows"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+operit-host-api = { path = "../../../../core/crates/operit-host-api" }
+regex = "1"

@@ -8,8 +8,23 @@ use crate::api::chat::llmprovider::AIServiceFactory::{
     AIServiceFactory, ApiKeyProviderSpec, ProviderCreateParams, ProviderCreateRequest, ProviderServiceKind,
     ProviderServiceSpec,
 };
+use crate::api::chat::llmprovider::ClaudeProvider::ClaudeProvider;
 use crate::api::chat::llmprovider::DeepseekProvider::DeepseekProvider;
+use crate::api::chat::llmprovider::DoubaoAIProvider::DoubaoAIProvider;
+use crate::api::chat::llmprovider::FourRouterProvider::FourRouterProvider;
+use crate::api::chat::llmprovider::GeminiProvider::GeminiProvider;
+use crate::api::chat::llmprovider::KimiProvider::KimiProvider;
+use crate::api::chat::llmprovider::LlamaProvider::LlamaProvider;
+use crate::api::chat::llmprovider::MimoProvider::MimoProvider;
+use crate::api::chat::llmprovider::MistralProvider::MistralProvider;
+use crate::api::chat::llmprovider::MNNProvider::MNNProvider;
+use crate::api::chat::llmprovider::NvidiaAIProvider::NvidiaAIProvider;
+use crate::api::chat::llmprovider::NousPortalProvider::NousPortalProvider;
+use crate::api::chat::llmprovider::OllamaProvider::OllamaProvider;
+use crate::api::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesProvider;
+use crate::api::chat::llmprovider::OpenRouterProvider::OpenRouterProvider;
 use crate::api::chat::llmprovider::OpenAIProvider::OpenAIProvider;
+use crate::api::chat::llmprovider::QwenAIProvider::QwenAIProvider;
 use crate::api::chat::llmprovider::RateLimitedAIService::RateLimitedAIService;
 use crate::api::chat::llmprovider::RateLimiterRegistry::RateLimiterRegistry;
 use crate::api::chat::llmprovider::RequestConcurrencyRegistry::RequestConcurrencyRegistry;
@@ -264,6 +279,281 @@ impl MultiServiceManager {
                 custom_headers.into_iter().collect(),
                 enable_tool_call,
             ))),
+            ProviderCreateParams::OpenAIResponsesProvider {
+                responses_api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                responses_provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            } => Ok(Box::new(OpenAIResponsesProvider::new(
+                responses_api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                responses_provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::ClaudeProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                enable_tool_call,
+            } => Ok(Box::new(ClaudeProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::GeminiProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                enable_tool_call,
+                enable_google_search,
+            } => Ok(Box::new(GeminiProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                enable_google_search,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::OllamaProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(OllamaProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::KimiProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(KimiProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::MimoProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(MimoProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::MistralProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(MistralProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::OpenRouterProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(OpenRouterProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::FourRouterProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(FourRouterProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::NousPortalProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(NousPortalProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::DoubaoAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(DoubaoAIProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::NvidiaAIProvider {
+                api_endpoint,
+                model_name,
+                api_key_provider,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(NvidiaAIProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::QwenAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                qwen_provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+                ..
+            } => Ok(Box::new(QwenAIProvider::new(
+                api_endpoint,
+                self.resolveApiKeyProvider(api_key_provider)?,
+                model_name,
+                qwen_provider_type.name().to_string(),
+                custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ))),
+            ProviderCreateParams::MNNProvider { .. } => Ok(Box::new(MNNProvider)),
+            ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
             _ => Err(AiServiceError::ProviderNotImplemented(format!("{:?}", spec.kind))),
         }
     }
