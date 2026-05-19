@@ -10,6 +10,7 @@ name = "operit2"
 path = "src/main.rs"
 
 [dependencies]
+operit-host-windows = { path = "../../../hosts/desktop/windows/operit-host-windows" }
 operit-runtime = { path = "../operit-runtime" }
+serde_json.workspace = true
 tokio.workspace = true
-

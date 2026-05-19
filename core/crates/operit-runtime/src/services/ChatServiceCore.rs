@@ -65,12 +65,16 @@ impl ChatServiceCore {
         proxySenderNameOverride: Option<String>,
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) {
         if let (Some(service), Some(delegate)) = (
             self.enhancedAiService.as_mut(),
             self.messageCoordinationDelegate.as_mut(),
         ) {
+            delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+            delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
             delegate.sendUserMessage(
                 service,
                 promptFunctionType,
@@ -80,6 +84,8 @@ impl ChatServiceCore {
                 proxySenderNameOverride,
                 chatModelConfigIdOverride,
                 chatModelIndexOverride,
+                attachments,
+                replyToMessage,
                 turnOptions,
             )
             .await;

@@ -542,7 +542,7 @@ impl ToolExecutionManager {
     }
 }
 
-pub trait ToolExecutor {
+pub trait ToolExecutor: Send {
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult;
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult>;
 }

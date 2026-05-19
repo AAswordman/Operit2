@@ -1057,6 +1057,56 @@ impl AIService for OpenAIProvider {
         self.reset_token_counts();
 
         let request_body = self.create_request_body(&request)?;
+        return self.send_prepared_request(request, request_body).await;
+    }
+
+    async fn test_connection(&self) -> Result<String, AiServiceError> {
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&self.api_endpoint)
+            .headers(self.headers()?)
+            .json(&json!({
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": false,
+                "max_tokens": 1
+            }))
+            .send()
+            .await
+            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+
+        if response.status().is_success() {
+            Ok("ok".to_string())
+        } else {
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            Err(AiServiceError::RequestFailed(format!("{status}: {text}")))
+        }
+    }
+
+    async fn calculate_input_tokens(
+        &self,
+        chat_history: &[PromptTurn],
+        available_tools: &[ToolPrompt],
+    ) -> Result<i32, AiServiceError> {
+        let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
+        let tool_chars: usize = available_tools
+            .iter()
+            .map(|tool| tool.name.len() + tool.description.len() + tool.parameters.len())
+            .sum();
+        Ok(((history_chars + tool_chars + 3) / 4) as i32)
+    }
+}
+
+impl OpenAIProvider {
+    pub async fn send_prepared_request(
+        &mut self,
+        request: SendMessageRequest,
+        request_body: Value,
+    ) -> Result<AiResponseStream, AiServiceError> {
         let client = reqwest::Client::new();
         let response = client
             .post(&self.api_endpoint)
@@ -1112,44 +1162,6 @@ impl AIService for OpenAIProvider {
         })
     }
 
-    async fn test_connection(&self) -> Result<String, AiServiceError> {
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.api_endpoint)
-            .headers(self.headers()?)
-            .json(&json!({
-                "model": self.model_name,
-                "messages": [{"role": "user", "content": "hi"}],
-                "stream": false,
-                "max_tokens": 1
-            }))
-            .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-        if response.status().is_success() {
-            Ok("Connection successful".to_string())
-        } else {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            Err(AiServiceError::ConnectionFailed(format!("{status}: {body}")))
-        }
-    }
-
-    async fn calculate_input_tokens(
-        &self,
-        chat_history: &[PromptTurn],
-        available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
-        let history_chars: usize = chat_history.iter().map(|turn| turn.content.chars().count()).sum();
-        let tool_chars: usize = available_tools
-            .iter()
-            .map(|tool| tool.name.len() + tool.description.len() + tool.parameters.len())
-            .sum();
-        Ok(((history_chars + tool_chars + 3) / 4) as i32)
-    }
 }
 
 fn parse_tool_parameters(parameters: &str) -> Result<Value, AiServiceError> {

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::api::chat::enhance::ConversationService::{
@@ -9,7 +10,9 @@ use crate::api::chat::enhance::ConversationService::{
 };
 use crate::api::chat::enhance::ConversationMarkupManager::ConversationMarkupManager;
 use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
-use crate::api::chat::enhance::ToolExecutionManager::ToolExecutionManager;
+use crate::api::chat::enhance::ToolExecutionManager::{
+    AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
+};
 use crate::api::chat::llmprovider::AIService::{
     AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts,
 };
@@ -21,12 +24,16 @@ use crate::core::config::SystemPromptConfig::{
 };
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::climode::CliToolModeSupport::ToolExposureMode as ResolvedToolExposureMode;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::ModelConfigData::ModelConfigData;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+use crate::util::ChatUtils::ChatUtils;
 
 const TAG: &str = "EnhancedAIService";
 
@@ -302,6 +309,18 @@ impl ConversationRoundManagerMirror {
     pub fn updateContent(&mut self, content: String) {
         self.content = content;
     }
+
+    pub fn appendContent(&mut self, content: &str) {
+        self.content.push_str(content);
+    }
+
+    pub fn getDisplayContent(&self) -> String {
+        self.content.clone()
+    }
+
+    pub fn getCurrentRoundContent(&self) -> String {
+        self.content.clone()
+    }
 }
 
 pub struct RuntimePromptHistoryHooks;
@@ -398,7 +417,7 @@ impl EnhancedAIService {
             is_service_manager_initialized: false,
             conversation_service,
             file_binding_service: FileBindingServiceMirror,
-            tool_handler: AIToolHandler::new(),
+            tool_handler: AIToolHandler::default(),
             input_processing_state: InputProcessingState::Idle,
             per_request_token_counts: None,
             request_window_estimate: None,
@@ -846,15 +865,34 @@ impl EnhancedAIService {
             }
             _ => multiServiceManager.getServiceForFunction(options.functionType.clone())?,
         };
+        let characterCardManager = CharacterCardManager::getInstance();
+        let activeCard = options
+            .roleCardId
+            .as_ref()
+            .and_then(|roleCardId| characterCardManager.getCharacterCard(roleCardId).ok());
+        let introPrompt = activeCard
+            .as_ref()
+            .and_then(|card| {
+                characterCardManager
+                    .combinePrompts(&card.id, Vec::new(), options.promptFunctionType.clone())
+                    .ok()
+            })
+            .unwrap_or_default();
+        let aiName = activeCard
+            .as_ref()
+            .map(|card| card.name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Operit".to_string());
+
         let runtime = SendMessageRuntime {
             activePromptMetadata: BTreeMap::new(),
             useEnglish: false,
             userPreferencesText: String::new(),
-            introPrompt: String::new(),
+            introPrompt,
             waifuRulesText: String::new(),
             avatarMoodRulesText: String::new(),
             disableUserPreferenceDescription: false,
-            aiName: "Operit".to_string(),
+            aiName,
             hasImageRecognition: modelConfig.enableDirectImageProcessing,
             hasAudioRecognition: modelConfig.enableDirectAudioProcessing,
             hasVideoRecognition: modelConfig.enableDirectVideoProcessing,
@@ -862,7 +900,10 @@ impl EnhancedAIService {
             chatModelHasDirectVideo: modelConfig.enableDirectVideoProcessing,
             chatModelHasDirectImage: modelConfig.enableDirectImageProcessing,
             useToolCallApi: modelConfig.enableToolCall,
-            toolExposureMode: ToolExposureMode::Cli,
+            toolExposureMode: match ResolvedToolExposureMode::resolve(modelConfig.apiProviderType.clone()) {
+                ResolvedToolExposureMode::CLI => ToolExposureMode::Cli,
+                ResolvedToolExposureMode::FULL => ToolExposureMode::Full,
+            },
             modelConfig,
             modelParameters,
             availableTools: Vec::new(),
@@ -1108,76 +1149,6 @@ impl EnhancedAIService {
             responseChunks.push(content);
         }
 
-        lifecycle.push(SendMessageLifecycleStage::ExtractToolInvocations);
-        let toolInvocations = ToolExecutionManager::extractToolInvocations(&execContext.streamBuffer);
-        if !toolInvocations.is_empty() {
-            lifecycle.push(SendMessageLifecycleStage::ExecuteToolInvocations);
-            self.tool_handler.registerDefaultTools();
-            let mut executors = self.tool_handler.takeExecutors();
-            let (emittedToolResultMessages, toolResults) = ToolExecutionManager::executeInvocations(
-                &toolInvocations,
-                &mut executors,
-                &BTreeSet::new(),
-                characterName.clone(),
-                chatId.clone(),
-                roleCardId.clone(),
-                crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::FULL,
-            );
-            self.tool_handler.restoreExecutors(executors);
-            for content in emittedToolResultMessages {
-                totalChars += content.len() as i32;
-                execContext.streamBuffer.push_str(&content);
-                execContext
-                    .roundManager
-                    .updateContent(execContext.streamBuffer.clone());
-                responseChunks.push(content);
-            }
-            if !toolResults.is_empty() {
-                lifecycle.push(SendMessageLifecycleStage::ProcessToolResults);
-                let AiResponseStream {
-                    chunks: followUpChunks,
-                    token_counts: followUpTokenCounts,
-                } = self.processToolResults(
-                    toolResults,
-                    &mut execContext,
-                    functionType.clone(),
-                    promptFunctionType.clone(),
-                    enableThinking,
-                    enableMemoryAutoUpdate,
-                    onNonFatalError,
-                    onTokenLimitExceeded,
-                    maxTokens,
-                    tokenUsageThreshold,
-                    isSubTask,
-                    characterName.clone(),
-                    avatarUri.clone(),
-                    roleCardId.clone(),
-                    chatId.clone(),
-                    onToolInvocation,
-                    notifyReplyOverride,
-                    chatModelConfigIdOverride.clone(),
-                    chatModelIndexOverride,
-                    preferenceProfileIdOverride.clone(),
-                    stream,
-                    enableGroupOrchestrationHint,
-                    None,
-                    disableWarning,
-                    &mut runtime,
-                ).await?;
-                for content in followUpChunks {
-                    totalChars += content.len() as i32;
-                    execContext.streamBuffer.push_str(&content);
-                    execContext
-                        .roundManager
-                        .updateContent(execContext.streamBuffer.clone());
-                    responseChunks.push(content);
-                }
-                token_counts.input += followUpTokenCounts.input;
-                token_counts.cached_input += followUpTokenCounts.cached_input;
-                token_counts.output += followUpTokenCounts.output;
-            }
-        }
-
         lifecycle.push(SendMessageLifecycleStage::PersistTokenUsage);
         let inputTokens = token_counts.input;
         let cachedInputTokens = token_counts.cached_input;
@@ -1193,7 +1164,8 @@ impl EnhancedAIService {
         let _ = requestStartActive.load(Ordering::SeqCst);
 
         lifecycle.push(SendMessageLifecycleStage::ProcessStreamCompletion);
-        self.processStreamCompletion(
+        let completion = self
+            .processStreamCompletion(
             &mut execContext,
             functionType,
             promptFunctionType,
@@ -1217,7 +1189,13 @@ impl EnhancedAIService {
             enableGroupOrchestrationHint,
             disableWarning,
             callbacks,
-        );
+            &mut runtime,
+        )
+        .await?;
+        for content in completion.chunks {
+            totalChars += content.len() as i32;
+            responseChunks.push(content);
+        }
 
         lifecycle.push(SendMessageLifecycleStage::UnregisterExecutionContext);
         self.unregisterExecutionContext(&execContext);
@@ -1392,7 +1370,7 @@ impl EnhancedAIService {
         self.current_request_output_token_count = 0;
         self.current_request_cached_input_token_count = 0;
 
-        let response = runtime
+        let mut response = runtime
             .aiService
             .send_message(SendMessageRequest {
                 chat_history: currentChatHistory,
@@ -1411,7 +1389,12 @@ impl EnhancedAIService {
             });
         }
 
-        self.processStreamCompletion(
+        for content in &response.chunks {
+            context.streamBuffer.push_str(content);
+            context.roundManager.updateContent(context.streamBuffer.clone());
+        }
+
+        let recursiveResponse = Box::pin(self.processStreamCompletion(
             context,
             functionType,
             promptFunctionType,
@@ -1435,39 +1418,599 @@ impl EnhancedAIService {
             enableGroupOrchestrationHint,
             disableWarning,
             None,
-        );
+            runtime,
+        ))
+        .await?;
+        response.token_counts.input += recursiveResponse.token_counts.input;
+        response.token_counts.cached_input += recursiveResponse.token_counts.cached_input;
+        response.token_counts.output += recursiveResponse.token_counts.output;
+        response.chunks.extend(recursiveResponse.chunks);
 
         Ok(response)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn processStreamCompletion(
+    pub async fn processStreamCompletion(
         &mut self,
         context: &mut MessageExecutionContext,
-        _functionType: FunctionType,
-        _promptFunctionType: PromptFunctionType,
-        _enableThinking: bool,
-        _enableMemoryAutoUpdate: bool,
-        _onNonFatalError: Option<fn(String)>,
-        _onTokenLimitExceeded: Option<fn()>,
-        _maxTokens: i32,
-        _tokenUsageThreshold: f64,
-        _isSubTask: bool,
+        functionType: FunctionType,
+        promptFunctionType: PromptFunctionType,
+        enableThinking: bool,
+        enableMemoryAutoUpdate: bool,
+        onNonFatalError: Option<fn(String)>,
+        onTokenLimitExceeded: Option<fn()>,
+        maxTokens: i32,
+        tokenUsageThreshold: f64,
+        isSubTask: bool,
         characterName: Option<String>,
         avatarUri: Option<String>,
-        _roleCardId: Option<String>,
+        roleCardId: Option<String>,
         chatId: Option<String>,
-        _onToolInvocation: Option<fn(String)>,
+        onToolInvocation: Option<fn(String)>,
         notifyReplyOverride: Option<bool>,
-        _chatModelConfigIdOverride: Option<String>,
-        _chatModelIndexOverride: Option<i32>,
+        chatModelConfigIdOverride: Option<String>,
+        chatModelIndexOverride: Option<i32>,
+        preferenceProfileIdOverride: Option<String>,
+        stream: bool,
+        enableGroupOrchestrationHint: bool,
+        disableWarning: bool,
+        callbacks: Option<&dyn SendMessageCallbacks>,
+        runtime: &mut SendMessageRuntime<'_>,
+    ) -> Result<AiResponseStream, AiServiceError> {
+        if !context.isConversationActive {
+            return Ok(empty_ai_response_stream());
+        }
+
+        let content = context.streamBuffer.trim().to_string();
+        if content.is_empty() {
+            self.finalizeAssistantResponse(
+                context,
+                &content,
+                enableMemoryAutoUpdate,
+                onNonFatalError,
+                isSubTask,
+                chatId.clone(),
+                characterName,
+                avatarUri,
+                notifyReplyOverride,
+                preferenceProfileIdOverride,
+                callbacks,
+            );
+            return Ok(empty_ai_response_stream());
+        }
+
+        let contentWithoutThinking = ChatUtils::remove_thinking_content(&content);
+        if contentWithoutThinking.is_empty() {
+            if disableWarning {
+                let displayContent = context.roundManager.getDisplayContent();
+                self.finalizeAssistantResponse(
+                    context,
+                    &displayContent,
+                    enableMemoryAutoUpdate,
+                    onNonFatalError,
+                    isSubTask,
+                    chatId.clone(),
+                    characterName,
+                    avatarUri,
+                    notifyReplyOverride,
+                    preferenceProfileIdOverride,
+                    callbacks,
+                );
+                return Ok(empty_ai_response_stream());
+            }
+            let pureThinkingWarning =
+                ConversationMarkupManager::createWarningStatus("enhanced_pure_thinking_only_warning");
+            context.roundManager.appendContent(&format!("\n{pureThinkingWarning}"));
+            context.conversationHistory.push(PromptTurn {
+                kind: PromptTurnKind::TOOL_RESULT,
+                content: pureThinkingWarning.clone(),
+                tool_name: None,
+                metadata: HashMap::new(),
+            });
+            return Box::pin(self.handleToolInvocation(
+                    Vec::new(),
+                    context,
+                    functionType,
+                    promptFunctionType,
+                    enableThinking,
+                    enableMemoryAutoUpdate,
+                    onNonFatalError,
+                    onTokenLimitExceeded,
+                    maxTokens,
+                    tokenUsageThreshold,
+                    isSubTask,
+                    characterName,
+                    avatarUri,
+                    roleCardId,
+                    chatId,
+                    onToolInvocation,
+                    notifyReplyOverride,
+                    chatModelConfigIdOverride,
+                    chatModelIndexOverride,
+                    preferenceProfileIdOverride,
+                    stream,
+                    enableGroupOrchestrationHint,
+                    Some(pureThinkingWarning),
+                    disableWarning,
+                    runtime,
+                ))
+                .await;
+        }
+
+        let enhancedContent = self.enhanceToolDetection(&content);
+        let truncatedToolRecovery = self.detectAndRepairTruncatedToolRound(&content);
+        let finalContent = truncatedToolRecovery
+            .as_ref()
+            .map(|recovery| recovery.repairedContent.clone())
+            .unwrap_or(enhancedContent);
+
+        if let Some(recovery) = &truncatedToolRecovery {
+            if !recovery.appendedSuffix.is_empty() {
+                context.streamBuffer.push_str(&recovery.appendedSuffix);
+                context.roundManager.updateContent(context.streamBuffer.clone());
+            }
+        } else if finalContent != content {
+            context.streamBuffer.clear();
+            context.streamBuffer.push_str(&finalContent);
+            context.roundManager.updateContent(finalContent.clone());
+        }
+
+        let extractedToolInvocations = if truncatedToolRecovery.is_none() {
+            ToolExecutionManager::extractToolInvocations(&finalContent)
+        } else {
+            Vec::new()
+        };
+
+        if !context.isConversationActive {
+            return Ok(empty_ai_response_stream());
+        }
+
+        context.conversationHistory.push(PromptTurn {
+            kind: PromptTurnKind::ASSISTANT,
+            content: context.roundManager.getCurrentRoundContent(),
+            tool_name: None,
+            metadata: HashMap::new(),
+        });
+
+        if !context.isConversationActive {
+            return Ok(empty_ai_response_stream());
+        }
+
+        if let Some(_recovery) = truncatedToolRecovery {
+            if disableWarning {
+                let displayContent = context.roundManager.getDisplayContent();
+                self.finalizeAssistantResponse(
+                    context,
+                    &displayContent,
+                    enableMemoryAutoUpdate,
+                    onNonFatalError,
+                    isSubTask,
+                    chatId.clone(),
+                    characterName,
+                    avatarUri,
+                    notifyReplyOverride,
+                    preferenceProfileIdOverride,
+                    callbacks,
+                );
+                return Ok(empty_ai_response_stream());
+            }
+            let warningStatus =
+                ConversationMarkupManager::createWarningStatus("enhanced_truncated_tool_call_warning");
+            let warningDisplayContent = format!("\n{warningStatus}");
+            context.roundManager.appendContent(&warningDisplayContent);
+            context.streamBuffer.push_str(&warningDisplayContent);
+            return Box::pin(self.handleToolInvocation(
+                    Vec::new(),
+                    context,
+                    functionType,
+                    promptFunctionType,
+                    enableThinking,
+                    enableMemoryAutoUpdate,
+                    onNonFatalError,
+                    onTokenLimitExceeded,
+                    maxTokens,
+                    tokenUsageThreshold,
+                    isSubTask,
+                    characterName,
+                    avatarUri,
+                    roleCardId,
+                    chatId,
+                    onToolInvocation,
+                    notifyReplyOverride,
+                    chatModelConfigIdOverride,
+                    chatModelIndexOverride,
+                    preferenceProfileIdOverride,
+                    stream,
+                    enableGroupOrchestrationHint,
+                    Some(warningStatus),
+                    disableWarning,
+                    runtime,
+                ))
+                .await;
+        }
+
+        if !extractedToolInvocations.is_empty() {
+            return Box::pin(self.handleToolInvocation(
+                    extractedToolInvocations,
+                    context,
+                    functionType,
+                    promptFunctionType,
+                    enableThinking,
+                    enableMemoryAutoUpdate,
+                    onNonFatalError,
+                    onTokenLimitExceeded,
+                    maxTokens,
+                    tokenUsageThreshold,
+                    isSubTask,
+                    characterName,
+                    avatarUri,
+                    roleCardId,
+                    chatId,
+                    onToolInvocation,
+                    notifyReplyOverride,
+                    chatModelConfigIdOverride,
+                    chatModelIndexOverride,
+                    preferenceProfileIdOverride,
+                    stream,
+                    enableGroupOrchestrationHint,
+                    None,
+                    disableWarning,
+                    runtime,
+                ))
+                .await;
+        }
+
+        self.finalizeAssistantResponse(
+            context,
+            &context.roundManager.getDisplayContent(),
+            enableMemoryAutoUpdate,
+            onNonFatalError,
+            isSubTask,
+            chatId.clone(),
+            characterName,
+            avatarUri,
+            notifyReplyOverride,
+            preferenceProfileIdOverride,
+            callbacks,
+        );
+        Ok(empty_ai_response_stream())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn handleToolInvocation(
+        &mut self,
+        toolInvocations: Vec<crate::api::chat::enhance::ToolExecutionManager::ToolInvocation>,
+        context: &mut MessageExecutionContext,
+        functionType: FunctionType,
+        promptFunctionType: PromptFunctionType,
+        enableThinking: bool,
+        enableMemoryAutoUpdate: bool,
+        onNonFatalError: Option<fn(String)>,
+        onTokenLimitExceeded: Option<fn()>,
+        maxTokens: i32,
+        tokenUsageThreshold: f64,
+        isSubTask: bool,
+        characterName: Option<String>,
+        avatarUri: Option<String>,
+        roleCardId: Option<String>,
+        chatId: Option<String>,
+        onToolInvocation: Option<fn(String)>,
+        notifyReplyOverride: Option<bool>,
+        chatModelConfigIdOverride: Option<String>,
+        chatModelIndexOverride: Option<i32>,
+        preferenceProfileIdOverride: Option<String>,
+        stream: bool,
+        enableGroupOrchestrationHint: bool,
+        toolResultOverrideMessage: Option<String>,
+        disableWarning: bool,
+        runtime: &mut SendMessageRuntime<'_>,
+    ) -> Result<AiResponseStream, AiServiceError> {
+        for invocation in &toolInvocations {
+            if let Some(callback) = onToolInvocation {
+                callback(invocation.tool.name.clone());
+            }
+        }
+
+        if !isSubTask && !toolInvocations.is_empty() {
+            let toolNames = toolInvocations
+                .iter()
+                .map(|invocation| resolveToolDisplayName(&invocation.tool))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.setInputProcessingState(InputProcessingState::ExecutingTool { toolName: toolNames });
+        }
+
+        self.tool_handler.registerDefaultTools();
+        let mut executors = self.tool_handler.takeExecutors();
+        let toolExposureMode = match runtime.toolExposureMode {
+            ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
+            ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
+        };
+        let (emittedToolResultMessages, allToolResults) = ToolExecutionManager::executeInvocations(
+            &toolInvocations,
+            &mut executors,
+            &BTreeSet::new(),
+            characterName.clone(),
+            chatId.clone(),
+            roleCardId.clone(),
+            toolExposureMode,
+        );
+        self.tool_handler.restoreExecutors(executors);
+
+        let mut responseChunks = Vec::new();
+        for content in emittedToolResultMessages {
+            context.streamBuffer.push_str(&content);
+            context.roundManager.updateContent(context.streamBuffer.clone());
+            responseChunks.push(content);
+        }
+
+        if !allToolResults.is_empty() {
+            let response = self.processToolResults(
+                allToolResults,
+                context,
+                functionType,
+                promptFunctionType,
+                enableThinking,
+                enableMemoryAutoUpdate,
+                onNonFatalError,
+                onTokenLimitExceeded,
+                maxTokens,
+                tokenUsageThreshold,
+                isSubTask,
+                characterName,
+                avatarUri,
+                roleCardId,
+                chatId,
+                onToolInvocation,
+                notifyReplyOverride,
+                chatModelConfigIdOverride,
+                chatModelIndexOverride,
+                preferenceProfileIdOverride,
+                stream,
+                enableGroupOrchestrationHint,
+                None,
+                disableWarning,
+                runtime,
+            )
+            .await?;
+            responseChunks.extend(response.chunks);
+            Ok(AiResponseStream {
+                chunks: responseChunks,
+                token_counts: response.token_counts,
+            })
+        } else if toolResultOverrideMessage.as_ref().map(|value| !value.is_empty()).unwrap_or(false) {
+            let response = self.processToolResults(
+                Vec::new(),
+                context,
+                functionType,
+                promptFunctionType,
+                enableThinking,
+                enableMemoryAutoUpdate,
+                onNonFatalError,
+                onTokenLimitExceeded,
+                maxTokens,
+                tokenUsageThreshold,
+                isSubTask,
+                characterName,
+                avatarUri,
+                roleCardId,
+                chatId,
+                onToolInvocation,
+                notifyReplyOverride,
+                chatModelConfigIdOverride,
+                chatModelIndexOverride,
+                preferenceProfileIdOverride,
+                stream,
+                enableGroupOrchestrationHint,
+                toolResultOverrideMessage,
+                disableWarning,
+                runtime,
+            )
+            .await?;
+            responseChunks.extend(response.chunks);
+            Ok(AiResponseStream {
+                chunks: responseChunks,
+                token_counts: response.token_counts,
+            })
+        } else {
+            Ok(AiResponseStream {
+                chunks: responseChunks,
+                token_counts: TokenCounts {
+                    input: 0,
+                    cached_input: 0,
+                    output: 0,
+                },
+            })
+        }
+    }
+
+    fn enhanceToolDetection(&self, content: &str) -> String {
+        if !ChatMarkupRegex::contains_tool_tag(content) {
+            return content.to_string();
+        }
+        let mut output = String::new();
+        let mut cursor = 0;
+        for tool_match in ChatMarkupRegex::tool_call_matches(content) {
+            output.push_str(&content[cursor..tool_match.start]);
+            let xml = &content[tool_match.start..tool_match.end];
+            let tagName = ChatMarkupRegex::extract_opening_tag_name(xml);
+            if tagName
+                .as_deref()
+                .map(|name| ChatMarkupRegex::is_tool_tag_name(Some(name)) && self.isToolXmlBlock(xml, name))
+                .unwrap_or(false)
+            {
+                output.push_str(&self.normalizeToolXml(xml));
+            } else {
+                output.push_str(xml);
+            }
+            cursor = tool_match.end;
+        }
+        output.push_str(&content[cursor..]);
+        output
+    }
+
+    fn normalizeToolXml(&self, xml: &str) -> String {
+        let mut result = xml.trim().to_string();
+        if let Some(toolTagName) = ChatMarkupRegex::extract_opening_tag_name(&result) {
+            if ChatMarkupRegex::is_tool_tag_name(Some(&toolTagName)) {
+                let tool_attr = Regex::new(&format!(
+                    r#"(?i)<{}\s+name\s*="#,
+                    regex::escape(&toolTagName)
+                ))
+                .expect("tool regex must compile");
+                result = tool_attr
+                    .replace_all(&result, format!("<{} name=", toolTagName))
+                    .to_string();
+            }
+        }
+        Regex::new(r#"<param\s+name\s*="#)
+            .expect("param regex must compile")
+            .replace_all(&result, "<param name=")
+            .to_string()
+    }
+
+    fn isToolXmlBlock(&self, xml: &str, tagName: &str) -> bool {
+        let trimmed = xml.trim();
+        trimmed.ends_with("/>") || trimmed.contains(&format!("</{tagName}>"))
+    }
+
+    fn detectAndRepairTruncatedToolRound(&self, content: &str) -> Option<TruncatedToolRoundRecovery> {
+        if !content.to_ascii_lowercase().contains("<tool") {
+            return None;
+        }
+        let completeToolBlocks = ChatMarkupRegex::tool_call_matches(content);
+        let openToolPattern = Regex::new(&format!(
+            r#"(?is)<({})\b[^>]*"#,
+            crate::util::ChatMarkupRegex::TOOL_TAG_NAME_REGEX_SOURCE
+        ))
+        .ok()?;
+        let candidate = openToolPattern.find_iter(content).last()?;
+        if completeToolBlocks
+            .iter()
+            .any(|block| candidate.start() >= block.start && candidate.end() <= block.end)
+        {
+            return None;
+        }
+        let fragment = &content[candidate.start()..];
+        if !Regex::new(r#"(?i)\bname\s*=\s*""#).ok()?.is_match(fragment) {
+            return None;
+        }
+        let tagName = ChatMarkupRegex::extract_opening_tag_name(fragment)
+            .or_else(|| {
+                openToolPattern
+                    .captures(fragment)
+                    .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
+            })
+            .filter(|name| ChatMarkupRegex::is_tool_tag_name(Some(name)))
+            .unwrap_or_else(ChatMarkupRegex::generate_random_tool_tag_name);
+        if Regex::new(&format!(r#"(?i)</{}\s*>"#, regex::escape(&tagName)))
+            .ok()?
+            .is_match(fragment)
+        {
+            return None;
+        }
+        let appendedSuffix = self.buildTruncatedToolRepairSuffix(fragment, &tagName);
+        if appendedSuffix.is_empty() {
+            return None;
+        }
+        let mut invalidatedToolNames = completeToolBlocks
+            .iter()
+            .map(|tool| tool.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect::<Vec<_>>();
+        if let Some(name) = extractXmlAttributeValue(fragment, "name") {
+            if !name.trim().is_empty() {
+                invalidatedToolNames.push(name.trim().to_string());
+            }
+        }
+        invalidatedToolNames.sort();
+        invalidatedToolNames.dedup();
+        Some(TruncatedToolRoundRecovery {
+            repairedContent: format!("{content}{appendedSuffix}"),
+            appendedSuffix,
+            invalidatedToolNames,
+        })
+    }
+
+    fn buildTruncatedToolRepairSuffix(&self, fragment: &str, fallbackTagName: &str) -> String {
+        let toolTagName = if ChatMarkupRegex::is_tool_tag_name(Some(fallbackTagName)) {
+            fallbackTagName.to_string()
+        } else {
+            ChatMarkupRegex::generate_random_tool_tag_name()
+        };
+        let Some(openingTagEnd) = fragment.find('>') else {
+            return format!(
+                "{}</{}>",
+                completePartialOpenTag(fragment, &toolTagName, "truncated_tool_call"),
+                toolTagName
+            );
+        };
+        let body = &fragment[openingTagEnd + 1..];
+        let tagPattern = Regex::new(r#"(?is)</?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>"#)
+            .expect("tag pattern must compile");
+        let mut openParamCount = 0usize;
+        for capture in tagPattern.captures_iter(body) {
+            let tagText = capture.get(0).map(|value| value.as_str()).unwrap_or("");
+            let tagName = capture.get(1).map(|value| value.as_str()).unwrap_or("");
+            let isClosing = tagText.starts_with("</");
+            if tagName.eq_ignore_ascii_case("param") {
+                if isClosing {
+                    openParamCount = openParamCount.saturating_sub(1);
+                } else if !tagText.ends_with("/>") {
+                    openParamCount += 1;
+                }
+            } else if tagName.eq_ignore_ascii_case(&toolTagName) && isClosing {
+                return String::new();
+            }
+        }
+        let mut suffix = String::new();
+        if let Some(trailingPartialTag) = extractTrailingPartialTag(fragment) {
+            if isPartialClosingTagFor(&trailingPartialTag, "param") {
+                suffix.push_str(&completePartialClosingTag(&trailingPartialTag, "param"));
+                openParamCount = openParamCount.saturating_sub(1);
+            } else if isPartialOpeningTagFor(&trailingPartialTag, "param") {
+                suffix.push_str(&completePartialOpenTag(
+                    &trailingPartialTag,
+                    "param",
+                    "_truncated_fragment",
+                ));
+                openParamCount += 1;
+            } else if isPartialClosingTagFor(&trailingPartialTag, &toolTagName) {
+                suffix.push_str(&completePartialClosingTag(&trailingPartialTag, &toolTagName));
+                return suffix;
+            } else if isPartialOpeningTagFor(&trailingPartialTag, &toolTagName) {
+                suffix.push_str(&completePartialOpenTag(
+                    &trailingPartialTag,
+                    &toolTagName,
+                    "truncated_tool_call",
+                ));
+            } else if trailingPartialTag == "<" {
+                suffix.push_str("!-- truncated -->");
+            }
+        }
+        for _ in 0..openParamCount {
+            suffix.push_str("</param>");
+        }
+        suffix.push_str(&format!("</{toolTagName}>"));
+        suffix
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalizeAssistantResponse(
+        &mut self,
+        context: &mut MessageExecutionContext,
+        content: &str,
+        _enableMemoryAutoUpdate: bool,
+        _onNonFatalError: Option<fn(String)>,
+        _isSubTask: bool,
+        chatId: Option<String>,
+        characterName: Option<String>,
+        avatarUri: Option<String>,
+        notifyReplyOverride: Option<bool>,
         _preferenceProfileIdOverride: Option<String>,
-        _stream: bool,
-        _enableGroupOrchestrationHint: bool,
-        _disableWarning: bool,
         callbacks: Option<&dyn SendMessageCallbacks>,
     ) {
-        self.last_reply_content = Some(context.streamBuffer.clone());
+        self.last_reply_content = Some(content.to_string());
         if let Some(callbacks) = callbacks {
             callbacks.onTokenLimitExceeded();
         }
@@ -1578,6 +2121,98 @@ fn apply_finalized_current_user_turn(
         metadata: Default::default(),
     });
     history
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TruncatedToolRoundRecovery {
+    repairedContent: String,
+    appendedSuffix: String,
+    invalidatedToolNames: Vec<String>,
+}
+
+fn empty_ai_response_stream() -> AiResponseStream {
+    AiResponseStream {
+        chunks: Vec::new(),
+        token_counts: TokenCounts {
+            input: 0,
+            cached_input: 0,
+            output: 0,
+        },
+    }
+}
+
+fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
+    if tool.name != "package_proxy" && tool.name != "tool" {
+        return tool.name.clone();
+    }
+    tool.parameters
+        .iter()
+        .find(|parameter| parameter.name == "tool_name")
+        .map(|parameter| parameter.value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| tool.name.clone())
+}
+
+fn extractXmlAttributeValue(fragment: &str, name: &str) -> Option<String> {
+    attr_value(fragment, name)
+}
+
+fn extractTrailingPartialTag(fragment: &str) -> Option<String> {
+    let start = fragment.rfind('<')?;
+    let tail = &fragment[start..];
+    if tail.contains('>') {
+        None
+    } else {
+        Some(tail.to_string())
+    }
+}
+
+fn isPartialClosingTagFor(partial: &str, tagName: &str) -> bool {
+    let normalized = partial.trim_start().to_ascii_lowercase();
+    let target = format!("</{}", tagName.to_ascii_lowercase());
+    target.starts_with(&normalized) || normalized.starts_with(&target)
+}
+
+fn isPartialOpeningTagFor(partial: &str, tagName: &str) -> bool {
+    let normalized = partial.trim_start().to_ascii_lowercase();
+    if normalized.starts_with("</") {
+        return false;
+    }
+    let target = format!("<{}", tagName.to_ascii_lowercase());
+    target.starts_with(&normalized) || normalized.starts_with(&target)
+}
+
+fn completePartialClosingTag(partial: &str, tagName: &str) -> String {
+    let target = format!("</{tagName}>");
+    completePartialToken(partial, &target)
+}
+
+fn completePartialOpenTag(partial: &str, tagName: &str, defaultNameValue: &str) -> String {
+    let mut completed = partial.to_string();
+    if !completed.starts_with('<') {
+        completed.insert(0, '<');
+    }
+    if !completed
+        .to_ascii_lowercase()
+        .starts_with(&format!("<{}", tagName.to_ascii_lowercase()))
+    {
+        completed = format!("<{tagName}");
+    }
+    if !completed.to_ascii_lowercase().contains(" name=") {
+        completed.push_str(&format!(r#" name="{defaultNameValue}""#));
+    }
+    if !completed.ends_with('>') {
+        completed.push('>');
+    }
+    completed
+}
+
+fn completePartialToken(partial: &str, target: &str) -> String {
+    if target.starts_with(partial) {
+        target[partial.len()..].to_string()
+    } else {
+        target.to_string()
+    }
 }
 
 fn systemToolPromptToModelToolPrompt(
