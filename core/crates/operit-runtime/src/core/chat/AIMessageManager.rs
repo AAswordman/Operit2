@@ -4,14 +4,22 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::chat::EnhancedAIService::{
-    EnhancedAIService, SendMessageCallbacks, SendMessageExecution, SendMessageOptions,
-    SendMessageRuntime,
+    EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
+    MessageProcessingHookParams, MessageProcessingPluginRegistry,
+};
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::util::stream::HotStream::StreamStart;
+use crate::util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
+use operit_store::PreferencesDataStore::FlowLike;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
 
@@ -62,8 +70,7 @@ pub struct SendMessageRequest<'a> {
     pub chatModelIndexOverride: Option<i32>,
     pub preferenceProfileIdOverride: Option<String>,
     pub disableWarning: bool,
-    pub callbacks: Option<&'a dyn SendMessageCallbacks>,
-    pub onStreamChunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
@@ -85,10 +92,11 @@ pub struct StableContextWindowRequest<'a> {
     pub chatModelIndexOverride: Option<i32>,
     pub preferenceProfileIdOverride: Option<String>,
     pub publishEstimate: bool,
-    pub runtime: SendMessageRuntime<'a>,
+    pub runtime: SendMessageRuntime,
 }
 
 static ACTIVE_CHAT_KEYS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static LAST_ACTIVE_CHAT_KEY: OnceLock<Mutex<String>> = OnceLock::new();
 
 pub fn messageTimingNow() -> MessageTiming {
     let startedAtMs = SystemTime::now()
@@ -103,6 +111,7 @@ pub fn logMessageTiming(_stage: &str, _startTimeMs: MessageTiming, _details: Opt
 impl AIMessageManager {
     pub fn initialize() {
         let _ = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
+        let _ = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
     }
 
     #[allow(non_snake_case)]
@@ -165,12 +174,13 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub async fn sendMessage(
         request: SendMessageRequest<'_>,
-    ) -> Result<SendMessageExecution, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<crate::api::chat::llmprovider::AIService::SharedAiResponseStream, crate::api::chat::llmprovider::AIService::AiServiceError> {
         let chatKey = match &request.chatId {
             Some(chatId) => chatId.clone(),
             None => DEFAULT_CHAT_KEY.to_string(),
         };
         Self::rememberActiveChatKey(chatKey.clone());
+        Self::setLastActiveChatKey(chatKey.clone());
 
         let memory = Self::getMemoryFromMessages(
             request.chatHistory.clone(),
@@ -179,10 +189,48 @@ impl AIMessageManager {
             request.groupOrchestrationMode,
         );
 
+        let apiPreferences = ApiPreferences::getInstance();
+        let maxImageHistoryUserTurns = apiPreferences
+            .maxImageHistoryUserTurnsFlow()
+            .first()
+            .unwrap_or(2);
+        let maxMediaHistoryUserTurns = apiPreferences
+            .maxMediaHistoryUserTurnsFlow()
+            .first()
+            .unwrap_or(1);
+        let memoryAfterImageLimit =
+            Self::limitImageLinksInChatHistory(memory, maxImageHistoryUserTurns);
+        let memoryForRequest =
+            Self::limitMediaLinksInChatHistory(memoryAfterImageLimit, maxMediaHistoryUserTurns);
+
+        let pluginExecution = MessageProcessingPluginRegistry::createExecutionIfMatched(
+            MessageProcessingHookParams {
+                chat_id: request.chatId.clone(),
+                message_content: request.messageContent.clone(),
+                chat_history: memoryForRequest.clone(),
+                workspace_path: request.workspacePath.clone(),
+                max_tokens: request.maxTokens,
+                token_usage_threshold: request.tokenUsageThreshold,
+            },
+        );
+        if let Some(pluginExecution) = pluginExecution {
+            Self::forgetActiveChatKey(&chatKey);
+            return Ok(with_event_channel_shared(
+                pluginExecution.stream,
+                crate::util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            ));
+        }
+
+        let disableStreamOutput = apiPreferences
+            .disableStreamOutputFlow()
+            .first()
+            .unwrap_or(false);
+        let enableStream = !disableStreamOutput;
+
         let mut options = SendMessageOptions::new();
         options.message = request.messageContent;
         options.chatId = request.chatId;
-        options.chatHistory = memory;
+        options.chatHistory = memoryForRequest;
         options.workspacePath = request.workspacePath;
         options.workspaceEnv = request.workspaceEnv;
         options.promptFunctionType = request.promptFunctionType;
@@ -202,13 +250,14 @@ impl AIMessageManager {
         options.preferenceProfileIdOverride = request.preferenceProfileIdOverride;
         options.disableWarning = request.disableWarning;
         options.callbacks = request.callbacks;
-        options.onStreamChunk = request.onStreamChunk;
         options.onToolInvocation = request.onToolInvocation;
+        options.stream = enableStream;
 
         let result = request
             .enhancedAiService
             .sendMessage(options)
-            .await;
+            .await
+            .map(|stream| share_revisable(stream, usize::MAX, StreamStart::Eagerly));
         Self::forgetActiveChatKey(&chatKey);
         result
     }
@@ -535,10 +584,123 @@ impl AIMessageManager {
         guard.insert(chatKey.clone(), chatKey);
     }
 
+    fn setLastActiveChatKey(chatKey: String) {
+        let lock = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
+        let mut guard = lock.lock().expect("last active chat key mutex poisoned");
+        *guard = chatKey;
+    }
+
     fn forgetActiveChatKey(chatKey: &str) {
         let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
         let mut guard = map.lock().expect("active chat key mutex poisoned");
         guard.remove(chatKey);
+    }
+
+    #[allow(non_snake_case)]
+    fn limitMediaLinksInChatHistory(
+        history: Vec<PromptTurn>,
+        keepLastUserMediaTurns: i32,
+    ) -> Vec<PromptTurn> {
+        let limit = keepLastUserMediaTurns.max(0) as usize;
+        let totalUserTurns = history
+            .iter()
+            .filter(|turn| turn.kind == PromptTurnKind::USER)
+            .count();
+        let keepFromTurn = totalUserTurns.saturating_sub(limit);
+
+        let mut currentUserTurnIndex = usize::MAX;
+        history
+            .into_iter()
+            .map(|turn| {
+                if turn.kind == PromptTurnKind::USER {
+                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                }
+                let shouldKeepMedia = limit > 0 && currentUserTurnIndex >= keepFromTurn;
+                if !shouldKeepMedia && MediaLinkParser::has_media_links(&turn.content) {
+                    let removed = MediaLinkParser::remove_media_links(&turn.content)
+                        .trim()
+                        .to_string();
+                    turn.with_content(if removed.is_empty() {
+                        "[Media omitted]".to_string()
+                    } else {
+                        removed
+                    })
+                } else {
+                    turn
+                }
+            })
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    fn limitImageLinksInChatHistory(
+        history: Vec<PromptTurn>,
+        keepLastUserImageTurns: i32,
+    ) -> Vec<PromptTurn> {
+        let limit = keepLastUserImageTurns.max(0) as usize;
+        let totalUserTurns = history
+            .iter()
+            .filter(|turn| turn.kind == PromptTurnKind::USER)
+            .count();
+        let keepFromTurn = totalUserTurns.saturating_sub(limit);
+
+        let mut currentUserTurnIndex = usize::MAX;
+        history
+            .into_iter()
+            .map(|turn| {
+                if turn.kind == PromptTurnKind::USER {
+                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                }
+                let shouldKeepImages = limit > 0 && currentUserTurnIndex >= keepFromTurn;
+                if !shouldKeepImages && MediaLinkParser::has_image_links(&turn.content) {
+                    let removed = MediaLinkParser::remove_image_links(&turn.content)
+                        .trim()
+                        .to_string();
+                    turn.with_content(if removed.is_empty() {
+                        "[Image omitted]".to_string()
+                    } else {
+                        removed
+                    })
+                } else {
+                    turn
+                }
+            })
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cancelCurrentOperation() {
+        let lock = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
+        let chatKey = lock
+            .lock()
+            .expect("last active chat key mutex poisoned")
+            .clone();
+        Self::cancelOperation(chatKey);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cancelOperation(chatId: String) {
+        let chatKey = if chatId.trim().is_empty() {
+            DEFAULT_CHAT_KEY.to_string()
+        } else {
+            chatId
+        };
+        Self::forgetActiveChatKey(&chatKey);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cancelAllOperations() {
+        let keys = {
+            let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
+            map.lock()
+                .expect("active chat key mutex poisoned")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        for key in keys {
+            Self::cancelOperation(key);
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Mutex;
+use std::thread;
 
 use regex::Regex;
 use operit_store::PreferencesDataStore::MutableStateFlow;
@@ -17,8 +18,12 @@ use crate::api::chat::enhance::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
 use crate::api::chat::llmprovider::AIService::{
-    AIService, AiResponseStream, AiServiceError, SendMessageRequest, TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
+    SharedAiResponseStream, TokenCounts,
 };
+use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
+use crate::util::stream::Stream::{FnStream, Stream};
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::config::SystemPromptConfig::{
@@ -45,18 +50,24 @@ pub struct EnhancedAIService {
     pub multi_service_manager: MultiServiceManagerMirror,
     pub init_scope: InitScopeMirror,
     pub init_mutex: InitMutexMirror,
-    pub is_service_manager_initialized: bool,
     pub conversation_service: ConversationService,
     pub file_binding_service: FileBindingServiceMirror,
     pub tool_handler: AIToolHandler,
     pub input_processing_state: MutableStateFlow<InputProcessingState>,
-    pub per_request_token_counts: Option<(i32, i32)>,
-    pub request_window_estimate: Option<i32>,
     pub api_preferences: ApiPreferencesMirror,
     pub character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
-    pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
-    pub next_execution_context_id: AtomicI32,
     pub tool_processing_scope: ToolProcessingScopeMirror,
+    pub package_manager: PackageManagerMirror,
+    pub shared_state: Arc<Mutex<EnhancedAISharedState>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnhancedAISharedState {
+    pub is_service_manager_initialized: bool,
+    pub per_request_token_counts: Option<(i32, i32)>,
+    pub request_window_estimate: Option<i32>,
+    pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
+    pub next_execution_context_id: i32,
     pub tool_execution_jobs: BTreeMap<String, ToolExecutionJobMirror>,
     pub accumulated_input_token_count: i32,
     pub accumulated_output_token_count: i32,
@@ -66,8 +77,9 @@ pub struct EnhancedAIService {
     pub current_request_cached_input_token_count: i32,
     pub current_response_callback_registered: bool,
     pub current_complete_callback_registered: bool,
-    pub package_manager: PackageManagerMirror,
     pub last_reply_content: Option<String>,
+    pub last_provider_model: Option<String>,
+    pub last_turn_token_snapshot: Option<TurnTokenSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +89,7 @@ pub struct TurnTokenSnapshot {
     pub cachedInputTokens: i32,
 }
 
-pub trait SendMessageCallbacks {
+pub trait SendMessageCallbacks: Send + Sync {
     fn onNonFatalError(&self, _error: String) {}
 
     fn onTokenLimitExceeded(&self) {}
@@ -87,7 +99,7 @@ pub trait SendMessageCallbacks {
     fn onInputProcessingStateChanged(&self, _state: InputProcessingState) {}
 }
 
-pub struct SendMessageOptions<'a> {
+pub struct SendMessageOptions {
     pub message: String,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
@@ -109,9 +121,8 @@ pub struct SendMessageOptions<'a> {
     pub enableGroupOrchestrationHint: bool,
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
-    pub callbacks: Option<&'a dyn SendMessageCallbacks>,
+    pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub onStreamChunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub notifyReplyOverride: Option<bool>,
     pub chatModelConfigIdOverride: Option<String>,
     pub chatModelIndexOverride: Option<i32>,
@@ -120,7 +131,7 @@ pub struct SendMessageOptions<'a> {
     pub disableWarning: bool,
 }
 
-impl<'a> SendMessageOptions<'a> {
+impl SendMessageOptions {
     pub fn new() -> Self {
         Self {
             message: String::new(),
@@ -146,7 +157,6 @@ impl<'a> SendMessageOptions<'a> {
             proxySenderName: None,
             callbacks: None,
             onToolInvocation: None,
-            onStreamChunk: None,
             notifyReplyOverride: None,
             chatModelConfigIdOverride: None,
             chatModelIndexOverride: None,
@@ -225,7 +235,7 @@ pub struct SendMessageExecution {
     pub lifecycle: Vec<SendMessageLifecycleStage>,
 }
 
-pub struct SendMessageRuntime<'a> {
+pub struct SendMessageRuntime {
     pub activePromptMetadata: BTreeMap<String, String>,
     pub useEnglish: bool,
     pub userPreferencesText: String,
@@ -245,7 +255,7 @@ pub struct SendMessageRuntime<'a> {
     pub modelConfig: ModelConfigData,
     pub modelParameters: Vec<ModelParameter<Value>>,
     pub availableTools: Vec<ToolPrompt>,
-    pub aiService: &'a mut dyn AIService,
+    pub aiService: Box<dyn AIService>,
 }
 
 #[derive(Clone, Debug)]
@@ -422,38 +432,48 @@ impl EnhancedAIService {
             multi_service_manager: MultiServiceManagerMirror { initialized: false },
             init_scope: InitScopeMirror,
             init_mutex: InitMutexMirror,
-            is_service_manager_initialized: false,
             conversation_service,
             file_binding_service: FileBindingServiceMirror,
             tool_handler: AIToolHandler::default(),
             input_processing_state: mutableStateFlow(InputProcessingState::Idle),
-            per_request_token_counts: None,
-            request_window_estimate: None,
             api_preferences: ApiPreferencesMirror,
             character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
-            active_execution_contexts: BTreeMap::new(),
-            next_execution_context_id: AtomicI32::new(0),
             tool_processing_scope: ToolProcessingScopeMirror,
-            tool_execution_jobs: BTreeMap::new(),
-            accumulated_input_token_count: 0,
-            accumulated_output_token_count: 0,
-            accumulated_cached_input_token_count: 0,
-            current_request_input_token_count: 0,
-            current_request_output_token_count: 0,
-            current_request_cached_input_token_count: 0,
-            current_response_callback_registered: false,
-            current_complete_callback_registered: false,
             package_manager: PackageManagerMirror,
-            last_reply_content: None,
+            shared_state: Arc::new(Mutex::new(EnhancedAISharedState {
+                is_service_manager_initialized: false,
+                per_request_token_counts: None,
+                request_window_estimate: None,
+                active_execution_contexts: BTreeMap::new(),
+                next_execution_context_id: 0,
+                tool_execution_jobs: BTreeMap::new(),
+                accumulated_input_token_count: 0,
+                accumulated_output_token_count: 0,
+                accumulated_cached_input_token_count: 0,
+                current_request_input_token_count: 0,
+                current_request_output_token_count: 0,
+                current_request_cached_input_token_count: 0,
+                current_response_callback_registered: false,
+                current_complete_callback_registered: false,
+                last_reply_content: None,
+                last_provider_model: None,
+                last_turn_token_snapshot: None,
+            })),
         }
     }
 
+    fn shared_state(&self) -> std::sync::MutexGuard<'_, EnhancedAISharedState> {
+        self.shared_state
+            .lock()
+            .expect("EnhancedAIService shared_state mutex poisoned")
+    }
+
     pub fn ensureInitialized(&mut self) {
-        if self.is_service_manager_initialized {
+        if self.shared_state().is_service_manager_initialized {
             return;
         }
         self.multi_service_manager.initialized = true;
-        self.is_service_manager_initialized = true;
+        self.shared_state().is_service_manager_initialized = true;
     }
 
     pub fn getAIServiceForFunction<'a>(
@@ -461,10 +481,10 @@ impl EnhancedAIService {
         _functionType: FunctionType,
         _chatModelConfigIdOverride: Option<String>,
         _chatModelIndexOverride: Option<i32>,
-        runtime: &'a mut SendMessageRuntime<'_>,
+        runtime: &'a mut SendMessageRuntime,
     ) -> &'a mut dyn AIService {
         self.ensureInitialized();
-        runtime.aiService
+        runtime.aiService.as_mut()
     }
 
     pub fn getProviderAndModelForFunction(&self, providerModel: &str) -> (String, String) {
@@ -480,7 +500,7 @@ impl EnhancedAIService {
         _functionType: FunctionType,
         _chatModelConfigIdOverride: Option<String>,
         _chatModelIndexOverride: Option<i32>,
-        runtime: &SendMessageRuntime<'_>,
+        runtime: &SendMessageRuntime,
     ) -> ModelConfigData {
         self.ensureInitialized();
         runtime.modelConfig.clone()
@@ -499,14 +519,14 @@ impl EnhancedAIService {
         _functionType: FunctionType,
         _chatModelConfigIdOverride: Option<String>,
         _chatModelIndexOverride: Option<i32>,
-        runtime: &SendMessageRuntime<'_>,
+        runtime: &SendMessageRuntime,
     ) -> Vec<ModelParameter<Value>> {
         self.ensureInitialized();
         runtime.modelParameters.clone()
     }
 
     pub fn publishRequestWindowEstimate(&mut self, windowSize: i32) {
-        self.request_window_estimate = Some(windowSize);
+        self.shared_state().request_window_estimate = Some(windowSize);
     }
 
     pub async fn estimatePreparedRequestWindow(
@@ -589,7 +609,7 @@ impl EnhancedAIService {
         chatModelConfigIdOverride: Option<String>,
         chatModelIndexOverride: Option<i32>,
         preferenceProfileIdOverride: Option<String>,
-        runtime: &SendMessageRuntime<'_>,
+        runtime: &SendMessageRuntime,
     ) -> Vec<PromptTurn> {
         let config = self.getModelConfigForFunction(
             functionType,
@@ -672,7 +692,7 @@ impl EnhancedAIService {
         _roleCardId: Option<String>,
         _chatModelConfigIdOverride: Option<String>,
         _chatModelIndexOverride: Option<i32>,
-        runtime: &SendMessageRuntime<'_>,
+        runtime: &SendMessageRuntime,
     ) -> Vec<ToolPrompt> {
         if !runtime.availableTools.is_empty() {
             return runtime.availableTools.clone();
@@ -727,7 +747,7 @@ impl EnhancedAIService {
         chatModelIndexOverride: Option<i32>,
         preferenceProfileIdOverride: Option<String>,
         publishEstimate: bool,
-        mut runtime: SendMessageRuntime<'_>,
+        mut runtime: SendMessageRuntime,
     ) -> Result<i32, AiServiceError> {
         self.ensureInitialized();
         let preparedHistory = self.prepareConversationHistory(
@@ -774,11 +794,15 @@ impl EnhancedAIService {
     }
 
     pub fn registerExecutionContext(&mut self, context: MessageExecutionContext) {
-        self.active_execution_contexts.insert(context.executionId, context);
+        self.shared_state()
+            .active_execution_contexts
+            .insert(context.executionId, context);
     }
 
     pub fn unregisterExecutionContext(&mut self, context: &MessageExecutionContext) {
-        self.active_execution_contexts.remove(&context.executionId);
+        self.shared_state()
+            .active_execution_contexts
+            .remove(&context.executionId);
     }
 
     pub fn invalidateExecutionContext(
@@ -787,19 +811,28 @@ impl EnhancedAIService {
         _reason: String,
     ) {
         context.isConversationActive = false;
-        if let Some(active) = self.active_execution_contexts.get_mut(&context.executionId) {
+        if let Some(active) = self
+            .shared_state()
+            .active_execution_contexts
+            .get_mut(&context.executionId)
+        {
             active.isConversationActive = false;
         }
     }
 
     pub fn invalidateAllExecutionContexts(&mut self, reason: String) {
         let ids = self
+            .shared_state()
             .active_execution_contexts
             .keys()
             .copied()
             .collect::<Vec<_>>();
         for id in ids {
-            if let Some(active) = self.active_execution_contexts.get_mut(&id) {
+            if let Some(active) = self
+                .shared_state()
+                .active_execution_contexts
+                .get_mut(&id)
+            {
                 active.isConversationActive = false;
             }
         }
@@ -809,6 +842,7 @@ impl EnhancedAIService {
     pub fn isExecutionContextActive(&self, context: &MessageExecutionContext) -> bool {
         context.isConversationActive
             && self
+                .shared_state()
                 .active_execution_contexts
                 .get(&context.executionId)
                 .map(|active| active.isConversationActive)
@@ -853,29 +887,19 @@ impl EnhancedAIService {
 
     pub async fn sendMessage(
         &mut self,
-        options: SendMessageOptions<'_>,
-    ) -> Result<SendMessageExecution, AiServiceError> {
+        options: SendMessageOptions,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let mut multiServiceManager = MultiServiceManager::default();
         multiServiceManager.initialize()?;
-        let modelConfig = match &options.chatModelConfigIdOverride {
-            Some(configId) if !configId.trim().is_empty() => multiServiceManager
-                .getModelConfigForConfig(configId.clone())?,
-            _ => multiServiceManager.getModelConfigForFunction(options.functionType.clone())?,
-        };
-        let modelParameters = match &options.chatModelConfigIdOverride {
-            Some(configId) if !configId.trim().is_empty() => multiServiceManager
-                .getModelParametersForConfig(configId.clone())?,
-            _ => multiServiceManager.getModelParametersForFunction(options.functionType.clone())?,
-        };
-        let selectedService = match &options.chatModelConfigIdOverride {
+        let (modelConfig, modelParameters, selectedService) = match &options.chatModelConfigIdOverride {
             Some(configId) if !configId.trim().is_empty() => {
                 let index = match options.chatModelIndexOverride {
                     Some(value) => value,
                     None => 0,
                 };
-                multiServiceManager.getServiceForConfig(configId.clone(), index)?
+                multiServiceManager.createOwnedServiceBundleForConfig(configId.clone(), index)?
             }
-            _ => multiServiceManager.getServiceForFunction(options.functionType.clone())?,
+            _ => multiServiceManager.createOwnedServiceBundleForFunction(options.functionType.clone())?,
         };
         let characterCardManager = CharacterCardManager::getInstance();
         let activeCard = options
@@ -926,9 +950,61 @@ impl EnhancedAIService {
 
     pub async fn sendMessageWithRuntime(
         &mut self,
-        options: SendMessageOptions<'_>,
-        mut runtime: SendMessageRuntime<'_>,
-    ) -> Result<SendMessageExecution, AiServiceError> {
+        options: SendMessageOptions,
+        runtime: SendMessageRuntime,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let eventChannel = crate::util::stream::HotStream::mutable_shared_stream(usize::MAX);
+        let streamEventChannel = eventChannel.clone();
+        let mut service = self.clone();
+        let mut ownedOptions = Some(options);
+        let mut ownedRuntime = Some(runtime);
+        let coldStream = FnStream::new(move |emit| {
+            let options = ownedOptions
+                .take()
+                .expect("sendMessageWithRuntime stream must only be collected once");
+            let runtime = ownedRuntime
+                .take()
+                .expect("sendMessageWithRuntime runtime must only be consumed once");
+            let responseStream = with_event_channel_shared(
+                crate::util::stream::HotStream::mutable_shared_stream(usize::MAX),
+                streamEventChannel.clone(),
+            );
+            let mut workerService = service.clone();
+            let workerResponseStream = responseStream.clone();
+            let worker = thread::spawn(move || {
+                let runtimeBuilder = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime must build for EnhancedAIService stream");
+                let result = runtimeBuilder.block_on(workerService.executeSendMessageWithRuntime(
+                    options,
+                    runtime,
+                    workerResponseStream.clone(),
+                ));
+                workerResponseStream.upstream.close();
+                workerResponseStream.event_channel.close();
+                if let Err(error) = result {
+                    workerService.setInputProcessingState(InputProcessingState::Error {
+                        message: error.to_string(),
+                    });
+                }
+            });
+            let mut sharedCollector = responseStream.clone();
+            sharedCollector.collect(emit);
+            let _ = worker.join();
+        });
+        Ok(Box::new(crate::util::stream::RevisableTextStream::with_event_channel(
+            coldStream,
+            eventChannel,
+        )))
+    }
+
+    async fn executeSendMessageWithRuntime(
+        &mut self,
+        options: SendMessageOptions,
+        mut runtime: SendMessageRuntime,
+        responseStream: SharedAiResponseStream,
+    ) -> Result<(), AiServiceError> {
         let message = options.message.clone();
         let chatId = options.chatId.clone();
         let chatHistory = options.chatHistory.clone();
@@ -958,24 +1034,26 @@ impl EnhancedAIService {
         let onNonFatalError = options.onNonFatalError;
         let onTokenLimitExceeded = options.onTokenLimitExceeded;
         let onToolInvocation = options.onToolInvocation;
-        let onStreamChunk = options.onStreamChunk;
 
-        self.accumulated_input_token_count = 0;
-        self.accumulated_output_token_count = 0;
-        self.accumulated_cached_input_token_count = 0;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
+        {
+            let mut shared = self.shared_state();
+            shared.accumulated_input_token_count = 0;
+            shared.accumulated_output_token_count = 0;
+            shared.accumulated_cached_input_token_count = 0;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+        }
 
         let mut lifecycle = Vec::new();
         let eventChannel = MutableSharedStreamMirror::<TextStreamEventMirror>::new(usize::MAX);
-        let mut execContext = MessageExecutionContext::new(
-            self.next_execution_context_id
-                .fetch_add(1, Ordering::SeqCst)
-                + 1,
-            chatHistory,
-            eventChannel,
-        );
+        let executionId = {
+            let mut shared = self.shared_state();
+            shared.next_execution_context_id += 1;
+            shared.next_execution_context_id
+        };
+        let mut execContext =
+            MessageExecutionContext::new(executionId, chatHistory, eventChannel);
         self.registerExecutionContext(execContext.clone());
 
         lifecycle.push(SendMessageLifecycleStage::EnsureInitialized);
@@ -1034,10 +1112,13 @@ impl EnhancedAIService {
         );
 
         lifecycle.push(SendMessageLifecycleStage::ClearPerRequestTokenCounts);
-        self.per_request_token_counts = None;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
+        {
+            let mut shared = self.shared_state();
+            shared.per_request_token_counts = None;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+        }
 
         lifecycle.push(SendMessageLifecycleStage::GetAvailableToolsForFunction);
         let availableTools = self.getAvailableToolsForFunction(
@@ -1127,12 +1208,8 @@ impl EnhancedAIService {
         ).await?;
 
         lifecycle.push(SendMessageLifecycleStage::SendMessageRequest);
-        let requestStartActive = AtomicBool::new(true);
         let providerModel = serviceForFunction.provider_model();
-        let AiResponseStream {
-            chunks,
-            mut token_counts,
-        } = serviceForFunction.send_message(SendMessageRequest {
+        let mut provider_stream = serviceForFunction.send_message(SendMessageRequest {
             chat_history: requestHistory.clone(),
             model_parameters: modelParameters.clone(),
             enable_thinking: enableThinking,
@@ -1140,7 +1217,6 @@ impl EnhancedAIService {
             available_tools: availableTools.clone(),
             preserve_think_in_history: false,
             enable_retry: true,
-            on_stream_chunk: onStreamChunk.clone(),
             on_tool_invocation: onToolInvocation.clone(),
         }).await?;
 
@@ -1148,6 +1224,14 @@ impl EnhancedAIService {
         self.startAssistantResponseRound(&mut execContext);
 
         lifecycle.push(SendMessageLifecycleStage::CollectResponseStream);
+        let providerEventChannel = provider_stream.event_channel().clone();
+        let responseEventChannel = responseStream.event_channel.clone();
+        let eventForwarder = thread::spawn(move || {
+            let mut events = providerEventChannel;
+            events.collect(&mut |event| {
+                responseEventChannel.emit(event);
+            });
+        });
         if !isSubTask {
             self.setInputProcessingState(InputProcessingState::Receiving {
                 message: "enhanced_receiving_response".to_string(),
@@ -1155,32 +1239,36 @@ impl EnhancedAIService {
         }
         let mut responseChunks = Vec::new();
         let mut totalChars = 0;
-        for content in chunks {
+        provider_stream.collect(&mut |content| {
             totalChars += content.len() as i32;
             execContext.streamBuffer.push_str(&content);
             execContext
                 .roundManager
                 .updateContent(execContext.streamBuffer.clone());
+            responseStream.upstream.emit(content.clone());
             responseChunks.push(content);
-        }
+        });
+        let _ = eventForwarder.join();
 
         lifecycle.push(SendMessageLifecycleStage::PersistTokenUsage);
-        let inputTokens = token_counts.input;
-        let cachedInputTokens = token_counts.cached_input;
-        let outputTokens = token_counts.output;
-        self.accumulated_input_token_count += inputTokens;
-        self.accumulated_output_token_count += outputTokens;
-        self.accumulated_cached_input_token_count += cachedInputTokens;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
-        self.per_request_token_counts = Some((inputTokens, outputTokens));
+        let inputTokens = serviceForFunction.input_token_count();
+        let cachedInputTokens = serviceForFunction.cached_input_token_count();
+        let outputTokens = serviceForFunction.output_token_count();
+        {
+            let mut shared = self.shared_state();
+            shared.accumulated_input_token_count += inputTokens;
+            shared.accumulated_output_token_count += outputTokens;
+            shared.accumulated_cached_input_token_count += cachedInputTokens;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+            shared.per_request_token_counts = Some((inputTokens, outputTokens));
+        }
         let _ = totalChars;
-        let _ = requestStartActive.load(Ordering::SeqCst);
 
         lifecycle.push(SendMessageLifecycleStage::ProcessStreamCompletion);
-        let completion = self
-            .processStreamCompletion(
+        self.processStreamCompletion(
+            &responseStream,
             &mut execContext,
             functionType,
             promptFunctionType,
@@ -1207,10 +1295,6 @@ impl EnhancedAIService {
             &mut runtime,
         )
         .await?;
-        for content in completion.chunks {
-            totalChars += content.len() as i32;
-            responseChunks.push(content);
-        }
 
         lifecycle.push(SendMessageLifecycleStage::UnregisterExecutionContext);
         self.unregisterExecutionContext(&execContext);
@@ -1220,24 +1304,28 @@ impl EnhancedAIService {
             self.stopAiService(characterName, avatarUri);
         }
 
-        Ok(SendMessageExecution {
-            processedInput: finalProcessedInput,
-            requestHistory,
-            responseChunks,
-            tokenSnapshot: TurnTokenSnapshot {
+        {
+            let mut shared = self.shared_state();
+            shared.last_reply_content = Some(execContext.roundManager.getDisplayContent());
+            shared.last_provider_model = Some(providerModel);
+            shared.last_turn_token_snapshot = Some(TurnTokenSnapshot {
                 inputTokens,
                 outputTokens,
                 cachedInputTokens,
-            },
-            requestWindowSize,
-            providerModel,
-            lifecycle,
-        })
+            });
+        }
+        let _ = finalProcessedInput;
+        let _ = requestHistory;
+        let _ = requestWindowSize;
+        let _ = lifecycle;
+        responseStream.upstream.close();
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn processToolResults(
         &mut self,
+        collector: &SharedAiResponseStream,
         results: Vec<crate::api::chat::enhance::ConversationMarkupManager::ToolResult>,
         context: &mut MessageExecutionContext,
         functionType: FunctionType,
@@ -1262,8 +1350,8 @@ impl EnhancedAIService {
         enableGroupOrchestrationHint: bool,
         toolResultMessageOverride: Option<String>,
         disableWarning: bool,
-        runtime: &mut SendMessageRuntime<'_>,
-    ) -> Result<AiResponseStream, AiServiceError> {
+        runtime: &mut SendMessageRuntime,
+    ) -> Result<(), AiServiceError> {
         let toolNames = results
             .iter()
             .map(|result| result.toolName.clone())
@@ -1274,14 +1362,7 @@ impl EnhancedAIService {
         let toolResultMessage = rawToolResultMessage;
 
         if toolResultMessage.trim().is_empty() {
-            return Ok(AiResponseStream {
-                chunks: Vec::new(),
-                token_counts: TokenCounts {
-                    input: 0,
-                    cached_input: 0,
-                    output: 0,
-                },
-            });
+            return Ok(());
         }
 
         let displayToolNames = if toolNames.trim().is_empty() {
@@ -1297,14 +1378,7 @@ impl EnhancedAIService {
         }
 
         if !context.isConversationActive {
-            return Ok(AiResponseStream {
-                chunks: Vec::new(),
-                token_counts: TokenCounts {
-                    input: 0,
-                    cached_input: 0,
-                    output: 0,
-                },
-            });
+            return Ok(());
         }
 
         context.conversationHistory.push(PromptTurn {
@@ -1352,7 +1426,7 @@ impl EnhancedAIService {
 
         let currentTokens = self
             .estimatePreparedRequestWindow(
-                runtime.aiService,
+                runtime.aiService.as_mut(),
                 &currentChatHistory,
                 &availableTools,
                 true,
@@ -1369,21 +1443,17 @@ impl EnhancedAIService {
                 if !isSubTask {
                     self.stopAiService(characterName, avatarUri);
                 }
-                return Ok(AiResponseStream {
-                    chunks: Vec::new(),
-                    token_counts: TokenCounts {
-                        input: 0,
-                        cached_input: 0,
-                        output: 0,
-                    },
-                });
+                return Ok(());
             }
         }
 
-        self.per_request_token_counts = None;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
+        {
+            let mut shared = self.shared_state();
+            shared.per_request_token_counts = None;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+        }
 
         let mut response = runtime
             .aiService
@@ -1395,7 +1465,6 @@ impl EnhancedAIService {
                 available_tools: availableTools,
                 preserve_think_in_history: false,
                 enable_retry: true,
-                on_stream_chunk: None,
                 on_tool_invocation: onToolInvocation.clone(),
             })
             .await?;
@@ -1406,12 +1475,23 @@ impl EnhancedAIService {
             });
         }
 
-        for content in &response.chunks {
-            context.streamBuffer.push_str(content);
+        let responseEventChannel = response.event_channel().clone();
+        let collectorEventChannel = collector.event_channel.clone();
+        let eventForwarder = thread::spawn(move || {
+            let mut events = responseEventChannel;
+            events.collect(&mut |event| {
+                collectorEventChannel.emit(event);
+            });
+        });
+        response.collect(&mut |content| {
+            context.streamBuffer.push_str(&content);
             context.roundManager.updateContent(context.streamBuffer.clone());
-        }
+            collector.upstream.emit(content);
+        });
+        let _ = eventForwarder.join();
 
-        let recursiveResponse = Box::pin(self.processStreamCompletion(
+        Box::pin(self.processStreamCompletion(
+            collector,
             context,
             functionType,
             promptFunctionType,
@@ -1438,17 +1518,13 @@ impl EnhancedAIService {
             runtime,
         ))
         .await?;
-        response.token_counts.input += recursiveResponse.token_counts.input;
-        response.token_counts.cached_input += recursiveResponse.token_counts.cached_input;
-        response.token_counts.output += recursiveResponse.token_counts.output;
-        response.chunks.extend(recursiveResponse.chunks);
-
-        Ok(response)
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn processStreamCompletion(
         &mut self,
+        collector: &SharedAiResponseStream,
         context: &mut MessageExecutionContext,
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,
@@ -1471,11 +1547,11 @@ impl EnhancedAIService {
         stream: bool,
         enableGroupOrchestrationHint: bool,
         disableWarning: bool,
-        callbacks: Option<&dyn SendMessageCallbacks>,
-        runtime: &mut SendMessageRuntime<'_>,
-    ) -> Result<AiResponseStream, AiServiceError> {
+        callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
+        runtime: &mut SendMessageRuntime,
+    ) -> Result<(), AiServiceError> {
         if !context.isConversationActive {
-            return Ok(empty_ai_response_stream());
+            return Ok(());
         }
 
         let content = context.streamBuffer.trim().to_string();
@@ -1493,7 +1569,7 @@ impl EnhancedAIService {
                 preferenceProfileIdOverride,
                 callbacks,
             );
-            return Ok(empty_ai_response_stream());
+            return Ok(());
         }
 
         let contentWithoutThinking = ChatUtils::remove_thinking_content(&content);
@@ -1513,11 +1589,12 @@ impl EnhancedAIService {
                     preferenceProfileIdOverride,
                     callbacks,
                 );
-                return Ok(empty_ai_response_stream());
+                return Ok(());
             }
             let pureThinkingWarning =
                 ConversationMarkupManager::createWarningStatus("enhanced_pure_thinking_only_warning");
             context.roundManager.appendContent(&format!("\n{pureThinkingWarning}"));
+            collector.upstream.emit(pureThinkingWarning.clone());
             context.conversationHistory.push(PromptTurn {
                 kind: PromptTurnKind::TOOL_RESULT,
                 content: pureThinkingWarning.clone(),
@@ -1525,6 +1602,7 @@ impl EnhancedAIService {
                 metadata: HashMap::new(),
             });
             return Box::pin(self.handleToolInvocation(
+                    collector,
                     Vec::new(),
                     context,
                     functionType,
@@ -1579,7 +1657,7 @@ impl EnhancedAIService {
         };
 
         if !context.isConversationActive {
-            return Ok(empty_ai_response_stream());
+            return Ok(());
         }
 
         context.conversationHistory.push(PromptTurn {
@@ -1590,7 +1668,7 @@ impl EnhancedAIService {
         });
 
         if !context.isConversationActive {
-            return Ok(empty_ai_response_stream());
+            return Ok(());
         }
 
         if let Some(_recovery) = truncatedToolRecovery {
@@ -1609,14 +1687,16 @@ impl EnhancedAIService {
                     preferenceProfileIdOverride,
                     callbacks,
                 );
-                return Ok(empty_ai_response_stream());
+                return Ok(());
             }
             let warningStatus =
                 ConversationMarkupManager::createWarningStatus("enhanced_truncated_tool_call_warning");
             let warningDisplayContent = format!("\n{warningStatus}");
             context.roundManager.appendContent(&warningDisplayContent);
             context.streamBuffer.push_str(&warningDisplayContent);
+            collector.upstream.emit(warningDisplayContent);
             return Box::pin(self.handleToolInvocation(
+                    collector,
                     Vec::new(),
                     context,
                     functionType,
@@ -1648,6 +1728,7 @@ impl EnhancedAIService {
 
         if !extractedToolInvocations.is_empty() {
             return Box::pin(self.handleToolInvocation(
+                    collector,
                     extractedToolInvocations,
                     context,
                     functionType,
@@ -1690,12 +1771,13 @@ impl EnhancedAIService {
             preferenceProfileIdOverride,
             callbacks,
         );
-        Ok(empty_ai_response_stream())
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn handleToolInvocation(
         &mut self,
+        collector: &SharedAiResponseStream,
         toolInvocations: Vec<crate::api::chat::enhance::ToolExecutionManager::ToolInvocation>,
         context: &mut MessageExecutionContext,
         functionType: FunctionType,
@@ -1720,8 +1802,8 @@ impl EnhancedAIService {
         enableGroupOrchestrationHint: bool,
         toolResultOverrideMessage: Option<String>,
         disableWarning: bool,
-        runtime: &mut SendMessageRuntime<'_>,
-    ) -> Result<AiResponseStream, AiServiceError> {
+        runtime: &mut SendMessageRuntime,
+    ) -> Result<(), AiServiceError> {
         for invocation in &toolInvocations {
             if let Some(callback) = onToolInvocation.as_ref() {
                 callback(invocation.tool.name.clone());
@@ -1756,15 +1838,15 @@ impl EnhancedAIService {
         );
         self.tool_handler.restoreExecutors(executors);
 
-        let mut responseChunks = Vec::new();
         for content in emittedToolResultMessages {
             context.streamBuffer.push_str(&content);
             context.roundManager.updateContent(context.streamBuffer.clone());
-            responseChunks.push(content);
+            collector.upstream.emit(content);
         }
 
         if !allToolResults.is_empty() {
-            let response = self.processToolResults(
+            Box::pin(self.processToolResults(
+                collector,
                 allToolResults,
                 context,
                 functionType,
@@ -1790,15 +1872,11 @@ impl EnhancedAIService {
                 None,
                 disableWarning,
                 runtime,
-            )
+            ))
             .await?;
-            responseChunks.extend(response.chunks);
-            Ok(AiResponseStream {
-                chunks: responseChunks,
-                token_counts: response.token_counts,
-            })
         } else if toolResultOverrideMessage.as_ref().map(|value| !value.is_empty()).unwrap_or(false) {
-            let response = self.processToolResults(
+            Box::pin(self.processToolResults(
+                collector,
                 Vec::new(),
                 context,
                 functionType,
@@ -1824,23 +1902,10 @@ impl EnhancedAIService {
                 toolResultOverrideMessage,
                 disableWarning,
                 runtime,
-            )
+            ))
             .await?;
-            responseChunks.extend(response.chunks);
-            Ok(AiResponseStream {
-                chunks: responseChunks,
-                token_counts: response.token_counts,
-            })
-        } else {
-            Ok(AiResponseStream {
-                chunks: responseChunks,
-                token_counts: TokenCounts {
-                    input: 0,
-                    cached_input: 0,
-                    output: 0,
-                },
-            })
         }
+        Ok(())
     }
 
     fn enhanceToolDetection(&self, content: &str) -> String {
@@ -2027,9 +2092,9 @@ impl EnhancedAIService {
         avatarUri: Option<String>,
         notifyReplyOverride: Option<bool>,
         _preferenceProfileIdOverride: Option<String>,
-        callbacks: Option<&dyn SendMessageCallbacks>,
+        callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     ) {
-        self.last_reply_content = Some(content.to_string());
+        self.shared_state().last_reply_content = Some(content.to_string());
         if let Some(callbacks) = callbacks {
             callbacks.onTokenLimitExceeded();
         }
@@ -2040,44 +2105,63 @@ impl EnhancedAIService {
         self.invalidateAllExecutionContexts("cancelConversation".to_string());
         service.cancel_streaming();
         self.input_processing_state.set_value(InputProcessingState::Idle);
-        self.per_request_token_counts = None;
-        self.accumulated_input_token_count = 0;
-        self.accumulated_output_token_count = 0;
-        self.accumulated_cached_input_token_count = 0;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
-        self.current_response_callback_registered = false;
-        self.current_complete_callback_registered = false;
+        {
+            let mut shared = self.shared_state();
+            shared.per_request_token_counts = None;
+            shared.accumulated_input_token_count = 0;
+            shared.accumulated_output_token_count = 0;
+            shared.accumulated_cached_input_token_count = 0;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+            shared.current_response_callback_registered = false;
+            shared.current_complete_callback_registered = false;
+        }
         self.stopAiService(None, None);
     }
 
     pub fn cancelAllToolExecutions(&mut self) {
-        self.tool_execution_jobs.clear();
+        self.shared_state().tool_execution_jobs.clear();
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentInputTokenCount(&self) -> i32 {
-        self.accumulated_input_token_count
+        self.shared_state().accumulated_input_token_count
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentOutputTokenCount(&self) -> i32 {
-        self.accumulated_output_token_count
+        self.shared_state().accumulated_output_token_count
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentCachedInputTokenCount(&self) -> i32 {
-        self.accumulated_cached_input_token_count
+        self.shared_state().accumulated_cached_input_token_count
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getPerRequestTokenCounts(&self) -> Option<(i32, i32)> {
+        self.shared_state().per_request_token_counts
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getLastProviderModel(&self) -> Option<String> {
+        self.shared_state().last_provider_model.clone()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getLastTurnTokenSnapshot(&self) -> Option<TurnTokenSnapshot> {
+        self.shared_state().last_turn_token_snapshot.clone()
     }
 
     #[allow(non_snake_case)]
     pub fn captureCurrentTurnTokenSnapshot(&self) -> TurnTokenSnapshot {
+        let shared = self.shared_state();
         TurnTokenSnapshot {
-            inputTokens: (self.accumulated_input_token_count + self.current_request_input_token_count).max(0),
-            outputTokens: (self.accumulated_output_token_count + self.current_request_output_token_count).max(0),
-            cachedInputTokens: (self.accumulated_cached_input_token_count
-                + self.current_request_cached_input_token_count)
+            inputTokens: (shared.accumulated_input_token_count + shared.current_request_input_token_count).max(0),
+            outputTokens: (shared.accumulated_output_token_count + shared.current_request_output_token_count).max(0),
+            cachedInputTokens: (shared.accumulated_cached_input_token_count
+                + shared.current_request_cached_input_token_count)
                 .max(0),
         }
     }
@@ -2089,27 +2173,48 @@ impl EnhancedAIService {
         outputTokens: i32,
         cachedInputTokens: i32,
     ) {
-        self.accumulated_input_token_count = inputTokens.max(0);
-        self.accumulated_output_token_count = outputTokens.max(0);
-        self.accumulated_cached_input_token_count = cachedInputTokens.max(0);
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
-        self.per_request_token_counts = Some((
-            self.accumulated_input_token_count,
-            self.accumulated_output_token_count,
+        let mut shared = self.shared_state();
+        shared.accumulated_input_token_count = inputTokens.max(0);
+        shared.accumulated_output_token_count = outputTokens.max(0);
+        shared.accumulated_cached_input_token_count = cachedInputTokens.max(0);
+        shared.current_request_input_token_count = 0;
+        shared.current_request_output_token_count = 0;
+        shared.current_request_cached_input_token_count = 0;
+        shared.per_request_token_counts = Some((
+            shared.accumulated_input_token_count,
+            shared.accumulated_output_token_count,
         ));
     }
 
     #[allow(non_snake_case)]
     pub fn resetTokenCounters(&mut self) {
-        self.per_request_token_counts = None;
-        self.accumulated_input_token_count = 0;
-        self.accumulated_output_token_count = 0;
-        self.accumulated_cached_input_token_count = 0;
-        self.current_request_input_token_count = 0;
-        self.current_request_output_token_count = 0;
-        self.current_request_cached_input_token_count = 0;
+        let mut shared = self.shared_state();
+        shared.per_request_token_counts = None;
+        shared.accumulated_input_token_count = 0;
+        shared.accumulated_output_token_count = 0;
+        shared.accumulated_cached_input_token_count = 0;
+        shared.current_request_input_token_count = 0;
+        shared.current_request_output_token_count = 0;
+        shared.current_request_cached_input_token_count = 0;
+    }
+}
+
+impl Clone for EnhancedAIService {
+    fn clone(&self) -> Self {
+        Self {
+            multi_service_manager: self.multi_service_manager.clone(),
+            init_scope: self.init_scope.clone(),
+            init_mutex: self.init_mutex.clone(),
+            conversation_service: self.conversation_service.clone(),
+            file_binding_service: self.file_binding_service.clone(),
+            tool_handler: self.tool_handler.clone(),
+            input_processing_state: self.input_processing_state.clone(),
+            api_preferences: self.api_preferences.clone(),
+            character_card_tool_access_resolver: self.character_card_tool_access_resolver.clone(),
+            tool_processing_scope: self.tool_processing_scope.clone(),
+            package_manager: self.package_manager.clone(),
+            shared_state: self.shared_state.clone(),
+        }
     }
 }
 
@@ -2149,15 +2254,8 @@ struct TruncatedToolRoundRecovery {
     invalidatedToolNames: Vec<String>,
 }
 
-fn empty_ai_response_stream() -> AiResponseStream {
-    AiResponseStream {
-        chunks: Vec::new(),
-        token_counts: TokenCounts {
-            input: 0,
-            cached_input: 0,
-            output: 0,
-        },
-    }
+fn empty_ai_response_stream() -> Box<dyn RevisableTextStreamLike> {
+    response_stream_from_chunks(Vec::new())
 }
 
 fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {

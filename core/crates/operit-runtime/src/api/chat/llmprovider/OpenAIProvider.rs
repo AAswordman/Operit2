@@ -3,18 +3,26 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
     TokenCounts,
 };
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::util::stream::RevisableTextStream::{
+    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike, TextStreamEvent,
+    TextStreamEventType,
+};
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use crate::util::stream::Stream::FnStream;
 
+#[derive(Clone)]
 pub struct OpenAIProvider {
     pub api_endpoint: String,
     pub api_key: String,
@@ -25,6 +33,11 @@ pub struct OpenAIProvider {
     pub supports_video: bool,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    state: Arc<Mutex<OpenAIProviderState>>,
+}
+
+#[derive(Debug, Default)]
+struct OpenAIProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
@@ -43,6 +56,54 @@ pub struct StreamingState {
     pub accumulatedToolCalls: HashMap<i32, Value>,
     pub toolCallState: ToolCallState,
     pub lastProcessedToolIndex: Option<i32>,
+}
+
+pub struct StreamEmitter {
+    pub received_content: String,
+    pub event_channel: crate::util::stream::HotStream::MutableSharedStreamImpl<TextStreamEvent>,
+    pub savepoints: HashMap<String, usize>,
+}
+
+impl StreamEmitter {
+    pub fn new(
+        event_channel: crate::util::stream::HotStream::MutableSharedStreamImpl<TextStreamEvent>,
+    ) -> Self {
+        Self {
+            received_content: String::new(),
+            event_channel,
+            savepoints: HashMap::new(),
+        }
+    }
+
+    pub fn emit_chunk(&mut self, chunk: &str) {
+        if chunk.is_empty() {
+            return;
+        }
+        self.received_content.push_str(chunk);
+    }
+
+    pub fn emit_savepoint(&mut self, id: &str) {
+        self.savepoints
+            .insert(id.to_string(), self.received_content.len());
+        self.event_channel.emit(TextStreamEvent {
+            event_type: TextStreamEventType::Savepoint,
+            id: id.to_string(),
+        });
+    }
+
+    pub fn emit_rollback(&mut self, id: &str) -> bool {
+        let Some(savepoint_length) = self.savepoints.get(id).copied() else {
+            return false;
+        };
+        if self.received_content.len() > savepoint_length {
+            self.received_content.truncate(savepoint_length);
+        }
+        self.event_channel.emit(TextStreamEvent {
+            event_type: TextStreamEventType::Rollback,
+            id: id.to_string(),
+        });
+        true
+    }
 }
 
 #[derive(Default)]
@@ -346,11 +407,20 @@ impl OpenAIProvider {
             supports_video: false,
             enable_tool_call,
             custom_headers,
-            inputTokenCount: 0,
-            cachedInputTokenCount: 0,
-            outputTokenCount: 0,
-            cancelled: false,
+            state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
+    }
+
+    fn apply_token_counts(&self, token_counts: TokenCounts) {
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = token_counts.input;
+            state.cachedInputTokenCount = token_counts.cached_input;
+            state.outputTokenCount = token_counts.output;
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.state.lock().map(|state| state.cancelled).unwrap_or(false)
     }
 
     pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
@@ -404,12 +474,13 @@ impl OpenAIProvider {
         )
     }
 
-    pub async fn process_streaming_response(
-        &mut self,
+    async fn read_streaming_response(
+        &self,
         response: reqwest::Response,
-        on_stream_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        on_tool_invocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> Result<AiResponseStream, AiServiceError> {
+        on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
+        tx: &std::sync::mpsc::Sender<String>,
+        emitter: &mut StreamEmitter,
+    ) -> Result<(), AiServiceError> {
         let mut state = StreamingState {
             chunks: Vec::new(),
             pending_line: String::new(),
@@ -427,33 +498,45 @@ impl OpenAIProvider {
             toolCallState: ToolCallState::default(),
             lastProcessedToolIndex: None,
         };
-        let mut stream = response.bytes_stream();
+        let mut response_stream = response.bytes_stream();
 
-        while let Some(item) = stream.next().await {
-            if self.cancelled {
-                break;
+        let result = async {
+            while let Some(item) = response_stream.next().await {
+                if self.is_cancelled() {
+                    break;
+                }
+                let bytes =
+                    item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                state.pending_line.push_str(&String::from_utf8_lossy(&bytes));
+
+                while let Some(newline_index) = state.pending_line.find('\n') {
+                    let line = state.pending_line[..newline_index].trim().to_string();
+                    state.pending_line = state.pending_line[newline_index + 1..].to_string();
+                    let emitted_before = state.chunks.len();
+                    self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
+                    for chunk in state.chunks[emitted_before..].iter().cloned() {
+                        let _ = tx.send(chunk.clone());
+                        emitter.emit_chunk(&chunk);
+                    }
+                }
             }
-            let bytes = item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            state.pending_line.push_str(&String::from_utf8_lossy(&bytes));
 
-            while let Some(newline_index) = state.pending_line.find('\n') {
-                let line = state.pending_line[..newline_index].trim().to_string();
-                state.pending_line = state.pending_line[newline_index + 1..].to_string();
-                let before_len = state.chunks.len();
-                self.process_streaming_line(&line, &mut state, on_tool_invocation.as_ref())?;
-                emit_new_chunks(&state, before_len, on_stream_chunk.as_ref());
+            let pending = state.pending_line.trim().to_string();
+            if !pending.is_empty() {
+                let emitted_before = state.chunks.len();
+                self.process_streaming_line(&pending, &mut state, on_tool_invocation)?;
+                for chunk in state.chunks[emitted_before..].iter().cloned() {
+                    let _ = tx.send(chunk.clone());
+                    emitter.emit_chunk(&chunk);
+                }
             }
-        }
 
-        let pending = state.pending_line.trim().to_string();
-        if !pending.is_empty() {
-            let before_len = state.chunks.len();
-            self.process_streaming_line(&pending, &mut state, on_tool_invocation.as_ref())?;
-            emit_new_chunks(&state, before_len, on_stream_chunk.as_ref());
+            self.apply_token_counts(state.usage.clone());
+            Ok(())
         }
+        .await;
 
-        self.apply_token_counts(state.usage.clone());
-        Ok(response_stream_from_chunks(state.chunks))
+        result
     }
 
     fn process_streaming_line(
@@ -1037,25 +1120,29 @@ impl OpenAIProvider {
         Ok(headers)
     }
 
-    fn apply_token_counts(&mut self, token_counts: TokenCounts) {
-        self.inputTokenCount = token_counts.input;
-        self.cachedInputTokenCount = token_counts.cached_input;
-        self.outputTokenCount = token_counts.output;
-    }
 }
 
 #[async_trait]
 impl AIService for OpenAIProvider {
     fn input_token_count(&self) -> i32 {
-        self.inputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.inputTokenCount)
+            .unwrap_or(0)
     }
 
     fn cached_input_token_count(&self) -> i32 {
-        self.cachedInputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.cachedInputTokenCount)
+            .unwrap_or(0)
     }
 
     fn output_token_count(&self) -> i32 {
-        self.outputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.outputTokenCount)
+            .unwrap_or(0)
     }
 
     fn provider_model(&self) -> String {
@@ -1063,17 +1150,26 @@ impl AIService for OpenAIProvider {
     }
 
     fn reset_token_counts(&mut self) {
-        self.inputTokenCount = 0;
-        self.cachedInputTokenCount = 0;
-        self.outputTokenCount = 0;
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = 0;
+            state.cachedInputTokenCount = 0;
+            state.outputTokenCount = 0;
+        }
     }
 
     fn cancel_streaming(&mut self) {
-        self.cancelled = true;
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = true;
+        }
     }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
-        self.cancelled = false;
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = false;
+        }
         self.reset_token_counts();
 
         let request_body = self.create_request_body(&request)?;
@@ -1126,7 +1222,81 @@ impl OpenAIProvider {
         &mut self,
         request: SendMessageRequest,
         request_body: Value,
-    ) -> Result<AiResponseStream, AiServiceError> {
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        if request.stream {
+            let mut provider = self.clone();
+            let event_channel = empty_revisable_event_channel();
+            let stream_event_channel = event_channel.clone();
+            let mut request_parts = Some((
+                self.api_endpoint.clone(),
+                self.headers()?,
+                request_body,
+                request.on_tool_invocation.clone(),
+            ));
+            let cold_stream = FnStream::new(move |emit| {
+                let (api_endpoint, headers, request_body, on_tool_invocation) = request_parts
+                    .take()
+                    .expect("OpenAIProvider stream must only be collected once");
+                let (tx, rx) = channel::<String>();
+                let worker_provider = provider.clone();
+                let worker_event_channel = stream_event_channel.clone();
+                let worker = std::thread::spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("tokio runtime must build for OpenAIProvider stream");
+                    let result: Result<(), AiServiceError> = runtime.block_on(async {
+                        let request_savepoint_id = format!("attempt_{}", Uuid::new_v4().simple());
+                        let mut emitter = StreamEmitter::new(worker_event_channel.clone());
+                        emitter.emit_savepoint(&request_savepoint_id);
+
+                        let result = async {
+                            let client = reqwest::Client::new();
+                            let response = client
+                                .post(&api_endpoint)
+                                .headers(headers)
+                                .json(&request_body)
+                                .send()
+                                .await
+                                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+
+                            let status = response.status();
+                            if !status.is_success() {
+                                let message = response
+                                    .text()
+                                    .await
+                                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                                return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+                            }
+
+                            worker_provider
+                                .read_streaming_response(
+                                    response,
+                                    on_tool_invocation.as_ref(),
+                                    &tx,
+                                    &mut emitter,
+                                )
+                                .await
+                        }
+                        .await;
+                        if result.is_err() {
+                            let _ = emitter.emit_rollback(&request_savepoint_id);
+                        }
+                        result
+                    });
+                    worker_event_channel.close();
+                    if let Err(error) = result {
+                        let _ = error;
+                    }
+                });
+                while let Ok(chunk) = rx.recv() {
+                    emit(chunk);
+                }
+                let _ = worker.join();
+            });
+            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+        }
+
         let client = reqwest::Client::new();
         let response = client
             .post(&self.api_endpoint)
@@ -1143,16 +1313,6 @@ impl OpenAIProvider {
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
-        }
-
-        if request.stream {
-            return self
-                .process_streaming_response(
-                    response,
-                    request.on_stream_chunk.clone(),
-                    request.on_tool_invocation.clone(),
-                )
-                .await;
         }
 
         let json_response: Value = response

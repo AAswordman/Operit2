@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
+use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
     TokenCounts,
 };
 use super::OpenAIProvider::OpenAIProvider;
@@ -12,8 +13,12 @@ use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::ToolPrompt::ToolPrompt;
-use crate::util::stream::HotStream::SharedStream;
+use crate::util::stream::RevisableTextStream::{
+    with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
+};
+use crate::util::stream::Stream::FnStream;
 
+#[derive(Clone)]
 pub struct DeepseekProvider {
     pub api_endpoint: String,
     pub api_key: String,
@@ -24,6 +29,11 @@ pub struct DeepseekProvider {
     pub supports_video: bool,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    state: Arc<Mutex<DeepseekProviderState>>,
+}
+
+#[derive(Debug, Default)]
+struct DeepseekProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
@@ -49,10 +59,15 @@ impl DeepseekProvider {
             supports_video: false,
             enable_tool_call,
             custom_headers,
-            inputTokenCount: 0,
-            cachedInputTokenCount: 0,
-            outputTokenCount: 0,
-            cancelled: false,
+            state: Arc::new(Mutex::new(DeepseekProviderState::default())),
+        }
+    }
+
+    fn apply_token_counts(&self, token_counts: TokenCounts) {
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = token_counts.input;
+            state.cachedInputTokenCount = token_counts.cached_input;
+            state.outputTokenCount = token_counts.output;
         }
     }
 
@@ -194,25 +209,29 @@ impl DeepseekProvider {
         Ok(headers)
     }
 
-    fn apply_token_counts(&mut self, token_counts: TokenCounts) {
-        self.inputTokenCount = token_counts.input;
-        self.cachedInputTokenCount = token_counts.cached_input;
-        self.outputTokenCount = token_counts.output;
-    }
 }
 
 #[async_trait]
 impl AIService for DeepseekProvider {
     fn input_token_count(&self) -> i32 {
-        self.inputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.inputTokenCount)
+            .unwrap_or(0)
     }
 
     fn cached_input_token_count(&self) -> i32 {
-        self.cachedInputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.cachedInputTokenCount)
+            .unwrap_or(0)
     }
 
     fn output_token_count(&self) -> i32 {
-        self.outputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.outputTokenCount)
+            .unwrap_or(0)
     }
 
     fn provider_model(&self) -> String {
@@ -220,20 +239,56 @@ impl AIService for DeepseekProvider {
     }
 
     fn reset_token_counts(&mut self) {
-        self.inputTokenCount = 0;
-        self.cachedInputTokenCount = 0;
-        self.outputTokenCount = 0;
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = 0;
+            state.cachedInputTokenCount = 0;
+            state.outputTokenCount = 0;
+        }
     }
 
     fn cancel_streaming(&mut self) {
-        self.cancelled = true;
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = true;
+        }
     }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
-        self.cancelled = false;
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = false;
+        }
         self.reset_token_counts();
 
         let request_body = self.create_request_body(&request)?;
+        if request.stream {
+            let mut parent = OpenAIProvider::new(
+                self.api_endpoint.clone(),
+                self.api_key.clone(),
+                self.model_name.clone(),
+                self.provider_type.clone(),
+                self.custom_headers.clone(),
+                self.enable_tool_call,
+            );
+            let mut result = parent
+                .send_prepared_request(request, request_body)
+                .await?;
+            let event_channel = result.event_channel().clone();
+            let mut provider = self.clone();
+            let cold_stream = FnStream::new(move |emit| {
+                result.collect(&mut |content| {
+                    emit(content);
+                });
+                provider.apply_token_counts(TokenCounts {
+                    input: parent.input_token_count(),
+                    cached_input: parent.cached_input_token_count(),
+                    output: parent.output_token_count(),
+                });
+            });
+            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+        }
+
         let client = reqwest::Client::new();
         let response = client
             .post(&self.api_endpoint)
@@ -250,16 +305,6 @@ impl AIService for DeepseekProvider {
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
-        }
-
-        if request.stream {
-            return self
-                .process_streaming_response(
-                    response,
-                    request.on_stream_chunk.clone(),
-                    request.on_tool_invocation.clone(),
-                )
-                .await;
         }
 
         let json_response: Value = response
@@ -330,33 +375,6 @@ impl AIService for DeepseekProvider {
             .map(|tool| tool.name.len() + tool.description.len() + tool.parameters.len())
             .sum();
         Ok(((history_chars + tool_chars + 3) / 4) as i32)
-    }
-}
-
-impl DeepseekProvider {
-    async fn process_streaming_response(
-        &mut self,
-        response: reqwest::Response,
-        on_stream_chunk: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-        on_tool_invocation: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> Result<AiResponseStream, AiServiceError> {
-        let mut parent = OpenAIProvider::new(
-            self.api_endpoint.clone(),
-            self.api_key.clone(),
-            self.model_name.clone(),
-            self.provider_type.clone(),
-            self.custom_headers.clone(),
-            self.enable_tool_call,
-        );
-        let result = parent
-            .process_streaming_response(response, on_stream_chunk, on_tool_invocation)
-            .await?;
-        self.apply_token_counts(TokenCounts {
-            input: parent.input_token_count(),
-            cached_input: parent.cached_input_token_count(),
-            output: parent.output_token_count(),
-        });
-        Ok(response_stream_from_chunks(result.replay_cache()))
     }
 }
 

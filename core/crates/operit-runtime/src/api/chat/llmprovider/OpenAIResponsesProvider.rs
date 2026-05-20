@@ -2,15 +2,21 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
     TokenCounts,
 };
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::util::stream::RevisableTextStream::{
+    with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
+};
+use crate::util::stream::Stream::FnStream;
 
+#[derive(Clone)]
 pub struct OpenAIResponsesProvider {
     pub responsesApiEndpoint: String,
     pub api_key: String,
@@ -21,6 +27,11 @@ pub struct OpenAIResponsesProvider {
     pub supportsVideo: bool,
     pub enableToolCall: bool,
     pub customHeaders: Vec<(String, String)>,
+    state: Arc<Mutex<OpenAIResponsesProviderState>>,
+}
+
+#[derive(Debug, Default)]
+struct OpenAIResponsesProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
@@ -68,10 +79,15 @@ impl OpenAIResponsesProvider {
             supportsVideo,
             enableToolCall,
             customHeaders,
-            inputTokenCount: 0,
-            cachedInputTokenCount: 0,
-            outputTokenCount: 0,
-            cancelled: false,
+            state: Arc::new(Mutex::new(OpenAIResponsesProviderState::default())),
+        }
+    }
+
+    fn apply_usage_counts(&self, usage: &UsageCounts) {
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = usage.actualInputTokens;
+            state.cachedInputTokenCount = usage.cachedInputTokens;
+            state.outputTokenCount = usage.outputTokens;
         }
     }
 
@@ -607,15 +623,24 @@ impl OpenAIResponsesPayloadAdapter {
 #[async_trait]
 impl AIService for OpenAIResponsesProvider {
     fn input_token_count(&self) -> i32 {
-        self.inputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.inputTokenCount)
+            .unwrap_or(0)
     }
 
     fn cached_input_token_count(&self) -> i32 {
-        self.cachedInputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.cachedInputTokenCount)
+            .unwrap_or(0)
     }
 
     fn output_token_count(&self) -> i32 {
-        self.outputTokenCount
+        self.state
+            .lock()
+            .map(|state| state.outputTokenCount)
+            .unwrap_or(0)
     }
 
     fn provider_model(&self) -> String {
@@ -623,20 +648,56 @@ impl AIService for OpenAIResponsesProvider {
     }
 
     fn reset_token_counts(&mut self) {
-        self.inputTokenCount = 0;
-        self.cachedInputTokenCount = 0;
-        self.outputTokenCount = 0;
+        if let Ok(mut state) = self.state.lock() {
+            state.inputTokenCount = 0;
+            state.cachedInputTokenCount = 0;
+            state.outputTokenCount = 0;
+        }
     }
 
     fn cancel_streaming(&mut self) {
-        self.cancelled = true;
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = true;
+        }
     }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
-        self.cancelled = false;
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = false;
+        }
         self.reset_token_counts();
-        let stream = request.stream;
         let requestBody = self.create_request_body(&request)?;
+        if request.stream {
+            let mut parent = OpenAIProvider::new(
+                self.responsesApiEndpoint.clone(),
+                self.api_key.clone(),
+                self.modelName.clone(),
+                self.responsesProviderType.clone(),
+                self.customHeaders.clone(),
+                self.enableToolCall,
+            );
+            let mut parent_stream = parent
+                .send_prepared_request(request, requestBody)
+                .await?;
+            let event_channel = parent_stream.event_channel().clone();
+            let mut provider = self.clone();
+            let cold_stream = FnStream::new(move |emit| {
+                parent_stream.collect(&mut |content| {
+                    emit(content);
+                });
+                provider.apply_usage_counts(&UsageCounts {
+                    totalInputTokens: parent.input_token_count() + parent.cached_input_token_count(),
+                    actualInputTokens: parent.input_token_count(),
+                    cachedInputTokens: parent.cached_input_token_count(),
+                    outputTokens: parent.output_token_count(),
+                });
+            });
+            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+        }
+
         let response = reqwest::Client::new()
             .post(&self.responsesApiEndpoint)
             .headers(self.headers()?)
@@ -654,27 +715,13 @@ impl AIService for OpenAIResponsesProvider {
             return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
         }
 
-        if stream {
-            let mut parent = OpenAIProvider::new(
-                self.responsesApiEndpoint.clone(),
-                self.api_key.clone(),
-                self.modelName.clone(),
-                self.responsesProviderType.clone(),
-                self.customHeaders.clone(),
-                self.enableToolCall,
-            );
-            return parent.process_streaming_response(response).await;
-        }
-
         let jsonResponse: Value = response
             .json()
             .await
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let parsed = OpenAIResponsesPayloadAdapter::parse_non_streaming_response(&jsonResponse);
         if let Some(usage) = parsed.usage {
-            self.inputTokenCount = usage.actualInputTokens;
-            self.cachedInputTokenCount = usage.cachedInputTokens;
-            self.outputTokenCount = usage.outputTokens;
+            self.apply_usage_counts(&usage);
         }
 
         let mut chunks = Vec::new();

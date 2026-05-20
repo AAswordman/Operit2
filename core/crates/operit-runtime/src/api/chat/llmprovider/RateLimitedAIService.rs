@@ -3,8 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::AIService::{
-    AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    AIService, AiServiceError, SendMessageRequest,
 };
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::api::chat::llmprovider::RequestConcurrencyRegistry::RequestSemaphore;
 use crate::api::chat::llmprovider::SlidingWindowRateLimiter::SlidingWindowRateLimiter;
 use crate::core::chat::hooks::PromptTurn::PromptTurn;
@@ -64,7 +65,7 @@ impl AIService for RateLimitedAIService {
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
-    ) -> Result<AiResponseStream, AiServiceError> {
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         if let Some(rateLimiter) = &self.rateLimiter {
             rateLimiter.acquire();
         }

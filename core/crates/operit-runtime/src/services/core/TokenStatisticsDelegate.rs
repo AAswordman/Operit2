@@ -73,7 +73,7 @@ impl TokenStatisticsDelegate {
     #[allow(non_snake_case)]
     pub fn bindChatService(&mut self, chatId: Option<String>, service: &EnhancedAIService) {
         let key = Self::chatKey(chatId.as_ref());
-        self.handlePerRequestCounts(key.clone(), service.per_request_token_counts);
+        self.handlePerRequestCounts(key.clone(), service.getPerRequestTokenCounts());
         self.handleRequestWindowEstimate(key);
     }
 

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::api::chat::llmprovider::AIService::{
-    AiResponseStream, AiServiceError, SendMessageRequest,
+    collect_stream_chunks, AiServiceError, SendMessageRequest,
 };
 use crate::core::chat::hooks::SummaryHookRegistry::{
     SummaryHookContext, SummaryHookRegistry,
@@ -79,6 +79,7 @@ pub trait SystemPromptComposer {
     ) -> String;
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct ConversationService;
 
 impl ConversationService {
@@ -447,10 +448,7 @@ impl ConversationService {
             )
         };
 
-        let AiResponseStream {
-            chunks,
-            token_counts,
-        } = summaryService
+        let summaryStream = summaryService
             .send_message(SendMessageRequest {
                 chat_history: preparedHistory.clone(),
                 model_parameters: modelParameters,
@@ -459,11 +457,12 @@ impl ConversationService {
                 available_tools: Vec::new(),
                 preserve_think_in_history: false,
                 enable_retry: true,
-                on_stream_chunk: None,
                 on_tool_invocation: None,
             })
             .await?;
-        let mut summaryContent = removeThinkingContent(&chunks.join("").trim().to_string());
+        let summaryChunks = collect_stream_chunks(summaryStream);
+        let mut summaryContent =
+            removeThinkingContent(&summaryChunks.join("").trim().to_string());
 
         let afterGenerateContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(
             SummaryHookContext {
@@ -482,12 +481,18 @@ impl ConversationService {
                         "preparedMessageCount".to_string(),
                         json!(preparedHistory.len()),
                     );
-                    metadata.insert("inputTokens".to_string(), json!(token_counts.input));
+                    metadata.insert(
+                        "inputTokens".to_string(),
+                        json!(summaryService.input_token_count()),
+                    );
                     metadata.insert(
                         "cachedInputTokens".to_string(),
-                        json!(token_counts.cached_input),
+                        json!(summaryService.cached_input_token_count()),
                     );
-                    metadata.insert("outputTokens".to_string(), json!(token_counts.output));
+                    metadata.insert(
+                        "outputTokens".to_string(),
+                        json!(summaryService.output_token_count()),
+                    );
                     metadata
                 },
             },

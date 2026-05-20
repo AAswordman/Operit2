@@ -1,5 +1,9 @@
 mod app;
+mod commands;
 mod helpers;
+mod input;
+mod markdown;
+mod render;
 
 use app::OperitTui;
 

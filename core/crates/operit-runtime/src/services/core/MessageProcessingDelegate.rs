@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageExecution};
+use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest,
@@ -18,9 +19,12 @@ use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow};
-use crate::util::stream::HotStream::{mutable_shared_stream, MutableSharedStream, MutableSharedStreamImpl};
-use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use crate::util::stream::HotStream::SharedStream;
+use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
+use crate::util::stream::Stream::Stream;
+use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 
 pub const STREAM_SCROLL_THROTTLE_MS: i64 = 200;
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
@@ -40,7 +44,7 @@ impl TextFieldValue {
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub sendJob: Option<String>,
-    pub responseStream: Option<MutableSharedStreamImpl<String>>,
+    pub responseStream: Option<SharedAiResponseStream>,
     pub streamCollectionJob: Option<String>,
     pub stateCollectionJob: Option<String>,
     pub currentTurnOptions: ChatTurnOptions,
@@ -98,8 +102,9 @@ pub struct BuildUserMessageContentForGroupOrchestrationRequest {
 
 pub struct SendUserMessageProcessingRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
+    pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
     pub chatId: String,
-    pub messageContent: String,
+    pub messageText: String,
     pub chatHistory: Vec<ChatMessage>,
     pub workspacePath: Option<String>,
     pub workspaceEnv: Option<String>,
@@ -120,18 +125,20 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub isGroupOrchestrationTurn: bool,
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderNameOverride: Option<String>,
+    pub suppressUserMessageInHistory: bool,
+    pub isAutoContinuation: bool,
     pub turnOptions: ChatTurnOptions,
 }
 
 #[derive(Clone, Debug)]
 pub struct SendUserMessageProcessingResult {
     pub aiMessage: ChatMessage,
-    pub execution: SendMessageExecution,
     pub nextWindowSize: Option<i32>,
 }
 
 pub struct RegenerateAiMessageVariantRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
+    pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
     pub chatId: String,
     pub targetMessageTimestamp: i64,
     pub requestMessageContent: String,
@@ -212,19 +219,19 @@ impl MessageProcessingDelegate {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
             userMessage: self.userMessage.clone(),
-            userMessageFlow: mutableStateFlow(self.userMessage.clone()),
+            userMessageFlow: self.userMessageFlow.clone(),
             isLoading: self.isLoading,
-            isLoadingFlow: mutableStateFlow(self.isLoading),
+            isLoadingFlow: self.isLoadingFlow.clone(),
             activeStreamingChatIds: self.activeStreamingChatIds.clone(),
-            activeStreamingChatIdsFlow: mutableStateFlow(self.activeStreamingChatIds.clone()),
+            activeStreamingChatIdsFlow: self.activeStreamingChatIdsFlow.clone(),
             inputProcessingStateByChatId: self.inputProcessingStateByChatId.clone(),
-            inputProcessingStateByChatIdFlow: mutableStateFlow(self.inputProcessingStateByChatId.clone()),
+            inputProcessingStateByChatIdFlow: self.inputProcessingStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
             turnCompleteCounterByChatId: self.turnCompleteCounterByChatId.clone(),
-            turnCompleteCounterByChatIdFlow: mutableStateFlow(self.turnCompleteCounterByChatId.clone()),
+            turnCompleteCounterByChatIdFlow: self.turnCompleteCounterByChatIdFlow.clone(),
             currentTurnToolInvocationCountByChatId: self.currentTurnToolInvocationCountByChatId.clone(),
-            currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(self.currentTurnToolInvocationCountByChatId.clone()),
+            currentTurnToolInvocationCountByChatIdFlow: self.currentTurnToolInvocationCountByChatIdFlow.clone(),
             chatRuntimes: self.chatRuntimes.clone(),
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
@@ -392,7 +399,7 @@ impl MessageProcessingDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn getResponseStream(&self, chatId: String) -> Option<MutableSharedStreamImpl<String>> {
+    pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
         self.chatRuntimes
             .get(&Self::chatKey(Some(chatId)))
             .and_then(|runtime| runtime.responseStream.clone())
@@ -400,7 +407,29 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn resolveFinalContent(aiMessage: ChatMessage) -> String {
-        aiMessage.content
+        let replayChunks = aiMessage
+            .contentStream
+            .as_ref()
+            .map(|stream| stream.replay_cache());
+        let eventCarrier = aiMessage
+            .contentStream
+            .as_ref()
+            .map(|stream| stream as &dyn TextStreamEventCarrier);
+
+        if eventCarrier
+            .map(|carrier| !carrier.event_channel().replay_cache().is_empty())
+            .unwrap_or(false)
+        {
+            aiMessage.content
+        } else if replayChunks
+            .as_ref()
+            .map(|chunks| !chunks.is_empty())
+            .unwrap_or(false)
+        {
+            replayChunks.unwrap_or_default().join("")
+        } else {
+            aiMessage.content
+        }
     }
 
     #[allow(non_snake_case)]
@@ -477,32 +506,32 @@ impl MessageProcessingDelegate {
         self.userMessageFlow.set_value(self.userMessage.clone());
     }
 
-    pub fn userMessageFlow(&self) -> MutableStateFlow<TextFieldValue> {
-        self.userMessageFlow.clone()
+    pub fn userMessageFlow(&self) -> StateFlow<TextFieldValue> {
+        self.userMessageFlow.asStateFlow()
     }
 
-    pub fn isLoadingFlow(&self) -> MutableStateFlow<bool> {
-        self.isLoadingFlow.clone()
+    pub fn isLoadingFlow(&self) -> StateFlow<bool> {
+        self.isLoadingFlow.asStateFlow()
     }
 
-    pub fn activeStreamingChatIdsFlow(&self) -> MutableStateFlow<HashSet<String>> {
-        self.activeStreamingChatIdsFlow.clone()
+    pub fn activeStreamingChatIdsFlow(&self) -> StateFlow<HashSet<String>> {
+        self.activeStreamingChatIdsFlow.asStateFlow()
     }
 
     pub fn inputProcessingStateByChatIdFlow(
         &self,
-    ) -> MutableStateFlow<HashMap<String, InputProcessingState>> {
-        self.inputProcessingStateByChatIdFlow.clone()
+    ) -> StateFlow<HashMap<String, InputProcessingState>> {
+        self.inputProcessingStateByChatIdFlow.asStateFlow()
     }
 
-    pub fn turnCompleteCounterByChatIdFlow(&self) -> MutableStateFlow<HashMap<String, i64>> {
-        self.turnCompleteCounterByChatIdFlow.clone()
+    pub fn turnCompleteCounterByChatIdFlow(&self) -> StateFlow<HashMap<String, i64>> {
+        self.turnCompleteCounterByChatIdFlow.asStateFlow()
     }
 
     pub fn currentTurnToolInvocationCountByChatIdFlow(
         &self,
-    ) -> MutableStateFlow<HashMap<String, i32>> {
-        self.currentTurnToolInvocationCountByChatIdFlow.clone()
+    ) -> StateFlow<HashMap<String, i32>> {
+        self.currentTurnToolInvocationCountByChatIdFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
@@ -553,24 +582,57 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub async fn sendUserMessage(
         &mut self,
-        request: SendUserMessageProcessingRequest<'_>,
+        mut request: SendUserMessageProcessingRequest<'_>,
     ) -> Result<SendUserMessageProcessingResult, crate::api::chat::llmprovider::AIService::AiServiceError> {
         let chatId = request.chatId.clone();
+        let originalMessageText = request.messageText.trim().to_string();
+        let finalMessageContent = self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
+            messageText: originalMessageText.clone(),
+            proxySenderNameOverride: request.proxySenderNameOverride.clone(),
+            attachments: request.attachments.clone(),
+            workspacePath: request.workspacePath.clone(),
+            workspaceEnv: request.workspaceEnv.clone(),
+            replyToMessage: request.replyToMessage.clone(),
+            chatId: chatId.clone(),
+            roleCardId: request.roleCardId.clone(),
+            chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
+        })?;
+        let shouldAddUserMessageToChat = request.turnOptions.persistTurn
+            && !request.suppressUserMessageInHistory
+            && !(request.isAutoContinuation && originalMessageText.is_empty() && request.attachments.is_empty())
+            && !(request.isGroupOrchestrationTurn && originalMessageText.is_empty() && request.attachments.is_empty());
+        let mut userMessageAdded = false;
+        let mut userMessage = ChatMessage {
+            sender: "user".to_string(),
+            content: finalMessageContent.clone(),
+            roleName: "user".to_string(),
+            displayMode: if request.turnOptions.hideUserMessage {
+                ChatMessageDisplayMode::HIDDEN_PLACEHOLDER
+            } else {
+                ChatMessageDisplayMode::NORMAL
+            },
+            ..ChatMessage::new("user".to_string())
+        };
+        if shouldAddUserMessageToChat {
+            request
+                .chatHistoryDelegate
+                .addMessageToChat(userMessage.clone(), Some(chatId.clone()));
+            userMessageAdded = true;
+        }
         self.resetCurrentTurnToolInvocationCount(chatId.clone());
         {
-            let responseStream = mutable_shared_stream(usize::MAX);
             let runtime = self.runtimeFor(Some(chatId.clone()));
             runtime.currentTurnOptions = request.turnOptions.clone();
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
             runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
             runtime.firstResponseElapsed = None;
             runtime.isLoading = true;
-            runtime.responseStream = Some(responseStream);
+            runtime.responseStream = None;
         }
         self.setInputProcessingStateForChat(
             chatId.clone(),
-            InputProcessingState::Connecting {
-                message: String::new(),
+            InputProcessingState::Processing {
+                message: "message_processing".to_string(),
             },
         );
         self.updateGlobalLoadingState();
@@ -583,22 +645,15 @@ impl MessageProcessingDelegate {
         let currentRoleName = characterName.clone().unwrap_or_else(|| "Operit".to_string());
         let requestMessageContent =
             if request.isGroupOrchestrationTurn
-                && !request.messageContent.trim_start().is_empty()
-                && !request.messageContent.trim_start().starts_with("[From user]")
+                && !finalMessageContent.trim_start().is_empty()
+                && !finalMessageContent.trim_start().starts_with("[From user]")
             {
-                format!("[From user]\n{}", request.messageContent)
+                format!("[From user]\n{}", finalMessageContent)
             } else {
-                request.messageContent
+                finalMessageContent
             };
 
-        let responseStream = self
-            .runtimeFor(Some(chatId.clone()))
-            .responseStream
-            .clone()
-            .expect("response stream must exist before send");
-        let firstResponseElapsed = Arc::new(Mutex::new(None::<i64>));
-        let firstResponseElapsedForChunk = firstResponseElapsed.clone();
-        let execution = AIMessageManager::sendMessage(AIMessageSendRequest {
+        let completionStream = AIMessageManager::sendMessage(AIMessageSendRequest {
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
             messageContent: requestMessageContent,
@@ -624,55 +679,121 @@ impl MessageProcessingDelegate {
             preferenceProfileIdOverride: request.preferenceProfileIdOverride,
             disableWarning: request.turnOptions.disableWarning,
             callbacks: None,
-            onStreamChunk: Some(Arc::new(move |chunk: String| {
-                responseStream.emit(chunk);
-                if let Ok(mut guard) = firstResponseElapsedForChunk.lock() {
-                    if guard.is_none() {
-                        *guard = Some(messageTimingNow().startedAtMs as i64);
-                    }
-                }
-            })),
             onToolInvocation: None,
         })
         .await?;
-        let toolInvocationCount =
-            ChatMarkupRegex::tool_call_matches(&execution.responseChunks.join("")).len() as i32;
-        if toolInvocationCount > 0 {
-            self.currentTurnToolInvocationCountByChatId
-                .insert(chatId.clone(), toolInvocationCount);
+        let sharedResponseStream = completionStream.clone();
+        self.runtimeFor(Some(chatId.clone())).responseStream = Some(sharedResponseStream.clone());
+        let initialProviderModel = request.enhancedAiService.getLastProviderModel().unwrap_or_default();
+        let (initialProvider, initialModelName) = split_provider_model(&initialProviderModel);
+        let mut aiMessage = ChatMessage {
+            sender: "ai".to_string(),
+            content: String::new(),
+            timestamp: ChatMessageTimestampAllocator::next(),
+            roleName: currentRoleName.clone(),
+            provider: initialProvider,
+            modelName: initialModelName,
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedInputTokens: 0,
+            displayMode: ChatMessageDisplayMode::NORMAL,
+            contentStream: Some(completionStream.clone()),
+            ..ChatMessage::new("ai".to_string())
+        };
+        let workerChatId = chatId.clone();
+        let workerTurnOptions = request.turnOptions.clone();
+        let mut workerAiMessage = aiMessage.clone();
+        let mut workerResponseStream = sharedResponseStream.clone();
+        let workerEventCollector = sharedResponseStream.event_channel().clone();
+        let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
+        let workerEventTracker = workerRevisionTracker.clone();
+        let mut workerService = request.enhancedAiService.clone();
+        let mut workerChatHistoryDelegate = request.chatHistoryDelegate.clone_for_core();
+        let mut workerMessageProcessingDelegate = self.clone_for_core();
+        let workerRequestSentAt = self.runtimeFor(Some(chatId.clone())).requestSentAt;
+        let workerRequestStartElapsed = self.runtimeFor(Some(chatId.clone())).requestStartElapsed;
+        if userMessageAdded {
+            userMessage.sentAt = workerRequestSentAt;
+            request
+                .chatHistoryDelegate
+                .addMessageToChat(userMessage, Some(chatId.clone()));
         }
-        self.runtimeFor(Some(chatId.clone())).firstResponseElapsed =
-            firstResponseElapsed.lock().ok().and_then(|guard| *guard);
-
-        let (provider, modelName) = split_provider_model(&execution.providerModel);
-        let completedElapsed = messageTimingNow().startedAtMs as i64;
-        let runtime = self.runtimeFor(Some(chatId.clone())).clone();
-        let finalContent = responseStream.replay_cache().join("");
-        let aiMessage = Self::withTurnMetrics(
-            ChatMessage {
-                sender: "ai".to_string(),
-                content: finalContent,
-                timestamp: ChatMessageTimestampAllocator::next(),
-                roleName: currentRoleName,
-                provider,
-                modelName,
-                inputTokens: execution.tokenSnapshot.inputTokens,
-                outputTokens: execution.tokenSnapshot.outputTokens,
-                cachedInputTokens: execution.tokenSnapshot.cachedInputTokens,
-                displayMode: ChatMessageDisplayMode::NORMAL,
-                contentStream: Some(responseStream.clone()),
-                ..ChatMessage::new("ai".to_string())
-            },
-            runtime.requestSentAt,
-            runtime.requestStartElapsed,
-            runtime.firstResponseElapsed,
-            completedElapsed,
-        );
-
-        self.finalizeMessageAndNotify(chatId.clone(), aiMessage.clone(), request.turnOptions.clone());
+        if workerTurnOptions.persistTurn {
+            request
+                .chatHistoryDelegate
+                .addMessageToChat(aiMessage.clone(), Some(chatId.clone()));
+        }
+        std::thread::spawn(move || {
+            let eventWorker = std::thread::spawn(move || {
+                let mut events = workerEventCollector;
+                events.collect(&mut |event| match event.event_type {
+                    TextStreamEventType::Savepoint => {
+                        if let Ok(mut tracker) = workerEventTracker.lock() {
+                            tracker.savepoint(&event.id);
+                        }
+                    }
+                    TextStreamEventType::Rollback => {
+                        if let Ok(mut tracker) = workerEventTracker.lock() {
+                            let _ = tracker.rollback(&event.id);
+                        }
+                    }
+                });
+            });
+            let mut firstResponseElapsed = None::<i64>;
+            workerResponseStream.collect(&mut |chunk| {
+                if firstResponseElapsed.is_none() {
+                    firstResponseElapsed = Some(messageTimingNow().startedAtMs as i64);
+                }
+                let content = if let Ok(mut tracker) = workerRevisionTracker.lock() {
+                    tracker.append(&chunk)
+                } else {
+                    workerAiMessage.content.clone()
+                };
+                workerAiMessage.content = content;
+            });
+            let _ = eventWorker.join();
+            let finalContent = workerRevisionTracker
+                .lock()
+                .map(|tracker| tracker.current_content())
+                .unwrap_or_else(|_| workerAiMessage.content.clone());
+            let providerModel = workerService.getLastProviderModel().unwrap_or_default();
+            let (provider, modelName) = split_provider_model(&providerModel);
+            let tokenSnapshot = workerService
+                .getLastTurnTokenSnapshot()
+                .unwrap_or(crate::api::chat::EnhancedAIService::TurnTokenSnapshot {
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cachedInputTokens: 0,
+                });
+            let completedElapsed = messageTimingNow().startedAtMs as i64;
+            workerAiMessage.provider = provider;
+            workerAiMessage.modelName = modelName;
+            workerAiMessage.inputTokens = tokenSnapshot.inputTokens;
+            workerAiMessage.outputTokens = tokenSnapshot.outputTokens;
+            workerAiMessage.cachedInputTokens = tokenSnapshot.cachedInputTokens;
+            workerAiMessage.content = finalContent;
+            workerAiMessage.contentStream = None;
+            let finalMessage = MessageProcessingDelegate::withTurnMetrics(
+                ChatMessage {
+                    completedAt: completedElapsed,
+                    ..workerAiMessage
+                },
+                workerRequestSentAt,
+                workerRequestStartElapsed,
+                firstResponseElapsed,
+                completedElapsed,
+            );
+            if workerTurnOptions.persistTurn {
+                workerChatHistoryDelegate.addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
+            }
+            workerMessageProcessingDelegate.finalizeMessageAndNotify(
+                workerChatId,
+                finalMessage,
+                workerTurnOptions,
+            );
+        });
         Ok(SendUserMessageProcessingResult {
             aiMessage,
-            execution,
             nextWindowSize: None,
         })
     }
@@ -686,8 +807,9 @@ impl MessageProcessingDelegate {
         let result = self
             .sendUserMessage(SendUserMessageProcessingRequest {
                 enhancedAiService: request.enhancedAiService,
+                chatHistoryDelegate: request.chatHistoryDelegate,
                 chatId: request.chatId,
-                messageContent: request.requestMessageContent,
+                messageText: request.requestMessageContent,
                 chatHistory: request.requestHistory,
                 workspacePath: request.workspacePath,
                 workspaceEnv: None,
@@ -708,6 +830,8 @@ impl MessageProcessingDelegate {
                 isGroupOrchestrationTurn: false,
                 groupParticipantNamesText: None,
                 proxySenderNameOverride: None,
+                suppressUserMessageInHistory: false,
+                isAutoContinuation: false,
                 turnOptions: ChatTurnOptions::default(),
             })
             .await?;

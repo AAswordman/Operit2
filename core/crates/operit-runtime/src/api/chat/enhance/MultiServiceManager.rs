@@ -132,6 +132,45 @@ impl MultiServiceManager {
         self.getServiceForFunction(FunctionType::CHAT)
     }
 
+    pub fn createOwnedServiceBundleForFunction(
+        &mut self,
+        functionType: FunctionType,
+    ) -> Result<(ModelConfigData, Vec<ModelParameter<Value>>, Box<dyn AIService>), AiServiceError> {
+        self.ensureInitialized()?;
+        let configMapping = self
+            .functionalConfigManager
+            .getConfigMappingForFunction(functionType.clone())
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let config = self
+            .modelConfigManager
+            .getModelConfigFlow(&configMapping.configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let modelParameters = self
+            .modelConfigManager
+            .getModelParametersForConfig(&configMapping.configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let service = self.createServiceFromConfig(config.clone(), configMapping.modelIndex)?;
+        Ok((config, modelParameters, service))
+    }
+
+    pub fn createOwnedServiceBundleForConfig(
+        &mut self,
+        configId: String,
+        modelIndex: i32,
+    ) -> Result<(ModelConfigData, Vec<ModelParameter<Value>>, Box<dyn AIService>), AiServiceError> {
+        self.ensureInitialized()?;
+        let config = self
+            .modelConfigManager
+            .getModelConfigFlow(&configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let modelParameters = self
+            .modelConfigManager
+            .getModelParametersForConfig(&configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let service = self.createServiceFromConfig(config.clone(), modelIndex)?;
+        Ok((config, modelParameters, service))
+    }
+
     pub fn cancelAllStreaming(&mut self) {
         for service in self.serviceInstances.values_mut() {
             service.cancel_streaming();

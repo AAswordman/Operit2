@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -106,9 +106,13 @@ impl<T> Flow<T> {
 
     pub fn stateIn(&self, _scope: CoroutineScope, _started: SharingStarted, initialValue: T) -> StateFlow<T>
     where
-        T: Clone + Send + 'static,
+        T: Clone + PartialEq + Send + 'static,
     {
-        StateFlow::new(self.clone(), initialValue)
+        let stateFlow = StateFlow::new(initialValue);
+        if let Ok(value) = self.first() {
+            stateFlow.set_value(value);
+        }
+        stateFlow
     }
 }
 
@@ -138,36 +142,39 @@ pub enum SharingStarted {
 
 #[derive(Clone)]
 pub struct StateFlow<T> {
-    source: Flow<T>,
-    value: Arc<Mutex<T>>,
+    inner: Arc<StateFlowInner<T>>,
+}
+
+struct StateFlowInner<T> {
+    value: Mutex<T>,
+    version: Mutex<u64>,
+    changed: Condvar,
 }
 
 impl<T> StateFlow<T>
 where
-    T: Clone,
+    T: Clone + PartialEq,
 {
-    pub fn new(source: Flow<T>, initialValue: T) -> Self {
-        let value = source.first().unwrap_or(initialValue);
+    pub fn new(initialValue: T) -> Self {
         Self {
-            source,
-            value: Arc::new(Mutex::new(value)),
+            inner: Arc::new(StateFlowInner {
+                value: Mutex::new(initialValue),
+                version: Mutex::new(0),
+                changed: Condvar::new(),
+            }),
         }
     }
 
     pub fn value(&self) -> T {
-        self.value
+        self.inner
+            .value
             .lock()
             .expect("StateFlow value mutex must not be poisoned")
             .clone()
     }
 
     pub fn first(&self) -> FlowResult<T> {
-        let value = self.source.first()?;
-        *self
-            .value
-            .lock()
-            .expect("StateFlow value mutex must not be poisoned") = value.clone();
-        Ok(value)
+        Ok(self.value())
     }
 
     pub fn firstWhere<P>(&self, predicate: P) -> FlowResult<Option<T>>
@@ -186,15 +193,75 @@ where
     where
         F: Fn(T),
     {
-        let value = self.first()?;
-        collector(value);
-        Ok(())
+        collector(self.value());
+        let mut observedVersion = *self
+            .inner
+            .version
+            .lock()
+            .expect("StateFlow version mutex must not be poisoned");
+        loop {
+            let versionGuard = self
+                .inner
+                .version
+                .lock()
+                .expect("StateFlow version mutex must not be poisoned");
+            let versionGuard = self
+                .inner
+                .changed
+                .wait_while(versionGuard, |version| *version == observedVersion)
+                .expect("StateFlow version mutex must not be poisoned");
+            observedVersion = *versionGuard;
+            drop(versionGuard);
+            collector(self.value());
+        }
+    }
+
+    pub fn set_value(&self, value: T) {
+        let mut guard = self
+            .inner
+            .value
+            .lock()
+            .expect("StateFlow value mutex must not be poisoned");
+        if *guard == value {
+            return;
+        }
+        *guard = value;
+        drop(guard);
+        let mut version = self
+            .inner
+            .version
+            .lock()
+            .expect("StateFlow version mutex must not be poisoned");
+        *version += 1;
+        self.inner.changed.notify_all();
+    }
+
+    pub fn compare_and_set(&self, expect: T, update: T) -> bool {
+        let mut guard = self
+            .inner
+            .value
+            .lock()
+            .expect("StateFlow value mutex must not be poisoned");
+        if *guard == expect {
+            *guard = update;
+            drop(guard);
+            let mut version = self
+                .inner
+                .version
+                .lock()
+                .expect("StateFlow version mutex must not be poisoned");
+            *version += 1;
+            self.inner.changed.notify_all();
+            true
+        } else {
+            false
+        }
     }
 }
 
 impl<T> FlowLike<T> for StateFlow<T>
 where
-    T: Clone,
+    T: Clone + PartialEq,
 {
     fn first(&self) -> FlowResult<T> {
         StateFlow::first(self)
@@ -210,7 +277,7 @@ where
 
 impl<T> StateFlowLike<T> for StateFlow<T>
 where
-    T: Clone,
+    T: Clone + PartialEq,
 {
     fn value(&self) -> T {
         StateFlow::value(self)
@@ -219,7 +286,7 @@ where
 
 #[derive(Clone)]
 pub struct MutableStateFlow<T> {
-    value: Arc<Mutex<T>>,
+    state: StateFlow<T>,
 }
 
 impl<T> MutableStateFlow<T>
@@ -228,15 +295,17 @@ where
 {
     pub fn new(initialValue: T) -> Self {
         Self {
-            value: Arc::new(Mutex::new(initialValue)),
+            state: StateFlow::new(initialValue),
         }
     }
 
+    #[allow(non_snake_case)]
+    pub fn asStateFlow(&self) -> StateFlow<T> {
+        self.state.clone()
+    }
+
     pub fn value(&self) -> T {
-        self.value
-            .lock()
-            .expect("MutableStateFlow value mutex must not be poisoned")
-            .clone()
+        self.state.value()
     }
 
     pub fn first(&self) -> FlowResult<T> {
@@ -247,28 +316,15 @@ where
     where
         F: Fn(T),
     {
-        collector(self.value());
-        Ok(())
+        self.state.collect(collector)
     }
 
     pub fn set_value(&self, value: T) {
-        *self
-            .value
-            .lock()
-            .expect("MutableStateFlow value mutex must not be poisoned") = value;
+        self.state.set_value(value);
     }
 
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
-        let mut guard = self
-            .value
-            .lock()
-            .expect("MutableStateFlow value mutex must not be poisoned");
-        if *guard == expect {
-            *guard = update;
-            true
-        } else {
-            false
-        }
+        self.state.compare_and_set(expect, update)
     }
 }
 

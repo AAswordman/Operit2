@@ -16,7 +16,7 @@ pub fn collection_as_stream<T>(values: impl IntoIterator<Item = T>) -> VecStream
     VecStream::new(values)
 }
 
-pub fn stream<T>(block: impl FnMut(&mut dyn FnMut(T)) + 'static) -> FnStream<T> {
+pub fn stream<T>(block: impl FnMut(&mut dyn FnMut(T)) + Send + 'static) -> FnStream<T> {
     FnStream::new(block)
 }
 

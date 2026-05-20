@@ -1,5 +1,4 @@
 use std::io::{self, Stdout};
-use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -8,62 +7,53 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::{Frame, Terminal};
-use tokio::runtime::Builder;
+use ratatui::Terminal;
 
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 
-use super::helpers::{
-    centered_rect, char_to_byte_index, render_message_lines, short_chat_label,
-    split_command_line, transcript_max_scroll, wrap_approx_lines,
-};
+use super::helpers::{short_chat_label, split_command_line};
 use crate::{
-    create_cli_application, current_shell_chat_id, ensure_chat_exists, parse_shell_args,
-    send_chat_message_with_application, ChatSendArgs, ChatSendResult, ShellArgs,
+    current_shell_chat_id, ensure_chat_exists, launch_chat_message_with_application,
+    parse_shell_args, ChatSendArgs, ShellArgs,
 };
 
 pub(super) struct OperitTui {
-    application: OperitApplication,
-    initial_shell_args: ShellArgs,
-    chats: Vec<ChatListItem>,
-    selected_chat_index: usize,
-    focus: FocusArea,
-    input: String,
-    input_cursor: usize,
-    queued_attachment_paths: Vec<String>,
-    status_message: String,
-    transcript_scroll: u16,
-    follow_transcript: bool,
-    ctrl_c_pending: bool,
-    pending_send: Option<thread::JoinHandle<Result<ChatSendResult, String>>>,
-    pending_preview: Option<PendingSendPreview>,
-    show_help: bool,
-    should_quit: bool,
+    pub(super) application: OperitApplication,
+    pub(super) initial_shell_args: ShellArgs,
+    pub(super) chats: Vec<ChatListItem>,
+    pub(super) selected_chat_index: usize,
+    pub(super) focus: FocusArea,
+    pub(super) input: String,
+    pub(super) input_cursor: usize,
+    pub(super) autocomplete_index: usize,
+    pub(super) queued_attachment_paths: Vec<String>,
+    pub(super) status_message: String,
+    pub(super) transcript_scroll: u16,
+    pub(super) transcript_viewport_height: u16,
+    pub(super) transcript_max_scroll: u16,
+    pub(super) follow_transcript: bool,
+    pub(super) show_chat_list: bool,
+    pub(super) ctrl_c_pending: bool,
+    pub(super) last_current_chat_loading: bool,
+    pub(super) awaiting_runtime_loading: bool,
+    pub(super) show_help: bool,
+    pub(super) should_quit: bool,
 }
 
 #[derive(Clone, Debug)]
-struct ChatListItem {
-    id: String,
-    title: String,
-    secondary: String,
+pub(super) struct ChatListItem {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) secondary: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FocusArea {
+pub(super) enum FocusArea {
     Chats,
     Input,
-}
-
-struct PendingSendPreview {
-    chat_id: String,
-    messages: Vec<ChatMessage>,
 }
 
 impl OperitTui {
@@ -72,13 +62,16 @@ impl OperitTui {
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
     ) -> Result<Self, String> {
-        let chats = load_chat_list()?;
+        let chats = {
+            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            load_chat_list_from_core(core)
+        };
         let selected_chat_index = chats
             .iter()
             .position(|item| item.id == initial_chat_id)
             .unwrap_or(0);
         let status_message = format!(
-            "chat={} | Tab switch focus | Enter send | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help",
+            "chat={} | F3 chats | Enter send | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help",
             short_chat_label(&initial_chat_id)
         );
         let _ = current_shell_chat_id(&mut application)?;
@@ -90,13 +83,17 @@ impl OperitTui {
             focus: FocusArea::Input,
             input: String::new(),
             input_cursor: 0,
+            autocomplete_index: 0,
             queued_attachment_paths: Vec::new(),
             status_message,
             transcript_scroll: 0,
+            transcript_viewport_height: 1,
+            transcript_max_scroll: 0,
             follow_transcript: true,
+            show_chat_list: false,
             ctrl_c_pending: false,
-            pending_send: None,
-            pending_preview: None,
+            last_current_chat_loading: false,
+            awaiting_runtime_loading: false,
             show_help: false,
             should_quit: false,
         })
@@ -120,7 +117,7 @@ impl OperitTui {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<(), String> {
         while !self.should_quit {
-            self.poll_pending_send().await?;
+            self.refresh_runtime_status();
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
@@ -132,234 +129,6 @@ impl OperitTui {
             }
         }
         Ok(())
-    }
-
-    async fn poll_pending_send(&mut self) -> Result<(), String> {
-        let finished = self
-            .pending_send
-            .as_ref()
-            .map(|handle| handle.is_finished())
-            .unwrap_or(false);
-        if !finished {
-            return Ok(());
-        }
-
-        let handle = self.pending_send.take().expect("pending send vanished");
-        let result = handle
-            .join()
-            .map_err(|_| "background send panicked".to_string())?;
-        let preview_chat_id = self.pending_preview.as_ref().map(|preview| preview.chat_id.clone());
-        self.pending_preview = None;
-
-        match result {
-            Ok(result) => {
-                let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-                core.switchChat(result.chatId.clone());
-                self.follow_transcript = true;
-                self.refresh_chats()?;
-                self.select_chat_by_id(&result.chatId);
-                self.status_message = format!(
-                    "reply ready | chat={} | provider={} | model={} | out={}",
-                    short_chat_label(&result.chatId),
-                    result.aiMessage.provider,
-                    result.aiMessage.modelName,
-                    result.aiMessage.outputTokens,
-                );
-            }
-            Err(error) => {
-                if let Some(chat_id) = preview_chat_id {
-                    let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-                    core.switchChat(chat_id);
-                }
-                self.follow_transcript = true;
-                self.status_message = error;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn render(&mut self, frame: &mut Frame) {
-        let root = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(1),
-            ])
-            .split(frame.area());
-
-        self.render_header(frame, root[0]);
-
-        let body = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(28), Constraint::Min(0)])
-            .split(root[1]);
-
-        self.render_chat_list(frame, body[0]);
-
-        let main = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(7)])
-            .split(body[1]);
-
-        self.render_transcript(frame, main[0]);
-        self.render_input(frame, main[1]);
-        self.render_footer(frame, root[2]);
-
-        if self.show_help {
-            self.render_help_modal(frame);
-        }
-    }
-
-    fn render_header(&mut self, frame: &mut Frame, area: Rect) {
-        let current_chat_id = self.current_chat_id().unwrap_or_default();
-        let focus_label = match self.focus {
-            FocusArea::Chats => "chats",
-            FocusArea::Input => "input",
-        };
-        let attachment_count = self.queued_attachment_paths.len();
-        let spans = Line::from(vec![
-            Span::styled(" Operit2 ", Style::default().fg(Color::Black).bg(Color::Cyan)),
-            Span::raw(" "),
-            Span::styled(
-                format!("chat={} ", short_chat_label(&current_chat_id)),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("focus={} ", focus_label)),
-            Span::raw(format!("attachments={} ", attachment_count)),
-        ]);
-        frame.render_widget(Paragraph::new(spans), area);
-    }
-
-    fn render_chat_list(&self, frame: &mut Frame, area: Rect) {
-        let items = if self.chats.is_empty() {
-            vec![ListItem::new(Line::from("no chats"))]
-        } else {
-            self.chats
-                .iter()
-                .map(|item| {
-                    ListItem::new(vec![
-                        Line::from(Span::styled(
-                            item.title.clone(),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )),
-                        Line::from(Span::styled(
-                            item.secondary.clone(),
-                            Style::default().fg(Color::DarkGray),
-                        )),
-                    ])
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let border_style = if self.focus == FocusArea::Chats {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
-        let list = List::new(items)
-            .block(Block::default().title("Chats").borders(Borders::ALL).border_style(border_style))
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(">> ");
-        let mut state = ListState::default();
-        if !self.chats.is_empty() {
-            state.select(Some(self.selected_chat_index.min(self.chats.len().saturating_sub(1))));
-        }
-        frame.render_stateful_widget(list, area, &mut state);
-    }
-
-    fn render_transcript(&mut self, frame: &mut Frame, area: Rect) {
-        let messages = self.current_messages();
-        let transcript_lines = render_message_lines(&messages);
-        let max_scroll = transcript_max_scroll(&transcript_lines, area);
-        if self.follow_transcript {
-            self.transcript_scroll = max_scroll;
-        } else if self.transcript_scroll > max_scroll {
-            self.transcript_scroll = max_scroll;
-        }
-
-        let paragraph = Paragraph::new(Text::from(transcript_lines))
-            .block(Block::default().title("Conversation").borders(Borders::ALL))
-            .wrap(Wrap { trim: false })
-            .scroll((self.transcript_scroll, 0));
-        frame.render_widget(paragraph, area);
-    }
-
-    fn render_input(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus == FocusArea::Input {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
-        let input_block = Block::default()
-            .title("Input")
-            .borders(Borders::ALL)
-            .border_style(border_style);
-        let inner = input_block.inner(area);
-        let visible_text = self.input_view_text(inner.width.saturating_sub(1) as usize, inner.height as usize);
-        let input = Paragraph::new(visible_text)
-            .block(input_block)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(input, area);
-
-        if self.focus == FocusArea::Input && !self.show_help {
-            let (cursor_x, cursor_y) = self.cursor_position(inner.width.saturating_sub(1) as usize, inner.height as usize);
-            frame.set_cursor_position((inner.x + cursor_x as u16, inner.y + cursor_y as u16));
-        }
-    }
-
-    fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let text = if self.status_message.is_empty() {
-            "Ready".to_string()
-        } else {
-            self.status_message.clone()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!(" {text}"),
-                Style::default().fg(Color::DarkGray),
-            ))),
-            area,
-        );
-    }
-
-    fn render_help_modal(&self, frame: &mut Frame) {
-        let popup = centered_rect(72, 60, frame.area());
-        frame.render_widget(Clear, popup);
-        let lines = vec![
-            Line::from(Span::styled(
-                "Operit2 TUI",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from("Tab: switch focus between chat list and input"),
-            Line::from("Enter: send message / activate selected chat"),
-            Line::from("Ctrl+J: insert newline in input"),
-            Line::from("Ctrl+N: create new chat"),
-            Line::from("Ctrl+C: press twice to quit"),
-            Line::from("Ctrl+Q: quit"),
-            Line::from("PageUp/PageDown: scroll conversation"),
-            Line::from("Esc: close help / clear status"),
-            Line::from(""),
-            Line::from("Local commands:"),
-            Line::from("/help"),
-            Line::from("/new [--character <name>] [--group-card <id>] [--group <name>]"),
-            Line::from("/switch <chat-id>"),
-            Line::from("/attach <path>"),
-            Line::from("/attachments"),
-            Line::from("/clear-attachments"),
-            Line::from("/quit"),
-        ];
-        let help = Paragraph::new(Text::from(lines))
-            .block(Block::default().title("Help").borders(Borders::ALL))
-            .wrap(Wrap { trim: false });
-        frame.render_widget(help, popup);
     }
 
     async fn handle_key_event(&mut self, key: KeyEvent) -> Result<(), String> {
@@ -399,21 +168,45 @@ impl OperitTui {
                 return Ok(());
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
-                self.refresh_chats()?;
+                self.refresh_chats();
                 self.status_message = "chat list refreshed".to_string();
                 return Ok(());
             }
+            (KeyCode::F(3), _) => {
+                self.toggle_chat_list();
+                return Ok(());
+            }
             (KeyCode::PageUp, _) => {
-                self.follow_transcript = false;
-                self.transcript_scroll = self.transcript_scroll.saturating_sub(8);
+                self.scroll_transcript_page_up();
                 return Ok(());
             }
             (KeyCode::PageDown, _) => {
-                self.follow_transcript = false;
-                self.transcript_scroll = self.transcript_scroll.saturating_add(8);
+                self.scroll_transcript_page_down();
+                return Ok(());
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.scroll_transcript_half_page_up();
+                return Ok(());
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.scroll_transcript_half_page_down();
+                return Ok(());
+            }
+            (KeyCode::Home, KeyModifiers::CONTROL) => {
+                self.scroll_transcript_to_top();
+                return Ok(());
+            }
+            (KeyCode::End, KeyModifiers::CONTROL) => {
+                self.scroll_transcript_to_bottom();
                 return Ok(());
             }
             (KeyCode::Esc, _) => {
+                if self.show_chat_list && self.focus == FocusArea::Chats {
+                    self.show_chat_list = false;
+                    self.focus = FocusArea::Input;
+                    self.status_message = "chat list hidden".to_string();
+                    return Ok(());
+                }
                 self.status_message.clear();
                 self.focus = FocusArea::Input;
                 return Ok(());
@@ -422,7 +215,13 @@ impl OperitTui {
                 self.show_help = true;
                 return Ok(());
             }
+            (KeyCode::Tab, _)
+                if self.focus == FocusArea::Input && !self.command_suggestions().is_empty() => {}
             (KeyCode::Tab, _) => {
+                if !self.show_chat_list {
+                    self.focus = FocusArea::Input;
+                    return Ok(());
+                }
                 self.focus = match self.focus {
                     FocusArea::Chats => FocusArea::Input,
                     FocusArea::Input => FocusArea::Chats,
@@ -436,6 +235,54 @@ impl OperitTui {
             FocusArea::Chats => self.handle_chat_list_key(key),
             FocusArea::Input => self.handle_input_key(key).await,
         }
+    }
+
+    fn scroll_transcript_page_up(&mut self) {
+        self.scroll_transcript_up(self.transcript_page_step());
+    }
+
+    fn scroll_transcript_page_down(&mut self) {
+        self.scroll_transcript_down(self.transcript_page_step());
+    }
+
+    fn scroll_transcript_half_page_up(&mut self) {
+        self.scroll_transcript_up(self.transcript_half_page_step());
+    }
+
+    fn scroll_transcript_half_page_down(&mut self) {
+        self.scroll_transcript_down(self.transcript_half_page_step());
+    }
+
+    fn scroll_transcript_to_top(&mut self) {
+        self.follow_transcript = false;
+        self.transcript_scroll = 0;
+    }
+
+    fn scroll_transcript_to_bottom(&mut self) {
+        self.follow_transcript = true;
+        self.transcript_scroll = self.transcript_max_scroll;
+    }
+
+    fn scroll_transcript_up(&mut self, amount: u16) {
+        self.follow_transcript = false;
+        self.transcript_scroll = self.transcript_scroll.saturating_sub(amount);
+    }
+
+    fn scroll_transcript_down(&mut self, amount: u16) {
+        let next_scroll = self
+            .transcript_scroll
+            .saturating_add(amount)
+            .min(self.transcript_max_scroll);
+        self.transcript_scroll = next_scroll;
+        self.follow_transcript = next_scroll >= self.transcript_max_scroll;
+    }
+
+    fn transcript_page_step(&self) -> u16 {
+        self.transcript_viewport_height.max(1)
+    }
+
+    fn transcript_half_page_step(&self) -> u16 {
+        (self.transcript_viewport_height / 2).max(1)
     }
 
     fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
@@ -460,34 +307,8 @@ impl OperitTui {
         Ok(())
     }
 
-    async fn handle_input_key(&mut self, key: KeyEvent) -> Result<(), String> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Enter, KeyModifiers::NONE) => {
-                self.submit_input().await?;
-            }
-            (KeyCode::Char('j'), KeyModifiers::CONTROL) => self.insert_char('\n'),
-            (KeyCode::Backspace, _) => self.delete_before_cursor(),
-            (KeyCode::Delete, _) => self.delete_at_cursor(),
-            (KeyCode::Left, _) => self.move_cursor_left(),
-            (KeyCode::Right, _) => self.move_cursor_right(),
-            (KeyCode::Home, _) | (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
-                self.move_cursor_home()
-            }
-            (KeyCode::End, _) | (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-                self.move_cursor_end()
-            }
-            (KeyCode::Char(ch), modifiers)
-                if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT =>
-            {
-                self.insert_char(ch);
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    async fn submit_input(&mut self) -> Result<(), String> {
-        if self.pending_send.is_some() {
+    pub(super) async fn submit_input(&mut self) -> Result<(), String> {
+        if self.current_chat_is_loading() {
             self.status_message = "request already running".to_string();
             return Ok(());
         }
@@ -505,16 +326,6 @@ impl OperitTui {
 
         let chat_id = self.current_chat_id()?;
         let attachment_paths = self.queued_attachment_paths.clone();
-        let mut preview_messages = self.current_messages();
-        preview_messages.push(ChatMessage::new_with_content("user".to_string(), input.clone()));
-        preview_messages.push(ChatMessage::new_with_content(
-            "ai".to_string(),
-            "connecting...".to_string(),
-        ));
-        self.pending_preview = Some(PendingSendPreview {
-            chat_id: chat_id.clone(),
-            messages: preview_messages,
-        });
         self.follow_transcript = true;
         self.status_message = "connecting...".to_string();
         self.queued_attachment_paths.clear();
@@ -527,17 +338,15 @@ impl OperitTui {
             attachmentPaths: attachment_paths,
             replyToTimestamp: None,
         };
-        self.pending_send = Some(thread::spawn(move || {
-            let runtime = Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?;
-            let mut application = create_cli_application();
-            application.onCreate()?;
-            runtime.block_on(async move {
-                send_chat_message_with_application(&mut application, send_args).await
-            })
-        }));
+        let active_chat_id = launch_chat_message_with_application(&mut self.application, send_args)?;
+        self.refresh_chats();
+        self.select_chat_by_id(&active_chat_id);
+        self.last_current_chat_loading = true;
+        self.awaiting_runtime_loading = true;
+        self.status_message = format!(
+            "streaming | chat={}",
+            short_chat_label(&active_chat_id)
+        );
         Ok(())
     }
 
@@ -559,11 +368,7 @@ impl OperitTui {
                 self.create_new_chat(shell_args)?;
             }
             "switch" => {
-                let chat_id = parts
-                    .get(1)
-                    .ok_or_else(|| "usage: /switch <chat-id>".to_string())?
-                    .clone();
-                self.switch_to_chat(chat_id)?;
+                self.toggle_chat_list();
             }
             "attach" => {
                 let path = parts
@@ -595,7 +400,7 @@ impl OperitTui {
     }
 
     fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
-        if self.pending_send.is_some() {
+        if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
@@ -610,14 +415,25 @@ impl OperitTui {
         );
         let chat_id = current_shell_chat_id(&mut self.application)?;
         self.follow_transcript = true;
-        self.refresh_chats()?;
+        self.refresh_chats();
         self.select_chat_by_id(&chat_id);
         self.status_message = format!("new chat={chat_id}");
         Ok(())
     }
 
+    fn toggle_chat_list(&mut self) {
+        self.show_chat_list = !self.show_chat_list;
+        if self.show_chat_list {
+            self.focus = FocusArea::Chats;
+            self.status_message = "chat list shown | Up/Down select | Enter switch | Esc close".to_string();
+        } else {
+            self.focus = FocusArea::Input;
+            self.status_message = "chat list hidden".to_string();
+        }
+    }
+
     fn switch_to_chat(&mut self, chat_id: String) -> Result<(), String> {
-        if self.pending_send.is_some() {
+        if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
@@ -631,15 +447,17 @@ impl OperitTui {
         Ok(())
     }
 
-    fn refresh_chats(&mut self) -> Result<(), String> {
+    fn refresh_chats(&mut self) {
         let current_chat_id = self.current_chat_id().ok();
-        self.chats = load_chat_list()?;
+        self.chats = {
+            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            load_chat_list_from_core(core)
+        };
         if let Some(chat_id) = current_chat_id {
             self.select_chat_by_id(&chat_id);
         } else if self.selected_chat_index >= self.chats.len() {
             self.selected_chat_index = self.chats.len().saturating_sub(1);
         }
-        Ok(())
     }
 
     fn select_chat_by_id(&mut self, chat_id: &str) {
@@ -648,103 +466,98 @@ impl OperitTui {
         }
     }
 
-    fn current_chat_id(&mut self) -> Result<String, String> {
-        if let Some(preview) = self.pending_preview.as_ref() {
-            return Ok(preview.chat_id.clone());
-        }
-
+    pub(super) fn current_chat_id(&mut self) -> Result<String, String> {
         let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.currentChatId()
-            .clone()
+        core.currentChatIdFlow()
+            .value()
             .ok_or_else(|| "no active chat in tui".to_string())
     }
 
-    fn current_messages(&mut self) -> Vec<ChatMessage> {
-        if let Some(preview) = self.pending_preview.as_ref() {
-            return preview.messages.clone();
-        }
-
+    pub(super) fn current_messages(&mut self) -> Vec<ChatMessage> {
         let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.chatHistory().clone()
+        core.chatHistoryFlow().value()
     }
 
-    fn insert_char(&mut self, ch: char) {
-        let byte_index = char_to_byte_index(&self.input, self.input_cursor);
-        self.input.insert(byte_index, ch);
-        self.input_cursor += 1;
+    fn current_chat_is_loading(&mut self) -> bool {
+        self.last_current_chat_loading || self.raw_current_chat_is_loading()
     }
 
-    fn delete_before_cursor(&mut self) {
-        if self.input_cursor == 0 {
+    fn raw_current_chat_is_loading(&mut self) -> bool {
+        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+        core.currentChatIsLoading()
+    }
+
+    fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
+        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+        core.currentChatInputProcessingState()
+    }
+
+    fn refresh_runtime_status(&mut self) {
+        let chat_id = self.current_chat_id().unwrap_or_default();
+        let is_loading = self.raw_current_chat_is_loading();
+        let state = self.current_chat_input_processing_state();
+        if self.awaiting_runtime_loading && !is_loading {
+            match state {
+                InputProcessingState::Error { message } => {
+                    self.awaiting_runtime_loading = false;
+                    self.last_current_chat_loading = false;
+                    self.status_message = message;
+                }
+                _ => {
+                    self.follow_transcript = true;
+                    self.status_message = format!("connecting | chat={}", short_chat_label(&chat_id));
+                }
+            }
             return;
         }
-        let start = char_to_byte_index(&self.input, self.input_cursor - 1);
-        let end = char_to_byte_index(&self.input, self.input_cursor);
-        self.input.replace_range(start..end, "");
-        self.input_cursor -= 1;
-    }
-
-    fn delete_at_cursor(&mut self) {
-        if self.input_cursor >= self.input.chars().count() {
-            return;
+        if is_loading {
+            self.awaiting_runtime_loading = false;
+            self.follow_transcript = true;
+            self.status_message = match state {
+                InputProcessingState::Processing { message } => {
+                    format!("processing | chat={} | {}", short_chat_label(&chat_id), message)
+                }
+                InputProcessingState::Connecting { message } => {
+                    format!("connecting | chat={} | {}", short_chat_label(&chat_id), message)
+                }
+                InputProcessingState::Receiving { message } => {
+                    format!("receiving | chat={} | {}", short_chat_label(&chat_id), message)
+                }
+                InputProcessingState::ExecutingTool { toolName } => {
+                    format!("tool | chat={} | {}", short_chat_label(&chat_id), toolName)
+                }
+                InputProcessingState::ToolProgress { toolName, message, .. } => {
+                    format!("tool | chat={} | {} {}", short_chat_label(&chat_id), toolName, message)
+                }
+                InputProcessingState::ProcessingToolResult { toolName } => {
+                    format!("tool result | chat={} | {}", short_chat_label(&chat_id), toolName)
+                }
+                InputProcessingState::Summarizing { message } => {
+                    format!("summarizing | chat={} | {}", short_chat_label(&chat_id), message)
+                }
+                InputProcessingState::ExecutingPlan { message } => {
+                    format!("plan | chat={} | {}", short_chat_label(&chat_id), message)
+                }
+                InputProcessingState::Error { message } => message,
+                InputProcessingState::Completed | InputProcessingState::Idle => {
+                    format!("streaming | chat={}", short_chat_label(&chat_id))
+                }
+            };
+        } else if self.last_current_chat_loading {
+            self.awaiting_runtime_loading = false;
+            self.follow_transcript = true;
+            self.refresh_chats();
+            self.status_message = format!("reply ready | chat={}", short_chat_label(&chat_id));
         }
-        let start = char_to_byte_index(&self.input, self.input_cursor);
-        let end = char_to_byte_index(&self.input, self.input_cursor + 1);
-        self.input.replace_range(start..end, "");
-    }
-
-    fn move_cursor_left(&mut self) {
-        self.input_cursor = self.input_cursor.saturating_sub(1);
-    }
-
-    fn move_cursor_right(&mut self) {
-        let char_count = self.input.chars().count();
-        if self.input_cursor < char_count {
-            self.input_cursor += 1;
-        }
-    }
-
-    fn move_cursor_home(&mut self) {
-        self.input_cursor = 0;
-    }
-
-    fn move_cursor_end(&mut self) {
-        self.input_cursor = self.input.chars().count();
-    }
-
-    fn input_view_text(&self, width: usize, height: usize) -> String {
-        let text = if self.input.is_empty() {
-            String::new()
-        } else {
-            self.input.clone()
-        };
-        let lines = wrap_approx_lines(&text, width.max(1));
-        let visible_height = height.saturating_sub(1).max(1);
-        let start = lines.len().saturating_sub(visible_height);
-        lines[start..].join("\n")
-    }
-
-    fn cursor_position(&self, width: usize, height: usize) -> (usize, usize) {
-        let prefix = self.input.chars().take(self.input_cursor).collect::<String>();
-        let lines = wrap_approx_lines(&prefix, width.max(1));
-        let visible_height = height.saturating_sub(1).max(1);
-        let line_index = lines.len().saturating_sub(1);
-        let start = lines.len().saturating_sub(visible_height);
-        let visible_line = line_index.saturating_sub(start);
-        let col = lines.last().map(|line| line.chars().count()).unwrap_or(0);
-        (
-            col.min(width.saturating_sub(1)),
-            visible_line.min(height.saturating_sub(1)),
-        )
+        self.last_current_chat_loading = is_loading;
     }
 }
 
-fn load_chat_list() -> Result<Vec<ChatListItem>, String> {
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    let chats = manager
-        .chatHistoriesFlow()
-        .map_err(|error| error.to_string())?;
-    Ok(chats
+fn load_chat_list_from_core(
+    core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore,
+) -> Vec<ChatListItem> {
+    core.chatHistoriesFlow()
+        .value()
         .into_iter()
         .map(|chat| {
             let title = if chat.title.trim().is_empty() {
@@ -770,5 +583,5 @@ fn load_chat_list() -> Result<Vec<ChatListItem>, String> {
                 secondary,
             }
         })
-        .collect())
+        .collect()
 }

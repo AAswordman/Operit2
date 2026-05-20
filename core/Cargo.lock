@@ -790,26 +790,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-cli"
-version = "0.1.0"
-dependencies = [
- "operit-host-windows",
- "operit-runtime",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "operit-host-api"
 version = "0.1.0"
-
-[[package]]
-name = "operit-host-windows"
-version = "0.1.0"
-dependencies = [
- "operit-host-api",
- "regex",
-]
 
 [[package]]
 name = "operit-runtime"

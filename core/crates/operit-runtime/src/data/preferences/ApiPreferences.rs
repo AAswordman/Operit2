@@ -56,6 +56,39 @@ impl ApiPreferences {
         })
     }
 
+    pub fn disableStreamOutputFlow(&self) -> Flow<bool> {
+        let store = self.apiDataStore.clone();
+        Flow::new(move || {
+            let preferences = store.data()?;
+            Ok(preferences
+                .get(&stringPreferencesKey("disable_stream_output"))
+                .and_then(|value| value.parse::<bool>().ok())
+                .unwrap_or(false))
+        })
+    }
+
+    pub fn maxImageHistoryUserTurnsFlow(&self) -> Flow<i32> {
+        let store = self.apiDataStore.clone();
+        Flow::new(move || {
+            let preferences = store.data()?;
+            Ok(preferences
+                .get(&stringPreferencesKey("max_image_history_user_turns"))
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(2))
+        })
+    }
+
+    pub fn maxMediaHistoryUserTurnsFlow(&self) -> Flow<i32> {
+        let store = self.apiDataStore.clone();
+        Flow::new(move || {
+            let preferences = store.data()?;
+            Ok(preferences
+                .get(&stringPreferencesKey("max_media_history_user_turns"))
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(1))
+        })
+    }
+
     pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("enable_thinking_mode"), isEnabled.to_string());

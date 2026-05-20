@@ -68,6 +68,37 @@ pub trait Stream {
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item));
 }
 
+impl<S> Stream for Box<S>
+where
+    S: ?Sized + Stream,
+{
+    type Item = S::Item;
+
+    fn is_locked(&self) -> bool {
+        (**self).is_locked()
+    }
+
+    fn buffered_count(&self) -> usize {
+        (**self).buffered_count()
+    }
+
+    fn lock(&mut self) {
+        (**self).lock();
+    }
+
+    fn unlock(&mut self) {
+        (**self).unlock();
+    }
+
+    fn clear_buffer(&mut self) {
+        (**self).clear_buffer();
+    }
+
+    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
+        (**self).collect(collector);
+    }
+}
+
 pub trait StreamCollector<T> {
     fn emit(&mut self, value: T);
 }
@@ -148,14 +179,14 @@ impl<T> Stream for VecStream<T> {
 }
 
 pub struct FnStream<T> {
-    block: Box<dyn FnMut(&mut dyn FnMut(T))>,
+    block: Box<dyn FnMut(&mut dyn FnMut(T)) + Send>,
     locked: bool,
     buffer: VecDeque<T>,
     closed: bool,
 }
 
 impl<T> FnStream<T> {
-    pub fn new(block: impl FnMut(&mut dyn FnMut(T)) + 'static) -> Self {
+    pub fn new(block: impl FnMut(&mut dyn FnMut(T)) + Send + 'static) -> Self {
         Self {
             block: Box::new(block),
             locked: false,

@@ -5,7 +5,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
     TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
@@ -13,6 +13,7 @@ use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::{ParameterCategory, ModelParameter};
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 pub struct GeminiProvider {
@@ -420,7 +421,10 @@ impl GeminiProvider {
         Ok(headers)
     }
 
-    async fn process_streaming_response(&mut self, response: reqwest::Response) -> Result<AiResponseStream, AiServiceError> {
+    async fn process_streaming_response(
+        &mut self,
+        response: reqwest::Response,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let mut chunks = Vec::new();
         let mut pending = String::new();
         let mut bytes_stream = response.bytes_stream();
@@ -612,7 +616,10 @@ impl AIService for GeminiProvider {
         self.cancelled = true;
     }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.cancelled = false;
         self.reset_token_counts();
         let stream = request.stream;

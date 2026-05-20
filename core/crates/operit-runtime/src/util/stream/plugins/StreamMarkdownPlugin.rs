@@ -1,168 +1,29 @@
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 
-#[derive(Debug, Clone)]
-struct DelimitedPlugin {
-    name: &'static str,
-    start: &'static str,
-    end: &'static str,
-    include_delimiters: bool,
-    line_bound: bool,
-    at_line_start: bool,
-    state: PluginState,
-    start_buffer: String,
-    end_buffer: String,
+fn is_digit(c: char) -> bool {
+    c.is_ascii_digit()
 }
-
-impl DelimitedPlugin {
-    fn new(
-        name: &'static str,
-        start: &'static str,
-        end: &'static str,
-        include_delimiters: bool,
-        line_bound: bool,
-        at_line_start: bool,
-    ) -> Self {
-        Self {
-            name,
-            start,
-            end,
-            include_delimiters,
-            line_bound,
-            at_line_start,
-            state: PluginState::Idle,
-            start_buffer: String::new(),
-            end_buffer: String::new(),
-        }
-    }
-
-    fn process(&mut self, c: char, at_start_of_line: bool) -> bool {
-        if self.state == PluginState::Processing {
-            if self.line_bound && c == '\n' {
-                self.reset();
-                return true;
-            }
-            self.end_buffer.push(c);
-            if self.end.starts_with(&self.end_buffer) {
-                if self.end_buffer == self.end {
-                    self.reset();
-                }
-                return self.include_delimiters;
-            }
-            self.end_buffer.clear();
-            if self.end.starts_with(c) {
-                self.end_buffer.push(c);
-                return self.include_delimiters;
-            }
-            return true;
-        }
-
-        if self.at_line_start && !at_start_of_line && self.state == PluginState::Idle {
-            return true;
-        }
-
-        self.start_buffer.push(c);
-        if self.start.starts_with(&self.start_buffer) {
-            self.state = PluginState::Trying;
-            if self.start_buffer == self.start {
-                self.state = PluginState::Processing;
-                self.start_buffer.clear();
-                self.end_buffer.clear();
-            }
-            return self.include_delimiters;
-        }
-
-        self.reset();
-        true
-    }
-
-    fn reset(&mut self) {
-        self.state = PluginState::Idle;
-        self.start_buffer.clear();
-        self.end_buffer.clear();
-    }
-}
-
-macro_rules! delimited_plugin {
-    ($type_name:ident, $start:expr, $end:expr, $field_name:ident, $line_bound:expr, $at_line_start:expr) => {
-        #[derive(Debug, Clone)]
-        pub struct $type_name {
-            inner: DelimitedPlugin,
-        }
-
-        impl $type_name {
-            pub fn new($field_name: bool) -> Self {
-                Self {
-                    inner: DelimitedPlugin::new(
-                        stringify!($type_name),
-                        $start,
-                        $end,
-                        $field_name,
-                        $line_bound,
-                        $at_line_start,
-                    ),
-                }
-            }
-        }
-
-        impl Default for $type_name {
-            fn default() -> Self {
-                Self::new(true)
-            }
-        }
-
-        impl StreamPlugin for $type_name {
-            fn name(&self) -> &'static str {
-                self.inner.name
-            }
-
-            fn state(&self) -> PluginState {
-                self.inner.state
-            }
-
-            fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
-                self.inner.process(c, at_start_of_line)
-            }
-
-            fn init_plugin(&mut self) -> bool {
-                self.reset();
-                true
-            }
-
-            fn destroy(&mut self) {}
-
-            fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-    };
-}
-
-delimited_plugin!(StreamMarkdownInlineCodePlugin, "`", "`", include_ticks, true, false);
-delimited_plugin!(StreamMarkdownBoldPlugin, "**", "**", include_asterisks, true, false);
-delimited_plugin!(StreamMarkdownItalicPlugin, "*", "*", include_asterisks, true, false);
-delimited_plugin!(StreamMarkdownStrikethroughPlugin, "~~", "~~", include_delimiters, true, false);
-delimited_plugin!(StreamMarkdownUnderlinePlugin, "__", "__", include_delimiters, true, false);
-delimited_plugin!(StreamMarkdownInlineLaTeXPlugin, "$", "$", include_delimiters, true, false);
-delimited_plugin!(StreamMarkdownInlineParenLaTeXPlugin, "\\(", "\\)", include_delimiters, true, false);
-delimited_plugin!(StreamMarkdownBlockLaTeXPlugin, "$$", "$$", include_delimiters, false, false);
-delimited_plugin!(StreamMarkdownBlockBracketLaTeXPlugin, "\\[", "\\]", include_delimiters, false, false);
 
 #[derive(Debug, Clone)]
 pub struct StreamMarkdownFencedCodeBlockPlugin {
     include_fences: bool,
     state: PluginState,
-    opening_fence: String,
-    line_buffer: String,
+    fence_len: usize,
+    is_matching_end_fence: bool,
+    has_started_matching_fence: bool,
 }
 
 impl StreamMarkdownFencedCodeBlockPlugin {
     pub fn new(include_fences: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_fences,
             state: PluginState::Idle,
-            opening_fence: String::new(),
-            line_buffer: String::new(),
-        }
+            fence_len: 0,
+            is_matching_end_fence: false,
+            has_started_matching_fence: false,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -181,37 +42,76 @@ impl StreamPlugin for StreamMarkdownFencedCodeBlockPlugin {
         self.state
     }
 
-    fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
         if self.state == PluginState::Processing {
-            if at_start_of_line {
-                self.line_buffer.clear();
+            if _at_start_of_line {
+                self.is_matching_end_fence = true;
+                self.has_started_matching_fence = false;
             }
-            self.line_buffer.push(c);
-            if self.line_buffer.trim_start().starts_with(&self.opening_fence)
-                && self.line_buffer.trim_end() == self.opening_fence
-            {
-                self.reset();
+
+            if self.is_matching_end_fence {
+                if !self.has_started_matching_fence {
+                    if c == ' ' {
+                        return self.include_fences;
+                    }
+                    self.has_started_matching_fence = true;
+                }
+
+                if c == '`' {
+                    self.fence_len += 1;
+                    return self.include_fences;
+                }
+
+                if c == '\n' {
+                    if self.fence_len >= 3 {
+                        self.reset();
+                        return self.include_fences;
+                    }
+                    self.is_matching_end_fence = false;
+                    self.fence_len = 0;
+                    return true;
+                }
+
+                self.is_matching_end_fence = false;
+                self.fence_len = 0;
+                return true;
+            }
+
+            return true;
+        }
+
+        if self.state == PluginState::Idle {
+            if c == '`' {
+                self.state = PluginState::Trying;
+                self.fence_len = 1;
                 return self.include_fences;
             }
             return true;
         }
 
-        if at_start_of_line && c == '`' {
-            self.opening_fence.push(c);
-            self.state = PluginState::Trying;
-            return self.include_fences;
-        }
         if self.state == PluginState::Trying {
             if c == '`' {
-                self.opening_fence.push(c);
+                self.fence_len += 1;
                 return self.include_fences;
             }
-            if self.opening_fence.len() >= 3 {
-                self.state = PluginState::Processing;
+            if c == '\n' {
+                if self.fence_len >= 3 {
+                    self.state = PluginState::Processing;
+                    self.is_matching_end_fence = false;
+                    self.has_started_matching_fence = false;
+                    self.fence_len = 0;
+                    return self.include_fences;
+                }
+                self.reset();
                 return true;
             }
-            self.reset();
+            if self.fence_len < 3 {
+                self.reset();
+                return true;
+            }
+            return self.include_fences;
         }
+
         true
     }
 
@@ -224,8 +124,290 @@ impl StreamPlugin for StreamMarkdownFencedCodeBlockPlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.opening_fence.clear();
-        self.line_buffer.clear();
+        self.fence_len = 0;
+        self.is_matching_end_fence = false;
+        self.has_started_matching_fence = false;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownInlineCodePlugin {
+    include_ticks: bool,
+    state: PluginState,
+    tick_len: usize,
+    end_match: usize,
+}
+
+impl StreamMarkdownInlineCodePlugin {
+    pub fn new(include_ticks: bool) -> Self {
+        let mut value = Self {
+            include_ticks,
+            state: PluginState::Idle,
+            tick_len: 0,
+            end_match: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownInlineCodePlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownInlineCodePlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownInlineCodePlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing && c == '\n' {
+            self.reset();
+            return true;
+        }
+
+        if self.state == PluginState::Processing {
+            if c == '`' {
+                self.end_match += 1;
+                if self.end_match == self.tick_len {
+                    self.reset();
+                    return self.include_ticks;
+                }
+                return self.include_ticks;
+            }
+            self.end_match = 0;
+            return true;
+        }
+
+        if c == '`' {
+            if self.state == PluginState::Idle {
+                self.state = PluginState::Trying;
+                self.tick_len = 1;
+                return self.include_ticks;
+            }
+            if self.state == PluginState::Trying {
+                self.reset();
+                return true;
+            }
+        }
+
+        if self.state == PluginState::Trying {
+            if c != '`' && c != '\n' {
+                self.state = PluginState::Processing;
+                self.end_match = 0;
+                return true;
+            }
+            if c == '\n' {
+                self.reset();
+                return true;
+            }
+        }
+
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.tick_len = 0;
+        self.end_match = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownBoldPlugin {
+    include_asterisks: bool,
+    state: PluginState,
+    start_match: usize,
+    end_match: usize,
+}
+
+impl StreamMarkdownBoldPlugin {
+    pub fn new(include_asterisks: bool) -> Self {
+        let mut value = Self {
+            include_asterisks,
+            state: PluginState::Idle,
+            start_match: 0,
+            end_match: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownBoldPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownBoldPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownBoldPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if c == '*' {
+                self.end_match += 1;
+                if self.end_match == 2 {
+                    self.reset();
+                    return self.include_asterisks;
+                }
+                return self.include_asterisks;
+            }
+            self.end_match = 0;
+            return true;
+        }
+
+        if self.state == PluginState::Idle {
+            if c == '*' {
+                self.state = PluginState::Trying;
+                self.start_match = 1;
+                return self.include_asterisks;
+            }
+            return true;
+        }
+
+        if self.state == PluginState::Trying {
+            if self.start_match == 1 {
+                if c == '*' {
+                    self.start_match = 2;
+                    return self.include_asterisks;
+                }
+                self.reset();
+                return true;
+            }
+            if self.start_match == 2 {
+                if c != '*' && c != '\n' {
+                    self.state = PluginState::Processing;
+                    self.start_match = 0;
+                    self.end_match = 0;
+                    return true;
+                }
+                self.reset();
+                return true;
+            }
+        }
+
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_match = 0;
+        self.end_match = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownItalicPlugin {
+    include_asterisks: bool,
+    state: PluginState,
+    start_match: usize,
+    last_char: Option<char>,
+}
+
+impl StreamMarkdownItalicPlugin {
+    pub fn new(include_asterisks: bool) -> Self {
+        let mut value = Self {
+            include_asterisks,
+            state: PluginState::Idle,
+            start_match: 0,
+            last_char: None,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownItalicPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownItalicPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownItalicPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.last_char == Some('*') && c == '*' {
+            self.last_char = None;
+            self.reset();
+            return true;
+        }
+        self.last_char = Some(c);
+
+        if self.state == PluginState::Processing {
+            if c == '\n' {
+                self.reset();
+                return true;
+            }
+            if c == '*' {
+                self.reset();
+                return self.include_asterisks;
+            }
+            return true;
+        }
+
+        if c == '*' {
+            self.state = PluginState::Trying;
+            self.start_match = 1;
+            return self.include_asterisks;
+        }
+
+        if self.state == PluginState::Trying {
+            if c != '*' && c != '\n' && c != ' ' {
+                self.state = PluginState::Processing;
+                return true;
+            }
+            self.reset();
+            return true;
+        }
+
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_match = 0;
+        self.last_char = None;
     }
 }
 
@@ -234,15 +416,19 @@ pub struct StreamMarkdownHeaderPlugin {
     include_marker: bool,
     state: PluginState,
     hash_count: usize,
+    in_match: bool,
 }
 
 impl StreamMarkdownHeaderPlugin {
     pub fn new(include_marker: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_marker,
             state: PluginState::Idle,
             hash_count: 0,
-        }
+            in_match: false,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -268,22 +454,30 @@ impl StreamPlugin for StreamMarkdownHeaderPlugin {
             }
             return true;
         }
-        if at_start_of_line && c == '#' {
+
+        if at_start_of_line {
+            self.in_match = true;
+            self.hash_count = 0;
+            self.state = PluginState::Idle;
+        }
+
+        if !self.in_match && self.state != PluginState::Trying {
+            return true;
+        }
+
+        if c == '#' {
+            self.hash_count += 1;
             self.state = PluginState::Trying;
-            self.hash_count = 1;
             return self.include_marker;
         }
-        if self.state == PluginState::Trying {
-            if c == '#' {
-                self.hash_count += 1;
-                return self.include_marker;
-            }
-            if c == ' ' && (1..=6).contains(&self.hash_count) {
-                self.state = PluginState::Processing;
-                return self.include_marker;
-            }
-            self.reset();
+
+        if c == ' ' && (1..=6).contains(&self.hash_count) {
+            self.state = PluginState::Processing;
+            self.in_match = false;
+            return self.include_marker;
         }
+
+        self.reset();
         true
     }
 
@@ -297,28 +491,24 @@ impl StreamPlugin for StreamMarkdownHeaderPlugin {
     fn reset(&mut self) {
         self.state = PluginState::Idle;
         self.hash_count = 0;
+        self.in_match = false;
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct StreamMarkdownLinkPlugin {
     state: PluginState,
-    stage: LinkStage,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum LinkStage {
-    WaitText,
-    WaitParen,
-    WaitUrl,
+    phase: usize,
 }
 
 impl Default for StreamMarkdownLinkPlugin {
     fn default() -> Self {
-        Self {
+        let mut value = Self {
             state: PluginState::Idle,
-            stage: LinkStage::WaitText,
-        }
+            phase: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -332,82 +522,43 @@ impl StreamPlugin for StreamMarkdownLinkPlugin {
     }
 
     fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
-        match self.state {
-            PluginState::Idle if c == '[' => {
+        if self.state == PluginState::Idle {
+            if c == '[' {
                 self.state = PluginState::Trying;
-                self.stage = LinkStage::WaitText;
+                self.phase = 1;
             }
-            PluginState::Trying | PluginState::Processing => match self.stage {
-                LinkStage::WaitText if c == ']' => self.stage = LinkStage::WaitParen,
-                LinkStage::WaitParen if c == '(' => {
-                    self.stage = LinkStage::WaitUrl;
+            return true;
+        }
+
+        if self.state == PluginState::Trying || self.state == PluginState::Processing {
+            if c == '\n' {
+                self.reset();
+                return true;
+            }
+            if self.phase == 1 {
+                if c == ']' {
+                    self.phase = 2;
                     self.state = PluginState::Processing;
                 }
-                LinkStage::WaitUrl if c == ')' => self.reset(),
-                _ if c == '\n' => self.reset(),
-                _ => {}
-            },
-            _ => {}
-        }
-        true
-    }
-
-    fn init_plugin(&mut self) -> bool {
-        self.reset();
-        true
-    }
-
-    fn destroy(&mut self) {}
-
-    fn reset(&mut self) {
-        self.state = PluginState::Idle;
-        self.stage = LinkStage::WaitText;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StreamMarkdownImagePlugin {
-    include_delimiters: bool,
-    state: PluginState,
-    buffer: String,
-}
-
-impl StreamMarkdownImagePlugin {
-    pub fn new(include_delimiters: bool) -> Self {
-        Self {
-            include_delimiters,
-            state: PluginState::Idle,
-            buffer: String::new(),
-        }
-    }
-}
-
-impl Default for StreamMarkdownImagePlugin {
-    fn default() -> Self {
-        Self::new(true)
-    }
-}
-
-impl StreamPlugin for StreamMarkdownImagePlugin {
-    fn name(&self) -> &'static str {
-        "StreamMarkdownImagePlugin"
-    }
-
-    fn state(&self) -> PluginState {
-        self.state
-    }
-
-    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
-        self.buffer.push(c);
-        if self.state == PluginState::Idle && self.buffer.ends_with("![") {
-            self.state = PluginState::Processing;
-        }
-        if self.state == PluginState::Processing {
-            if c == ')' || c == '\n' {
-                self.reset();
+                return true;
             }
-            return self.include_delimiters;
+            if self.phase == 2 {
+                if c == '(' {
+                    self.phase = 3;
+                    return true;
+                }
+                self.reset();
+                return true;
+            }
+            if self.phase == 3 {
+                if c == ')' {
+                    self.reset();
+                    return true;
+                }
+                return true;
+            }
         }
+
         true
     }
 
@@ -420,7 +571,7 @@ impl StreamPlugin for StreamMarkdownImagePlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.buffer.clear();
+        self.phase = 0;
     }
 }
 
@@ -428,14 +579,18 @@ impl StreamPlugin for StreamMarkdownImagePlugin {
 pub struct StreamMarkdownBlockQuotePlugin {
     include_marker: bool,
     state: PluginState,
+    match_index: usize,
 }
 
 impl StreamMarkdownBlockQuotePlugin {
     pub fn new(include_marker: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_marker,
             state: PluginState::Idle,
-        }
+            match_index: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -455,16 +610,59 @@ impl StreamPlugin for StreamMarkdownBlockQuotePlugin {
     }
 
     fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
-        if self.state == PluginState::Processing {
-            if c == '\n' {
+        if c == '\n' {
+            if self.state == PluginState::Processing {
+                self.state = PluginState::WaitFor;
+            } else {
                 self.reset();
             }
             return true;
         }
-        if at_start_of_line && c == '>' {
-            self.state = PluginState::Processing;
-            return self.include_marker;
+
+        if self.state == PluginState::WaitFor && at_start_of_line {
+            if c == '>' {
+                self.state = PluginState::Processing;
+                self.match_index = 1;
+                return true;
+            }
+            self.reset();
+            return true;
         }
+
+        if at_start_of_line {
+            if self.match_index == 0 {
+                if c == '>' {
+                    self.match_index = 1;
+                    self.state = PluginState::Trying;
+                    return self.include_marker;
+                }
+                return true;
+            }
+            if self.match_index == 1 {
+                if c == ' ' {
+                    self.state = PluginState::Processing;
+                    self.match_index = 0;
+                    return self.include_marker;
+                }
+                self.reset();
+                return true;
+            }
+        }
+
+        if self.state == PluginState::Processing {
+            return true;
+        }
+
+        if self.state == PluginState::Trying && self.match_index == 1 {
+            if c == ' ' {
+                self.state = PluginState::Processing;
+                self.match_index = 0;
+                return self.include_marker;
+            }
+            self.reset();
+            return true;
+        }
+
         true
     }
 
@@ -477,6 +675,7 @@ impl StreamPlugin for StreamMarkdownBlockQuotePlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
+        self.match_index = 0;
     }
 }
 
@@ -484,18 +683,20 @@ impl StreamPlugin for StreamMarkdownBlockQuotePlugin {
 pub struct StreamMarkdownHorizontalRulePlugin {
     include_marker: bool,
     state: PluginState,
-    marker: Option<char>,
-    count: usize,
+    current_marker: Option<char>,
+    marker_count: usize,
 }
 
 impl StreamMarkdownHorizontalRulePlugin {
     pub fn new(include_marker: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_marker,
             state: PluginState::Idle,
-            marker: None,
-            count: 0,
-        }
+            current_marker: None,
+            marker_count: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -515,28 +716,36 @@ impl StreamPlugin for StreamMarkdownHorizontalRulePlugin {
     }
 
     fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
-        if at_start_of_line && matches!(c, '-' | '*' | '_') {
-            self.state = PluginState::Trying;
-            self.marker = Some(c);
-            self.count = 1;
+        if c == '\n' {
+            let is_match = (self.state == PluginState::Trying
+                || self.state == PluginState::Processing)
+                && self.marker_count >= 3;
+            let should_emit = is_match && self.include_marker;
+            self.reset();
+            return if is_match { should_emit } else { true };
+        }
+
+        if self.state == PluginState::Idle {
+            if at_start_of_line && matches!(c, '-' | '*' | '_') {
+                self.state = PluginState::Trying;
+                self.current_marker = Some(c);
+                self.marker_count = 1;
+                return self.include_marker;
+            }
+            return true;
+        }
+
+        if self.current_marker == Some(c) || c == ' ' || c == '\t' {
+            if self.current_marker == Some(c) {
+                self.marker_count += 1;
+            }
+            if self.marker_count >= 3 {
+                self.state = PluginState::Processing;
+            }
             return self.include_marker;
         }
-        if self.state == PluginState::Trying {
-            if Some(c) == self.marker {
-                self.count += 1;
-                if self.count >= 3 {
-                    self.state = PluginState::Processing;
-                }
-                return self.include_marker;
-            }
-            if c == '\n' && self.count >= 3 {
-                self.reset();
-                return self.include_marker;
-            }
-            if c != ' ' {
-                self.reset();
-            }
-        }
+
+        self.reset();
         true
     }
 
@@ -549,8 +758,8 @@ impl StreamPlugin for StreamMarkdownHorizontalRulePlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.marker = None;
-        self.count = 0;
+        self.current_marker = None;
+        self.marker_count = 0;
     }
 }
 
@@ -558,18 +767,18 @@ impl StreamPlugin for StreamMarkdownHorizontalRulePlugin {
 pub struct StreamMarkdownOrderedListPlugin {
     include_marker: bool,
     state: PluginState,
-    seen_digit: bool,
-    seen_dot: bool,
+    match_state: usize,
 }
 
 impl StreamMarkdownOrderedListPlugin {
     pub fn new(include_marker: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_marker,
             state: PluginState::Idle,
-            seen_digit: false,
-            seen_dot: false,
-        }
+            match_state: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -595,25 +804,51 @@ impl StreamPlugin for StreamMarkdownOrderedListPlugin {
             }
             return true;
         }
-        if at_start_of_line && c.is_ascii_digit() {
-            self.state = PluginState::Trying;
-            self.seen_digit = true;
-            return self.include_marker;
+
+        if at_start_of_line {
+            self.match_state = 0;
+            self.state = PluginState::Idle;
         }
-        if self.state == PluginState::Trying {
-            if c.is_ascii_digit() {
-                return self.include_marker;
-            }
-            if c == '.' && self.seen_digit {
-                self.seen_dot = true;
-                return self.include_marker;
-            }
-            if c == ' ' && self.seen_dot {
-                self.state = PluginState::Processing;
+
+        if !at_start_of_line && self.state != PluginState::Trying {
+            return true;
+        }
+
+        if self.match_state == 0 {
+            if is_digit(c) {
+                self.state = PluginState::Trying;
+                self.match_state = 1;
                 return self.include_marker;
             }
             self.reset();
+            return true;
         }
+
+        if self.match_state == 1 {
+            if is_digit(c) {
+                self.state = PluginState::Trying;
+                return self.include_marker;
+            }
+            if c == '.' {
+                self.match_state = 2;
+                self.state = PluginState::Trying;
+                return self.include_marker;
+            }
+            self.reset();
+            return true;
+        }
+
+        if self.match_state == 2 {
+            if c == ' ' {
+                self.state = PluginState::Processing;
+                self.match_state = 0;
+                return self.include_marker;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
         true
     }
 
@@ -626,8 +861,7 @@ impl StreamPlugin for StreamMarkdownOrderedListPlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.seen_digit = false;
-        self.seen_dot = false;
+        self.match_state = 0;
     }
 }
 
@@ -635,16 +869,18 @@ impl StreamPlugin for StreamMarkdownOrderedListPlugin {
 pub struct StreamMarkdownUnorderedListPlugin {
     include_marker: bool,
     state: PluginState,
-    marker_seen: bool,
+    match_state: usize,
 }
 
 impl StreamMarkdownUnorderedListPlugin {
     pub fn new(include_marker: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_marker,
             state: PluginState::Idle,
-            marker_seen: false,
-        }
+            match_state: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -670,18 +906,37 @@ impl StreamPlugin for StreamMarkdownUnorderedListPlugin {
             }
             return true;
         }
-        if at_start_of_line && matches!(c, '-' | '+' | '*') {
-            self.state = PluginState::Trying;
-            self.marker_seen = true;
-            return self.include_marker;
+
+        if at_start_of_line {
+            self.match_state = 0;
+            self.state = PluginState::Idle;
         }
-        if self.state == PluginState::Trying {
-            if c == ' ' && self.marker_seen {
-                self.state = PluginState::Processing;
+
+        if !at_start_of_line && self.state != PluginState::Trying {
+            return true;
+        }
+
+        if self.match_state == 0 {
+            if matches!(c, '-' | '+' | '*') {
+                self.state = PluginState::Trying;
+                self.match_state = 1;
                 return self.include_marker;
             }
             self.reset();
+            return true;
         }
+
+        if self.match_state == 1 {
+            if c == ' ' {
+                self.state = PluginState::Processing;
+                self.match_state = 0;
+                return self.include_marker;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
         true
     }
 
@@ -694,7 +949,600 @@ impl StreamPlugin for StreamMarkdownUnorderedListPlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.marker_seen = false;
+        self.match_state = 0;
+    }
+}
+
+macro_rules! double_delimiter_plugin {
+    ($type_name:ident, $start_char:expr, $end_char:expr, $field_name:ident) => {
+        #[derive(Debug, Clone)]
+        pub struct $type_name {
+            $field_name: bool,
+            state: PluginState,
+            start_state: usize,
+            end_state: usize,
+        }
+
+        impl $type_name {
+            pub fn new($field_name: bool) -> Self {
+                let mut value = Self {
+                    $field_name,
+                    state: PluginState::Idle,
+                    start_state: 0,
+                    end_state: 0,
+                };
+                value.reset();
+                value
+            }
+        }
+
+        impl Default for $type_name {
+            fn default() -> Self {
+                Self::new(true)
+            }
+        }
+
+        impl StreamPlugin for $type_name {
+            fn name(&self) -> &'static str {
+                stringify!($type_name)
+            }
+
+            fn state(&self) -> PluginState {
+                self.state
+            }
+
+            fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+                if self.state == PluginState::Processing {
+                    if self.end_state == 0 {
+                        if c == $end_char {
+                            self.end_state = 1;
+                            return self.$field_name;
+                        }
+                        return true;
+                    }
+                    if self.end_state == 1 {
+                        if c == $end_char {
+                            self.reset();
+                            return self.$field_name;
+                        }
+                        self.end_state = 0;
+                        return true;
+                    }
+                    self.end_state = 0;
+                    return true;
+                }
+
+                if self.start_state == 0 {
+                    if c == $start_char {
+                        self.start_state = 1;
+                        self.state = PluginState::Trying;
+                        return self.$field_name;
+                    }
+                    return true;
+                }
+                if self.start_state == 1 {
+                    if c == $start_char {
+                        self.start_state = 2;
+                        self.state = PluginState::Trying;
+                        return self.$field_name;
+                    }
+                    self.reset();
+                    return true;
+                }
+                if self.start_state == 2 {
+                    if c != $start_char && c != '\n' {
+                        self.state = PluginState::Processing;
+                        self.start_state = 0;
+                        self.end_state = 0;
+                        return true;
+                    }
+                    self.reset();
+                    return true;
+                }
+
+                self.reset();
+                true
+            }
+
+            fn init_plugin(&mut self) -> bool {
+                self.reset();
+                true
+            }
+
+            fn destroy(&mut self) {}
+
+            fn reset(&mut self) {
+                self.state = PluginState::Idle;
+                self.start_state = 0;
+                self.end_state = 0;
+            }
+        }
+    };
+}
+
+double_delimiter_plugin!(
+    StreamMarkdownStrikethroughPlugin,
+    '~',
+    '~',
+    include_delimiters
+);
+double_delimiter_plugin!(
+    StreamMarkdownUnderlinePlugin,
+    '_',
+    '_',
+    include_delimiters
+);
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownInlineLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+}
+
+impl StreamMarkdownInlineLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownInlineLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownInlineLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownInlineLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 && c == '$' {
+                self.end_state = 1;
+                self.reset();
+                return self.include_delimiters;
+            }
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '$' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+
+        if self.start_state == 1 {
+            if c != '$' && c != '\n' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+                return true;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownInlineParenLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+}
+
+impl StreamMarkdownInlineParenLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownInlineParenLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownInlineParenLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownInlineParenLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 {
+                if c == '\\' {
+                    self.end_state = 1;
+                    return self.include_delimiters;
+                }
+                return true;
+            }
+            if self.end_state == 1 {
+                if c == ')' {
+                    self.reset();
+                    return self.include_delimiters;
+                }
+                self.end_state = 0;
+                return true;
+            }
+            self.end_state = 0;
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '\\' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+        if self.start_state == 1 {
+            if c == '(' {
+                self.start_state = 2;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            self.reset();
+            return true;
+        }
+        if self.start_state == 2 {
+            if c != '\n' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+                return true;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownBlockLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+}
+
+impl StreamMarkdownBlockLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownBlockLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownBlockLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownBlockLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 {
+                if c == '$' {
+                    self.end_state = 1;
+                    return self.include_delimiters;
+                }
+                return true;
+            }
+            if self.end_state == 1 {
+                if c == '$' {
+                    self.reset();
+                    return self.include_delimiters;
+                }
+                self.end_state = 0;
+                return true;
+            }
+            self.end_state = 0;
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '$' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+        if self.start_state == 1 {
+            if c == '$' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+                return self.include_delimiters;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownBlockBracketLaTeXPlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    start_state: usize,
+    end_state: usize,
+}
+
+impl StreamMarkdownBlockBracketLaTeXPlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            start_state: 0,
+            end_state: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownBlockBracketLaTeXPlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownBlockBracketLaTeXPlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownBlockBracketLaTeXPlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Processing {
+            if self.end_state == 0 {
+                if c == '\\' {
+                    self.end_state = 1;
+                    return self.include_delimiters;
+                }
+                return true;
+            }
+            if self.end_state == 1 {
+                if c == ']' {
+                    self.reset();
+                    return self.include_delimiters;
+                }
+                self.end_state = 0;
+                return true;
+            }
+            self.end_state = 0;
+            return true;
+        }
+
+        if self.start_state == 0 {
+            if c == '\\' {
+                self.start_state = 1;
+                self.state = PluginState::Trying;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+        if self.start_state == 1 {
+            if c == '[' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+                return self.include_delimiters;
+            }
+            self.reset();
+            return true;
+        }
+
+        self.reset();
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.start_state = 0;
+        self.end_state = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamMarkdownImagePlugin {
+    include_delimiters: bool,
+    state: PluginState,
+    phase: usize,
+}
+
+impl StreamMarkdownImagePlugin {
+    pub fn new(include_delimiters: bool) -> Self {
+        let mut value = Self {
+            include_delimiters,
+            state: PluginState::Idle,
+            phase: 0,
+        };
+        value.reset();
+        value
+    }
+}
+
+impl Default for StreamMarkdownImagePlugin {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl StreamPlugin for StreamMarkdownImagePlugin {
+    fn name(&self) -> &'static str {
+        "StreamMarkdownImagePlugin"
+    }
+
+    fn state(&self) -> PluginState {
+        self.state
+    }
+
+    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+        if self.state == PluginState::Idle {
+            if c == '!' {
+                self.state = PluginState::Trying;
+                self.phase = 1;
+                return self.include_delimiters;
+            }
+            return true;
+        }
+
+        if self.state == PluginState::Trying || self.state == PluginState::Processing {
+            if c == '\n' {
+                self.reset();
+                return true;
+            }
+            if self.phase == 1 {
+                if c == '[' {
+                    self.phase = 2;
+                    self.state = PluginState::Processing;
+                    return self.include_delimiters;
+                }
+                self.reset();
+                return true;
+            }
+            if self.phase == 2 {
+                if c == ']' {
+                    self.phase = 3;
+                    return self.include_delimiters;
+                }
+                return self.include_delimiters;
+            }
+            if self.phase == 3 {
+                if c == '(' {
+                    self.phase = 4;
+                    return self.include_delimiters;
+                }
+                self.reset();
+                return true;
+            }
+            if self.phase == 4 {
+                if c == ')' {
+                    self.reset();
+                    return self.include_delimiters;
+                }
+                return self.include_delimiters;
+            }
+        }
+
+        true
+    }
+
+    fn init_plugin(&mut self) -> bool {
+        self.reset();
+        true
+    }
+
+    fn destroy(&mut self) {}
+
+    fn reset(&mut self) {
+        self.state = PluginState::Idle;
+        self.phase = 0;
     }
 }
 
@@ -704,16 +1552,20 @@ pub struct StreamMarkdownTablePlugin {
     state: PluginState,
     table_row_count: usize,
     found_header_separator: bool,
+    header_sep_match_state: usize,
 }
 
 impl StreamMarkdownTablePlugin {
     pub fn new(include_delimiters: bool) -> Self {
-        Self {
+        let mut value = Self {
             include_delimiters,
             state: PluginState::Idle,
             table_row_count: 0,
             found_header_separator: false,
-        }
+            header_sep_match_state: 0,
+        };
+        value.reset();
+        value
     }
 }
 
@@ -733,30 +1585,59 @@ impl StreamPlugin for StreamMarkdownTablePlugin {
     }
 
     fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
-        if c == '\n' && self.state == PluginState::Processing {
-            self.state = PluginState::WaitFor;
+        if c == '\n' {
+            if self.state == PluginState::Processing {
+                self.state = PluginState::WaitFor;
+            }
             return true;
         }
-        if self.state == PluginState::WaitFor {
-            if at_start_of_line && c == '|' {
+
+        if self.state == PluginState::WaitFor && at_start_of_line {
+            if c == '|' {
                 self.state = PluginState::Processing;
                 self.table_row_count += 1;
+                self.header_sep_match_state = 0;
                 return self.include_delimiters;
+            }
+            if matches!(c, '$' | '`' | '#' | '>' | '*' | '-' | '+') {
+                self.reset();
+                return true;
             }
             self.reset();
             return true;
         }
-        if at_start_of_line && c == '|' {
-            self.state = PluginState::Processing;
-            self.table_row_count += 1;
-            return self.include_delimiters;
-        }
-        if self.state == PluginState::Processing {
-            if self.table_row_count == 2 && matches!(c, '-' | ':' | ' ' | '|') {
-                self.found_header_separator = true;
+
+        if at_start_of_line {
+            if c == '|' {
+                if self.state == PluginState::Idle {
+                    self.state = PluginState::Processing;
+                    self.table_row_count = 1;
+                    self.found_header_separator = false;
+                } else if self.state == PluginState::Processing {
+                    self.table_row_count += 1;
+                }
+                self.header_sep_match_state = 0;
+                return self.include_delimiters;
             }
-            return self.include_delimiters || c != '|';
+            if self.state == PluginState::Processing {
+                self.reset();
+            }
+            return true;
         }
+
+        if self.state == PluginState::Processing {
+            if self.table_row_count == 2 && !self.found_header_separator {
+                if self.header_sep_match_state == 0 {
+                    self.header_sep_match_state = 1;
+                }
+                let _ = matches!(c, '|' | '-' | ':' | ' ' | '\t');
+            }
+            if self.include_delimiters {
+                return true;
+            }
+            return c != '|';
+        }
+
         true
     }
 
@@ -771,5 +1652,6 @@ impl StreamPlugin for StreamMarkdownTablePlugin {
         self.state = PluginState::Idle;
         self.table_row_count = 0;
         self.found_header_separator = false;
+        self.header_sep_match_state = 0;
     }
 }

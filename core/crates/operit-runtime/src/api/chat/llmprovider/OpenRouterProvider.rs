@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest};
+use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct OpenRouterProvider {
     inner: OpenAIProvider,
@@ -103,7 +104,10 @@ impl AIService for OpenRouterProvider {
     fn provider_model(&self) -> String { self.inner.provider_model() }
     fn reset_token_counts(&mut self) { self.inner.reset_token_counts(); }
     fn cancel_streaming(&mut self) { self.inner.cancel_streaming(); }
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.inner.reset_token_counts();
         let request_body = self.create_request_body(&request)?;
         self.inner.send_prepared_request(request, request_body).await

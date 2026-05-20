@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -21,8 +22,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageProcessingDelegate::{
-    BuildUserMessageContentForGroupOrchestrationRequest, BuildUserMessageContentForSendRequest,
-    MessageProcessingDelegate,
+    BuildUserMessageContentForGroupOrchestrationRequest, MessageProcessingDelegate,
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
@@ -316,6 +316,7 @@ impl MessageCoordinationDelegate {
             .messageProcessingDelegate
             .regenerateAiMessageVariant(RegenerateAiMessageVariantRequest {
                 enhancedAiService,
+                chatHistoryDelegate: &mut self.chatHistoryDelegate,
                 chatId,
                 targetMessageTimestamp: targetMessage.timestamp,
                 requestMessageContent,
@@ -402,33 +403,15 @@ impl MessageCoordinationDelegate {
                 }
             },
         };
-        let messageContent = self
-            .messageProcessingDelegate
-            .buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
-                messageText,
-                proxySenderNameOverride,
-                attachments: attachments.clone(),
-                workspacePath: workspacePath.clone(),
-                workspaceEnv: workspaceEnv.clone(),
-                replyToMessage: replyToMessage.clone(),
-                chatId: chatId.clone(),
-                roleCardId: roleCardId.clone(),
-                chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
-            })
-            .unwrap_or_default();
-        if !isContinuation && !suppressUserMessageInHistory {
-            self.chatHistoryDelegate.addMessageToChat(
-                ChatMessage::new_with_content("user".to_string(), messageContent.clone()),
-                Some(chatId.clone()),
-            );
-        }
+        let runtimeChatHistory = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
         let result = self
             .messageProcessingDelegate
             .sendUserMessage(SendUserMessageProcessingRequest {
                 enhancedAiService,
+                chatHistoryDelegate: &mut self.chatHistoryDelegate,
                 chatId: chatId.clone(),
-                messageContent,
-                chatHistory: self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone()),
+                messageText,
+                chatHistory: runtimeChatHistory,
                 workspacePath,
                 workspaceEnv,
                 promptFunctionType,
@@ -447,7 +430,9 @@ impl MessageCoordinationDelegate {
                 preferenceProfileIdOverride,
                 isGroupOrchestrationTurn,
                 groupParticipantNamesText,
-                proxySenderNameOverride: None,
+                proxySenderNameOverride,
+                suppressUserMessageInHistory: suppressUserMessageInHistory || isContinuation,
+                isAutoContinuation,
                 turnOptions: turnOptions.clone(),
             })
             .await;
@@ -463,8 +448,6 @@ impl MessageCoordinationDelegate {
                 return;
             }
         };
-        self.chatHistoryDelegate
-            .addMessageToChat(result.aiMessage.clone(), Some(chatId.clone()));
         self.tokenStatisticsDelegate
             .updateCumulativeStatistics(Some(chatId.clone()), Some(enhancedAiService));
         let (inputTokens, outputTokens) = self
@@ -788,8 +771,9 @@ impl MessageCoordinationDelegate {
         options.promptFunctionType = PromptFunctionType::CHAT;
         options.enableThinking = false;
         options.stream = false;
-        let execution = enhancedAiService.sendMessage(options).await.ok()?;
-        let rawContent = removeThinkingContent(&execution.responseChunks.join("")).trim().to_string();
+        let response = enhancedAiService.sendMessage(options).await.ok()?;
+        let rawContent =
+            removeThinkingContent(&collect_stream_chunks(response).join("")).trim().to_string();
         self.parsePlannedRounds(
             &rawContent,
             members

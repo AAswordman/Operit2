@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest};
+use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct FourRouterProvider {
     inner: OpenAIProvider,
@@ -39,7 +40,10 @@ impl AIService for FourRouterProvider {
     fn provider_model(&self) -> String { self.inner.provider_model() }
     fn reset_token_counts(&mut self) { self.inner.reset_token_counts(); }
     fn cancel_streaming(&mut self) { self.inner.cancel_streaming(); }
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.inner.send_message(request).await
     }
     async fn calculate_input_tokens(

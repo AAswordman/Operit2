@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{AIService, AiResponseStream, AiServiceError, SendMessageRequest};
+use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::DeepseekProvider::DeepseekProvider;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct KimiProvider {
     inner: DeepseekProvider,
@@ -64,7 +65,10 @@ impl AIService for KimiProvider {
         self.inner.cancel_streaming();
     }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.inner.send_message(request).await
     }
 

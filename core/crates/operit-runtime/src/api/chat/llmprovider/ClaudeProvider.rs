@@ -4,13 +4,14 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiResponseStream, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
     TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 
 pub struct ClaudeProvider {
@@ -276,7 +277,10 @@ impl AIService for ClaudeProvider {
     }
     fn cancel_streaming(&mut self) { self.cancelled = true; }
 
-    async fn send_message(&mut self, request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.cancelled = false;
         self.reset_token_counts();
         let stream = request.stream;
@@ -327,7 +331,7 @@ impl ClaudeProvider {
     async fn process_streaming_response(
         &mut self,
         response: reqwest::Response,
-    ) -> Result<AiResponseStream, AiServiceError> {
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let mut chunks = Vec::new();
         let mut token_counts = TokenCounts { input: 0, cached_input: 0, output: 0 };
         let mut pending_line = String::new();

@@ -1,4 +1,5 @@
 use super::super::hooks::PromptTurn::PromptTurn;
+use crate::util::stream::HotStream::MutableSharedStreamImpl;
 
 pub struct MessageProcessingHookParams {
     pub chat_id: Option<String>,
@@ -15,6 +16,7 @@ pub trait MessageProcessingController {
 
 pub struct MessageProcessingExecution<TController> {
     pub controller: TController,
+    pub stream: MutableSharedStreamImpl<String>,
 }
 
 pub trait MessageProcessingPlugin {
@@ -22,3 +24,12 @@ pub trait MessageProcessingPlugin {
 }
 
 pub struct MessageProcessingPluginRegistry;
+
+impl MessageProcessingPluginRegistry {
+    #[allow(non_snake_case)]
+    pub fn createExecutionIfMatched(
+        _params: MessageProcessingHookParams,
+    ) -> Option<MessageProcessingExecution<Box<dyn MessageProcessingController + Send + Sync>>> {
+        None
+    }
+}

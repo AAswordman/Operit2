@@ -3,6 +3,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use operit_runtime::data::model::ChatMessage::ChatMessage;
+use operit_runtime::util::stream::HotStream::SharedStream;
+
+use super::markdown::render_markdown_lines;
 
 pub(super) fn render_message_lines(messages: &[ChatMessage]) -> Vec<Line<'static>> {
     if messages.is_empty() {
@@ -48,10 +51,17 @@ pub(super) fn render_message_lines(messages: &[ChatMessage]) -> Vec<Line<'static
             ),
             Span::styled(meta, Style::default().fg(Color::DarkGray)),
         ]));
-        for content_line in message.content.lines() {
-            lines.push(Line::from(content_line.to_string()));
-        }
-        if message.content.is_empty() {
+        let rendered_content = if message.content.is_empty() {
+            message
+                .contentStream
+                .as_ref()
+                .map(|stream| stream.replay_cache().join(""))
+                .unwrap_or_default()
+        } else {
+            message.content.clone()
+        };
+        lines.extend(render_markdown_lines(&rendered_content));
+        if rendered_content.is_empty() {
             lines.push(Line::from(""));
         }
         lines.push(Line::from(""));

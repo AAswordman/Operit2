@@ -4,8 +4,10 @@ use crate::core::chat::hooks::PromptTurn::PromptTurn;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::OpenAIModels::ModelOption;
 use crate::data::model::ToolPrompt::ToolPrompt;
-use crate::util::stream::HotStream::{
-    mutable_shared_stream, MutableSharedStream, MutableSharedStreamImpl,
+use crate::util::stream::Stream::VecStream;
+use crate::util::stream::RevisableTextStream::{
+    empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
+    RevisableTextStreamLike,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -19,7 +21,6 @@ pub struct SendMessageRequest {
     pub available_tools: Vec<ToolPrompt>,
     pub preserve_think_in_history: bool,
     pub enable_retry: bool,
-    pub on_stream_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub on_tool_invocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
@@ -29,6 +30,8 @@ pub struct TokenCounts {
     pub cached_input: i32,
     pub output: i32,
 }
+
+pub type SharedAiResponseStream = DelegatingRevisableSharedTextStream;
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AiServiceError {
@@ -42,14 +45,22 @@ pub enum AiServiceError {
     TokenCalculationFailed(String),
 }
 
-pub type AiResponseStream = MutableSharedStreamImpl<String>;
+pub fn response_stream_from_chunks(chunks: Vec<String>) -> Box<dyn RevisableTextStreamLike> {
+    let event_channel = empty_revisable_event_channel();
+    event_channel.close();
+    Box::new(with_event_channel(VecStream::new(chunks), event_channel))
+}
 
-pub fn response_stream_from_chunks(chunks: Vec<String>) -> AiResponseStream {
-    let mut stream = mutable_shared_stream(chunks.len().max(1));
-    for chunk in chunks {
-        stream.emit(chunk);
-    }
-    stream
+pub fn empty_response_stream() -> Box<dyn RevisableTextStreamLike> {
+    response_stream_from_chunks(Vec::new())
+}
+
+pub fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Vec<String> {
+    let mut chunks = Vec::new();
+    stream.collect(&mut |chunk| {
+        chunks.push(chunk);
+    });
+    chunks
 }
 
 #[async_trait]
@@ -78,7 +89,10 @@ pub trait AIService: Send + Sync {
         Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
     }
 
-    async fn send_message(&mut self, _request: SendMessageRequest) -> Result<AiResponseStream, AiServiceError> {
+    async fn send_message(
+        &mut self,
+        _request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
     }
 

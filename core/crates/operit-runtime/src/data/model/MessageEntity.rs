@@ -51,6 +51,7 @@ impl MessageEntity {
             },
             isFavorite: self.isFavorite,
             isVariantPreview: false,
+            contentStream: None,
         }
     }
 
