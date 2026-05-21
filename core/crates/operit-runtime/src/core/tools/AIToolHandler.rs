@@ -9,6 +9,8 @@ use crate::api::chat::enhance::ToolExecutionManager::{
 use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
+use crate::core::tools::packTool::PackageManager::PackageManager;
+use operit_host_api::HostEnvironmentDescriptor;
 
 static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
 
@@ -30,6 +32,7 @@ pub struct AIToolHandlerState {
     context: OperitApplicationContext,
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
+    packageManager: Arc<Mutex<PackageManager>>,
 }
 
 impl AIToolHandler {
@@ -42,6 +45,7 @@ impl AIToolHandler {
                 context: OperitApplicationContext::new(),
                 hooks: Vec::new(),
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
+                packageManager: Arc::new(Mutex::new(PackageManager::default())),
             })),
         }
     }
@@ -57,6 +61,7 @@ impl AIToolHandler {
                     context: context.clone(),
                     hooks: Vec::new(),
                     toolPermissionSystem: ToolPermissionSystem::getInstance(),
+                    packageManager: Arc::new(Mutex::new(PackageManager::default())),
                 }))
             })
             .clone();
@@ -166,6 +171,25 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    pub fn getHostEnvironmentDescriptor(&self) -> HostEnvironmentDescriptor {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .context
+            .hostEnvironment
+            .clone()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<PackageManager>> {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .packageManager
+            .clone()
+    }
+
+    #[allow(non_snake_case)]
     pub fn getPublicToolNames(&self) -> Vec<String> {
         let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         guard
@@ -244,6 +268,64 @@ impl AIToolHandler {
     #[allow(non_snake_case)]
     pub fn getToolExecutor(&mut self, _toolName: &str) -> Option<&mut Box<dyn ToolExecutor>> {
         None
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeTool(&mut self, tool: AITool) -> ToolResult {
+        self.notifyToolCallRequested(&tool);
+        self.registerDefaultTools();
+        let Some(mut executor) = ({
+            self.inner
+                .lock()
+                .expect("AIToolHandler mutex poisoned")
+                .availableTools
+                .remove(&tool.name)
+        }) else {
+            let notFoundResult = ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: String::new(),
+                error: Some(format!("Tool not found: {}", tool.name)),
+            };
+            self.notifyToolExecutionResult(&tool, &notFoundResult);
+            self.notifyToolExecutionFinished(&tool);
+            return notFoundResult;
+        };
+
+        let validationResult = executor.validateParameters(&tool);
+        if !validationResult.valid {
+            let validationFailedResult = ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: String::new(),
+                error: Some(validationResult.errorMessage),
+            };
+            self.notifyToolExecutionResult(&tool, &validationFailedResult);
+            self.notifyToolExecutionFinished(&tool);
+            self.inner
+                .lock()
+                .expect("AIToolHandler mutex poisoned")
+                .availableTools
+                .insert(tool.name.clone(), executor);
+            return validationFailedResult;
+        }
+
+        self.notifyToolExecutionStarted(&tool);
+        let collected = executor.invokeAndStream(&tool);
+        let result = collected.last().cloned().unwrap_or_else(|| ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: String::new(),
+            error: Some("The tool execution returned no results.".to_string()),
+        });
+        self.notifyToolExecutionResult(&tool, &result);
+        self.notifyToolExecutionFinished(&tool);
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .availableTools
+            .insert(tool.name.clone(), executor);
+        result
     }
 
     #[allow(non_snake_case)]

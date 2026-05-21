@@ -1,9 +1,13 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::api::chat::enhance::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult,
 };
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::climode::CliToolModeSupport::{
+    CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
+};
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::data::preferences::CharacterCardToolAccessResolver::{
     CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
@@ -11,11 +15,15 @@ use crate::data::preferences::CharacterCardToolAccessResolver::{
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
-const CLI_PROXY_TOOL_NAME: &str = "tool";
-const CLI_SEARCH_TOOL_NAME: &str = "search";
+const CLI_PROXY_TOOL_NAME: &str = PROXY_TOOL_NAME;
+const CLI_SEARCH_TOOL_NAME: &str = SEARCH_TOOL_NAME;
 const PACKAGE_CALLER_NAME_PARAM: &str = "__operit_package_caller_name";
 const PACKAGE_CHAT_ID_PARAM: &str = "__operit_package_chat_id";
 const PACKAGE_CALLER_CARD_ID_PARAM: &str = "__operit_package_caller_card_id";
+
+thread_local! {
+    static TOOL_RUNTIME_CONTEXT: RefCell<Option<ToolRuntimeContext>> = RefCell::new(None);
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolExposureMode {
@@ -58,7 +66,7 @@ pub struct ToolExecutionManager;
 
 impl ToolExecutionManager {
     pub fn currentToolRuntimeContext() -> Option<ToolRuntimeContext> {
-        None
+        TOOL_RUNTIME_CONTEXT.with(|value| value.borrow().clone())
     }
 
     pub fn extractToolInvocations(response: &str) -> Vec<ToolInvocation> {
@@ -212,6 +220,13 @@ impl ToolExecutionManager {
             packageManager,
             None,
         );
+        let previousRuntimeContext = Self::currentToolRuntimeContext();
+        TOOL_RUNTIME_CONTEXT.with(|value| {
+            *value.borrow_mut() = Some(ToolRuntimeContext {
+                callerCardId: callerCardId.clone(),
+                toolExposureMode: toolExposureMode.clone(),
+            });
+        });
         let injectedInvocations = invocations
             .iter()
             .map(|invocation| {
@@ -290,8 +305,13 @@ impl ToolExecutionManager {
                 continue;
             };
 
+            let resolvedInvocation = ToolInvocation {
+                tool: resolved.tool.clone(),
+                rawText: invocation.rawText.clone(),
+                responseLocation: invocation.responseLocation,
+            };
             toolHandler.notifyToolExecutionStarted(&invocation.tool);
-            let collected = Self::executeToolSafely(&invocation, executor.as_mut());
+            let collected = Self::executeToolSafely(&resolvedInvocation, executor.as_mut());
             for result in &collected {
                 toolHandler.notifyToolExecutionResult(&invocation.tool, result);
                 emitted.push(ensureEndsWithNewline(
@@ -337,6 +357,9 @@ impl ToolExecutionManager {
             toolHandler.notifyToolExecutionFinished(&invocation.tool);
         }
 
+        TOOL_RUNTIME_CONTEXT.with(|value| {
+            *value.borrow_mut() = previousRuntimeContext;
+        });
         (emitted, results)
     }
 
@@ -550,11 +573,14 @@ impl ToolExecutionManager {
         let toolName = invocation.tool.name.trim();
         let denied = match toolExposureMode {
             ToolExposureMode::CLI if !Self::isCliPublicTool(toolName) => Some(format!(
-                "Tool `{}` is not available in CLI tool exposure mode.",
-                Self::resolveDisplayToolName(&invocation.tool)
+                "{}",
+                CliToolModeSupport::buildCliTopLevelRestrictionErrorMessage(
+                    &Self::resolveDisplayToolName(&invocation.tool),
+                    true,
+                )
             )),
             ToolExposureMode::FULL if Self::isCliPublicTool(toolName) => {
-                Some("CLI public tool is unavailable in full tool exposure mode.".to_string())
+                Some(CliToolModeSupport::buildCliModeUnavailableMessage(true))
             }
             _ => None,
         }?;

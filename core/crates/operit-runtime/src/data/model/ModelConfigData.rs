@@ -145,7 +145,7 @@ impl ModelConfigDefaults {
     pub const DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT: bool = true;
     pub const DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD: i32 = 16;
     pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str = "https://api.deepseek.com/v1/chat/completions";
-    pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-chat";
+    pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-v4-flash";
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

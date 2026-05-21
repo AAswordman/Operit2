@@ -1,3 +1,4 @@
+use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
 use rusqlite::{params, params_from_iter, Row};
 
@@ -15,8 +16,8 @@ impl ChatDao {
         Self { store }
     }
 
-    pub fn getAllChats(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.getAllChatsDirectly()
+    pub fn getAllChats(&self) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
+        self.observeChats("SELECT * FROM chats ORDER BY displayOrder ASC".to_string(), Vec::new())
     }
 
     pub fn getTotalChatCount(&self) -> Result<i32, SqliteStoreError> {
@@ -71,7 +72,8 @@ impl ChatDao {
                 ],
             )?;
             Ok(())
-        })
+        })?;
+        self.store.notifyInvalidated()
     }
 
     pub fn deleteChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
@@ -210,7 +212,7 @@ impl ChatDao {
         for chat in chats {
             self.insertChat(chat)?;
         }
-        Ok(())
+        self.store.notifyInvalidated()
     }
 
     pub fn updateGroupName(&self, oldName: &str, newName: &str) -> Result<(), SqliteStoreError> {
@@ -295,16 +297,22 @@ impl ChatDao {
         )
     }
 
-    pub fn getBranchesByParentIdFlow(&self, parentChatId: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.getBranchesByParentId(parentChatId)
+    pub fn getBranchesByParentIdFlow(&self, parentChatId: &str) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
+        self.observeChats(
+            "SELECT * FROM chats WHERE parentChatId = ?1 ORDER BY displayOrder ASC".to_string(),
+            vec![parentChatId.to_string()],
+        )
     }
 
     pub fn getMainChats(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChats("SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC", [])
     }
 
-    pub fn getMainChatsFlow(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.getMainChats()
+    pub fn getMainChatsFlow(&self) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
+        self.observeChats(
+            "SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC".to_string(),
+            Vec::new(),
+        )
     }
 
     pub fn getChatsByCharacterCard(&self, characterCardName: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
@@ -501,11 +509,14 @@ impl ChatDao {
         self.store.withConnection(|connection| {
             connection.execute(sql, params)?;
             Ok(())
-        })
+        })?;
+        self.store.notifyInvalidated()
     }
 
     fn execute_count<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<i32, SqliteStoreError> {
-        self.store.withConnection(|connection| Ok(connection.execute(sql, params)? as i32))
+        let count = self.store.withConnection(|connection| Ok(connection.execute(sql, params)? as i32))?;
+        self.store.notifyInvalidated()?;
+        Ok(count)
     }
 
     fn selectChats<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<Vec<ChatEntity>, SqliteStoreError> {
@@ -528,11 +539,40 @@ impl ChatDao {
     ) -> Result<i32, SqliteStoreError> {
         let placeholders = chatIds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!("{sqlPrefix} ({placeholders})");
-        self.store.withConnection(|connection| {
+        let count = self.store.withConnection(|connection| {
             for chatId in &chatIds {
                 leadingParams.push(chatId);
             }
             Ok(connection.execute(&sql, params_from_iter(leadingParams))? as i32)
+        })?;
+        self.store.notifyInvalidated()?;
+        Ok(count)
+    }
+
+    fn observeChats(
+        &self,
+        sql: String,
+        values: Vec<String>,
+    ) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
+        let stateFlow = StateFlow::new(self.selectChatsByValues(&sql, &values)?);
+        let chatDao = self.clone();
+        let stateFlowForObserver = stateFlow.clone();
+        self.store.addInvalidationObserver(move || {
+            stateFlowForObserver.set_value(chatDao.selectChatsByValues(&sql, &values)?);
+            Ok(())
+        })?;
+        Ok(stateFlow)
+    }
+
+    fn selectChatsByValues(
+        &self,
+        sql: &str,
+        values: &[String],
+    ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
+        self.store.withConnection(|connection| {
+            let mut statement = connection.prepare(sql)?;
+            let rows = statement.query_map(params_from_iter(values.iter()), mapChatEntity)?;
+            rows.collect()
         })
     }
 }

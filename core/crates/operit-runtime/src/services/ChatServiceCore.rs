@@ -8,6 +8,7 @@ use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
+use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use operit_store::PreferencesDataStore::StateFlow;
 
 pub trait ChatServiceUiBridge {}
@@ -290,6 +291,13 @@ impl ChatServiceCore {
 
     pub fn getMessageCoordinationDelegate(&mut self) -> Option<&mut MessageCoordinationDelegate> {
         self.messageCoordinationDelegate.as_mut()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getTokenStatisticsDelegate(&self) -> Option<&TokenStatisticsDelegate> {
+        self.messageCoordinationDelegate
+            .as_ref()
+            .map(|delegate| &delegate.tokenStatisticsDelegate)
     }
 
     pub fn getEnhancedAiService(&self) -> Option<&EnhancedAIService> {

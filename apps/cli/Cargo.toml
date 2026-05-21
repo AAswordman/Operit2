@@ -11,8 +11,13 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.28"
-operit-host-windows-native = { path = "../../hosts/windows" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
 ratatui = "0.28"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+operit-host-windows-native = { path = "../../hosts/windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+operit-host-linux-native = { path = "../../hosts/linux" }

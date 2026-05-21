@@ -90,6 +90,8 @@ impl MultiServiceManager {
             let config = self
                 .modelConfigManager
                 .getModelConfigFlow(&configMapping.configId)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+                .first()
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             let service = self.createServiceFromConfig(config, configMapping.modelIndex)?;
             self.serviceInstances.insert(functionType.clone(), service);
@@ -116,6 +118,8 @@ impl MultiServiceManager {
             let config = self
                 .modelConfigManager
                 .getModelConfigFlow(&configId)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+                .first()
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             let service = self.createServiceFromConfig(config, normalizedIndex)?;
             self.customServiceInstances.insert(cacheKey.clone(), service);
@@ -144,6 +148,8 @@ impl MultiServiceManager {
         let config = self
             .modelConfigManager
             .getModelConfigFlow(&configMapping.configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+            .first()
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let modelParameters = self
             .modelConfigManager
@@ -162,6 +168,8 @@ impl MultiServiceManager {
         let config = self
             .modelConfigManager
             .getModelConfigFlow(&configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+            .first()
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let modelParameters = self
             .modelConfigManager
@@ -292,14 +300,19 @@ impl MultiServiceManager {
                 model_name,
                 custom_headers,
                 provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
                 enable_tool_call,
-                ..
-            } => Ok(Box::new(OpenAIProvider::new(
+            } => Ok(Box::new(OpenAIProvider::new_with_capabilities(
                 api_endpoint,
                 self.resolveApiKeyProvider(api_key_provider)?,
                 model_name,
                 provider_type.name().to_string(),
                 custom_headers.into_iter().collect(),
+                supports_vision,
+                supports_audio,
+                supports_video,
                 enable_tool_call,
             ))),
             ProviderCreateParams::DeepseekProvider {
@@ -607,6 +620,8 @@ impl MultiServiceManager {
                 let config = self
                     .modelConfigManager
                     .getModelConfigFlow(&config_id)
+                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+                    .first()
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
                 let index = usize::try_from(config.currentKeyIndex)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
@@ -650,6 +665,8 @@ impl MultiServiceManager {
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         self.modelConfigManager
             .getModelConfigFlow(&configMapping.configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+            .first()
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
     }
 
@@ -660,6 +677,8 @@ impl MultiServiceManager {
         self.ensureInitialized()?;
         self.modelConfigManager
             .getModelConfigFlow(&configId)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+            .first()
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
     }
 

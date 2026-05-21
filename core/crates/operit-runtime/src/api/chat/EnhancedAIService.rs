@@ -27,13 +27,14 @@ use crate::util::stream::Stream::{FnStream, Stream};
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::config::SystemPromptConfig::{
-    SystemPromptConfig, SystemPromptOptions, SystemPromptWithCustomOptions,
+    PackageInfo, SystemPromptConfig, SystemPromptOptions, SystemPromptWithCustomOptions,
     ToolExposureMode as SystemToolExposureMode,
 };
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
 use crate::core::tools::AIToolHandler::AIToolHandler;
-use crate::core::tools::climode::CliToolModeSupport::ToolExposureMode as ResolvedToolExposureMode;
-use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::climode::CliToolModeSupport::{
+    CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
+};
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::ModelConfigData::ModelConfigData;
@@ -41,6 +42,7 @@ use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::skill::SkillRepository::SkillRepository;
 use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
 
@@ -395,6 +397,42 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             Some(value) => value.clone(),
             None => String::new(),
         };
+        let tool_handler = AIToolHandler::default();
+        let host_environment = tool_handler.getHostEnvironmentDescriptor();
+        let package_manager = tool_handler.getOrCreatePackageManager();
+        let package_manager_guard = package_manager
+            .lock()
+            .expect("package manager mutex poisoned");
+        let enabled_packages = package_manager_guard
+            .getEnabledPackageNames()
+            .into_iter()
+            .filter_map(|package_name| {
+                package_manager_guard
+                    .getEffectivePackageTools(&package_name)
+                    .filter(|_| !package_manager_guard.isToolPkgContainer(&package_name))
+                    .map(|tool_package| PackageInfo {
+                        name: package_name,
+                        description: tool_package.description.resolve(use_english),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let mcp_servers = package_manager_guard
+            .getAvailableServerPackages()
+            .into_iter()
+            .map(|(name, server_config)| PackageInfo {
+                name,
+                description: server_config.description,
+            })
+            .collect::<Vec<_>>();
+        drop(package_manager_guard);
+        let skill_packages = SkillRepository::getInstance(&crate::core::application::OperitApplicationContext::OperitApplicationContext::new())
+            .getAiVisibleSkillPackages()
+            .into_iter()
+            .map(|(name, skill)| PackageInfo {
+                name,
+                description: skill.description,
+            })
+            .collect::<Vec<_>>();
 
         SystemPromptConfig::getSystemPromptWithCustomPrompts(SystemPromptWithCustomOptions {
             base: SystemPromptOptions {
@@ -415,6 +453,10 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     ToolExposureMode::Full => SystemToolExposureMode::FULL,
                     ToolExposureMode::Cli => SystemToolExposureMode::CLI,
                 },
+                host_environment,
+                enabled_packages,
+                mcp_servers,
+                skill_packages,
                 hook_metadata: btree_to_value_map(&request.active_prompt_metadata),
                 ..SystemPromptOptions::default()
             },
@@ -701,8 +743,13 @@ impl EnhancedAIService {
             return Vec::new();
         }
         self.tool_handler.registerDefaultTools();
+        if runtime.toolExposureMode == ToolExposureMode::Cli {
+            return CliToolModeSupport::buildCliPublicToolPrompts(runtime.useEnglish);
+        }
+        let host_environment = self.tool_handler.getHostEnvironmentDescriptor();
+        let registered_tool_names = self.tool_handler.getAllToolNames();
         let categories = if runtime.useEnglish {
-            SystemToolPrompts::getAIAllCategoriesEn(
+            SystemToolPrompts::getAIAllCategoriesEnForHost(
                 false,
                 runtime.chatModelHasDirectImage,
                 false,
@@ -710,9 +757,10 @@ impl EnhancedAIService {
                 runtime.chatModelHasDirectAudio,
                 runtime.chatModelHasDirectVideo,
                 &[],
+                &host_environment,
             )
         } else {
-            SystemToolPrompts::getAIAllCategoriesCn(
+            SystemToolPrompts::getAIAllCategoriesCnForHost(
                 false,
                 runtime.chatModelHasDirectImage,
                 false,
@@ -720,14 +768,17 @@ impl EnhancedAIService {
                 runtime.chatModelHasDirectAudio,
                 runtime.chatModelHasDirectVideo,
                 &[],
+                &host_environment,
             )
         };
-        categories
+        let mut available_tools = categories
             .into_iter()
             .flat_map(|category| category.tools)
-            .filter(|tool| self.tool_handler.getAllToolNames().contains(&tool.name))
+            .filter(|tool| registered_tool_names.contains(&tool.name))
             .map(systemToolPromptToModelToolPrompt)
-            .collect()
+            .collect::<Vec<_>>();
+        available_tools.push(buildPackageProxyToolPrompt());
+        available_tools
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -889,6 +940,15 @@ impl EnhancedAIService {
         &mut self,
         options: SendMessageOptions,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let runtime = self.createSendMessageRuntime(&options)?;
+        self.sendMessageWithRuntime(options, runtime).await
+    }
+
+    #[allow(non_snake_case)]
+    pub fn createSendMessageRuntime(
+        &mut self,
+        options: &SendMessageOptions,
+    ) -> Result<SendMessageRuntime, AiServiceError> {
         let mut multiServiceManager = MultiServiceManager::default();
         multiServiceManager.initialize()?;
         let (modelConfig, modelParameters, selectedService) = match &options.chatModelConfigIdOverride {
@@ -920,7 +980,7 @@ impl EnhancedAIService {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Operit".to_string());
 
-        let runtime = SendMessageRuntime {
+        Ok(SendMessageRuntime {
             activePromptMetadata: BTreeMap::new(),
             useEnglish: false,
             userPreferencesText: String::new(),
@@ -944,8 +1004,7 @@ impl EnhancedAIService {
             modelParameters,
             availableTools: Vec::new(),
             aiService: selectedService,
-        };
-        self.sendMessageWithRuntime(options, runtime).await
+        })
     }
 
     pub async fn sendMessageWithRuntime(
@@ -1821,6 +1880,12 @@ impl EnhancedAIService {
 
         self.tool_handler.registerDefaultTools();
         let mut executors = self.tool_handler.takeExecutors();
+        let packageManagerSnapshot = self
+            .tool_handler
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .clone();
         let toolExposureMode = match runtime.toolExposureMode {
             ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
             ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
@@ -1828,7 +1893,7 @@ impl EnhancedAIService {
         let (emittedToolResultMessages, allToolResults) = ToolExecutionManager::executeInvocations(
             &toolInvocations,
             &mut self.tool_handler,
-            &PackageManager::default(),
+            &packageManagerSnapshot,
             &mut executors,
             &BTreeSet::new(),
             characterName.clone(),
@@ -2259,7 +2324,7 @@ fn empty_ai_response_stream() -> Box<dyn RevisableTextStreamLike> {
 }
 
 fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
-    if tool.name != "package_proxy" && tool.name != "tool" {
+    if tool.name != "package_proxy" && tool.name != "proxy" {
         return tool.name.clone();
     }
     tool.parameters
@@ -2268,6 +2333,48 @@ fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
         .map(|parameter| parameter.value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| tool.name.clone())
+}
+
+#[allow(non_snake_case)]
+fn buildPackageProxyToolPrompt() -> ToolPrompt {
+    ToolPrompt {
+        name: "package_proxy".to_string(),
+        description: "Proxy tool for package tools activated by use_package.".to_string(),
+        parameters: buildToolParametersJson(&[
+            crate::core::config::SystemToolPrompts::ToolParameterSchema {
+                name: "tool_name".to_string(),
+                value_type: "string".to_string(),
+                description: "Target tool name from an activated package (for example: packageName:toolName)".to_string(),
+                required: true,
+                default: None,
+            },
+            crate::core::config::SystemToolPrompts::ToolParameterSchema {
+                name: "params".to_string(),
+                value_type: "object".to_string(),
+                description: "JSON object of parameters to forward to the target tool".to_string(),
+                required: true,
+                default: None,
+            },
+        ]),
+        parametersStructured: Some(vec![
+            ToolParameterSchema {
+                name: "tool_name".to_string(),
+                r#type: "string".to_string(),
+                description: "Target tool name from an activated package (for example: packageName:toolName)".to_string(),
+                required: true,
+                default: None,
+            },
+            ToolParameterSchema {
+                name: "params".to_string(),
+                r#type: "object".to_string(),
+                description: "JSON object of parameters to forward to the target tool".to_string(),
+                required: true,
+                default: None,
+            },
+        ]),
+        details: String::new(),
+        notes: String::new(),
+    }
 }
 
 fn extractXmlAttributeValue(fragment: &str, name: &str) -> Option<String> {

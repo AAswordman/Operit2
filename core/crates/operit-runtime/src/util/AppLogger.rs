@@ -27,6 +27,7 @@ pub struct LogEntry {
 #[derive(Debug, Default)]
 struct LoggerState {
     enable_file_logging: bool,
+    enable_console_logging: bool,
     log_file: Option<PathBuf>,
     package_log_file: Option<PathBuf>,
     entries: Vec<LogEntry>,
@@ -38,6 +39,7 @@ fn state() -> &'static Mutex<LoggerState> {
     STATE.get_or_init(|| {
         Mutex::new(LoggerState {
             enable_file_logging: true,
+            enable_console_logging: true,
             log_file: None,
             package_log_file: None,
             entries: Vec::new(),
@@ -55,6 +57,18 @@ impl AppLogger {
 
     pub fn enable_file_logging() -> bool {
         state().lock().expect("AppLogger mutex poisoned").enable_file_logging
+    }
+
+    pub fn set_enable_console_logging(enabled: bool) {
+        let mut guard = state().lock().expect("AppLogger mutex poisoned");
+        guard.enable_console_logging = enabled;
+    }
+
+    pub fn enable_console_logging() -> bool {
+        state()
+            .lock()
+            .expect("AppLogger mutex poisoned")
+            .enable_console_logging
     }
 
     pub fn bind_log_file(path: impl Into<PathBuf>) {
@@ -142,20 +156,23 @@ fn write_entry(priority: i32, tag: &str, msg: &str, throwable: Option<String>) {
         timestamp_ms,
     };
 
-    let (enable_file_logging, log_file, package_log_file) = {
+    let (enable_file_logging, enable_console_logging, log_file, package_log_file) = {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
         guard.entries.push(entry.clone());
         (
             guard.enable_file_logging,
+            guard.enable_console_logging,
             guard.log_file.clone(),
             guard.package_log_file.clone(),
         )
     };
 
     let line = format_log_line(&entry, tag);
-    match priority {
-        ERROR | ASSERT => eprint!("{line}"),
-        _ => print!("{line}"),
+    if enable_console_logging {
+        match priority {
+            ERROR | ASSERT => eprint!("{line}"),
+            _ => print!("{line}"),
+        }
     }
 
     if enable_file_logging {

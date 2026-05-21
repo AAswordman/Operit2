@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::skill::SkillRepository::SkillRepository;
 
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedCharacterCardToolAccess {
@@ -60,14 +62,26 @@ impl CharacterCardToolAccessResolver {
     pub fn resolve(
         &self,
         roleCardId: Option<&str>,
-        _packageManager: &PackageManager,
+        packageManager: &PackageManager,
         globalToolVisibility: Option<HashMap<String, bool>>,
     ) -> ResolvedCharacterCardToolAccess {
         let effectiveGlobalToolVisibility = globalToolVisibility.unwrap_or_default();
 
-        let globalPackageNames = HashSet::new();
-        let globalSkillNames = HashSet::new();
-        let globalMcpServerNames = HashSet::new();
+        let globalPackageNames = packageManager
+            .getEnabledPackageNames()
+            .into_iter()
+            .filter(|packageName| !packageManager.isToolPkgContainer(packageName))
+            .collect::<HashSet<_>>();
+        let globalSkillNames = SkillRepository::getInstance(&OperitApplicationContext::new())
+            .getAiVisibleSkillPackages()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let globalMcpServerNames = packageManager
+            .getAvailableServerPackages()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
 
         let roleCardConfig = roleCardId
             .filter(|id| !id.trim().is_empty())
@@ -174,7 +188,7 @@ fn manageable_tool_names() -> HashSet<String> {
         "make_directory",
         "grep_code",
         "search",
-        "tool",
+        "proxy",
         "sleep",
     ]
     .into_iter()

@@ -3,6 +3,7 @@ use std::fmt::{self, Display};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use operit_host_api::HostEnvironmentDescriptor;
 
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::config::SystemToolPromptsInternal::SystemToolPromptsInternal;
@@ -124,6 +125,29 @@ impl SystemToolPrompts {
         chat_model_has_direct_video: bool,
         saf_bookmark_names: &[String],
     ) -> Vec<SystemToolPromptCategory> {
+        Self::getAIAllCategoriesEnForHost(
+            has_backend_image_recognition,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAIAllCategoriesEnForHost(
+        has_backend_image_recognition: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
+    ) -> Vec<SystemToolPromptCategory> {
         let expose_intent = (has_backend_image_recognition && !chat_model_has_direct_image)
             || (has_backend_audio_recognition && !chat_model_has_direct_audio)
             || (has_backend_video_recognition && !chat_model_has_direct_video);
@@ -137,6 +161,7 @@ impl SystemToolPrompts {
             buildSafBookmarksSectionEn(saf_bookmark_names),
             "Read the content of a file. For media files, you can also provide an 'intent' parameter to use a backend recognition model for analysis.",
         );
+        file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, true);
         vec![basic_tools_en(), file_system, http_tools_en(), memory_tools_en()]
     }
 
@@ -150,7 +175,7 @@ impl SystemToolPrompts {
         chat_model_has_direct_video: bool,
         saf_bookmark_names: &[String],
     ) -> Vec<SystemToolPromptCategory> {
-        let mut categories = Self::getAIAllCategoriesEn(
+        Self::getAllCategoriesEnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -158,8 +183,32 @@ impl SystemToolPrompts {
             chat_model_has_direct_audio,
             chat_model_has_direct_video,
             saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAllCategoriesEnForHost(
+        has_backend_image_recognition: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
+    ) -> Vec<SystemToolPromptCategory> {
+        let mut categories = Self::getAIAllCategoriesEnForHost(
+            has_backend_image_recognition,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            host_environment,
         );
-        categories.extend(SystemToolPromptsInternal::internalToolCategoriesEn());
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesEnForHost(host_environment));
         categories
     }
 
@@ -172,6 +221,29 @@ impl SystemToolPrompts {
         chat_model_has_direct_audio: bool,
         chat_model_has_direct_video: bool,
         saf_bookmark_names: &[String],
+    ) -> Vec<SystemToolPromptCategory> {
+        Self::getAIAllCategoriesCnForHost(
+            has_backend_image_recognition,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAIAllCategoriesCnForHost(
+        has_backend_image_recognition: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
     ) -> Vec<SystemToolPromptCategory> {
         let expose_intent = (has_backend_image_recognition && !chat_model_has_direct_image)
             || (has_backend_audio_recognition && !chat_model_has_direct_audio)
@@ -186,6 +258,7 @@ impl SystemToolPrompts {
             buildSafBookmarksSectionCn(saf_bookmark_names),
             "读取文件内容。对于媒体文件，你也可以提供 intent 参数，使用后端识别模型进行分析。",
         );
+        file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, false);
         vec![basic_tools_cn(), file_system, http_tools_cn(), memory_tools_cn()]
     }
 
@@ -199,7 +272,7 @@ impl SystemToolPrompts {
         chat_model_has_direct_video: bool,
         saf_bookmark_names: &[String],
     ) -> Vec<SystemToolPromptCategory> {
-        let mut categories = Self::getAIAllCategoriesCn(
+        Self::getAllCategoriesCnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -207,8 +280,32 @@ impl SystemToolPrompts {
             chat_model_has_direct_audio,
             chat_model_has_direct_video,
             saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAllCategoriesCnForHost(
+        has_backend_image_recognition: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
+    ) -> Vec<SystemToolPromptCategory> {
+        let mut categories = Self::getAIAllCategoriesCnForHost(
+            has_backend_image_recognition,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            host_environment,
         );
-        categories.extend(SystemToolPromptsInternal::internalToolCategoriesCn());
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesCnForHost(host_environment));
         categories
     }
 
@@ -265,7 +362,38 @@ impl SystemToolPrompts {
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
     ) -> String {
-        let mut categories = Self::getAIAllCategoriesEn(
+        Self::generateToolsPromptEnForHost(
+            chat_id,
+            has_backend_image_recognition,
+            include_memory_tools,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+            tool_visibility,
+            hook_metadata,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn generateToolsPromptEnForHost(
+        chat_id: Option<String>,
+        has_backend_image_recognition: bool,
+        include_memory_tools: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
+        tool_visibility: &HashMap<String, bool>,
+        hook_metadata: HashMap<String, Value>,
+    ) -> String {
+        let mut categories = Self::getAIAllCategoriesEnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -273,6 +401,7 @@ impl SystemToolPrompts {
             chat_model_has_direct_audio,
             chat_model_has_direct_video,
             saf_bookmark_names,
+            host_environment,
         );
         if !include_memory_tools {
             categories.retain(|category| category.category_name != "Memory and Memory Library Tools");
@@ -294,7 +423,38 @@ impl SystemToolPrompts {
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
     ) -> String {
-        let mut categories = Self::getAIAllCategoriesCn(
+        Self::generateToolsPromptCnForHost(
+            chat_id,
+            has_backend_image_recognition,
+            include_memory_tools,
+            chat_model_has_direct_image,
+            has_backend_audio_recognition,
+            has_backend_video_recognition,
+            chat_model_has_direct_audio,
+            chat_model_has_direct_video,
+            saf_bookmark_names,
+            &HostEnvironmentDescriptor::android(),
+            tool_visibility,
+            hook_metadata,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn generateToolsPromptCnForHost(
+        chat_id: Option<String>,
+        has_backend_image_recognition: bool,
+        include_memory_tools: bool,
+        chat_model_has_direct_image: bool,
+        has_backend_audio_recognition: bool,
+        has_backend_video_recognition: bool,
+        chat_model_has_direct_audio: bool,
+        chat_model_has_direct_video: bool,
+        saf_bookmark_names: &[String],
+        host_environment: &HostEnvironmentDescriptor,
+        tool_visibility: &HashMap<String, bool>,
+        hook_metadata: HashMap<String, Value>,
+    ) -> String {
+        let mut categories = Self::getAIAllCategoriesCnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -302,11 +462,145 @@ impl SystemToolPrompts {
             chat_model_has_direct_audio,
             chat_model_has_direct_video,
             saf_bookmark_names,
+            host_environment,
         );
         if !include_memory_tools {
             categories.retain(|category| category.category_name != "记忆与记忆库工具");
         }
         compose_tool_prompt(chat_id, false, include_memory_tools, categories, tool_visibility, hook_metadata)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn applyHostEnvironmentToCategory(
+        mut category: SystemToolPromptCategory,
+        host_environment: &HostEnvironmentDescriptor,
+        use_english: bool,
+    ) -> SystemToolPromptCategory {
+        category.category_header = join_non_empty_lines(vec![
+            category.category_header,
+            hostPromptHeader(host_environment, use_english),
+        ]);
+        for tool in &mut category.tools {
+            applyHostEnvironmentToTool(tool, host_environment, use_english);
+        }
+        category
+    }
+}
+
+fn join_non_empty_lines(lines: Vec<String>) -> String {
+    lines
+        .into_iter()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[allow(non_snake_case)]
+fn hostPromptHeader(host_environment: &HostEnvironmentDescriptor, use_english: bool) -> String {
+    let examples = host_environment.examplePaths.join(", ");
+    if use_english {
+        let environment_rule = if host_environment.usesEnvironmentParameter {
+            format!(
+                "- File tools accept an `environment` parameter. {}",
+                host_environment.environmentParameterDescriptionEn
+            )
+        } else {
+            "- File tools operate directly on this host; omit environment parameters.".to_string()
+        };
+        format!(
+            "Current file host: {} (`{}`).\n- {}\n- Example absolute paths: {}.\n{}",
+            host_environment.displayName,
+            host_environment.id,
+            host_environment.pathStyleDescriptionEn,
+            examples,
+            environment_rule
+        )
+    } else {
+        let environment_rule = if host_environment.usesEnvironmentParameter {
+            format!(
+                "- 文件工具可以使用 `environment` 参数。{}",
+                host_environment.environmentParameterDescriptionCn
+            )
+        } else {
+            "- 文件工具直接作用于当前 Host；不要传入 environment 参数。".to_string()
+        };
+        format!(
+            "当前文件 Host：{}（`{}`）。\n- {}\n- 绝对路径示例：{}。\n{}",
+            host_environment.displayName,
+            host_environment.id,
+            host_environment.pathStyleDescriptionCn,
+            examples,
+            environment_rule
+        )
+    }
+}
+
+#[allow(non_snake_case)]
+fn applyHostEnvironmentToTool(
+    tool: &mut ToolPrompt,
+    host_environment: &HostEnvironmentDescriptor,
+    use_english: bool,
+) {
+    if !host_environment.usesEnvironmentParameter {
+        tool.parameters_structured.retain(|parameter| {
+            !matches!(
+                parameter.name.as_str(),
+                "environment" | "source_environment" | "dest_environment"
+            )
+        });
+    }
+
+    for parameter in &mut tool.parameters_structured {
+        match parameter.name.as_str() {
+            "path" | "source" | "destination" | "folder_path" => {
+                parameter.description = hostPathParameterDescription(host_environment, use_english);
+            }
+            "environment" => {
+                parameter.description = if use_english {
+                    host_environment.environmentParameterDescriptionEn.clone()
+                } else {
+                    host_environment.environmentParameterDescriptionCn.clone()
+                };
+            }
+            "source_environment" | "dest_environment" => {
+                parameter.description = if use_english {
+                    host_environment.environmentParameterDescriptionEn.clone()
+                } else {
+                    host_environment.environmentParameterDescriptionCn.clone()
+                };
+            }
+            _ => {}
+        }
+    }
+
+    if !host_environment.usesEnvironmentParameter && tool.name == "copy_file" {
+        tool.description = if use_english {
+            "Copy a file or directory on the current file host.".to_string()
+        } else {
+            "在当前文件 Host 内复制文件或目录。".to_string()
+        };
+    }
+}
+
+#[allow(non_snake_case)]
+fn hostPathParameterDescription(
+    host_environment: &HostEnvironmentDescriptor,
+    use_english: bool,
+) -> String {
+    let examples = host_environment.examplePaths.join(", ");
+    if use_english {
+        format!(
+            "absolute {} path, e.g. {}",
+            host_environment.displayName,
+            examples
+        )
+    } else {
+        format!(
+            "{} 绝对路径，例如 {}",
+            host_environment.displayName,
+            examples
+        )
     }
 }
 

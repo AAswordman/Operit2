@@ -32,6 +32,19 @@ impl RuntimeStorePaths {
         self.root_dir.join("chats")
     }
 
+    pub fn skills_dir(&self) -> PathBuf {
+        self.root_dir.join("skills")
+    }
+
+    pub fn packages_dir(&self) -> PathBuf {
+        self.root_dir.join("packages")
+    }
+
+    pub fn package_manager_preferences_path(&self) -> PathBuf {
+        self.root_dir
+            .join("com.ai.assistance.operit.core.tools.PackageManager.preferences.json")
+    }
+
     pub fn chat_path(&self, chat_id: &str) -> PathBuf {
         self.chats_dir().join(format!("{chat_id}.json"))
     }
@@ -50,6 +63,14 @@ impl RuntimeStorePaths {
 
     pub fn ensure_chats_dir(&self) -> std::io::Result<()> {
         fs::create_dir_all(self.chats_dir())
+    }
+
+    pub fn ensure_skills_dir(&self) -> std::io::Result<()> {
+        fs::create_dir_all(self.skills_dir())
+    }
+
+    pub fn ensure_packages_dir(&self) -> std::io::Result<()> {
+        fs::create_dir_all(self.packages_dir())
     }
 }
 

@@ -1,5 +1,6 @@
 mod app;
 mod commands;
+mod empty_state;
 mod helpers;
 mod input;
 mod markdown;

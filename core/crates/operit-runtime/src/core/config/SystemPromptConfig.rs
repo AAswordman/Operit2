@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use operit_host_api::HostEnvironmentDescriptor;
 use serde_json::{json, Value};
 
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
+use crate::core::tools::climode::CliToolModeSupport::CliToolModeSupport;
 
 const TOOL_USAGE_GUIDELINES_EN: &str = r#"When calling a tool, the user will see your response, and then will automatically send the tool results back to you in a follow-up message.
 
@@ -144,6 +146,7 @@ pub struct SystemPromptOptions {
     pub workspace_rule_file: Option<WorkspaceRuleFile>,
     pub external_storage_path: String,
     pub app_files_path: String,
+    pub host_environment: HostEnvironmentDescriptor,
     pub hook_metadata: HashMap<String, Value>,
 }
 
@@ -172,6 +175,7 @@ impl Default for SystemPromptOptions {
             workspace_rule_file: None,
             external_storage_path: "/sdcard".to_string(),
             app_files_path: String::new(),
+            host_environment: HostEnvironmentDescriptor::android(),
             hook_metadata: HashMap::new(),
         }
     }
@@ -239,6 +243,7 @@ impl SystemPromptConfig {
             options.workspace_rule_file.as_ref(),
             &options.external_storage_path,
             &options.app_files_path,
+            &options.host_environment,
         );
 
         let mut prompt = template_to_use
@@ -251,7 +256,7 @@ impl SystemPromptConfig {
             format!(
                 "{}{}",
                 SystemToolPrompts::generateMemoryToolsPromptEn(&options.tool_visibility),
-                SystemToolPrompts::generateToolsPromptEn(
+                SystemToolPrompts::generateToolsPromptEnForHost(
                     options.chat_id.clone(),
                     options.has_image_recognition,
                     false,
@@ -261,6 +266,7 @@ impl SystemPromptConfig {
                     options.chat_model_has_direct_audio,
                     options.chat_model_has_direct_video,
                     &options.saf_bookmark_names,
+                    &options.host_environment,
                     &options.tool_visibility,
                     options.hook_metadata.clone(),
                 )
@@ -272,7 +278,7 @@ impl SystemPromptConfig {
             format!(
                 "{}{}",
                 SystemToolPrompts::generateMemoryToolsPromptCn(&options.tool_visibility),
-                SystemToolPrompts::generateToolsPromptCn(
+                SystemToolPrompts::generateToolsPromptCnForHost(
                     options.chat_id.clone(),
                     options.has_image_recognition,
                     false,
@@ -282,6 +288,7 @@ impl SystemPromptConfig {
                     options.chat_model_has_direct_audio,
                     options.chat_model_has_direct_video,
                     &options.saf_bookmark_names,
+                    &options.host_environment,
                     &options.tool_visibility,
                     options.hook_metadata.clone(),
                 )
@@ -334,6 +341,7 @@ impl SystemPromptConfig {
         let mut metadata = HashMap::from([
             ("workspacePath".to_string(), json!(options.base.workspace_path)),
             ("workspaceEnv".to_string(), json!(options.base.workspace_env)),
+            ("hostEnvironment".to_string(), json!(options.base.host_environment.id.clone())),
             ("safBookmarkNames".to_string(), json!(options.base.saf_bookmark_names)),
             ("customSystemPromptTemplate".to_string(), json!(options.base.custom_system_prompt_template)),
             ("customIntroPrompt".to_string(), json!(options.custom_intro_prompt)),
@@ -445,6 +453,7 @@ fn getWorkspaceGuidelines(
     workspace_rule_file: Option<&WorkspaceRuleFile>,
     external_storage_path: &str,
     app_files_path: &str,
+    host_environment: &HostEnvironmentDescriptor,
 ) -> String {
     let Some(workspace_path) = workspace_path else {
         return String::new();
@@ -452,15 +461,32 @@ fn getWorkspaceGuidelines(
     if workspace_path.trim().is_empty() {
         return String::new();
     }
-    let env_label = workspace_env.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("android");
+    let env_label = workspace_env
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(host_environment.id.as_str());
     let base_guidelines = if use_english {
-        format!(
-            "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}` (environment={env_label}).\n- Treat this exact path as the base path for all workspace file operations.\n- When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `{workspace_path}`.\n- When operating on workspace files via tools, always pass `environment=\"{env_label}\"` together with the workspace path.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- Terminal mount note: common mounts include `{external_storage_path} -> /sdcard`, `{external_storage_path} -> {external_storage_path}`, and app sandbox `{app_files_path} -> same path`.\n- If the workspace is under mounted paths, execute workspace files directly in the Linux terminal environment; do not copy files before execution.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
-        )
+        if host_environment.usesEnvironmentParameter {
+            format!(
+                "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}` (environment={env_label}).\n- Treat this exact path as the base path for all workspace file operations.\n- When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `{workspace_path}`.\n- When operating on workspace files via tools, always pass `environment=\"{env_label}\"` together with the workspace path.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- Terminal mount note: common mounts include `{external_storage_path} -> /sdcard`, `{external_storage_path} -> {external_storage_path}`, and app sandbox `{app_files_path} -> same path`.\n- If the workspace is under mounted paths, execute workspace files directly in the Linux terminal environment; do not copy files before execution.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
+            )
+        } else {
+            format!(
+                "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}` on {}.\n- Treat this exact path as the base path for all workspace file operations.\n- When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `{workspace_path}`.\n- File tools operate directly on this host; omit environment parameters.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes.",
+                host_environment.displayName
+            )
+        }
     } else {
-        format!(
-            "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`（environment={env_label}）。\n- 所有工作区文件操作都要把这个精确路径当作根路径。\n- 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `{workspace_path}` 为根的绝对路径。\n- 通过工具操作工作区文件时，每次都必须同时传入 `environment=\"{env_label}\"` 和对应的工作区路径。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- 终端挂载说明：常见挂载包括 `{external_storage_path} -> /sdcard`、`{external_storage_path} -> {external_storage_path}`，以及应用沙箱 `{app_files_path} -> 同路径`。\n- 若工作区位于已挂载路径中，直接在 Linux 终端环境中执行工作区文件；无需先复制再执行。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
-        )
+        if host_environment.usesEnvironmentParameter {
+            format!(
+                "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`（environment={env_label}）。\n- 所有工作区文件操作都要把这个精确路径当作根路径。\n- 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `{workspace_path}` 为根的绝对路径。\n- 通过工具操作工作区文件时，每次都必须同时传入 `environment=\"{env_label}\"` 和对应的工作区路径。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- 终端挂载说明：常见挂载包括 `{external_storage_path} -> /sdcard`、`{external_storage_path} -> {external_storage_path}`，以及应用沙箱 `{app_files_path} -> 同路径`。\n- 若工作区位于已挂载路径中，直接在 Linux 终端环境中执行工作区文件；无需先复制再执行。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
+            )
+        } else {
+            format!(
+                "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`（{}）。\n- 所有工作区文件操作都要把这个精确路径当作根路径。\n- 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `{workspace_path}` 为根的绝对路径。\n- 文件工具直接作用于当前 Host；不要传入 environment 参数。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。",
+                host_environment.displayName
+            )
+        }
     };
     let rule_section = buildWorkspaceRuleFileSection(workspace_rule_file, use_english);
     if rule_section.is_empty() {
@@ -471,27 +497,7 @@ fn getWorkspaceGuidelines(
 }
 
 fn build_cli_mode_prompt(use_english: bool) -> String {
-    if use_english {
-        let intro = r#"CLI TOOL MODE
-- Only two public tools are available: `search` and `proxy`.
-- `search` only searches the hidden tool catalog. It does not read files, search code, or browse the web.
-- All real capabilities are hidden behind `proxy`.
-- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params."#;
-        let category = r#"Public tools:
-- search: Search the hidden tool catalog only. Use this first to discover hidden tool names and parameter shapes. Parameters: query (tool capability or hidden tool name to search for), limit (optional, max results to return, default 8)
-- proxy: Execute a hidden tool after you discover its target tool name and parameter shape via search. Parameters: tool_name (hidden target tool name, for example read_file or packageName:toolName), params (JSON object of parameters to forward to the hidden target tool)"#;
-        format!("{intro}\n\n{category}")
-    } else {
-        let intro = r#"CLI 工具模式
-- 当前只有两个公开工具：`search` 和 `proxy`。
-- `search` 只搜索隐藏工具目录，不会直接读文件、搜代码或访问网页。
-- 所有真实能力都隐藏在 `proxy` 后面。
-- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。"#;
-        let category = r#"公开工具:
-- search: 仅搜索隐藏工具目录。先用它发现隐藏工具名和参数形态。 Parameters: query (要搜索的工具能力或隐藏工具名), limit (可选，返回的最大结果数, default 8)
-- proxy: 在 search 发现目标工具名和参数形态后，代理执行隐藏工具。 Parameters: tool_name (隐藏目标工具名，例如 read_file 或 packageName:toolName), params (转发给隐藏目标工具的 JSON 参数对象)"#;
-        format!("{intro}\n\n{category}")
-    }
+    CliToolModeSupport::buildCliModePrompt(use_english)
 }
 
 fn collapse_blank_lines(input: &str) -> String {

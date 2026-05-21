@@ -47,6 +47,8 @@ pub struct ChatHistoryManager {
     messageVariantDao: MessageVariantDao,
     currentChatIdDataStore: PreferencesDataStore,
     pub currentChatIdFlow: StateFlow<Option<String>>,
+    _chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
+    pub chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
 }
 
 pub struct PreferencesKeys;
@@ -93,6 +95,13 @@ impl ChatHistoryManager {
             })
             .map(|preferences| preferences.get(&PreferencesKeys::CURRENT_CHAT_ID()).cloned())
             .stateIn(CoroutineScope, SharingStarted::Lazily, None);
+        let _chatHistoriesFlow = chatDao.getAllChats()?.map(|chatEntities| {
+            chatEntities
+                .into_iter()
+                .map(|chatEntity| chatEntity.toChatHistory(Vec::new()))
+                .collect()
+        });
+        let chatHistoriesFlow = _chatHistoriesFlow.clone();
         Ok(Self {
             database,
             chatDao,
@@ -100,6 +109,8 @@ impl ChatHistoryManager {
             messageVariantDao,
             currentChatIdDataStore,
             currentChatIdFlow,
+            _chatHistoriesFlow,
+            chatHistoriesFlow,
         })
     }
 
@@ -184,12 +195,7 @@ impl ChatHistoryManager {
     }
 
     pub fn chatHistoriesFlow(&self) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
-        Ok(self
-            .chatDao
-            .getAllChats()?
-            .into_iter()
-            .map(|chat| self.toChatHistory(chat))
-            .collect())
+        Ok(self.chatHistoriesFlow.value())
     }
 
     pub fn getTotalChatCount(&self) -> ChatHistoryManagerResult<i32> {

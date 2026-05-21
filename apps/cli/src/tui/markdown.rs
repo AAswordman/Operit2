@@ -6,11 +6,18 @@ use operit_runtime::util::streamnative::NativeMarkdownStreamOperators::NativeMar
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-pub(super) fn render_markdown_lines(content: &str) -> Vec<Line<'static>> {
+const TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT: usize = 160;
+const TOOL_RESULT_INLINE_DETAIL_CHAR_LIMIT: usize = 80;
+const TOOL_RESULT_PREFIX_DISPLAY_WIDTH: usize = 8;
+
+pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<Line<'static>> {
     let nodes = content.nativeMarkdownSplitByBlock();
     let mut lines = Vec::new();
-    for node in nodes {
-        render_block_node(&node, &mut lines);
+    for (index, node) in nodes.iter().enumerate() {
+        if is_blank_block_between_tool_blocks(&nodes, index) {
+            continue;
+        }
+        render_block_node(&node, content_width, &mut lines);
     }
     if lines.is_empty() {
         lines.push(Line::from(""));
@@ -18,7 +25,53 @@ pub(super) fn render_markdown_lines(content: &str) -> Vec<Line<'static>> {
     lines
 }
 
-fn render_block_node(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) {
+fn is_blank_block_between_tool_blocks(nodes: &[MarkdownNodeStable], index: usize) -> bool {
+    let Some(node) = nodes.get(index) else {
+        return false;
+    };
+    if !is_blank_text_block(node) {
+        return false;
+    }
+    let previous_is_tool = previous_non_blank_node(nodes, index).map(is_tool_xml_block).unwrap_or(false);
+    let next_is_tool = next_non_blank_node(nodes, index).map(is_tool_xml_block).unwrap_or(false);
+    previous_is_tool && next_is_tool
+}
+
+fn is_blank_text_block(node: &MarkdownNodeStable) -> bool {
+    matches!(
+        node.r#type,
+        MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak
+    ) && node.content.trim().is_empty()
+        && node.children.iter().all(is_blank_text_block)
+}
+
+fn previous_non_blank_node(nodes: &[MarkdownNodeStable], index: usize) -> Option<&MarkdownNodeStable> {
+    nodes
+        .get(..index)?
+        .iter()
+        .rev()
+        .find(|node| !is_blank_text_block(node))
+}
+
+fn next_non_blank_node(nodes: &[MarkdownNodeStable], index: usize) -> Option<&MarkdownNodeStable> {
+    nodes
+        .get(index + 1..)?
+        .iter()
+        .find(|node| !is_blank_text_block(node))
+}
+
+fn is_tool_xml_block(node: &MarkdownNodeStable) -> bool {
+    if node.r#type != MarkdownProcessorType::XmlBlock {
+        return false;
+    }
+    let raw_tag = ChatMarkupRegex::extract_opening_tag_name(&node.content);
+    matches!(
+        ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref()).as_deref(),
+        Some("tool") | Some("tool_result")
+    )
+}
+
+fn render_block_node(node: &MarkdownNodeStable, content_width: usize, lines: &mut Vec<Line<'static>>) {
     match node.r#type {
         MarkdownProcessorType::Header => render_header(node, lines),
         MarkdownProcessorType::BlockQuote => render_block_quote(node, lines),
@@ -31,7 +84,7 @@ fn render_block_node(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) 
         ))),
         MarkdownProcessorType::BlockLatex => render_latex_block(&node.content, lines),
         MarkdownProcessorType::Table => render_table_block(&node.content, lines),
-        MarkdownProcessorType::XmlBlock => render_xml_block(&node.content, lines),
+        MarkdownProcessorType::XmlBlock => render_xml_block(&node.content, content_width, lines),
         MarkdownProcessorType::Image => lines.extend(render_inline_nodes(&[node.clone()], Style::default())),
         MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => {
             lines.extend(render_inline_nodes(&node.children, Style::default()));
@@ -180,12 +233,13 @@ fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
     }
 }
 
-fn render_xml_block(content: &str, lines: &mut Vec<Line<'static>>) {
+fn render_xml_block(content: &str, content_width: usize, lines: &mut Vec<Line<'static>>) {
     let raw_tag = ChatMarkupRegex::extract_opening_tag_name(content);
     let tag = ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref());
     match tag.as_deref() {
-        Some("tool") => render_tool_xml(content, false, lines),
-        Some("tool_result") => render_tool_xml(content, true, lines),
+        Some("tool") => render_tool_xml(content, false, content_width, lines),
+        Some("tool_result") => render_tool_xml(content, true, content_width, lines),
+        Some("error") => render_error_xml(content, lines),
         Some("think") | Some("thinking") => render_named_xml_body("thinking", content, lines),
         Some("status") => render_status_xml(content, lines),
         Some("meta") => {}
@@ -194,7 +248,7 @@ fn render_xml_block(content: &str, lines: &mut Vec<Line<'static>>) {
     }
 }
 
-fn render_tool_xml(content: &str, is_result: bool, lines: &mut Vec<Line<'static>>) {
+fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: &mut Vec<Line<'static>>) {
     let name = attr_value(content, "name").unwrap_or_else(|| "tool".to_string());
     let status = attr_value(content, "status");
     let tag_name = ChatMarkupRegex::extract_opening_tag_name(content).unwrap_or_else(|| {
@@ -205,27 +259,218 @@ fn render_tool_xml(content: &str, is_result: bool, lines: &mut Vec<Line<'static>
         }
     });
     let body = tag_body(content, &tag_name).unwrap_or("").trim();
-    let symbol = if is_result { "->" } else { "*" };
+    if is_result {
+        render_tool_result_xml(&name, status.as_deref(), body, content_width, lines);
+        return;
+    }
+
+    let params = extract_param_pairs(body);
+    let summary = render_tool_param_summary(&params, body);
     let mut header = vec![
-        Span::styled(symbol.to_string(), Style::default().fg(Color::Cyan)),
+        Span::styled("*".to_string(), Style::default().fg(Color::Cyan)),
         Span::raw(" "),
         Span::styled(name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     ];
-    if let Some(status) = status {
+    let summary = compact_tool_summary(&summary, TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT);
+    if !summary.is_empty() {
+        header.push(Span::styled(" ".to_string(), Style::default()));
+        header.push(Span::styled(summary, Style::default().fg(Color::DarkGray)));
+    }
+    lines.push(Line::from(header));
+}
+
+fn render_tool_result_xml(
+    _name: &str,
+    status: Option<&str>,
+    body: &str,
+    content_width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let content = extract_first_tag_body(body, "content").unwrap_or(body).trim();
+    let error = extract_first_tag_body(content, "error").map(str::trim);
+    let is_error = status
+        .map(|value| value.eq_ignore_ascii_case("error"))
+        .unwrap_or(false)
+        || error.is_some();
+    let result_limit = content_width
+        .saturating_sub(TOOL_RESULT_PREFIX_DISPLAY_WIDTH)
+        .min(TOOL_RESULT_INLINE_DETAIL_CHAR_LIMIT)
+        .max(8);
+    let result = compact_tool_summary(
+        &normalize_tool_display_text(error.unwrap_or(content)),
+        result_limit,
+    );
+    let mut header = vec![
+        Span::raw("    "),
+        Span::styled("↳".to_string(), Style::default().fg(if is_error {
+            Color::Red
+        } else {
+            Color::DarkGray
+        })),
+        Span::raw(" "),
+        Span::styled(
+            if is_error { "×" } else { "✓" }.to_string(),
+            Style::default().fg(if is_error { Color::Red } else { Color::DarkGray }),
+        ),
+        Span::raw(" "),
+    ];
+    if !result.is_empty() {
         header.push(Span::styled(
-            format!(" [{status}]"),
+            result.clone(),
             Style::default().fg(Color::DarkGray),
         ));
     }
     lines.push(Line::from(header));
-    if !body.is_empty() {
-        for raw in body.lines() {
-            lines.push(Line::from(vec![
-                Span::styled("  ".to_string(), Style::default().fg(Color::DarkGray)),
-                Span::styled(raw.to_string(), Style::default().fg(Color::Gray)),
-            ]));
-        }
+}
+
+fn render_tool_param_summary(params: &[(String, String)], body: &str) -> String {
+    if params.is_empty() {
+        return normalize_tool_display_text(body);
     }
+    params
+        .iter()
+        .map(|(name, value)| {
+            let normalized_value = normalize_tool_display_text(value);
+            format!("{name}={normalized_value}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn compact_tool_summary(value: &str, char_limit: usize) -> String {
+    let normalized = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if display_width(&normalized) <= char_limit {
+        return normalized;
+    }
+    let max_width = char_limit.saturating_sub(3);
+    let mut summary = String::new();
+    let mut width = 0usize;
+    for ch in normalized.chars() {
+        let char_width = char_display_width(ch);
+        if width + char_width > max_width {
+            break;
+        }
+        summary.push(ch);
+        width += char_width;
+    }
+    summary.push_str("...");
+    summary
+}
+
+fn display_width(value: &str) -> usize {
+    value.chars().map(char_display_width).sum()
+}
+
+fn char_display_width(ch: char) -> usize {
+    if ch == '\0' || ch.is_control() {
+        0
+    } else if is_wide_char(ch) {
+        2
+    } else {
+        1
+    }
+}
+
+fn is_wide_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2329..=0x232A
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1FAFF
+            | 0x20000..=0x3FFFD
+    )
+}
+
+fn extract_param_pairs(content: &str) -> Vec<(String, String)> {
+    extract_tag_blocks(content, "param")
+        .into_iter()
+        .filter_map(|block| {
+            let name = attr_value(block.opening_tag, "name")?;
+            Some((name, xml_unescape(block.body.trim())))
+        })
+        .collect()
+}
+
+struct SimpleXmlBlock<'a> {
+    opening_tag: &'a str,
+    body: &'a str,
+}
+
+fn extract_first_tag_body<'a>(content: &'a str, tag_name: &str) -> Option<&'a str> {
+    extract_tag_blocks(content, tag_name)
+        .into_iter()
+        .next()
+        .map(|block| block.body)
+}
+
+fn extract_tag_blocks<'a>(content: &'a str, tag_name: &str) -> Vec<SimpleXmlBlock<'a>> {
+    let mut blocks = Vec::new();
+    let mut cursor = 0usize;
+    let lower = content.to_ascii_lowercase();
+    let open_prefix = format!("<{}", tag_name.to_ascii_lowercase());
+    let close = format!("</{}>", tag_name.to_ascii_lowercase());
+    while let Some(relative_start) = lower[cursor..].find(&open_prefix) {
+        let start = cursor + relative_start;
+        let after_name = start + open_prefix.len();
+        if !lower
+            .as_bytes()
+            .get(after_name)
+            .map(|byte| is_xml_tag_boundary(*byte))
+            .unwrap_or(false)
+        {
+            cursor = after_name;
+            continue;
+        }
+        let Some(open_end_relative) = lower[start..].find('>') else {
+            break;
+        };
+        let open_end = start + open_end_relative + 1;
+        let Some(close_relative) = lower[open_end..].find(&close) else {
+            break;
+        };
+        let close_start = open_end + close_relative;
+        let end = close_start + close.len();
+        blocks.push(SimpleXmlBlock {
+            opening_tag: &content[start..open_end],
+            body: &content[open_end..close_start],
+        });
+        cursor = end;
+    }
+    blocks
+}
+
+fn is_xml_tag_boundary(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b'>' || byte == b'/'
+}
+
+fn normalize_tool_display_text(value: &str) -> String {
+    xml_unescape(value)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
@@ -235,6 +480,18 @@ fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(vec![
         Span::styled("* ".to_string(), Style::default().fg(Color::DarkGray)),
         Span::styled(label, Style::default().fg(Color::Gray)),
+    ]));
+}
+
+fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>) {
+    let body = xml_unescape(
+        tag_body(content, "error").expect("error xml block must contain an error body"),
+    )
+        .trim()
+        .to_string();
+    lines.push(Line::from(vec![
+        Span::styled("error: ".to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(body, Style::default().fg(Color::LightRed)),
     ]));
 }
 

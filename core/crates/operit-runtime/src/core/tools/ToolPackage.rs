@@ -1,9 +1,23 @@
 use std::collections::HashMap;
 
+#[derive(Clone, Debug, Default)]
 pub struct LocalizedText {
     pub values: HashMap<String, String>,
 }
 
+impl LocalizedText {
+    pub fn resolve(&self, useEnglish: bool) -> String {
+        let primary = if useEnglish { "en" } else { "zh" };
+        self.values
+            .get(primary)
+            .or_else(|| self.values.get("default"))
+            .or_else(|| self.values.values().next())
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct EnvVar {
     pub name: String,
     pub description: LocalizedText,
@@ -11,6 +25,7 @@ pub struct EnvVar {
     pub default_value: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct ToolPackage {
     pub name: String,
     pub description: LocalizedText,
@@ -24,6 +39,7 @@ pub struct ToolPackage {
     pub author: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct ToolPackageState {
     pub id: String,
     pub condition: String,
@@ -32,6 +48,7 @@ pub struct ToolPackageState {
     pub tools: Vec<PackageTool>,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct PackageTool {
     pub name: String,
     pub description: LocalizedText,
@@ -40,6 +57,7 @@ pub struct PackageTool {
     pub advice: bool,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct PackageToolParameter {
     pub name: String,
     pub description: LocalizedText,

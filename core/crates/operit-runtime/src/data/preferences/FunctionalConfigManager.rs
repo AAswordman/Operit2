@@ -8,7 +8,7 @@ use crate::data::model::FunctionType::FunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -50,6 +50,7 @@ pub enum FunctionalConfigError {
     UnknownFunctionType(String),
 }
 
+#[derive(Clone)]
 pub struct FunctionalConfigManager {
     functionalConfigDataStore: PreferencesDataStore,
     modelConfigManager: ModelConfigManager,
@@ -84,7 +85,7 @@ impl FunctionalConfigManager {
     }
 
     pub fn initializeIfNeeded(&self) -> Result<(), FunctionalConfigError> {
-        let mapping = self.functionConfigMappingWithIndexFlow()?;
+        let mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
         if mapping.is_empty() {
             self.saveFunctionConfigMappingWithIndex(Self::defaultMapping())?;
         }
@@ -97,18 +98,28 @@ impl FunctionalConfigManager {
 
     pub fn functionConfigMappingFlow(
         &self,
-    ) -> Result<HashMap<FunctionType, String>, FunctionalConfigError> {
-        let mapping = self.functionConfigMappingWithIndexFlow()?;
-        Ok(mapping
-            .into_iter()
-            .map(|(functionType, mapping)| (functionType, mapping.configId))
-            .collect())
+    ) -> Result<Flow<HashMap<FunctionType, String>>, FunctionalConfigError> {
+        let flow = self.functionConfigMappingWithIndexFlow()?;
+        Ok(flow.map(|mapping| {
+            mapping
+                .into_iter()
+                .map(|(functionType, mapping)| (functionType, mapping.configId))
+                .collect()
+        }))
     }
 
     pub fn functionConfigMappingWithIndexFlow(
         &self,
-    ) -> Result<HashMap<FunctionType, FunctionConfigMapping>, FunctionalConfigError> {
-        let preferences = self.functionalConfigDataStore.data()?;
+    ) -> Result<Flow<HashMap<FunctionType, FunctionConfigMapping>>, FunctionalConfigError> {
+        Ok(self
+            .functionalConfigDataStore
+            .dataFlow()
+            .mapResult(|preferences| Self::readFunctionConfigMappingWithIndex(&preferences)))
+    }
+
+    fn readFunctionConfigMappingWithIndex(
+        preferences: &Preferences,
+    ) -> Result<HashMap<FunctionType, FunctionConfigMapping>, PreferencesDataStoreError> {
         let mappingJson = preferences
             .get(&Self::FUNCTION_CONFIG_MAPPING())
             .cloned()
@@ -120,19 +131,19 @@ impl FunctionalConfigManager {
 
         let rawMap: HashMap<String, StoredFunctionConfigMapping> =
             serde_json::from_str(&mappingJson)?;
-        rawMap
-            .into_iter()
-            .map(|(key, storedMapping)| {
-                let functionType = Self::parseFunctionType(&key)?;
-                let mapping = match storedMapping {
-                    StoredFunctionConfigMapping::WithIndex(mapping) => mapping,
-                    StoredFunctionConfigMapping::ConfigId(configId) => {
-                        FunctionConfigMapping::new(configId, 0)
-                    }
-                };
-                Ok((functionType, mapping))
-            })
-            .collect()
+        let mut mapping = HashMap::new();
+        for (key, storedMapping) in rawMap {
+            let functionType = Self::parseFunctionType(&key)
+                .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
+            let value = match storedMapping {
+                StoredFunctionConfigMapping::WithIndex(mapping) => mapping,
+                StoredFunctionConfigMapping::ConfigId(configId) => {
+                    FunctionConfigMapping::new(configId, 0)
+                }
+            };
+            mapping.insert(functionType, value);
+        }
+        Ok(mapping)
     }
 
     pub fn saveFunctionConfigMapping(
@@ -167,7 +178,7 @@ impl FunctionalConfigManager {
         &self,
         functionType: FunctionType,
     ) -> Result<String, FunctionalConfigError> {
-        let mapping = self.functionConfigMappingFlow()?;
+        let mapping = self.functionConfigMappingFlow()?.first()?;
         Ok(mapping
             .get(&functionType)
             .cloned()
@@ -178,7 +189,7 @@ impl FunctionalConfigManager {
         &self,
         functionType: FunctionType,
     ) -> Result<FunctionConfigMapping, FunctionalConfigError> {
-        let mapping = self.functionConfigMappingWithIndexFlow()?;
+        let mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
         Ok(mapping
             .get(&functionType)
             .cloned()
@@ -199,7 +210,7 @@ impl FunctionalConfigManager {
         configId: String,
         modelIndex: i32,
     ) -> Result<(), FunctionalConfigError> {
-        let mut mapping = self.functionConfigMappingWithIndexFlow()?;
+        let mut mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
         mapping.insert(functionType, FunctionConfigMapping::new(configId, modelIndex));
         self.saveFunctionConfigMappingWithIndex(mapping)
     }

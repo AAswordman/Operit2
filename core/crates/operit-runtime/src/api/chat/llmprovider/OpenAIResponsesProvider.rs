@@ -95,12 +95,15 @@ impl OpenAIResponsesProvider {
         &self,
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
-        let parent = OpenAIProvider::new(
+        let parent = OpenAIProvider::new_with_capabilities(
             self.responsesApiEndpoint.clone(),
             self.api_key.clone(),
             self.modelName.clone(),
             self.responsesProviderType.clone(),
             self.customHeaders.clone(),
+            self.supportsVision,
+            self.supportsAudio,
+            self.supportsVideo,
             self.enableToolCall,
         );
         let mut requestObject = OpenAIResponsesPayloadAdapter::to_responses_request(
@@ -671,12 +674,15 @@ impl AIService for OpenAIResponsesProvider {
         self.reset_token_counts();
         let requestBody = self.create_request_body(&request)?;
         if request.stream {
-            let mut parent = OpenAIProvider::new(
+            let mut parent = OpenAIProvider::new_with_capabilities(
                 self.responsesApiEndpoint.clone(),
                 self.api_key.clone(),
                 self.modelName.clone(),
                 self.responsesProviderType.clone(),
                 self.customHeaders.clone(),
+                self.supportsVision,
+                self.supportsAudio,
+                self.supportsVideo,
                 self.enableToolCall,
             );
             let mut parent_stream = parent

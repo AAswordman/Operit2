@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
-    GrepCodeResult, GrepFileMatch, GrepLineMatch, HostError, HostResult,
+    GrepCodeResult, GrepFileMatch, GrepLineMatch, HostEnvironmentDescriptor, HostError, HostResult,
 };
 use regex::RegexBuilder;
 use zip::write::SimpleFileOptions;
@@ -24,6 +24,10 @@ impl LinuxFileSystemHost {
 impl FileSystemHost for LinuxFileSystemHost {
     fn envLabel(&self) -> &str {
         "linux"
+    }
+
+    fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+        HostEnvironmentDescriptor::linux()
     }
 
     fn validatePath(&self, path: &str, paramName: &str) -> HostResult<()> {

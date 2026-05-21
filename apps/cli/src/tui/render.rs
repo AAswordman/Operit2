@@ -3,6 +3,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::app::{FocusArea, OperitTui};
 use super::helpers::{
@@ -116,7 +117,17 @@ impl OperitTui {
 
     fn render_transcript(&mut self, frame: &mut Frame, area: Rect) {
         let messages = self.current_messages();
-        let transcript_lines = render_message_lines(&messages);
+        let is_loading = self.current_chat_is_loading();
+        let input_state = self.current_chat_input_processing_state();
+        let thinking_text = thinking_indicator_text();
+        let content_width = area.width.saturating_sub(2).max(1) as usize;
+        let transcript_lines = render_message_lines(
+            &messages,
+            content_width,
+            is_loading,
+            &input_state,
+            &thinking_text,
+        );
         let max_scroll = transcript_max_scroll(&transcript_lines, area);
         self.transcript_viewport_height = area.height.saturating_sub(2).max(1);
         self.transcript_max_scroll = max_scroll;
@@ -219,10 +230,15 @@ impl OperitTui {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let text = if self.status_message.is_empty() {
+        let status_text = if self.status_message.is_empty() {
             "Ready".to_string()
         } else {
             self.status_message.clone()
+        };
+        let text = if self.context_usage_label.is_empty() {
+            status_text
+        } else {
+            format!("{status_text} | {}", self.context_usage_label)
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -259,6 +275,8 @@ impl OperitTui {
             Line::from("/help"),
             Line::from("/new [--character <name>] [--group-card <id>] [--group <name>]"),
             Line::from("/switch"),
+            Line::from("/max"),
+            Line::from("/model current | /model list | /model use <config-id> [model-index]"),
             Line::from("/attach <path>"),
             Line::from("/attachments"),
             Line::from("/clear-attachments"),
@@ -269,4 +287,13 @@ impl OperitTui {
             .wrap(Wrap { trim: false });
         frame.render_widget(help, popup);
     }
+}
+
+fn thinking_indicator_text() -> String {
+    let elapsed_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after unix epoch")
+        .as_millis();
+    let dots = ((elapsed_ms / 450) % 4) as usize;
+    format!("thinking{}", ".".repeat(dots))
 }

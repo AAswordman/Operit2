@@ -11,13 +11,24 @@ use ratatui::Terminal;
 
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::data::model::ActivePrompt::ActivePrompt;
+use operit_runtime::data::model::CharacterCard::CharacterCardChatModelBindingMode;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
+use operit_runtime::data::model::FunctionType::FunctionType;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
+use operit_runtime::data::model::ModelConfigData::{
+    getModelByIndex, getModelList, getValidModelIndex,
+};
+use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
+use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_runtime::util::AppLogger::AppLogger;
 
 use super::helpers::{short_chat_label, split_command_line};
 use crate::{
-    current_shell_chat_id, ensure_chat_exists, launch_chat_message_with_application,
-    parse_shell_args, ChatSendArgs, ShellArgs,
+    begin_chat_message_with_application, current_shell_chat_id, ensure_chat_exists, parse_shell_args,
+    ChatSendArgs, ShellArgs,
 };
 
 pub(super) struct OperitTui {
@@ -31,6 +42,7 @@ pub(super) struct OperitTui {
     pub(super) autocomplete_index: usize,
     pub(super) queued_attachment_paths: Vec<String>,
     pub(super) status_message: String,
+    pub(super) context_usage_label: String,
     pub(super) transcript_scroll: u16,
     pub(super) transcript_viewport_height: u16,
     pub(super) transcript_max_scroll: u16,
@@ -70,10 +82,9 @@ impl OperitTui {
             .iter()
             .position(|item| item.id == initial_chat_id)
             .unwrap_or(0);
-        let status_message = format!(
-            "chat={} | F3 chats | Enter send | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help",
-            short_chat_label(&initial_chat_id)
-        );
+        let status_message =
+            "F3 chats | Enter send | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help"
+                .to_string();
         let _ = current_shell_chat_id(&mut application)?;
         Ok(Self {
             application,
@@ -86,6 +97,7 @@ impl OperitTui {
             autocomplete_index: 0,
             queued_attachment_paths: Vec::new(),
             status_message,
+            context_usage_label: String::new(),
             transcript_scroll: 0,
             transcript_viewport_height: 1,
             transcript_max_scroll: 0,
@@ -100,16 +112,37 @@ impl OperitTui {
     }
 
     pub(super) async fn run(&mut self) -> Result<(), String> {
-        enable_raw_mode().map_err(|error| error.to_string())?;
+        let previous_console_logging = AppLogger::enable_console_logging();
+        AppLogger::set_enable_console_logging(false);
+        if let Err(error) = enable_raw_mode().map_err(|error| error.to_string()) {
+            AppLogger::set_enable_console_logging(previous_console_logging);
+            return Err(error);
+        }
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen).map_err(|error| error.to_string())?;
+        if let Err(error) = execute!(stdout, EnterAlternateScreen).map_err(|error| error.to_string()) {
+            let _ = disable_raw_mode();
+            AppLogger::set_enable_console_logging(previous_console_logging);
+            return Err(error);
+        }
         let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend).map_err(|error| error.to_string())?;
+        let mut terminal = match Terminal::new(backend).map_err(|error| error.to_string()) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                let _ = disable_raw_mode();
+                AppLogger::set_enable_console_logging(previous_console_logging);
+                return Err(error);
+            }
+        };
         let result = self.run_loop(&mut terminal).await;
-        disable_raw_mode().map_err(|error| error.to_string())?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(|error| error.to_string())?;
-        terminal.show_cursor().map_err(|error| error.to_string())?;
-        result
+        let cleanup_result = disable_raw_mode()
+            .map_err(|error| error.to_string())
+            .and_then(|_| {
+                execute!(terminal.backend_mut(), LeaveAlternateScreen)
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|_| terminal.show_cursor().map_err(|error| error.to_string()));
+        AppLogger::set_enable_console_logging(previous_console_logging);
+        result.and(cleanup_result)
     }
 
     async fn run_loop(
@@ -338,15 +371,13 @@ impl OperitTui {
             attachmentPaths: attachment_paths,
             replyToTimestamp: None,
         };
-        let active_chat_id = launch_chat_message_with_application(&mut self.application, send_args)?;
+        let result = begin_chat_message_with_application(&mut self.application, send_args).await?;
+        let active_chat_id = result.chatId;
         self.refresh_chats();
         self.select_chat_by_id(&active_chat_id);
         self.last_current_chat_loading = true;
         self.awaiting_runtime_loading = true;
-        self.status_message = format!(
-            "streaming | chat={}",
-            short_chat_label(&active_chat_id)
-        );
+        self.status_message = "streaming".to_string();
         Ok(())
     }
 
@@ -369,6 +400,12 @@ impl OperitTui {
             }
             "switch" => {
                 self.toggle_chat_list();
+            }
+            "max" => {
+                self.toggle_max_context_mode()?;
+            }
+            "model" => {
+                self.handle_model_command(&parts[1..])?;
             }
             "attach" => {
                 let path = parts
@@ -399,6 +436,220 @@ impl OperitTui {
         Ok(())
     }
 
+    fn handle_model_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None | Some("current") => self.show_current_chat_model(),
+            Some("list") => self.list_chat_models(),
+            Some("use") => self.use_chat_model(&args[1..]),
+            Some("help") => {
+                self.status_message =
+                    "usage: /model current | /model list | /model use <config-id> [model-index]"
+                        .to_string();
+                Ok(())
+            }
+            Some(other) => {
+                self.status_message = format!("unknown /model command: {other}");
+                Ok(())
+            }
+        }
+    }
+
+    fn show_current_chat_model(&mut self) -> Result<(), String> {
+        let (config_id, actual_index, provider_name, selected_model_name) =
+            self.current_chat_model_status_parts()?;
+        self.status_message = format!(
+            "CHAT -> {}[{}] {} / {}",
+            config_id,
+            actual_index,
+            provider_name,
+            selected_model_name
+        );
+        self.refresh_context_usage_label();
+        Ok(())
+    }
+
+    fn current_chat_model_status_parts(&self) -> Result<(String, i32, &'static str, String), String> {
+        let model_config_manager = ModelConfigManager::default();
+        let functional_config_manager = FunctionalConfigManager::default();
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        functional_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+
+        let mapping = functional_config_manager
+            .getConfigMappingForFunction(FunctionType::CHAT)
+            .map_err(|error| error.to_string())?;
+        let config = model_config_manager
+            .getModelConfig(&mapping.configId)
+            .map_err(|error| error.to_string())?;
+        let actual_index = getValidModelIndex(&config.modelName, mapping.modelIndex);
+        let selected_model_name = getModelByIndex(&config.modelName, actual_index);
+        Ok((
+            mapping.configId,
+            actual_index,
+            config.apiProviderType.name(),
+            selected_model_name,
+        ))
+    }
+
+    fn current_chat_model_status_label(&self) -> Result<String, String> {
+        let (_, _, _, selected_model_name) = self.current_chat_model_status_parts()?;
+        Ok(selected_model_name)
+    }
+
+    fn list_chat_models(&mut self) -> Result<(), String> {
+        let model_config_manager = ModelConfigManager::default();
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        let mut entries = Vec::new();
+        for config_id in model_config_manager
+            .getConfigIds()
+            .map_err(|error| error.to_string())?
+        {
+            let config = model_config_manager
+                .getModelConfig(&config_id)
+                .map_err(|error| error.to_string())?;
+            let model_names = getModelList(&config.modelName);
+            for (index, model_name) in model_names.into_iter().enumerate() {
+                entries.push(format!(
+                    "{}[{}]={}/{}",
+                    config.id,
+                    index,
+                    config.apiProviderType.name(),
+                    model_name
+                ));
+            }
+        }
+        self.status_message = format!("models: {}", entries.join(" | "));
+        Ok(())
+    }
+
+    fn use_chat_model(&mut self, args: &[String]) -> Result<(), String> {
+        let config_id = match args.first() {
+            Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+            _ => {
+                self.status_message = "usage: /model use <config-id> [model-index]".to_string();
+                return Ok(());
+            }
+        };
+        let requested_model_index = parse_optional_model_index(args.get(1))?;
+
+        let model_config_manager = ModelConfigManager::default();
+        let functional_config_manager = FunctionalConfigManager::default();
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        functional_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        let config = model_config_manager
+            .getModelConfig(&config_id)
+            .map_err(|error| error.to_string())?;
+        let model_names = getModelList(&config.modelName);
+        if model_names.is_empty() {
+            self.status_message = format!("model config has no modelName: {config_id}");
+            return Ok(());
+        }
+        if requested_model_index < 0 || requested_model_index as usize >= model_names.len() {
+            self.status_message = format!(
+                "model index out of range: {} (available 0..{})",
+                requested_model_index,
+                model_names.len().saturating_sub(1)
+            );
+            return Ok(());
+        }
+
+        functional_config_manager
+            .setConfigForFunctionWithIndex(
+                FunctionType::CHAT,
+                config_id.clone(),
+                requested_model_index,
+            )
+            .map_err(|error| error.to_string())?;
+        {
+            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            if let Some(service) = core.enhancedAiService.as_mut() {
+                service.refreshServiceForFunction(FunctionType::CHAT);
+            }
+        }
+        self.status_message = format!(
+            "CHAT -> {}[{}] {} / {}",
+            config_id,
+            requested_model_index,
+            config.apiProviderType.name(),
+            model_names[requested_model_index as usize]
+        );
+        self.refresh_context_usage_label();
+        Ok(())
+    }
+
+    fn toggle_max_context_mode(&mut self) -> Result<(), String> {
+        let config_id = self.resolve_editable_chat_config_id()?;
+        let model_config_manager = ModelConfigManager::default();
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        let current = model_config_manager
+            .getModelConfig(&config_id)
+            .map_err(|error| error.to_string())?;
+        let new_value = !current.enableMaxContextMode;
+        let updated = model_config_manager
+            .updateContextSettings(
+                &config_id,
+                current.contextLength,
+                current.maxContextLength,
+                new_value,
+            )
+            .map_err(|error| error.to_string())?;
+        let effective_context_length = if updated.enableMaxContextMode {
+            updated.maxContextLength
+        } else {
+            updated.contextLength
+        };
+        self.status_message = format!(
+            "context config={} | context={}K",
+            config_id,
+            format_context_length(effective_context_length)
+        );
+        self.refresh_context_usage_label();
+        Ok(())
+    }
+
+    fn resolve_editable_chat_config_id(&self) -> Result<String, String> {
+        let active_prompt_manager = ActivePromptManager::getInstance();
+        if let ActivePrompt::CharacterCard { id } = active_prompt_manager
+            .getActivePrompt()
+            .map_err(|error| error.to_string())?
+        {
+            let character_card_manager = CharacterCardManager::getInstance();
+            let card = character_card_manager
+                .getCharacterCard(&id)
+                .map_err(|error| error.to_string())?;
+            let binding_mode =
+                CharacterCardChatModelBindingMode::normalize(Some(card.chatModelBindingMode.as_str()));
+            if binding_mode == CharacterCardChatModelBindingMode::FIXED_CONFIG {
+                if let Some(config_id) = card
+                    .chatModelConfigId
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    return Ok(config_id);
+                }
+            }
+        }
+
+        let functional_config_manager = FunctionalConfigManager::default();
+        functional_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        functional_config_manager
+            .getConfigIdForFunction(FunctionType::CHAT)
+            .map_err(|error| error.to_string())
+    }
+
     fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
@@ -417,7 +668,7 @@ impl OperitTui {
         self.follow_transcript = true;
         self.refresh_chats();
         self.select_chat_by_id(&chat_id);
-        self.status_message = format!("new chat={chat_id}");
+        self.status_message = "new chat".to_string();
         Ok(())
     }
 
@@ -425,6 +676,10 @@ impl OperitTui {
         self.show_chat_list = !self.show_chat_list;
         if self.show_chat_list {
             self.focus = FocusArea::Chats;
+            self.refresh_chats();
+            if let Ok(chat_id) = self.current_chat_id() {
+                self.select_chat_by_id(&chat_id);
+            }
             self.status_message = "chat list shown | Up/Down select | Enter switch | Esc close".to_string();
         } else {
             self.focus = FocusArea::Input;
@@ -443,7 +698,7 @@ impl OperitTui {
         core.switchChat(chat_id.clone());
         self.follow_transcript = true;
         self.select_chat_by_id(&chat_id);
-        self.status_message = format!("switched chat={chat_id}");
+        self.status_message = "switched chat".to_string();
         Ok(())
     }
 
@@ -478,7 +733,7 @@ impl OperitTui {
         core.chatHistoryFlow().value()
     }
 
-    fn current_chat_is_loading(&mut self) -> bool {
+    pub(super) fn current_chat_is_loading(&mut self) -> bool {
         self.last_current_chat_loading || self.raw_current_chat_is_loading()
     }
 
@@ -487,25 +742,29 @@ impl OperitTui {
         core.currentChatIsLoading()
     }
 
-    fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
+    pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
         let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
         core.currentChatInputProcessingState()
     }
 
     fn refresh_runtime_status(&mut self) {
-        let chat_id = self.current_chat_id().unwrap_or_default();
+        self.refresh_context_usage_label();
         let is_loading = self.raw_current_chat_is_loading();
         let state = self.current_chat_input_processing_state();
         if self.awaiting_runtime_loading && !is_loading {
-            match state {
+            match &state {
                 InputProcessingState::Error { message } => {
                     self.awaiting_runtime_loading = false;
                     self.last_current_chat_loading = false;
-                    self.status_message = message;
+                    self.set_runtime_status_message(message.clone(), &state, is_loading);
                 }
                 _ => {
                     self.follow_transcript = true;
-                    self.status_message = format!("connecting | chat={}", short_chat_label(&chat_id));
+                    self.set_runtime_status_message(
+                        "正在连接AI服务...".to_string(),
+                        &state,
+                        is_loading,
+                    );
                 }
             }
             return;
@@ -513,43 +772,129 @@ impl OperitTui {
         if is_loading {
             self.awaiting_runtime_loading = false;
             self.follow_transcript = true;
-            self.status_message = match state {
-                InputProcessingState::Processing { message } => {
-                    format!("processing | chat={} | {}", short_chat_label(&chat_id), message)
-                }
-                InputProcessingState::Connecting { message } => {
-                    format!("connecting | chat={} | {}", short_chat_label(&chat_id), message)
-                }
-                InputProcessingState::Receiving { message } => {
-                    format!("receiving | chat={} | {}", short_chat_label(&chat_id), message)
-                }
-                InputProcessingState::ExecutingTool { toolName } => {
-                    format!("tool | chat={} | {}", short_chat_label(&chat_id), toolName)
-                }
-                InputProcessingState::ToolProgress { toolName, message, .. } => {
-                    format!("tool | chat={} | {} {}", short_chat_label(&chat_id), toolName, message)
-                }
-                InputProcessingState::ProcessingToolResult { toolName } => {
-                    format!("tool result | chat={} | {}", short_chat_label(&chat_id), toolName)
-                }
-                InputProcessingState::Summarizing { message } => {
-                    format!("summarizing | chat={} | {}", short_chat_label(&chat_id), message)
-                }
-                InputProcessingState::ExecutingPlan { message } => {
-                    format!("plan | chat={} | {}", short_chat_label(&chat_id), message)
-                }
-                InputProcessingState::Error { message } => message,
-                InputProcessingState::Completed | InputProcessingState::Idle => {
-                    format!("streaming | chat={}", short_chat_label(&chat_id))
-                }
+            let status = match &state {
+                InputProcessingState::Idle => match self.current_chat_model_status_label() {
+                    Ok(label) => label,
+                    Err(error) => error,
+                },
+                InputProcessingState::Error { message } => message.clone(),
+                _ => input_processing_status_text(&state),
             };
+            self.set_runtime_status_message(status, &state, is_loading);
         } else if self.last_current_chat_loading {
             self.awaiting_runtime_loading = false;
             self.follow_transcript = true;
             self.refresh_chats();
-            self.status_message = format!("reply ready | chat={}", short_chat_label(&chat_id));
+            match self.current_chat_model_status_label() {
+                Ok(label) => self.set_status_message(label),
+                Err(error) => self.set_status_message(error),
+            }
+        } else if matches!(state, InputProcessingState::Idle | InputProcessingState::Completed) {
+            match self.current_chat_model_status_label() {
+                Ok(label) => self.set_status_message(label),
+                Err(error) => self.set_status_message(error),
+            }
         }
         self.last_current_chat_loading = is_loading;
+    }
+
+    fn set_status_message(&mut self, message: String) {
+        self.status_message = message;
+    }
+
+    fn set_runtime_status_message(
+        &mut self,
+        message: String,
+        _state: &InputProcessingState,
+        _is_loading: bool,
+    ) {
+        self.status_message = message;
+    }
+
+    fn refresh_context_usage_label(&mut self) {
+        match self.current_context_usage_label() {
+            Ok(label) => {
+                self.context_usage_label = label;
+            }
+            Err(_) => {
+                self.context_usage_label.clear();
+            }
+        }
+    }
+
+    fn current_context_usage_label(&mut self) -> Result<String, String> {
+        let config_id = self.resolve_editable_chat_config_id()?;
+        let model_config_manager = ModelConfigManager::default();
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        let config = model_config_manager
+            .getModelConfig(&config_id)
+            .map_err(|error| error.to_string())?;
+        let effective_context_length = if config.enableMaxContextMode {
+            config.maxContextLength
+        } else {
+            config.contextLength
+        };
+        let max_tokens = (effective_context_length * 1024.0) as i32;
+        let current_window_size = {
+            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            let current_chat_id = core.currentChatIdFlow().value();
+            current_chat_id
+                .as_ref()
+                .and_then(|chat_id| {
+                    core.chatHistoriesFlow()
+                        .value()
+                        .into_iter()
+                        .find(|chat| chat.id == *chat_id)
+                        .map(|chat| chat.currentWindowSize)
+                })
+                .expect("current chat context window must be loaded")
+        };
+        if max_tokens <= 0 {
+            return Ok(format!("context {} / {}", current_window_size.max(0), max_tokens));
+        }
+        let usage_percent =
+            ((current_window_size.max(0) as f64 / max_tokens as f64) * 100.0).round() as i32;
+        Ok(format!(
+            "context {}% ({}/{})",
+            usage_percent, current_window_size, max_tokens
+        ))
+    }
+}
+
+fn input_processing_status_text(state: &InputProcessingState) -> String {
+    match state {
+        InputProcessingState::Processing { message } => resolve_processing_message(message),
+        InputProcessingState::Connecting { message } => resolve_processing_message(message),
+        InputProcessingState::Receiving { message } => resolve_processing_message(message),
+        InputProcessingState::ExecutingTool { toolName } => {
+            format!("正在执行工具: {}", toolName.trim())
+        }
+        InputProcessingState::ToolProgress { message, .. } => resolve_processing_message(message),
+        InputProcessingState::ProcessingToolResult { toolName } => {
+            format!("正在处理工具结果: {}", toolName.trim())
+        }
+        InputProcessingState::Summarizing { message } => resolve_processing_message(message),
+        InputProcessingState::ExecutingPlan { message } => resolve_processing_message(message),
+        InputProcessingState::Idle | InputProcessingState::Completed => String::new(),
+        InputProcessingState::Error { message } => message.clone(),
+    }
+}
+
+fn resolve_processing_message(message: &str) -> String {
+    match message {
+        "enhanced_processing_input" => "正在处理输入...".to_string(),
+        "enhanced_processing_message" | "message_processing" => "正在处理消息...".to_string(),
+        "enhanced_connecting_service" => "正在连接AI服务...".to_string(),
+        "enhanced_receiving_response" => "正在接收AI响应...".to_string(),
+        "enhanced_receiving_tool_result" => "正在接收工具执行后的AI响应...".to_string(),
+        "chat_processing_attachment" => "正在处理附件...".to_string(),
+        "chat_processing_shared_files" => "正在处理分享文件...".to_string(),
+        "chat_summarizing_memory" => "正在总结记忆...".to_string(),
+        "chat_summarizing_generating" => "正在生成总结...".to_string(),
+        "compressing history" => "正在压缩历史...".to_string(),
+        _ => message.trim().to_string(),
     }
 }
 
@@ -584,4 +929,19 @@ fn load_chat_list_from_core(
             }
         })
         .collect()
+}
+
+fn format_context_length(value: f32) -> String {
+    if value.fract() == 0.0 {
+        format!("{}", value as i32)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn parse_optional_model_index(value: Option<&String>) -> Result<i32, String> {
+    match value {
+        Some(value) => value.parse::<i32>().map_err(|error| error.to_string()),
+        None => Ok(0),
+    }
 }

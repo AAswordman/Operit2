@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+chrono.workspace = true
 futures-util.workspace = true
 operit-host-api = { path = "../operit-host-api" }
 operit-store = { path = "../operit-store" }
@@ -20,3 +21,4 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+zip.workspace = true

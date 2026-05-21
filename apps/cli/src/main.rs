@@ -1,8 +1,9 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
@@ -24,6 +25,7 @@ use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfig
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_runtime::data::skill::SkillRepository::SkillRepository;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -88,6 +90,7 @@ async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "character" => run_character_command(&args[1..]),
         "group" => run_group_command(&args[1..]),
         "active-prompt" => run_active_prompt_command(&args[1..]),
+        "skill" => run_skill_command(&application, &args[1..]),
         _ => {
             print_cli_usage();
             Ok(())
@@ -576,6 +579,8 @@ fn run_model_command(args: &[String]) -> Result<(), String> {
             let mut mappings = functionalConfigManager
                 .functionConfigMappingWithIndexFlow()
                 .map_err(|error| error.to_string())?
+                .first()
+                .map_err(|error| error.to_string())?
                 .into_iter()
                 .collect::<Vec<_>>();
             mappings.sort_by(|left, right| functionTypeName(&left.0).cmp(functionTypeName(&right.0)));
@@ -729,6 +734,130 @@ fn run_tag_command(args: &[String]) -> Result<(), String> {
         _ => print_tag_usage(),
     }
     Ok(())
+}
+
+fn run_skill_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_skill_usage();
+        return Ok(());
+    }
+
+    let repository = SkillRepository::getInstance(&application.applicationContext);
+    match args[0].as_str() {
+        "dir" => {
+            println!("{}", repository.getSkillsDirectoryPath());
+        }
+        "list" => {
+            let (skills, errors) = repository.getAvailableSkillPackagesSnapshot();
+            for (name, skill) in skills {
+                let visible = repository.isSkillVisibleToAi(&name);
+                println!(
+                    "{}\tvisible={}\t{}\t{}",
+                    name,
+                    visible,
+                    skill.description,
+                    skill.directory.to_string_lossy()
+                );
+            }
+            if !errors.is_empty() {
+                eprintln!("loadErrors={}", errors.len());
+            }
+        }
+        "show" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill show <name>".to_string())?;
+            let skills = repository.getAvailableSkillPackages();
+            let skill = skills
+                .get(name)
+                .ok_or_else(|| format!("skill not found: {name}"))?;
+            println!("name={}", skill.name);
+            println!("description={}", skill.description);
+            println!("directory={}", skill.directory.to_string_lossy());
+            println!("skillFile={}", skill.skillFile.to_string_lossy());
+            println!("visible={}", repository.isSkillVisibleToAi(name));
+            println!();
+            if let Some(content) = repository.readSkillContent(name) {
+                print!("{content}");
+            }
+        }
+        "create" => {
+            let skillId = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]".to_string())?;
+            let description = args
+                .get(2)
+                .ok_or_else(|| "usage: operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]".to_string())?;
+            let contentArg = args
+                .get(3)
+                .ok_or_else(|| "usage: operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]".to_string())?;
+            let content = read_skill_content_arg(contentArg)?;
+            let attachmentPaths = args[4..]
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            println!(
+                "{}",
+                repository.importSkillFromDirectInput(
+                    skillId,
+                    description,
+                    &content,
+                    &attachmentPaths,
+                )
+            );
+        }
+        "import-zip" => {
+            let zipPath = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill import-zip <zip-path> [sub-dir-in-zip]".to_string())?;
+            let subDir = args.get(2).map(String::as_str);
+            println!(
+                "{}",
+                repository.importSkillFromZipWithSubDir(Path::new(zipPath), subDir)
+            );
+        }
+        "delete" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill delete <name>".to_string())?;
+            if repository.deleteSkill(name) {
+                println!("deleted: {name}");
+            } else {
+                return Err(format!("skill not found: {name}"));
+            }
+        }
+        "visible" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill visible <name> [true|false]".to_string())?;
+            if args.len() == 2 {
+                println!("{}", repository.isSkillVisibleToAi(name));
+            } else {
+                let visible = parse_bool_arg(
+                    args.get(2),
+                    "usage: operit2 skill visible <name> [true|false]",
+                )?;
+                repository
+                    .setSkillVisibleToAi(name, visible)
+                    .map_err(|error| error.to_string())?;
+                println!("visible: {name}={visible}");
+            }
+        }
+        "errors" => {
+            for (name, error) in repository.getSkillLoadErrors() {
+                println!("{name}\t{error}");
+            }
+        }
+        _ => print_skill_usage(),
+    }
+    Ok(())
+}
+
+fn read_skill_content_arg(value: &str) -> Result<String, String> {
+    if let Some(path) = value.strip_prefix('@') {
+        return fs::read_to_string(path).map_err(|error| error.to_string());
+    }
+    Ok(value.to_string())
 }
 
 fn run_character_command(args: &[String]) -> Result<(), String> {
@@ -1883,7 +2012,48 @@ pub(crate) async fn send_chat_message_with_application(
         result.aiMessage.content = content;
         result.aiMessage.contentStream = None;
     }
+    result.aiMessage = wait_for_committed_ai_message(
+        application,
+        &result.chatId,
+        result.aiMessage.timestamp,
+        Duration::from_secs(30),
+    )?;
     Ok(result)
+}
+
+fn wait_for_committed_ai_message(
+    application: &mut OperitApplication,
+    chatId: &str,
+    timestamp: i64,
+    timeout: Duration,
+) -> Result<ChatMessage, String> {
+    let startedAt = Instant::now();
+    loop {
+        let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+        if let Some(message) = core
+            .chatHistoryFlow()
+            .value()
+            .into_iter()
+            .find(|message| {
+                message.sender == "ai"
+                    && message.timestamp == timestamp
+                    && message.contentStream.is_none()
+                    && message.completedAt > 0
+            })
+        {
+            return Ok(message);
+        }
+        let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
+        if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
+            return Err(message.clone());
+        }
+        if startedAt.elapsed() >= timeout {
+            return Err(format!(
+                "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn print_chat_send_result(result: &ChatSendResult) {
@@ -1947,7 +2117,7 @@ fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <model|chat|tag|character|group|active-prompt|shell>");
+    println!("operit2 cli <model|chat|tag|character|group|active-prompt|skill|shell>");
     println!();
     print_cli_usage();
 }
@@ -1958,6 +2128,7 @@ fn print_cli_usage() {
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
     println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
     println!("operit2 cli active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
+    println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -2052,6 +2223,17 @@ fn print_active_prompt_usage() {
     println!("operit2 cli active-prompt set-group <id>");
     println!("operit2 cli active-prompt activate-for-chat [character-card-name] [character-group-id]");
     println!("operit2 cli active-prompt resolved-card");
+}
+
+fn print_skill_usage() {
+    println!("operit2 cli skill dir");
+    println!("operit2 cli skill list");
+    println!("operit2 cli skill show <name>");
+    println!("operit2 cli skill create <skill-id> <description> <content-or-@file> [attachment-path...]");
+    println!("operit2 cli skill import-zip <zip-path> [sub-dir-in-zip]");
+    println!("operit2 cli skill delete <name>");
+    println!("operit2 cli skill visible <name> [true|false]");
+    println!("operit2 cli skill errors");
 }
 
 fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {

@@ -3,20 +3,25 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use operit_runtime::data::model::ChatMessage::ChatMessage;
+use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 use operit_runtime::util::stream::HotStream::SharedStream;
 
+use super::empty_state::render_blue_cat_lines;
 use super::markdown::render_markdown_lines;
 
-pub(super) fn render_message_lines(messages: &[ChatMessage]) -> Vec<Line<'static>> {
+pub(super) fn render_message_lines(
+    messages: &[ChatMessage],
+    content_width: usize,
+    is_loading: bool,
+    input_state: &InputProcessingState,
+    thinking_text: &str,
+) -> Vec<Line<'static>> {
     if messages.is_empty() {
-        return vec![Line::from(Span::styled(
-            "No messages yet. Type below to start.",
-            Style::default().fg(Color::DarkGray),
-        ))];
+        return render_blue_cat_lines(content_width);
     }
 
     let mut lines = Vec::new();
-    for message in messages {
+    for (index, message) in messages.iter().enumerate() {
         let role = message.roleName.trim();
         let sender = if role.is_empty() {
             message.sender.as_str()
@@ -60,19 +65,93 @@ pub(super) fn render_message_lines(messages: &[ChatMessage]) -> Vec<Line<'static
         } else {
             message.content.clone()
         };
-        lines.extend(render_markdown_lines(&rendered_content));
-        if rendered_content.is_empty() {
-            lines.push(Line::from(""));
+        if rendered_content.is_empty()
+            && is_loading
+            && index + 1 == messages.len()
+            && message.sender == "ai"
+        {
+            lines.push(Line::from(Span::styled(
+                thinking_text.to_string(),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            )));
+        } else {
+            lines.extend(render_markdown_lines(&rendered_content, content_width));
+            if rendered_content.is_empty() {
+                lines.push(Line::from(""));
+            }
         }
         lines.push(Line::from(""));
+    }
+    if is_loading
+        && matches!(messages.last(), Some(message) if message.sender == "user")
+    {
+        lines.push(Line::from(Span::styled(
+            "Operit: ",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            thinking_text.to_string(),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+        lines.push(Line::from(""));
+    }
+    if let InputProcessingState::Error { message } = input_state {
+        lines.push(Line::from(vec![
+            Span::styled("error: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(message.clone(), Style::default().fg(Color::LightRed)),
+        ]));
     }
     lines
 }
 
 pub(super) fn transcript_max_scroll(lines: &[Line<'_>], area: Rect) -> u16 {
-    let content_lines = lines.len() as u16;
+    let content_width = area.width.saturating_sub(2).max(1) as usize;
+    let content_lines = lines
+        .iter()
+        .map(|line| wrapped_visual_line_count(line, content_width))
+        .sum::<usize>() as u16;
     let viewport = area.height.saturating_sub(2);
     content_lines.saturating_sub(viewport)
+}
+
+fn wrapped_visual_line_count(line: &Line<'_>, content_width: usize) -> usize {
+    let width = line
+        .spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum::<usize>();
+    width.max(1).div_ceil(content_width)
+}
+
+fn display_width(value: &str) -> usize {
+    value.chars().map(char_display_width).sum()
+}
+
+fn char_display_width(ch: char) -> usize {
+    if ch == '\0' || ch.is_control() {
+        0
+    } else if is_wide_char(ch) {
+        2
+    } else {
+        1
+    }
+}
+
+fn is_wide_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2329..=0x232A
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1FAFF
+            | 0x20000..=0x3FFFD
+    )
 }
 
 pub(super) fn short_chat_label(chat_id: &str) -> String {

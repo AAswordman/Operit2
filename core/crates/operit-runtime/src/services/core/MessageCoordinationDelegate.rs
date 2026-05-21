@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
-use crate::core::chat::AIMessageManager::AIMessageManager;
+use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
@@ -122,35 +122,54 @@ impl MessageCoordinationDelegate {
         chatModelIndexOverride: Option<i32>,
         preferenceProfileIdOverride: Option<String>,
     ) -> i32 {
-        let workspacePath = chatId.as_ref().and_then(|chatId| {
+        let currentChat = chatId.as_ref().and_then(|chatId| {
             self.chatHistoryDelegate
-                .chatHistories
-                .iter()
+                .chatHistoriesFlow()
+                .value()
+                .into_iter()
                 .find(|history| history.id == *chatId)
-                .and_then(|history| history.workspace.clone())
         });
-        let workspaceEnv = chatId.as_ref().and_then(|chatId| {
-            self.chatHistoryDelegate
-                .chatHistories
-                .iter()
-                .find(|history| history.id == *chatId)
-                .and_then(|history| history.workspaceEnv.clone())
+        let currentRoleName = roleCardId.as_ref().and_then(|roleCardId| {
+            self.characterCardManager
+                .getCharacterCard(roleCardId)
+                .ok()
+                .map(|card| card.name)
         });
-        let _ = (
-            service,
-            workspacePath,
-            workspaceEnv,
+        let runtimeOptions = SendMessageOptions {
+            roleCardId: roleCardId.clone(),
+            promptFunctionType: promptFunctionType.clone(),
+            chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
+            chatModelIndexOverride,
+            preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
+            ..SendMessageOptions::new()
+        };
+        let runtime = service
+            .createSendMessageRuntime(&runtimeOptions)
+            .expect("stable context window runtime must be created");
+        AIMessageManager::calculateStableContextWindow(StableContextWindowRequest {
+            enhancedAiService: service,
+            chatId: chatId.clone(),
+            messageContent: String::new(),
+            chatHistory: chatId
+                .map(|id| self.chatHistoryDelegate.getRuntimeChatHistory(id))
+                .unwrap_or_default(),
+            workspacePath: currentChat.clone().and_then(|chat| chat.workspace),
+            workspaceEnv: currentChat.and_then(|chat| chat.workspaceEnv),
             promptFunctionType,
             roleCardId,
+            currentRoleName,
+            splitHistoryByRole: true,
             groupOrchestrationMode,
             groupParticipantNamesText,
+            proxySenderName: None,
             chatModelConfigIdOverride,
             chatModelIndexOverride,
             preferenceProfileIdOverride,
-        );
-        chatId
-            .map(|id| self.chatHistoryDelegate.getRuntimeChatHistory(id).len() as i32)
-            .unwrap_or(0)
+            publishEstimate: false,
+            runtime,
+        })
+        .await
+        .expect("stable context window must be calculated")
     }
 
     pub async fn refreshStableContextWindow(
@@ -195,6 +214,8 @@ impl MessageCoordinationDelegate {
             newWindowSize,
             Some(targetChatId.clone()),
         );
+        self.tokenStatisticsDelegate
+            .setTokenCounts(Some(targetChatId.clone()), inputTokens, outputTokens, newWindowSize);
         Some(newWindowSize)
     }
 
@@ -965,7 +986,12 @@ impl MessageCoordinationDelegate {
         let currentTokens = self
             .tokenStatisticsDelegate
             .getLastCurrentWindowSize(Some(chatId.clone()));
-        let maxTokens = (chatContextSettings.contextLength * 1024.0) as i32;
+        let effectiveContextLength = if chatContextSettings.enableMaxContextMode {
+            chatContextSettings.maxContextLength
+        } else {
+            chatContextSettings.contextLength
+        };
+        let maxTokens = (effectiveContextLength * 1024.0) as i32;
         let shouldSummarize = AIMessageManager::shouldGenerateSummary(
             currentMessages.clone(),
             currentTokens,

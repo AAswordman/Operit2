@@ -12,7 +12,7 @@ pub struct ApiPreferences {
 impl ApiPreferences {
     pub const DEFAULT_API_KEY: &'static str = "";
     pub const DEFAULT_API_ENDPOINT: &'static str = "https://api.deepseek.com/v1/chat/completions";
-    pub const DEFAULT_MODEL_NAME: &'static str = "deepseek-chat";
+    pub const DEFAULT_MODEL_NAME: &'static str = "deepseek-v4-flash";
     pub const DEFAULT_CONFIG_ID: &'static str = "default";
     pub const DEFAULT_CONFIG_NAME: &'static str = "model_config_default_name";
     pub const DEFAULT_ENABLE_THINKING_MODE: bool = false;
@@ -34,58 +34,48 @@ impl ApiPreferences {
     }
 
     pub fn enableThinkingModeFlow(&self) -> Flow<bool> {
-        let store = self.apiDataStore.clone();
-        Flow::new(move || {
-            let preferences = store.data()?;
-            Ok(preferences
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
                 .get(&stringPreferencesKey("enable_thinking_mode"))
                 .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_ENABLE_THINKING_MODE))
+                .unwrap_or(Self::DEFAULT_ENABLE_THINKING_MODE)
         })
     }
 
     pub fn thinkingQualityLevelFlow(&self) -> Flow<i32> {
-        let store = self.apiDataStore.clone();
-        Flow::new(move || {
-            let preferences = store.data()?;
-            Ok(preferences
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
                 .get(&stringPreferencesKey("thinking_quality_level"))
                 .and_then(|value| value.parse::<i32>().ok())
                 .unwrap_or(Self::DEFAULT_THINKING_QUALITY_LEVEL)
-                .clamp(1, 4))
+                .clamp(1, 4)
         })
     }
 
     pub fn disableStreamOutputFlow(&self) -> Flow<bool> {
-        let store = self.apiDataStore.clone();
-        Flow::new(move || {
-            let preferences = store.data()?;
-            Ok(preferences
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
                 .get(&stringPreferencesKey("disable_stream_output"))
                 .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(false))
+                .unwrap_or(false)
         })
     }
 
     pub fn maxImageHistoryUserTurnsFlow(&self) -> Flow<i32> {
-        let store = self.apiDataStore.clone();
-        Flow::new(move || {
-            let preferences = store.data()?;
-            Ok(preferences
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
                 .get(&stringPreferencesKey("max_image_history_user_turns"))
                 .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(2))
+                .unwrap_or(2)
         })
     }
 
     pub fn maxMediaHistoryUserTurnsFlow(&self) -> Flow<i32> {
-        let store = self.apiDataStore.clone();
-        Flow::new(move || {
-            let preferences = store.data()?;
-            Ok(preferences
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
                 .get(&stringPreferencesKey("max_media_history_user_turns"))
                 .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(1))
+                .unwrap_or(1)
         })
     }
 

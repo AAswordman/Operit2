@@ -29,3 +29,6 @@ pub mod defaultTool;
 
 #[path = "packTool/mod.rs"]
 pub mod packTool;
+
+#[path = "skill/mod.rs"]
+pub mod skill;

@@ -18,9 +18,9 @@ impl OpenRouterProvider {
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
-        _supports_vision: bool,
-        _supports_audio: bool,
-        _supports_video: bool,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
         enable_tool_call: bool,
     ) -> Self {
         let has_referer = custom_headers
@@ -38,12 +38,15 @@ impl OpenRouterProvider {
         }
         merged_headers.extend(custom_headers);
         Self {
-            inner: OpenAIProvider::new(
+            inner: OpenAIProvider::new_with_capabilities(
                 api_endpoint,
                 api_key,
                 model_name,
                 provider_type,
                 merged_headers,
+                supports_vision,
+                supports_audio,
+                supports_video,
                 enable_tool_call,
             ),
         }

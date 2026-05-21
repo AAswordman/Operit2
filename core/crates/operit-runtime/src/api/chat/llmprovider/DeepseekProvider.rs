@@ -11,8 +11,12 @@ use super::AIService::{
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::data::model::ModelParameter::ParameterValueType;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::util::ChatUtils::ChatUtils;
+use crate::util::TokenCacheManager::TokenCacheManager;
 use crate::util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
@@ -38,6 +42,7 @@ struct DeepseekProviderState {
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
     cancelled: bool,
+    tokenCacheManager: TokenCacheManager,
 }
 
 impl DeepseekProvider {
@@ -65,41 +70,72 @@ impl DeepseekProvider {
 
     fn apply_token_counts(&self, token_counts: TokenCounts) {
         if let Ok(mut state) = self.state.lock() {
-            state.inputTokenCount = token_counts.input;
-            state.cachedInputTokenCount = token_counts.cached_input;
-            state.outputTokenCount = token_counts.output;
+            if token_counts.input > 0 || token_counts.cached_input > 0 {
+                state.tokenCacheManager.update_actual_tokens(
+                    token_counts.input.max(0) as usize,
+                    token_counts.cached_input.max(0) as usize,
+                );
+            }
+            if token_counts.output > 0 {
+                state.tokenCacheManager.set_output_tokens(token_counts.output.max(0) as usize);
+            }
+            state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
+            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
+            state.outputTokenCount = state.tokenCacheManager.output_token_count() as i32;
         }
     }
 
     pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
         let mut json_object = Map::new();
+        let effectiveEnableToolCall = self.enable_tool_call && !request.available_tools.is_empty();
         json_object.insert("model".to_string(), json!(self.model_name));
         json_object.insert(
             "messages".to_string(),
             self.build_messages_with_reasoning(
                 &StructuredToolCallBridge::compileHistoryForProvider(
                     &request.chat_history,
-                    self.enable_tool_call && !request.available_tools.is_empty(),
+                    effectiveEnableToolCall,
                 ),
-                self.enable_tool_call && !request.available_tools.is_empty(),
+                effectiveEnableToolCall,
             )?,
         );
         json_object.insert("stream".to_string(), json!(request.stream));
         json_object.insert(
             "thinking".to_string(),
             json!({
-                "type": self.resolve_deepseek_thinking_effort(request.enable_thinking)
+                "type": if request.enable_thinking { "enabled" } else { "disabled" }
             }),
         );
+        if request.enable_thinking && !json_object.contains_key("reasoning_effort") {
+            if let Some(effort) = self.resolve_deepseek_thinking_effort() {
+                json_object.insert("reasoning_effort".to_string(), json!(effort));
+            }
+        }
 
         self.apply_model_parameters(&mut json_object, &request.model_parameters);
 
-        if self.enable_tool_call && !request.available_tools.is_empty() {
-            json_object.insert(
-                "tools".to_string(),
-                StructuredToolCallBridge::buildToolsArray(Some(&request.available_tools)),
+        if effectiveEnableToolCall {
+            let tools = StructuredToolCallBridge::buildToolsArray(Some(&request.available_tools));
+            let toolsJson = tools.to_string();
+            self.calculate_and_store_input_tokens(
+                &StructuredToolCallBridge::compileHistoryForProvider(
+                    &request.chat_history,
+                    effectiveEnableToolCall,
+                ),
+                Some(&toolsJson),
+                true,
             );
+            json_object.insert("tools".to_string(), tools);
             json_object.insert("tool_choice".to_string(), json!("auto"));
+        } else {
+            self.calculate_and_store_input_tokens(
+                &StructuredToolCallBridge::compileHistoryForProvider(
+                    &request.chat_history,
+                    effectiveEnableToolCall,
+                ),
+                None,
+                true,
+            );
         }
 
         Ok(Value::Object(json_object))
@@ -108,11 +144,12 @@ impl DeepseekProvider {
     pub fn build_messages_with_reasoning(
         &self,
         effectiveHistory: &[PromptTurn],
-        _useToolCall: bool,
+        useToolCall: bool,
     ) -> Result<Value, AiServiceError> {
-        let structuredMessages: Value = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJson(
+        let structuredMessages: Value = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
             effectiveHistory,
             true,
+            useToolCall,
         ))
         .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
 
@@ -157,17 +194,100 @@ impl DeepseekProvider {
         Ok(Value::Array(messagesArray))
     }
 
-    pub fn resolve_deepseek_thinking_effort(&self, enable_thinking: bool) -> &'static str {
-        match enable_thinking {
-            true => "enabled",
-            false => "disabled",
+    pub fn resolve_deepseek_thinking_effort(&self) -> Option<&'static str> {
+        let qualityLevel = ApiPreferences::getInstance()
+            .thinkingQualityLevelFlow()
+            .first()
+            .ok()?;
+        match qualityLevel.clamp(1, 4) {
+            1 | 2 => Some("high"),
+            3 | 4 => Some("max"),
+            _ => None,
+        }
+    }
+
+    fn calculate_and_store_input_tokens(
+        &self,
+        provider_ready_history: &[PromptTurn],
+        tools_json: Option<&str>,
+        preserve_think_in_history: bool,
+    ) -> i32 {
+        let comparableHistory = provider_ready_history
+            .iter()
+            .map(|turn| {
+                let role = match turn.kind {
+                    PromptTurnKind::SYSTEM => "system",
+                    PromptTurnKind::USER => "user",
+                    PromptTurnKind::ASSISTANT => "assistant",
+                    PromptTurnKind::TOOL_CALL => "tool_call",
+                    PromptTurnKind::TOOL_RESULT => "tool_result",
+                    PromptTurnKind::SUMMARY => "summary",
+                }
+                .to_string();
+                let content = if !preserve_think_in_history && turn.kind == PromptTurnKind::ASSISTANT {
+                    ChatUtils::remove_thinking_content(&turn.content)
+                } else {
+                    turn.content.clone()
+                };
+                (role, content)
+            })
+            .collect::<Vec<_>>();
+        if let Ok(mut state) = self.state.lock() {
+            let tokenCount = state
+                .tokenCacheManager
+                .calculate_input_tokens(&comparableHistory, tools_json, true);
+            state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
+            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
+            tokenCount as i32
+        } else {
+            0
         }
     }
 
     fn apply_model_parameters(&self, json_object: &mut Map<String, Value>, parameters: &[ModelParameter<Value>]) {
         for parameter in parameters {
             if parameter.isEnabled {
-                json_object.insert(parameter.apiName.clone(), parameter.currentValue.clone());
+                let value = match parameter.valueType {
+                    ParameterValueType::INT => {
+                        let Some(number) = parameter.currentValue.as_i64() else {
+                            continue;
+                        };
+                        json!(number)
+                    }
+                    ParameterValueType::FLOAT => {
+                        let Some(number) = parameter.currentValue.as_f64() else {
+                            continue;
+                        };
+                        json!(number)
+                    }
+                    ParameterValueType::STRING => {
+                        let Some(text) = parameter.currentValue.as_str() else {
+                            continue;
+                        };
+                        json!(text)
+                    }
+                    ParameterValueType::BOOLEAN => {
+                        let Some(value) = parameter.currentValue.as_bool() else {
+                            continue;
+                        };
+                        json!(value)
+                    }
+                    ParameterValueType::OBJECT => {
+                        if parameter.currentValue.is_object() || parameter.currentValue.is_array() {
+                            parameter.currentValue.clone()
+                        } else if let Some(raw) = parameter.currentValue.as_str() {
+                            let trimmed = raw.trim();
+                            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                                serde_json::from_str(trimmed).unwrap_or_else(|_| json!(trimmed))
+                            } else {
+                                json!(trimmed)
+                            }
+                        } else {
+                            parameter.currentValue.clone()
+                        }
+                    }
+                };
+                json_object.insert(parameter.apiName.clone(), value);
             }
         }
     }
@@ -216,21 +336,21 @@ impl AIService for DeepseekProvider {
     fn input_token_count(&self) -> i32 {
         self.state
             .lock()
-            .map(|state| state.inputTokenCount)
+            .map(|state| state.tokenCacheManager.total_input_token_count() as i32)
             .unwrap_or(0)
     }
 
     fn cached_input_token_count(&self) -> i32 {
         self.state
             .lock()
-            .map(|state| state.cachedInputTokenCount)
+            .map(|state| state.tokenCacheManager.cached_input_token_count() as i32)
             .unwrap_or(0)
     }
 
     fn output_token_count(&self) -> i32 {
         self.state
             .lock()
-            .map(|state| state.outputTokenCount)
+            .map(|state| state.tokenCacheManager.output_token_count() as i32)
             .unwrap_or(0)
     }
 
@@ -243,6 +363,7 @@ impl AIService for DeepseekProvider {
             state.inputTokenCount = 0;
             state.cachedInputTokenCount = 0;
             state.outputTokenCount = 0;
+            state.tokenCacheManager.reset_token_counts();
         }
     }
 
@@ -263,12 +384,15 @@ impl AIService for DeepseekProvider {
 
         let request_body = self.create_request_body(&request)?;
         if request.stream {
-            let mut parent = OpenAIProvider::new(
+            let mut parent = OpenAIProvider::new_with_capabilities(
                 self.api_endpoint.clone(),
                 self.api_key.clone(),
                 self.model_name.clone(),
                 self.provider_type.clone(),
                 self.custom_headers.clone(),
+                self.supports_vision,
+                self.supports_audio,
+                self.supports_video,
                 self.enable_tool_call,
             );
             let mut result = parent
@@ -369,12 +493,19 @@ impl AIService for DeepseekProvider {
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        let history_chars: usize = chat_history.iter().map(|turn| turn.content.chars().count()).sum();
-        let tool_chars: usize = available_tools
-            .iter()
-            .map(|tool| tool.name.len() + tool.description.len() + tool.parameters.len())
-            .sum();
-        Ok(((history_chars + tool_chars + 3) / 4) as i32)
+        let useToolCall = self.enable_tool_call && !available_tools.is_empty();
+        let providerReadyHistory =
+            StructuredToolCallBridge::compileHistoryForProvider(chat_history, useToolCall);
+        let toolsJson = if available_tools.is_empty() {
+            None
+        } else {
+            Some(StructuredToolCallBridge::buildToolsArray(Some(available_tools)).to_string())
+        };
+        Ok(self.calculate_and_store_input_tokens(
+            &providerReadyHistory,
+            toolsJson.as_deref(),
+            true,
+        ))
     }
 }
 
@@ -446,9 +577,10 @@ fn parse_usage_counts(usage: &Value) -> TokenCounts {
         .or_else(|| usage.get("output_tokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0) as i32;
+    let actual_input_tokens = (prompt_tokens - cached_tokens).max(0);
 
     TokenCounts {
-        input: prompt_tokens,
+        input: actual_input_tokens,
         cached_input: cached_tokens,
         output: completion_tokens,
     }

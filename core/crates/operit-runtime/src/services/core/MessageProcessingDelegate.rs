@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
-    SendMessageRequest as AIMessageSendRequest,
+    SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
+use crate::core::tools::ToolProgressBus::ToolProgressBus;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode;
@@ -296,6 +297,22 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn setChatInputProcessingState(&mut self, chatId: Option<String>, state: InputProcessingState) {
+        if let Some(chatId) = chatId.as_ref() {
+            if self.runtimeFor(Some(chatId.clone())).isLoading && Self::isTerminalInputState(&state) {
+                return;
+            }
+            if self.suppressIdleCompletedStateByChatId.contains_key(chatId)
+                && Self::isTerminalInputState(&state)
+            {
+                return;
+            }
+        }
+        if !matches!(
+            state,
+            InputProcessingState::ExecutingTool { .. } | InputProcessingState::Summarizing { .. }
+        ) {
+            ToolProgressBus::clear();
+        }
         let key = Self::chatKey(chatId);
         self.inputProcessingStateByChatId.insert(key, state);
         self.inputProcessingStateByChatIdFlow
@@ -360,6 +377,8 @@ impl MessageProcessingDelegate {
         let currentModelConfig = self
             .modelConfigManager
             .getModelConfigFlow(&configId)
+            .map_err(|error| crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(error.to_string()))?
+            .first()
             .map_err(|error| crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(error.to_string()))?;
         let enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing;
         let enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing;
@@ -601,6 +620,19 @@ impl MessageProcessingDelegate {
             && !request.suppressUserMessageInHistory
             && !(request.isAutoContinuation && originalMessageText.is_empty() && request.attachments.is_empty())
             && !(request.isGroupOrchestrationTurn && originalMessageText.is_empty() && request.attachments.is_empty());
+        let isFirstMessage = !request.chatHistoryDelegate.hasUserMessage(chatId.clone());
+        if request.turnOptions.persistTurn && isFirstMessage {
+            let newTitle = if !originalMessageText.trim().is_empty() {
+                originalMessageText.clone()
+            } else if let Some(attachment) = request.attachments.first() {
+                attachment.fileName.clone()
+            } else {
+                "New Chat".to_string()
+            };
+            request
+                .chatHistoryDelegate
+                .updateChatTitle(chatId.clone(), newTitle);
+        }
         let mut userMessageAdded = false;
         let mut userMessage = ChatMessage {
             sender: "user".to_string(),
@@ -637,6 +669,30 @@ impl MessageProcessingDelegate {
         );
         self.updateGlobalLoadingState();
 
+        request.enhancedAiService.setInputProcessingState(InputProcessingState::Processing {
+            message: "message_processing".to_string(),
+        });
+        {
+            let activeChatId = chatId.clone();
+            let mut stateDelegate = self.clone_for_core();
+            let stateFlow = request.enhancedAiService.inputProcessingState();
+            std::thread::spawn(move || {
+                let _ = stateFlow.collectUntil(
+                    |state| {
+                        stateDelegate.setInputProcessingStateForChat(activeChatId.clone(), state);
+                    },
+                    |state| {
+                        matches!(
+                            state,
+                            InputProcessingState::Idle
+                                | InputProcessingState::Completed
+                                | InputProcessingState::Error { .. }
+                        )
+                    },
+                );
+            });
+        }
+
         let characterName = CharacterCardManager::getInstance()
             .getCharacterCard(&request.roleCardId)
             .ok()
@@ -652,15 +708,70 @@ impl MessageProcessingDelegate {
             } else {
                 finalMessageContent
             };
+        let calculateNextWindowSize = {
+            let workspacePath = request.workspacePath.clone();
+            let workspaceEnv = request.workspaceEnv.clone();
+            let promptFunctionType = request.promptFunctionType.clone();
+            let roleCardId = request.roleCardId.clone();
+            let currentRoleName = currentRoleName.clone();
+            let groupOrchestrationMode = request.isGroupOrchestrationTurn;
+            let groupParticipantNamesText = request.groupParticipantNamesText.clone();
+            let proxySenderName = request.proxySenderNameOverride.clone();
+            let chatModelConfigIdOverride = request.chatModelConfigIdOverride.clone();
+            let chatModelIndexOverride = request.chatModelIndexOverride;
+            let preferenceProfileIdOverride = request.preferenceProfileIdOverride.clone();
+            move |service: &mut EnhancedAIService,
+                  chatHistoryDelegate: &ChatHistoryDelegate,
+                  chatId: String|
+                  -> Option<i32> {
+                let runtimeOptions = SendMessageOptions {
+                    roleCardId: Some(roleCardId.clone()),
+                    promptFunctionType: promptFunctionType.clone(),
+                    chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
+                    chatModelIndexOverride,
+                    preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
+                    ..SendMessageOptions::new()
+                };
+                let runtime = service.createSendMessageRuntime(&runtimeOptions).ok()?;
+                let calculation = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()?;
+                calculation
+                    .block_on(AIMessageManager::calculateStableContextWindow(
+                        StableContextWindowRequest {
+                            enhancedAiService: service,
+                            chatId: Some(chatId.clone()),
+                            messageContent: String::new(),
+                            chatHistory: chatHistoryDelegate.getRuntimeChatHistory(chatId),
+                            workspacePath,
+                            workspaceEnv,
+                            promptFunctionType,
+                            roleCardId: Some(roleCardId),
+                            currentRoleName: Some(currentRoleName),
+                            splitHistoryByRole: true,
+                            groupOrchestrationMode,
+                            groupParticipantNamesText,
+                            proxySenderName,
+                            chatModelConfigIdOverride,
+                            chatModelIndexOverride,
+                            preferenceProfileIdOverride,
+                            publishEstimate: false,
+                            runtime,
+                        },
+                    ))
+                    .ok()
+            }
+        };
 
-        let completionStream = AIMessageManager::sendMessage(AIMessageSendRequest {
+        let completionStream = match AIMessageManager::sendMessage(AIMessageSendRequest {
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
             messageContent: requestMessageContent,
             chatHistory: request.chatHistory,
-            workspacePath: request.workspacePath,
-            workspaceEnv: request.workspaceEnv,
-            promptFunctionType: request.promptFunctionType,
+            workspacePath: request.workspacePath.clone(),
+            workspaceEnv: request.workspaceEnv.clone(),
+            promptFunctionType: request.promptFunctionType.clone(),
             enableThinking: request.enableThinking,
             enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
             maxTokens: request.maxTokens,
@@ -671,17 +782,36 @@ impl MessageProcessingDelegate {
             currentRoleName: Some(currentRoleName.clone()),
             splitHistoryByRole: true,
             groupOrchestrationMode: request.isGroupOrchestrationTurn,
-            groupParticipantNamesText: request.groupParticipantNamesText,
-            proxySenderName: request.proxySenderNameOverride,
+            groupParticipantNamesText: request.groupParticipantNamesText.clone(),
+            proxySenderName: request.proxySenderNameOverride.clone(),
             notifyReplyOverride: request.turnOptions.notifyReply,
-            chatModelConfigIdOverride: request.chatModelConfigIdOverride,
+            chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
             chatModelIndexOverride: request.chatModelIndexOverride,
-            preferenceProfileIdOverride: request.preferenceProfileIdOverride,
+            preferenceProfileIdOverride: request.preferenceProfileIdOverride.clone(),
             disableWarning: request.turnOptions.disableWarning,
             callbacks: None,
             onToolInvocation: None,
         })
-        .await?;
+        .await {
+            Ok(stream) => stream,
+            Err(error) => {
+                self.setInputProcessingStateForChat(
+                    chatId.clone(),
+                    InputProcessingState::Error {
+                        message: error.to_string(),
+                    },
+                );
+                if let Some(runtime) = self.chatRuntimes.get_mut(&Self::chatKey(Some(chatId.clone()))) {
+                    runtime.isLoading = false;
+                    runtime.responseStream = None;
+                    runtime.sendJob = None;
+                    runtime.streamCollectionJob = None;
+                    runtime.stateCollectionJob = None;
+                }
+                self.updateGlobalLoadingState();
+                return Err(error);
+            }
+        };
         let sharedResponseStream = completionStream.clone();
         self.runtimeFor(Some(chatId.clone())).responseStream = Some(sharedResponseStream.clone());
         let initialProviderModel = request.enhancedAiService.getLastProviderModel().unwrap_or_default();
@@ -710,6 +840,7 @@ impl MessageProcessingDelegate {
         let mut workerService = request.enhancedAiService.clone();
         let mut workerChatHistoryDelegate = request.chatHistoryDelegate.clone_for_core();
         let mut workerMessageProcessingDelegate = self.clone_for_core();
+        let workerCalculateNextWindowSize = calculateNextWindowSize;
         let workerRequestSentAt = self.runtimeFor(Some(chatId.clone())).requestSentAt;
         let workerRequestStartElapsed = self.runtimeFor(Some(chatId.clone())).requestStartElapsed;
         if userMessageAdded {
@@ -756,6 +887,7 @@ impl MessageProcessingDelegate {
                 .lock()
                 .map(|tracker| tracker.current_content())
                 .unwrap_or_else(|_| workerAiMessage.content.clone());
+            let streamErrorMessage = stream_error_message(&finalContent);
             let providerModel = workerService.getLastProviderModel().unwrap_or_default();
             let (provider, modelName) = split_provider_model(&providerModel);
             let tokenSnapshot = workerService
@@ -786,11 +918,46 @@ impl MessageProcessingDelegate {
             if workerTurnOptions.persistTurn {
                 workerChatHistoryDelegate.addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
             }
-            workerMessageProcessingDelegate.finalizeMessageAndNotify(
-                workerChatId,
-                finalMessage,
-                workerTurnOptions,
-            );
+            if let Some(message) = streamErrorMessage {
+                workerMessageProcessingDelegate.setInputProcessingStateForChat(
+                    workerChatId.clone(),
+                    InputProcessingState::Error { message },
+                );
+                workerMessageProcessingDelegate.cleanupRuntimeAfterSend(workerChatId, workerTurnOptions);
+            } else {
+                let nextWindowSize = workerCalculateNextWindowSize(
+                    &mut workerService,
+                    &workerChatHistoryDelegate,
+                    workerChatId.clone(),
+                );
+                if let Some(windowSize) = nextWindowSize {
+                    let previousTokens = workerChatHistoryDelegate
+                        .chatHistoriesFlow()
+                        .value()
+                        .into_iter()
+                        .find(|history| history.id == workerChatId)
+                        .map(|history| (history.inputTokens, history.outputTokens));
+                    let (inputTokens, outputTokens) = match previousTokens {
+                        Some((inputTokens, outputTokens)) => (
+                            inputTokens + workerAiMessage.inputTokens,
+                            outputTokens + workerAiMessage.outputTokens,
+                        ),
+                        None => (workerAiMessage.inputTokens, workerAiMessage.outputTokens),
+                    };
+                    workerChatHistoryDelegate.saveCurrentChat(
+                        inputTokens,
+                        outputTokens,
+                        windowSize,
+                        Some(workerChatId.clone()),
+                    );
+                }
+                workerMessageProcessingDelegate.finalizeMessageAndNotify(
+                    workerChatId,
+                    finalMessage,
+                    nextWindowSize,
+                    workerTurnOptions,
+                );
+            }
         });
         Ok(SendUserMessageProcessingResult {
             aiMessage,
@@ -862,14 +1029,16 @@ impl MessageProcessingDelegate {
         &mut self,
         chatId: String,
         _aiMessage: ChatMessage,
+        nextWindowSize: Option<i32>,
         turnOptions: ChatTurnOptions,
     ) {
+        self.cleanupRuntimeAfterSend(chatId.clone(), turnOptions);
         self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
         let next = self.turnCompleteCounterByChatId.get(&chatId).copied().unwrap_or(0) + 1;
         self.turnCompleteCounterByChatId.insert(chatId.clone(), next);
         self.turnCompleteCounterByChatIdFlow
             .set_value(self.turnCompleteCounterByChatId.clone());
-        self.cleanupRuntimeAfterSend(chatId, turnOptions);
+        let _ = nextWindowSize;
     }
 
     #[allow(non_snake_case)]
@@ -893,6 +1062,26 @@ impl Default for MessageProcessingDelegate {
             ModelConfigManager::new(rootDir),
         )
     }
+}
+
+fn stream_error_message(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if !(trimmed.starts_with("<error>") && trimmed.ends_with("</error>")) {
+        return None;
+    }
+    let body = trimmed
+        .trim_start_matches("<error>")
+        .trim_end_matches("</error>");
+    Some(xml_unescape(body))
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 fn split_provider_model(providerModel: &str) -> (String, String) {

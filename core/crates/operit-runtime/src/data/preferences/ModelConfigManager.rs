@@ -10,7 +10,7 @@ use crate::data::model::ModelParameter::{
 use crate::data::model::StandardModelParameters::StandardModelParameters;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -32,6 +32,7 @@ pub enum ModelConfigError {
     CustomParameterConversion(String),
 }
 
+#[derive(Clone)]
 pub struct ModelConfigManager {
     paths: RuntimeStorePaths,
     modelConfigDataStore: PreferencesDataStore,
@@ -60,7 +61,7 @@ impl ModelConfigManager {
     }
 
     pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
-        let configList = self.configListFlow()?;
+        let configList = self.configListFlow()?.first()?;
         if configList.is_empty() {
             let defaultConfig = self.createFreshDefaultConfig();
             self.saveConfigToDataStore(&defaultConfig)?;
@@ -94,8 +95,14 @@ impl ModelConfigManager {
         config
     }
 
-    pub fn configListFlow(&self) -> Result<Vec<String>, ModelConfigError> {
-        let preferences = self.modelConfigDataStore.data()?;
+    pub fn configListFlow(&self) -> Result<Flow<Vec<String>>, ModelConfigError> {
+        Ok(self
+            .modelConfigDataStore
+            .dataFlow()
+            .mapResult(|preferences| Self::readConfigList(&preferences)))
+    }
+
+    fn readConfigList(preferences: &Preferences) -> Result<Vec<String>, PreferencesDataStoreError> {
         match preferences.get(&Self::CONFIG_LIST_KEY()) {
             Some(configList) if !configList.is_empty() => Ok(serde_json::from_str(configList)?),
             _ => Ok(Vec::new()),
@@ -112,11 +119,17 @@ impl ModelConfigManager {
     }
 
     pub fn getConfigIds(&self) -> Result<Vec<String>, ModelConfigError> {
-        self.configListFlow()
+        Ok(self.configListFlow()?.first()?)
     }
 
-    pub fn getModelConfigFlow(&self, configId: &str) -> Result<ModelConfigData, ModelConfigError> {
-        self.loadConfigFromDataStore(configId)
+    pub fn getModelConfigFlow(&self, configId: &str) -> Result<Flow<ModelConfigData>, ModelConfigError> {
+        let configId = configId.to_string();
+        let manager = self.clone();
+        Ok(self.modelConfigDataStore.dataFlow().mapResult(move |_| {
+            manager
+                .loadConfigFromDataStore(&configId)
+                .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))
+        }))
     }
 
     pub fn getModelConfig(&self, configId: &str) -> Result<ModelConfigData, ModelConfigError> {
@@ -124,10 +137,10 @@ impl ModelConfigManager {
     }
 
     pub fn getAllConfigSummaries(&self) -> Result<Vec<ModelConfigSummary>, ModelConfigError> {
-        let configIds = self.configListFlow()?;
+        let configIds = self.configListFlow()?.first()?;
         let mut summaries = Vec::new();
         for id in configIds {
-            let config = self.getModelConfigFlow(&id)?;
+            let config = self.getModelConfigFlow(&id)?.first()?;
             summaries.push(ModelConfigSummary {
                 id: config.id.clone(),
                 name: config.name.clone(),
@@ -142,7 +155,7 @@ impl ModelConfigManager {
 
     pub fn createConfig(&self, name: String) -> Result<String, ModelConfigError> {
         let configId = self.createConfigId();
-        let mut configList = self.configListFlow()?;
+        let mut configList = self.configListFlow()?.first()?;
         let mut newConfig = ModelConfigData::new(configId.clone(), name);
         newConfig.apiProviderType = ApiProviderType::OPENAI_GENERIC;
         newConfig.apiProviderTypeId = ApiProviderType::OPENAI_GENERIC.name().to_string();
@@ -157,7 +170,7 @@ impl ModelConfigManager {
         if configId == Self::DEFAULT_CONFIG_ID {
             return Ok(());
         }
-        let mut configList = self.configListFlow()?;
+        let mut configList = self.configListFlow()?.first()?;
         configList.retain(|id| id != configId);
         let configKey = self.configKey(configId);
         let encodedList = serde_json::to_string(&configList)?;
@@ -561,7 +574,7 @@ impl ModelConfigManager {
         &self,
         configId: &str,
     ) -> Result<Vec<ModelParameter<serde_json::Value>>, ModelConfigError> {
-        let config = self.getModelConfigFlow(configId)?;
+        let config = self.getModelConfigFlow(configId)?.first()?;
         let mut parameters = Vec::new();
 
         for def in StandardModelParameters::DEFINITIONS() {

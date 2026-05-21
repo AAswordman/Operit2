@@ -5,3 +5,5 @@ pub mod db;
 pub mod dao;
 pub mod preferences;
 pub mod repository;
+pub mod skill;
+pub mod mcp;

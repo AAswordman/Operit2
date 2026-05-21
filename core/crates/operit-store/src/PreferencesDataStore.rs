@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +12,8 @@ pub enum PreferencesDataStoreError {
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("{0}")]
+    Message(String),
 }
 
 pub type FlowResult<T> = Result<T, PreferencesDataStoreError>;
@@ -46,6 +48,7 @@ where
 #[derive(Clone)]
 pub struct Flow<T> {
     producer: Arc<dyn Fn() -> FlowResult<T> + Send + Sync>,
+    waitChanged: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl<T> Flow<T> {
@@ -55,6 +58,19 @@ impl<T> Flow<T> {
     {
         Self {
             producer: Arc::new(producer),
+            waitChanged: None,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newObserved<F, W>(producer: F, waitChanged: W) -> Self
+    where
+        F: Fn() -> FlowResult<T> + Send + Sync + 'static,
+        W: Fn() + Send + Sync + 'static,
+    {
+        Self {
+            producer: Arc::new(producer),
+            waitChanged: Some(Arc::new(waitChanged)),
         }
     }
 
@@ -67,6 +83,12 @@ impl<T> Flow<T> {
         F: Fn(T),
     {
         collector(self.first()?);
+        if let Some(waitChanged) = &self.waitChanged {
+            loop {
+                waitChanged();
+                collector(self.first()?);
+            }
+        }
         Ok(())
     }
 
@@ -89,7 +111,24 @@ impl<T> Flow<T> {
         F: Fn(T) -> U + Send + Sync + 'static,
     {
         let producer = Arc::clone(&self.producer);
-        Flow::new(move || producer().map(&transform))
+        Flow {
+            producer: Arc::new(move || producer().map(&transform)),
+            waitChanged: self.waitChanged.clone(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn mapResult<U, F>(&self, transform: F) -> Flow<U>
+    where
+        T: 'static,
+        U: 'static,
+        F: Fn(T) -> FlowResult<U> + Send + Sync + 'static,
+    {
+        let producer = Arc::clone(&self.producer);
+        Flow {
+            producer: Arc::new(move || transform(producer()?)),
+            waitChanged: self.waitChanged.clone(),
+        }
     }
 
     pub fn catch<F>(&self, handler: F) -> Flow<T>
@@ -98,10 +137,13 @@ impl<T> Flow<T> {
         F: Fn(PreferencesDataStoreError) -> FlowResult<T> + Send + Sync + 'static,
     {
         let producer = Arc::clone(&self.producer);
-        Flow::new(move || match producer() {
-            Ok(value) => Ok(value),
-            Err(error) => handler(error),
-        })
+        Flow {
+            producer: Arc::new(move || match producer() {
+                Ok(value) => Ok(value),
+                Err(error) => handler(error),
+            }),
+            waitChanged: self.waitChanged.clone(),
+        }
     }
 
     pub fn stateIn(&self, _scope: CoroutineScope, _started: SharingStarted, initialValue: T) -> StateFlow<T>
@@ -111,6 +153,15 @@ impl<T> Flow<T> {
         let stateFlow = StateFlow::new(initialValue);
         if let Ok(value) = self.first() {
             stateFlow.set_value(value);
+        }
+        if self.waitChanged.is_some() {
+            let flow = self.clone();
+            let stateFlowForThread = stateFlow.clone();
+            std::thread::spawn(move || {
+                let _ = flow.collect(|value| {
+                    stateFlowForThread.set_value(value);
+                });
+            });
         }
         stateFlow
     }
@@ -193,12 +244,12 @@ where
     where
         F: Fn(T),
     {
-        collector(self.value());
         let mut observedVersion = *self
             .inner
             .version
             .lock()
             .expect("StateFlow version mutex must not be poisoned");
+        collector(self.value());
         loop {
             let versionGuard = self
                 .inner
@@ -213,6 +264,43 @@ where
             observedVersion = *versionGuard;
             drop(versionGuard);
             collector(self.value());
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn collectUntil<F, P>(&self, mut collector: F, shouldStop: P) -> FlowResult<()>
+    where
+        F: FnMut(T),
+        P: Fn(&T) -> bool,
+    {
+        let mut observedVersion = *self
+            .inner
+            .version
+            .lock()
+            .expect("StateFlow version mutex must not be poisoned");
+        let current = self.value();
+        collector(current.clone());
+        if shouldStop(&current) {
+            return Ok(());
+        }
+        loop {
+            let versionGuard = self
+                .inner
+                .version
+                .lock()
+                .expect("StateFlow version mutex must not be poisoned");
+            let versionGuard = self
+                .inner
+                .changed
+                .wait_while(versionGuard, |version| *version == observedVersion)
+                .expect("StateFlow version mutex must not be poisoned");
+            observedVersion = *versionGuard;
+            drop(versionGuard);
+            let current = self.value();
+            collector(current.clone());
+            if shouldStop(&current) {
+                return Ok(());
+            }
         }
     }
 
@@ -256,6 +344,25 @@ where
         } else {
             false
         }
+    }
+
+    pub fn map<U, F>(&self, transform: F) -> StateFlow<U>
+    where
+        T: Send + 'static,
+        U: Clone + PartialEq + Send + 'static,
+        F: Fn(T) -> U + Send + Sync + 'static,
+    {
+        let transform = Arc::new(transform);
+        let stateFlow = StateFlow::new(transform(self.value()));
+        let sourceFlow = self.clone();
+        let stateFlowForThread = stateFlow.clone();
+        let transformForThread = Arc::clone(&transform);
+        std::thread::spawn(move || {
+            let _ = sourceFlow.collect(|value| {
+                stateFlowForThread.set_value(transformForThread(value));
+            });
+        });
+        stateFlow
     }
 }
 
@@ -317,6 +424,15 @@ where
         F: Fn(T),
     {
         self.state.collect(collector)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn collectUntil<F, P>(&self, collector: F, shouldStop: P) -> FlowResult<()>
+    where
+        F: FnMut(T),
+        P: Fn(&T) -> bool,
+    {
+        self.state.collectUntil(collector, shouldStop)
     }
 
     pub fn set_value(&self, value: T) {
@@ -418,11 +534,22 @@ where
 #[derive(Clone, Debug)]
 pub struct PreferencesDataStore {
     path: PathBuf,
+    changeSignal: Arc<PreferencesDataStoreChangeSignal>,
+}
+
+#[derive(Debug)]
+struct PreferencesDataStoreChangeSignal {
+    version: Mutex<u64>,
+    changed: Condvar,
 }
 
 impl PreferencesDataStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        Self {
+            path,
+            changeSignal,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -442,7 +569,21 @@ impl PreferencesDataStore {
 
     pub fn dataFlow(&self) -> Flow<Preferences> {
         let store = self.clone();
-        Flow::new(move || store.data())
+        let signal = Arc::clone(&self.changeSignal);
+        Flow::newObserved(
+            move || store.data(),
+            move || {
+                let versionGuard = signal
+                    .version
+                    .lock()
+                    .expect("PreferencesDataStore version mutex must not be poisoned");
+                let observedVersion = *versionGuard;
+                let _versionGuard = signal
+                    .changed
+                    .wait_while(versionGuard, |version| *version == observedVersion)
+                    .expect("PreferencesDataStore version mutex must not be poisoned");
+            },
+        )
     }
 
     pub fn edit<F>(&self, transform: F) -> Result<(), PreferencesDataStoreError>
@@ -470,6 +611,37 @@ impl PreferencesDataStore {
         }
         let content = serde_json::to_string_pretty(preferences)?;
         fs::write(&self.path, content)?;
+        self.notifyChanged();
         Ok(())
     }
+
+    #[allow(non_snake_case)]
+    fn notifyChanged(&self) {
+        let mut version = self
+            .changeSignal
+            .version
+            .lock()
+            .expect("PreferencesDataStore version mutex must not be poisoned");
+        *version += 1;
+        self.changeSignal.changed.notify_all();
+    }
+}
+
+#[allow(non_snake_case)]
+fn preferencesDataStoreChangeSignal(path: &Path) -> Arc<PreferencesDataStoreChangeSignal> {
+    static CHANGE_SIGNALS: OnceLock<Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreChangeSignal>>>> =
+        OnceLock::new();
+    let signals = CHANGE_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut signals = signals
+        .lock()
+        .expect("PreferencesDataStore change signal registry mutex must not be poisoned");
+    if let Some(signal) = signals.get(path).and_then(Weak::upgrade) {
+        return signal;
+    }
+    let signal = Arc::new(PreferencesDataStoreChangeSignal {
+        version: Mutex::new(0),
+        changed: Condvar::new(),
+    });
+    signals.insert(path.to_path_buf(), Arc::downgrade(&signal));
+    signal
 }

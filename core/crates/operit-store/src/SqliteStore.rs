@@ -12,12 +12,15 @@ pub enum SqliteStoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("sqlite connection mutex poisoned")]
     MutexPoisoned,
+    #[error("sqlite invalidation observer mutex poisoned")]
+    ObserverMutexPoisoned,
 }
 
 #[derive(Clone)]
 pub struct SqliteStore {
     path: PathBuf,
     connection: Arc<Mutex<Connection>>,
+    observers: Arc<Mutex<Vec<Arc<dyn Fn() -> Result<(), SqliteStoreError> + Send + Sync>>>>,
 }
 
 impl SqliteStore {
@@ -30,6 +33,7 @@ impl SqliteStore {
         Ok(Self {
             path,
             connection: Arc::new(Mutex::new(connection)),
+            observers: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -79,6 +83,32 @@ impl SqliteStore {
             .lock()
             .map_err(|_| SqliteStoreError::MutexPoisoned)?;
         Ok(action(&connection)?)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn addInvalidationObserver<F>(&self, observer: F) -> Result<(), SqliteStoreError>
+    where
+        F: Fn() -> Result<(), SqliteStoreError> + Send + Sync + 'static,
+    {
+        let mut observers = self
+            .observers
+            .lock()
+            .map_err(|_| SqliteStoreError::ObserverMutexPoisoned)?;
+        observers.push(Arc::new(observer));
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn notifyInvalidated(&self) -> Result<(), SqliteStoreError> {
+        let observers = self
+            .observers
+            .lock()
+            .map_err(|_| SqliteStoreError::ObserverMutexPoisoned)?
+            .clone();
+        for observer in observers {
+            observer()?;
+        }
+        Ok(())
     }
 
     pub fn transaction<T, F>(&self, action: F) -> Result<T, SqliteStoreError>

@@ -42,6 +42,18 @@ impl StructuredToolCallBridge {
         Self::buildStructuredMessages(history, preserveThinkInHistory).to_string()
     }
 
+    pub fn buildMessagesJsonForProvider(
+        history: &[PromptTurn],
+        preserveThinkInHistory: bool,
+        useToolCall: bool,
+    ) -> String {
+        if useToolCall {
+            Self::buildStructuredMessages(history, preserveThinkInHistory).to_string()
+        } else {
+            Self::buildXmlModeMessages(history, preserveThinkInHistory).to_string()
+        }
+    }
+
     pub fn buildMnnChatHistory(history: &[PromptTurn], preserveThinkInHistory: bool) -> Vec<(String, String)> {
         let messages = Self::buildStructuredMessages(history, preserveThinkInHistory);
         let mut compiledHistory = Vec::new();
@@ -212,6 +224,14 @@ impl StructuredToolCallBridge {
 
     pub fn build_messages_json(history: &[PromptTurn], preserve_think_in_history: bool) -> String {
         Self::buildMessagesJson(history, preserve_think_in_history)
+    }
+
+    pub fn build_messages_json_for_provider(
+        history: &[PromptTurn],
+        preserve_think_in_history: bool,
+        use_tool_call: bool,
+    ) -> String {
+        Self::buildMessagesJsonForProvider(history, preserve_think_in_history, use_tool_call)
     }
 
     pub fn compile_history_for_provider(history: &[PromptTurn], use_tool_call: bool) -> Vec<PromptTurn> {
@@ -434,6 +454,37 @@ impl StructuredToolCallBridge {
             &mut queuedToolCallIds,
             &mut openToolCallIds,
         );
+        Value::Array(messagesArray)
+    }
+
+    fn buildXmlModeMessages(history: &[PromptTurn], preserveThinkInHistory: bool) -> Value {
+        let mergedHistory = Self::compileHistoryForProvider(history, false);
+        let messagesArray = mergedHistory
+            .into_iter()
+            .map(|turn| {
+                let kind = turn.kind.clone();
+                let role = match kind {
+                    PromptTurnKind::SYSTEM => "system",
+                    PromptTurnKind::USER | PromptTurnKind::SUMMARY | PromptTurnKind::TOOL_RESULT => "user",
+                    PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => "assistant",
+                };
+                let content = if !preserveThinkInHistory && turn.kind == PromptTurnKind::ASSISTANT {
+                    removeThinkingContent(&turn.content)
+                } else {
+                    turn.content
+                };
+                let effectiveContent =
+                    if role == "assistant" && content.trim().is_empty() {
+                        "[Empty]".to_string()
+                    } else {
+                        content
+                    };
+                json!({
+                    "role": role,
+                    "content": effectiveContent,
+                })
+            })
+            .collect::<Vec<_>>();
         Value::Array(messagesArray)
     }
 

@@ -18,13 +18,23 @@ impl QwenAIProvider {
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
-        _supports_vision: bool,
-        _supports_audio: bool,
-        _supports_video: bool,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
         enable_tool_call: bool,
     ) -> Self {
         Self {
-            inner: OpenAIProvider::new(api_endpoint, api_key, model_name, provider_type, custom_headers, enable_tool_call),
+            inner: OpenAIProvider::new_with_capabilities(
+                api_endpoint,
+                api_key,
+                model_name,
+                provider_type,
+                custom_headers,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
         }
     }
 
