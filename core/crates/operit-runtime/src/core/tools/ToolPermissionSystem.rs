@@ -133,6 +133,28 @@ impl ToolPermissionSystem {
     }
 
     #[allow(non_snake_case)]
+    pub fn getMasterSwitch(&self) -> Result<PermissionLevel, PreferencesDataStoreError> {
+        let preferences = self.dataStore.data()?;
+        Ok(PermissionLevel::fromString(
+            preferences.get(&Self::MASTER_SWITCH()).map(String::as_str),
+        ))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPermissionOverrides(
+        &self,
+    ) -> Result<BTreeMap<String, PermissionLevel>, PreferencesDataStoreError> {
+        let preferences = self.dataStore.data()?;
+        let mut out = BTreeMap::new();
+        for (key, value) in preferences.entries() {
+            if let Some(toolName) = key.strip_prefix("tool_permission_") {
+                out.insert(toolName.to_string(), PermissionLevel::fromString(Some(value.as_str())));
+            }
+        }
+        Ok(out)
+    }
+
+    #[allow(non_snake_case)]
     pub fn getToolPermission(&self, toolName: &str) -> Result<PermissionLevel, PreferencesDataStoreError> {
         let preferences = self.dataStore.data()?;
         Ok(PermissionLevel::fromString(

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::api::chat::enhance::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult,
@@ -205,8 +205,6 @@ impl ToolExecutionManager {
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
         packageManager: &PackageManager,
-        executors: &mut BTreeMap<String, Box<dyn ToolExecutor>>,
-        jsPackageNames: &BTreeSet<String>,
         callerName: Option<String>,
         callerChatId: Option<String>,
         callerCardId: Option<String>,
@@ -227,12 +225,17 @@ impl ToolExecutionManager {
                 toolExposureMode: toolExposureMode.clone(),
             });
         });
+        let jsPackageNames = packageManager
+            .getAvailablePackages()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let injectedInvocations = invocations
             .iter()
             .map(|invocation| {
                 Self::injectPackageCallContext(
                     invocation,
-                    jsPackageNames,
+                    &jsPackageNames,
                     callerName.as_deref(),
                     callerChatId.as_deref(),
                     callerCardId.as_deref(),
@@ -287,7 +290,12 @@ impl ToolExecutionManager {
             }
 
             let resolved = Self::resolveToolTarget(&invocation.tool);
-            let Some(executor) = executors.get_mut(&resolved.tool.name) else {
+            let resolvedInvocation = ToolInvocation {
+                tool: resolved.tool.clone(),
+                rawText: invocation.rawText.clone(),
+                responseLocation: invocation.responseLocation,
+            };
+            if !toolHandler.getToolExecutorOrActivate(&resolvedInvocation.tool.name) {
                 let errorMessage = Self::buildToolNotAvailableErrorMessage(&resolved.tool.name);
                 let content = ConversationMarkupManager::createToolNotAvailableError(
                     &resolved.tool.name,
@@ -303,15 +311,14 @@ impl ToolExecutionManager {
                 emitted.push(ensureEndsWithNewline(&content));
                 results.push(deniedResult);
                 continue;
-            };
-
-            let resolvedInvocation = ToolInvocation {
-                tool: resolved.tool.clone(),
-                rawText: invocation.rawText.clone(),
-                responseLocation: invocation.responseLocation,
-            };
+            }
             toolHandler.notifyToolExecutionStarted(&invocation.tool);
-            let collected = Self::executeToolSafely(&resolvedInvocation, executor.as_mut());
+            let Some(collected) =
+                toolHandler.executeToolSafelyWithResolvedExecutor(&resolvedInvocation.tool)
+            else {
+                toolHandler.notifyToolExecutionFinished(&invocation.tool);
+                continue;
+            };
             for result in &collected {
                 toolHandler.notifyToolExecutionResult(&invocation.tool, result);
                 emitted.push(ensureEndsWithNewline(

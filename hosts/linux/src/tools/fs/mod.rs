@@ -335,7 +335,9 @@ impl FileSystemHost for LinuxFileSystemHost {
                 .ok_or_else(|| HostError::new(format!("Invalid source path: {source}")))?;
             zip_file(sourcePath, &fileName, &mut zipWriter, options)?;
         }
-        zipWriter.finish()?;
+        zipWriter
+            .finish()
+            .map_err(|error| HostError::new(format!("Error finalizing zip archive: {error}")))?;
         Ok(())
     }
 
@@ -371,8 +373,8 @@ impl FileSystemHost for LinuxFileSystemHost {
 
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        let status = Command::new("cmd")
-            .args(["/C", "start", "", path])
+        let status = Command::new("xdg-open")
+            .arg(path)
             .status()?;
         if !status.success() {
             return Err(HostError::new(format!(
@@ -382,11 +384,26 @@ impl FileSystemHost for LinuxFileSystemHost {
         Ok(())
     }
 
-    fn shareFile(&self, path: &str, _title: &str) -> HostResult<()> {
+    fn shareFile(&self, path: &str, title: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        Err(HostError::new(
-            "File sharing is not supported in Windows host yet",
-        ))
+        let subject = if title.trim().is_empty() {
+            "Share File"
+        } else {
+            title.trim()
+        };
+        let status = Command::new("xdg-email")
+            .arg("--subject")
+            .arg(subject)
+            .arg("--attach")
+            .arg(path)
+            .status()
+            .map_err(|error| HostError::new(format!("Failed to open Linux share request: {error}")))?;
+        if !status.success() {
+            return Err(HostError::new(format!(
+                "Linux share request exited with {status}"
+            )));
+        }
+        Ok(())
     }
 }
 

@@ -56,6 +56,7 @@ pub struct EnhancedAIService {
     pub file_binding_service: FileBindingServiceMirror,
     pub tool_handler: AIToolHandler,
     pub input_processing_state: MutableStateFlow<InputProcessingState>,
+    pub request_window_estimate_flow: MutableStateFlow<Option<i32>>,
     pub api_preferences: ApiPreferencesMirror,
     pub character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
     pub tool_processing_scope: ToolProcessingScopeMirror,
@@ -478,6 +479,7 @@ impl EnhancedAIService {
             file_binding_service: FileBindingServiceMirror,
             tool_handler: AIToolHandler::default(),
             input_processing_state: mutableStateFlow(InputProcessingState::Idle),
+            request_window_estimate_flow: mutableStateFlow(None),
             api_preferences: ApiPreferencesMirror,
             character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
             tool_processing_scope: ToolProcessingScopeMirror,
@@ -569,6 +571,7 @@ impl EnhancedAIService {
 
     pub fn publishRequestWindowEstimate(&mut self, windowSize: i32) {
         self.shared_state().request_window_estimate = Some(windowSize);
+        self.request_window_estimate_flow.set_value(Some(windowSize));
     }
 
     pub async fn estimatePreparedRequestWindow(
@@ -911,6 +914,11 @@ impl EnhancedAIService {
 
     pub fn inputProcessingState(&self) -> MutableStateFlow<InputProcessingState> {
         self.input_processing_state.clone()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn requestWindowEstimateFlow(&self) -> MutableStateFlow<Option<i32>> {
+        self.request_window_estimate_flow.clone()
     }
 
     pub fn startAiService(
@@ -1291,14 +1299,18 @@ impl EnhancedAIService {
                 responseEventChannel.emit(event);
             });
         });
-        if !isSubTask {
-            self.setInputProcessingState(InputProcessingState::Receiving {
-                message: "enhanced_receiving_response".to_string(),
-            });
-        }
         let mut responseChunks = Vec::new();
         let mut totalChars = 0;
+        let mut isFirstChunk = true;
         provider_stream.collect(&mut |content| {
+            if isFirstChunk {
+                if !isSubTask {
+                    self.setInputProcessingState(InputProcessingState::Receiving {
+                        message: "enhanced_receiving_response".to_string(),
+                    });
+                }
+                isFirstChunk = false;
+            }
             totalChars += content.len() as i32;
             execContext.streamBuffer.push_str(&content);
             execContext
@@ -1879,7 +1891,6 @@ impl EnhancedAIService {
         }
 
         self.tool_handler.registerDefaultTools();
-        let mut executors = self.tool_handler.takeExecutors();
         let packageManagerSnapshot = self
             .tool_handler
             .getOrCreatePackageManager()
@@ -1894,14 +1905,11 @@ impl EnhancedAIService {
             &toolInvocations,
             &mut self.tool_handler,
             &packageManagerSnapshot,
-            &mut executors,
-            &BTreeSet::new(),
             characterName.clone(),
             chatId.clone(),
             roleCardId.clone(),
             toolExposureMode,
         );
-        self.tool_handler.restoreExecutors(executors);
 
         for content in emittedToolResultMessages {
             context.streamBuffer.push_str(&content);
@@ -2166,9 +2174,8 @@ impl EnhancedAIService {
         self.notifyReplyCompleted(chatId, characterName, avatarUri, notifyReplyOverride);
     }
 
-    pub fn cancelConversation(&mut self, service: &mut dyn AIService) {
+    pub fn cancelConversation(&mut self) {
         self.invalidateAllExecutionContexts("cancelConversation".to_string());
-        service.cancel_streaming();
         self.input_processing_state.set_value(InputProcessingState::Idle);
         {
             let mut shared = self.shared_state();
@@ -2207,6 +2214,11 @@ impl EnhancedAIService {
     #[allow(non_snake_case)]
     pub fn getPerRequestTokenCounts(&self) -> Option<(i32, i32)> {
         self.shared_state().per_request_token_counts
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getRequestWindowEstimate(&self) -> Option<i32> {
+        self.shared_state().request_window_estimate
     }
 
     #[allow(non_snake_case)]
@@ -2274,6 +2286,7 @@ impl Clone for EnhancedAIService {
             file_binding_service: self.file_binding_service.clone(),
             tool_handler: self.tool_handler.clone(),
             input_processing_state: self.input_processing_state.clone(),
+            request_window_estimate_flow: self.request_window_estimate_flow.clone(),
             api_preferences: self.api_preferences.clone(),
             character_card_tool_access_resolver: self.character_card_tool_access_resolver.clone(),
             tool_processing_scope: self.tool_processing_scope.clone(),

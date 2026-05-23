@@ -1,10 +1,13 @@
 use std::sync::Arc;
+use std::thread;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{
     FileEntry, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult,
 };
+use reqwest::blocking::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{
@@ -13,6 +16,7 @@ use crate::api::chat::enhance::ToolExecutionManager::{
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
 
 use super::super::PathValidator::PathValidator;
+use super::StandardWebVisitTool::StandardWebVisitTool;
 
 #[derive(Clone)]
 pub struct StandardFileSystemTools {
@@ -464,6 +468,178 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
+    pub fn downloadFile(&self, tool: &AITool) -> ToolResult {
+        let urlParam = parameterValue(tool, "url");
+        let visitKey = parameterValue(tool, "visit_key");
+        let linkNumberStr = optionalParameterValue(tool, "link_number");
+        let imageNumberStr = optionalParameterValue(tool, "image_number");
+        let destPath = parameterValue(tool, "destination");
+        let headersParam = optionalParameterValue(tool, "headers");
+
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &destPath, &tool.name, "destination")
+        {
+            return result;
+        }
+
+        let mut resolvedUrl = urlParam;
+        if resolvedUrl.trim().is_empty() {
+            let linkNumber = parseIndex(linkNumberStr.as_deref());
+            let imageNumber = parseIndex(imageNumberStr.as_deref());
+            if visitKey.trim().is_empty() || (linkNumber.is_none() && imageNumber.is_none()) {
+                return toolError(
+                    tool,
+                    fileOperationDataToString(
+                        self.envLabel(),
+                        &format!(
+                            "Download failed for {destPath}: Either url or (visit_key + link_number/image_number) is required"
+                        ),
+                    ),
+                    "Either url or (visit_key + link_number/image_number) is required".to_string(),
+                );
+            }
+            let Some(cached) = StandardWebVisitTool::getCachedVisitResult(&visitKey) else {
+                return toolError(
+                    tool,
+                    fileOperationDataToString(
+                        self.envLabel(),
+                        &format!("Download failed for {destPath}: Invalid visit key."),
+                    ),
+                    "Invalid visit key.".to_string(),
+                );
+            };
+            resolvedUrl = if let Some(index) = linkNumber {
+                cached
+                    .links
+                    .get(index.saturating_sub(1) as usize)
+                    .map(|link| link.url.clone())
+                    .unwrap_or_default()
+            } else if let Some(index) = imageNumber {
+                cached
+                    .imageLinks
+                    .get(index.saturating_sub(1) as usize)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            if resolvedUrl.trim().is_empty() {
+                return toolError(
+                    tool,
+                    fileOperationDataToString(
+                        self.envLabel(),
+                        &format!("Download failed for {destPath}: Index out of bounds."),
+                    ),
+                    "Index out of bounds.".to_string(),
+                );
+            }
+        }
+
+        if resolvedUrl.trim().is_empty() || destPath.trim().is_empty() {
+            return toolError(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!(
+                        "Download failed for {destPath}: URL and destination parameters are required"
+                    ),
+                ),
+                "URL and destination parameters are required".to_string(),
+            );
+        }
+
+        if !resolvedUrl.starts_with("http://") && !resolvedUrl.starts_with("https://") {
+            return toolError(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!("Download failed for {destPath}: URL must start with http:// or https://"),
+                ),
+                "URL must start with http:// or https://".to_string(),
+            );
+        }
+
+        let headers = match parseHeaders(headersParam.as_deref()) {
+            Ok(headers) => headers,
+            Err(error) => {
+                return toolError(
+                    tool,
+                    fileOperationDataToString(
+                        self.envLabel(),
+                        &format!("Download failed for {destPath}: {error}"),
+                    ),
+                    error,
+                )
+            }
+        };
+
+        let resolvedUrlForThread = resolvedUrl.trim().to_string();
+        let headersForThread = headers.clone();
+        let downloadResult = thread::spawn(move || {
+            let client = Client::new();
+            let response = client.get(&resolvedUrlForThread).headers(headersForThread).send();
+            match response {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        Err(format!("Error downloading file: HTTP {}", response.status()))
+                    } else {
+                        response
+                            .bytes()
+                            .map(|bytes| bytes.to_vec())
+                            .map_err(|error| format!("Error downloading file: {error}"))
+                    }
+                }
+                Err(error) => Err(format!("Error downloading file: {error}")),
+            }
+        })
+        .join()
+        .map_err(|_| "Error downloading file: HTTP worker thread panicked".to_string());
+
+        let bytes = match downloadResult {
+            Ok(result) => match result {
+                Ok(bytes) => bytes,
+                Err(message) => {
+                    return toolError(
+                        tool,
+                        fileOperationDataToString(self.envLabel(), &message),
+                        message,
+                    );
+                }
+            },
+            Err(message) => {
+                return toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                );
+            }
+        };
+
+        match self.host.writeFileBytes(&destPath, bytes.as_ref()) {
+            Ok(()) => success(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!(
+                        "File downloaded successfully: {} -> {} (file size: {})",
+                        resolvedUrl.trim(),
+                        destPath,
+                        formatSize(bytes.len() as u64)
+                    ),
+                ),
+            ),
+            Err(error) => {
+                let message = format!("Error downloading file: {}", error.message);
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
     pub fn createFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let content = parameterValue(tool, "new");
@@ -652,6 +828,7 @@ pub enum FileSystemToolOperation {
     FindFiles,
     FileInfo,
     GrepCode,
+    DownloadFile,
     CreateFile,
     EditFile,
     ZipFiles,
@@ -694,6 +871,7 @@ impl ToolExecutor for FileSystemToolExecutor {
             FileSystemToolOperation::FindFiles => self.tools.findFiles(tool),
             FileSystemToolOperation::FileInfo => self.tools.fileInfo(tool),
             FileSystemToolOperation::GrepCode => self.tools.grepCode(tool),
+            FileSystemToolOperation::DownloadFile => self.tools.downloadFile(tool),
             FileSystemToolOperation::CreateFile => self.tools.createFile(tool),
             FileSystemToolOperation::EditFile => self.tools.editFile(tool),
             FileSystemToolOperation::ZipFiles => self.tools.zipFiles(tool),
@@ -724,6 +902,7 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
         FileSystemToolOperation::FindFiles | FileSystemToolOperation::GrepCode => {
             &["path", "pattern"]
         }
+        FileSystemToolOperation::DownloadFile => &["destination"],
         FileSystemToolOperation::CreateFile => &["path", "new"],
         FileSystemToolOperation::EditFile => &["path", "old", "new"],
         FileSystemToolOperation::ZipFiles | FileSystemToolOperation::UnzipFiles => {
@@ -772,6 +951,50 @@ fn parameterBoolDefaultTrue(tool: &AITool, name: &str) -> bool {
     optionalParameterValue(tool, name)
         .map(|value| value.eq_ignore_ascii_case("true"))
         .unwrap_or(true)
+}
+
+#[allow(non_snake_case)]
+fn parseHeaders(headersJson: Option<&str>) -> Result<HeaderMap, String> {
+    let Some(raw) = headersJson.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(HeaderMap::new());
+    };
+    let value = serde_json::from_str::<serde_json::Value>(raw)
+        .map_err(|error| format!("Invalid headers JSON: {error}"))?;
+    let Some(object) = value.as_object() else {
+        return Err("headers must be a JSON object string".to_string());
+    };
+    let mut headers = HeaderMap::new();
+    for (key, value) in object {
+        let Some(valueText) = value.as_str() else {
+            return Err(format!("headers.{key} must be a string"));
+        };
+        let headerName = HeaderName::from_bytes(key.as_bytes())
+            .map_err(|error| format!("Invalid header name '{key}': {error}"))?;
+        let headerValue = HeaderValue::from_str(valueText)
+            .map_err(|error| format!("Invalid header value for '{key}': {error}"))?;
+        headers.insert(headerName, headerValue);
+    }
+    Ok(headers)
+}
+
+#[allow(non_snake_case)]
+fn parseIndex(raw: Option<&str>) -> Option<i32> {
+    let value = raw.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        return None;
+    }
+    value.parse::<i32>().ok()
+}
+
+#[allow(non_snake_case)]
+fn formatSize(bytes: u64) -> String {
+    if bytes > 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes > 1024 {
+        format!("{:.2} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 fn directoryListingDataToString(env: &str, path: &str, entries: &[FileEntry]) -> String {

@@ -10,6 +10,8 @@ async-trait.workspace = true
 base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
+json5.workspace = true
+boa_engine.workspace = true
 operit-host-api = { path = "../operit-host-api" }
 operit-store = { path = "../operit-store" }
 reqwest.workspace = true

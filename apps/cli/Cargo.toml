@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.28"
+operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
 ratatui = "0.28"
 serde_json = "1"

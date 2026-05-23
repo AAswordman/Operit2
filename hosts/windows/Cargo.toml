@@ -8,4 +8,6 @@ publish = false
 [dependencies]
 operit-host-api = { path = "../../core/crates/operit-host-api" }
 regex = "1"
+serde_json = "1"
+tungstenite = "0.24"
 zip = { version = "2", default-features = false, features = ["deflate"] }

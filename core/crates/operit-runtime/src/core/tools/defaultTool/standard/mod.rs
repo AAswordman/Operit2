@@ -1,2 +1,11 @@
 #[path = "StandardFileSystemTools.rs"]
 pub mod StandardFileSystemTools;
+
+#[path = "StandardHttpTools.rs"]
+pub mod StandardHttpTools;
+
+#[path = "StandardSystemOperationTools.rs"]
+pub mod StandardSystemOperationTools;
+
+#[path = "StandardWebVisitTool.rs"]
+pub mod StandardWebVisitTool;

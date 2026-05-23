@@ -97,6 +97,8 @@ pub struct StableContextWindowRequest<'a> {
 
 static ACTIVE_CHAT_KEYS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static LAST_ACTIVE_CHAT_KEY: OnceLock<Mutex<String>> = OnceLock::new();
+static ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, EnhancedAIService>>> = OnceLock::new();
+static ACTIVE_RESPONSE_STREAM_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, SharedAiResponseStream>>> = OnceLock::new();
 
 pub fn messageTimingNow() -> MessageTiming {
     let startedAtMs = SystemTime::now()
@@ -112,6 +114,8 @@ impl AIMessageManager {
     pub fn initialize() {
         let _ = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
         let _ = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
+        let _ = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        let _ = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
     }
 
     #[allow(non_snake_case)]
@@ -181,6 +185,7 @@ impl AIMessageManager {
         };
         Self::rememberActiveChatKey(chatKey.clone());
         Self::setLastActiveChatKey(chatKey.clone());
+        Self::rememberActiveEnhancedAiService(chatKey.clone(), request.enhancedAiService.clone());
 
         let memory = Self::getMemoryFromMessages(
             request.chatHistory.clone(),
@@ -215,6 +220,7 @@ impl AIMessageManager {
         );
         if let Some(pluginExecution) = pluginExecution {
             Self::forgetActiveChatKey(&chatKey);
+            Self::forgetActiveEnhancedAiService(&chatKey);
             return Ok(with_event_channel_shared(
                 pluginExecution.stream,
                 crate::util::stream::HotStream::mutable_shared_stream(usize::MAX),
@@ -257,8 +263,23 @@ impl AIMessageManager {
             .enhancedAiService
             .sendMessage(options)
             .await
-            .map(|stream| share_revisable(stream, usize::MAX, StreamStart::Eagerly));
-        Self::forgetActiveChatKey(&chatKey);
+            .map(|stream| {
+                let shared = share_revisable(
+                    ActiveChatTextStream {
+                        chatKey: chatKey.clone(),
+                        stream,
+                    },
+                    usize::MAX,
+                    StreamStart::Eagerly,
+                );
+                Self::rememberActiveResponseStream(chatKey.clone(), shared.clone());
+                shared
+            });
+        if result.is_err() {
+            Self::forgetActiveChatKey(&chatKey);
+            Self::forgetActiveEnhancedAiService(&chatKey);
+            Self::forgetActiveResponseStream(&chatKey);
+        }
         result
     }
 
@@ -685,6 +706,13 @@ impl AIMessageManager {
         } else {
             chatId
         };
+        if let Some(stream) = Self::takeActiveResponseStream(&chatKey) {
+            stream.upstream.close();
+            stream.event_channel.close();
+        }
+        if let Some(mut service) = Self::takeActiveEnhancedAiService(&chatKey) {
+            service.cancelConversation();
+        }
         Self::forgetActiveChatKey(&chatKey);
     }
 
@@ -698,11 +726,124 @@ impl AIMessageManager {
                 .cloned()
                 .collect::<Vec<_>>()
         };
+        let service_keys = {
+            let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+            map.lock()
+                .expect("active enhanced ai service mutex poisoned")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let stream_keys = {
+            let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+            map.lock()
+                .expect("active response stream mutex poisoned")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let keys = keys
+            .into_iter()
+            .chain(service_keys)
+            .chain(stream_keys)
+            .collect::<std::collections::BTreeSet<_>>();
         for key in keys {
             Self::cancelOperation(key);
         }
     }
+
+    #[allow(non_snake_case)]
+    fn rememberActiveEnhancedAiService(chatKey: String, enhancedAiService: EnhancedAIService) {
+        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active enhanced ai service mutex poisoned")
+            .insert(chatKey, enhancedAiService);
+    }
+
+    #[allow(non_snake_case)]
+    fn forgetActiveEnhancedAiService(chatKey: &str) {
+        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active enhanced ai service mutex poisoned")
+            .remove(chatKey);
+    }
+
+    #[allow(non_snake_case)]
+    fn takeActiveEnhancedAiService(chatKey: &str) -> Option<EnhancedAIService> {
+        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active enhanced ai service mutex poisoned")
+            .remove(chatKey)
+    }
+
+    #[allow(non_snake_case)]
+    fn rememberActiveResponseStream(chatKey: String, responseStream: SharedAiResponseStream) {
+        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active response stream mutex poisoned")
+            .insert(chatKey, responseStream);
+    }
+
+    #[allow(non_snake_case)]
+    fn forgetActiveResponseStream(chatKey: &str) {
+        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active response stream mutex poisoned")
+            .remove(chatKey);
+    }
+
+    #[allow(non_snake_case)]
+    fn takeActiveResponseStream(chatKey: &str) -> Option<SharedAiResponseStream> {
+        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+        map.lock()
+            .expect("active response stream mutex poisoned")
+            .remove(chatKey)
+    }
 }
+
+struct ActiveChatTextStream {
+    chatKey: String,
+    stream: Box<dyn crate::util::stream::RevisableTextStream::RevisableTextStreamLike>,
+}
+
+impl crate::util::stream::Stream::Stream for ActiveChatTextStream {
+    type Item = String;
+
+    fn is_locked(&self) -> bool {
+        self.stream.is_locked()
+    }
+
+    fn buffered_count(&self) -> usize {
+        self.stream.buffered_count()
+    }
+
+    fn lock(&mut self) {
+        self.stream.lock();
+    }
+
+    fn unlock(&mut self) {
+        self.stream.unlock();
+    }
+
+    fn clear_buffer(&mut self) {
+        self.stream.clear_buffer();
+    }
+
+    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
+        self.stream.collect(collector);
+        AIMessageManager::forgetActiveChatKey(&self.chatKey);
+        AIMessageManager::forgetActiveEnhancedAiService(&self.chatKey);
+        AIMessageManager::forgetActiveResponseStream(&self.chatKey);
+    }
+}
+
+impl crate::util::stream::RevisableTextStream::TextStreamEventCarrier for ActiveChatTextStream {
+    fn event_channel(&self) -> &crate::util::stream::HotStream::MutableSharedStreamImpl<crate::util::stream::RevisableTextStream::TextStreamEvent> {
+        self.stream.event_channel()
+    }
+}
+
+impl crate::util::stream::RevisableTextStream::RevisableTextStream for ActiveChatTextStream {}
 
 fn strip_xml_tags(input: &str) -> String {
     let mut output = String::new();

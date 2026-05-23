@@ -1,13 +1,19 @@
 use std::collections::HashMap;
+use std::thread;
 
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TokenStatisticsDelegate {
     pub cumulativeInputTokens: i32,
     pub cumulativeOutputTokens: i32,
     pub currentWindowSize: i32,
     pub perRequestTokenCount: Option<(i32, i32)>,
+    pub cumulativeInputTokensFlow: MutableStateFlow<i32>,
+    pub cumulativeOutputTokensFlow: MutableStateFlow<i32>,
+    pub currentWindowSizeFlow: MutableStateFlow<i32>,
+    pub perRequestTokenCountFlow: MutableStateFlow<Option<(i32, i32)>>,
     pub lastCurrentWindowSize: i32,
     pub cumulativeInputTokensByChatKey: HashMap<String, i32>,
     pub cumulativeOutputTokensByChatKey: HashMap<String, i32>,
@@ -23,6 +29,10 @@ impl TokenStatisticsDelegate {
             cumulativeOutputTokens: 0,
             currentWindowSize: 0,
             perRequestTokenCount: None,
+            cumulativeInputTokensFlow: mutableStateFlow(0),
+            cumulativeOutputTokensFlow: mutableStateFlow(0),
+            currentWindowSizeFlow: mutableStateFlow(0),
+            perRequestTokenCountFlow: mutableStateFlow(None),
             lastCurrentWindowSize: 0,
             cumulativeInputTokensByChatKey: HashMap::new(),
             cumulativeOutputTokensByChatKey: HashMap::new(),
@@ -58,6 +68,10 @@ impl TokenStatisticsDelegate {
         self.cumulativeOutputTokens = output;
         self.currentWindowSize = window;
         self.perRequestTokenCount = perRequest;
+        self.cumulativeInputTokensFlow.set_value(input);
+        self.cumulativeOutputTokensFlow.set_value(output);
+        self.currentWindowSizeFlow.set_value(window);
+        self.perRequestTokenCountFlow.set_value(perRequest);
         self.lastCurrentWindowSize = window;
     }
 
@@ -74,7 +88,17 @@ impl TokenStatisticsDelegate {
     pub fn bindChatService(&mut self, chatId: Option<String>, service: &EnhancedAIService) {
         let key = Self::chatKey(chatId.as_ref());
         self.handlePerRequestCounts(key.clone(), service.getPerRequestTokenCounts());
-        self.handleRequestWindowEstimate(key);
+        self.handleRequestWindowEstimate(key.clone(), service.getRequestWindowEstimate());
+        let mut delegate = self.clone();
+        let flow = service.requestWindowEstimateFlow();
+        thread::spawn(move || {
+            let _ = flow.collectUntil(
+                |windowSize| {
+                    delegate.handleRequestWindowEstimate(key.clone(), windowSize);
+                },
+                |_| false,
+            );
+        });
     }
 
     #[allow(non_snake_case)]
@@ -90,12 +114,12 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
-    fn handleRequestWindowEstimate(&mut self, key: String) {
-        let windowSize = self.lastWindowSizeByChatKey.get(&key).copied();
+    fn handleRequestWindowEstimate(&mut self, key: String, windowSize: Option<i32>) {
         if let Some(windowSize) = windowSize {
             self.lastWindowSizeByChatKey.insert(key.clone(), windowSize);
             if self.isActiveKey(&key) {
                 self.currentWindowSize = windowSize;
+                self.currentWindowSizeFlow.set_value(windowSize);
                 self.lastCurrentWindowSize = windowSize;
             }
         }
@@ -107,6 +131,10 @@ impl TokenStatisticsDelegate {
         self.cumulativeOutputTokens = 0;
         self.currentWindowSize = 0;
         self.perRequestTokenCount = None;
+        self.cumulativeInputTokensFlow.set_value(0);
+        self.cumulativeOutputTokensFlow.set_value(0);
+        self.currentWindowSizeFlow.set_value(0);
+        self.perRequestTokenCountFlow.set_value(None);
         self.lastCurrentWindowSize = 0;
         self.cumulativeInputTokensByChatKey.clear();
         self.cumulativeOutputTokensByChatKey.clear();
@@ -144,6 +172,8 @@ impl TokenStatisticsDelegate {
             if self.isActiveKey(&key) {
                 self.cumulativeInputTokens = newInput;
                 self.cumulativeOutputTokens = newOutput;
+                self.cumulativeInputTokensFlow.set_value(newInput);
+                self.cumulativeOutputTokensFlow.set_value(newOutput);
             }
         }
     }
@@ -166,6 +196,9 @@ impl TokenStatisticsDelegate {
             self.cumulativeInputTokens = inputTokens;
             self.cumulativeOutputTokens = outputTokens;
             self.currentWindowSize = windowSize;
+            self.cumulativeInputTokensFlow.set_value(inputTokens);
+            self.cumulativeOutputTokensFlow.set_value(outputTokens);
+            self.currentWindowSizeFlow.set_value(windowSize);
             self.lastCurrentWindowSize = windowSize;
         }
     }
@@ -189,6 +222,26 @@ impl TokenStatisticsDelegate {
     pub fn getLastCurrentWindowSize(&self, chatId: Option<String>) -> i32 {
         let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
         self.lastWindowSizeByChatKey.get(&key).copied().unwrap_or(0)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
+        self.currentWindowSizeFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cumulativeInputTokensFlow(&self) -> StateFlow<i32> {
+        self.cumulativeInputTokensFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cumulativeOutputTokensFlow(&self) -> StateFlow<i32> {
+        self.cumulativeOutputTokensFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn perRequestTokenCountFlow(&self) -> StateFlow<Option<(i32, i32)>> {
+        self.perRequestTokenCountFlow.asStateFlow()
     }
 }
 

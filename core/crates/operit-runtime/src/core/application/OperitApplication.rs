@@ -7,6 +7,7 @@ use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::data::mcp::plugins::MCPStarter::MCPStarter;
 
 pub struct OperitApplication {
     pub appStartupTimeMs: i64,
@@ -45,6 +46,7 @@ impl OperitApplication {
         self.chatRuntimeHolder = ChatRuntimeHolder::new();
         let mut toolHandler = AIToolHandler::getInstance(self.applicationContext.clone());
         toolHandler.registerDefaultTools();
+        self.initMcpPlugins();
         self.initialized = true;
         Ok(())
     }
@@ -84,6 +86,12 @@ impl OperitApplication {
 
     #[allow(non_snake_case)]
     pub fn preloadDatabase(&self) {}
+
+    #[allow(non_snake_case)]
+    pub fn initMcpPlugins(&self) {
+        let starter = MCPStarter::new(self.applicationContext.clone());
+        let _ = starter.startAllDeployedPlugins();
+    }
 }
 
 impl Default for OperitApplication {

@@ -55,7 +55,34 @@ impl ChatServiceCore {
             self.chatHistoryDelegate.clone_for_core(),
             messageProcessingDelegate,
         ));
+        self.syncTokenStatisticsForCurrentChat();
         self.initialized = true;
+    }
+
+    #[allow(non_snake_case)]
+    fn syncTokenStatisticsForCurrentChat(&mut self) {
+        let chatId = self.chatHistoryDelegate.currentChatId.clone();
+        if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+            delegate
+                .tokenStatisticsDelegate
+                .setActiveChatId(chatId.clone());
+            if let Some(chatId) = chatId {
+                if let Some(chat) = self
+                    .chatHistoryDelegate
+                    .chatHistoriesFlow()
+                    .value()
+                    .into_iter()
+                    .find(|chat| chat.id == chatId)
+                {
+                    delegate.tokenStatisticsDelegate.setTokenCounts(
+                        Some(chat.id),
+                        chat.inputTokens,
+                        chat.outputTokens,
+                        chat.currentWindowSize,
+                    );
+                }
+            }
+        }
     }
 
     pub async fn sendUserMessage(
@@ -130,14 +157,17 @@ impl ChatServiceCore {
             setAsCurrentChat,
             None,
         );
+        self.syncTokenStatisticsForCurrentChat();
     }
 
     pub fn switchChat(&mut self, chatId: String) {
         self.chatHistoryDelegate.switchChat(chatId, true);
+        self.syncTokenStatisticsForCurrentChat();
     }
 
     pub fn switchChatLocal(&mut self, chatId: String) {
         self.chatHistoryDelegate.switchChat(chatId, false);
+        self.syncTokenStatisticsForCurrentChat();
     }
 
     pub fn syncCurrentChatIdToGlobal(&mut self) {}
@@ -298,6 +328,27 @@ impl ChatServiceCore {
         self.messageCoordinationDelegate
             .as_ref()
             .map(|delegate| &delegate.tokenStatisticsDelegate)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
+        self.getTokenStatisticsDelegate()
+            .expect("TokenStatisticsDelegate must be initialized")
+            .currentWindowSizeFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn inputTokenCountFlow(&self) -> StateFlow<i32> {
+        self.getTokenStatisticsDelegate()
+            .expect("TokenStatisticsDelegate must be initialized")
+            .cumulativeInputTokensFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn outputTokenCountFlow(&self) -> StateFlow<i32> {
+        self.getTokenStatisticsDelegate()
+            .expect("TokenStatisticsDelegate must be initialized")
+            .cumulativeOutputTokensFlow()
     }
 
     pub fn getEnhancedAiService(&self) -> Option<&EnhancedAIService> {

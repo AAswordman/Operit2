@@ -6,10 +6,14 @@ use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutor, ToolValidationResult,
 };
+use crate::core::tools::mcp::MCPManager::MCPManager;
+use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::AIToolHook::AIToolHook;
+use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
 use crate::core::tools::packTool::PackageManager::PackageManager;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_host_api::HostEnvironmentDescriptor;
 
 static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
@@ -45,7 +49,10 @@ impl AIToolHandler {
                 context: OperitApplicationContext::new(),
                 hooks: Vec::new(),
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
-                packageManager: Arc::new(Mutex::new(PackageManager::default())),
+                packageManager: Arc::new(Mutex::new(PackageManager::newWithContext(
+                    RuntimeStorePaths::default(),
+                    OperitApplicationContext::new(),
+                ))),
             })),
         }
     }
@@ -61,13 +68,20 @@ impl AIToolHandler {
                     context: context.clone(),
                     hooks: Vec::new(),
                     toolPermissionSystem: ToolPermissionSystem::getInstance(),
-                    packageManager: Arc::new(Mutex::new(PackageManager::default())),
+                    packageManager: Arc::new(Mutex::new(PackageManager::newWithContext(
+                        RuntimeStorePaths::default(),
+                        context.clone(),
+                    ))),
                 }))
             })
             .clone();
-        {
+        let packageManager = {
             let mut guard = inner.lock().expect("AIToolHandler mutex poisoned");
-            guard.context = context;
+            guard.context = context.clone();
+            guard.packageManager.clone()
+        };
+        if let Ok(mut packageManager) = packageManager.lock() {
+            packageManager.updateContext(context);
         }
         Self { inner }
     }
@@ -181,6 +195,15 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    pub fn getContext(&self) -> OperitApplicationContext {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .context
+            .clone()
+    }
+
+    #[allow(non_snake_case)]
     pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<PackageManager>> {
         self.inner
             .lock()
@@ -271,9 +294,167 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    pub fn hasToolExecutor(&self, toolName: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .availableTools
+            .contains_key(toolName)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolExecutorOrActivate(&mut self, toolName: &str) -> bool {
+        if self.hasToolExecutor(toolName) {
+            if let Some((packageName, _)) = toolName.split_once(':') {
+                let packageName = packageName.trim();
+                if !packageName.is_empty() {
+                    let packageManager = self.getOrCreatePackageManager();
+                    let isMcpAvailable = packageManager
+                        .lock()
+                        .expect("package manager mutex poisoned")
+                        .getAvailableServerPackages()
+                        .contains_key(packageName);
+                    if isMcpAvailable && !self.isMcpServiceActive(packageName) {
+                        let _ = packageManager
+                            .lock()
+                            .expect("package manager mutex poisoned")
+                            .usePackage(packageName);
+                    }
+                }
+            }
+            return self.hasToolExecutor(toolName);
+        }
+
+        self.registerDefaultTools();
+        if self.hasToolExecutor(toolName) {
+            return true;
+        }
+
+        if toolName.contains(':') {
+            let packageName = toolName.split_once(':').map(|(name, _)| name.trim()).unwrap_or("");
+            if !packageName.is_empty() {
+                let packageManager = self.getOrCreatePackageManager();
+                let selectedPackage = {
+                    let mut guard = packageManager
+                        .lock()
+                        .expect("package manager mutex poisoned");
+                    let isPackageAvailable = guard.getAvailablePackages().contains_key(packageName);
+                    let isMcpAvailable = guard.getAvailableServerPackages().contains_key(packageName);
+                    if isPackageAvailable || isMcpAvailable {
+                        let _ = guard.usePackage(packageName);
+                        guard
+                            .getEffectivePackageTools(packageName)
+                            .filter(|package| !guard.isToolPkgContainer(&package.name))
+                    } else {
+                        None
+                    }
+                };
+                if let Some(selectedPackage) = selectedPackage {
+                    self.registerPackageTools(packageManager, selectedPackage);
+                }
+            }
+        }
+
+        self.hasToolExecutor(toolName)
+    }
+
+    #[allow(non_snake_case)]
+    fn isMcpServiceActive(&self, packageName: &str) -> bool {
+        let mcpManager = MCPManager::getInstance(self.getContext());
+        let Some(client) = mcpManager.getOrCreateClient(packageName) else {
+            return false;
+        };
+        client
+            .getServiceInfo()
+            .map(|info| info.active && info.ready)
+            .unwrap_or(false)
+    }
+
+    #[allow(non_snake_case)]
+    fn registerPackageTools(
+        &mut self,
+        packageManager: Arc<Mutex<PackageManager>>,
+        toolPackage: ToolPackage,
+    ) {
+        let isMcpPackage = toolPackage.category == "MCP"
+            || toolPackage
+                .tools
+                .first()
+                .map(|tool| tool.script.contains("/* MCPJS"))
+                .unwrap_or(false);
+        let executableTools = toolPackage
+            .tools
+            .iter()
+            .filter(|packageTool| !packageTool.advice)
+            .cloned()
+            .collect::<Vec<_>>();
+        let context = self.getContext();
+        for packageTool in executableTools {
+            let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
+            if isMcpPackage {
+                self.registerTool(
+                    toolName,
+                    Box::new(MCPToolExecutor::new(MCPManager::getInstance(context.clone()))),
+                );
+            } else {
+                self.registerTool(
+                    toolName,
+                    Box::new(PackageToolExecutor::new(
+                        toolPackage.clone(),
+                        packageManager.clone(),
+                        self.clone(),
+                    )),
+                );
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeToolSafelyWithResolvedExecutor(
+        &mut self,
+        tool: &AITool,
+    ) -> Option<Vec<ToolResult>> {
+        if !self.getToolExecutorOrActivate(&tool.name) {
+            return None;
+        }
+
+        let Some(mut executor) = ({
+            self.inner
+                .lock()
+                .expect("AIToolHandler mutex poisoned")
+                .availableTools
+                .remove(&tool.name)
+        }) else {
+            return None;
+        };
+
+        let validationResult = executor.validateParameters(tool);
+        let collected = if validationResult.valid {
+            executor.invokeAndStream(tool)
+        } else {
+            vec![ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: String::new(),
+                error: Some(format!(
+                    "Invalid parameters: {}",
+                    validationResult.errorMessage
+                )),
+            }]
+        };
+
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .availableTools
+            .insert(tool.name.clone(), executor);
+        Some(collected)
+    }
+
+    #[allow(non_snake_case)]
     pub fn executeTool(&mut self, tool: AITool) -> ToolResult {
         self.notifyToolCallRequested(&tool);
-        self.registerDefaultTools();
+        self.getToolExecutorOrActivate(&tool.name);
         let Some(mut executor) = ({
             self.inner
                 .lock()

@@ -40,6 +40,18 @@ impl RuntimeStorePaths {
         self.root_dir.join("packages")
     }
 
+    pub fn mcp_plugins_dir(&self) -> PathBuf {
+        self.root_dir.join("mcp_plugins")
+    }
+
+    pub fn mcp_config_path(&self) -> PathBuf {
+        self.mcp_plugins_dir().join("mcp_config.json")
+    }
+
+    pub fn mcp_server_status_path(&self) -> PathBuf {
+        self.mcp_plugins_dir().join("server_status.json")
+    }
+
     pub fn package_manager_preferences_path(&self) -> PathBuf {
         self.root_dir
             .join("com.ai.assistance.operit.core.tools.PackageManager.preferences.json")
@@ -71,6 +83,10 @@ impl RuntimeStorePaths {
 
     pub fn ensure_packages_dir(&self) -> std::io::Result<()> {
         fs::create_dir_all(self.packages_dir())
+    }
+
+    pub fn ensure_mcp_plugins_dir(&self) -> std::io::Result<()> {
+        fs::create_dir_all(self.mcp_plugins_dir())
     }
 }
 

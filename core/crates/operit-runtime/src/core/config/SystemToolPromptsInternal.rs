@@ -1492,20 +1492,20 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "install_app",
-                    "Request installing an APK.",
+                    "Request app installation through the current host.",
                     "",
                     vec![
-                        param("path", "string", "APK file path (alias: path)", true, None)
+                        param("path", "string", "installer file path for the current host, for example Android APK, Windows MSI/MSIX/EXE, or Linux desktop installer file", true, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "uninstall_app",
-                    "Request uninstalling an app.",
+                    "Request app uninstallation through the current host.",
                     "",
                     vec![
-                        param("package_name", "string", "app package name", true, None)
+                        param("package_name", "string", "host app/package identifier, for example Android package name, Windows Appx/MSIX package name or MSI product code, or Linux Flatpak app id/local .desktop file", true, None)
                     ],
                     "",
                     "",
@@ -1522,28 +1522,28 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "start_app",
-                    "Start an app.",
+                    "Start an app through the current host.",
                     "",
                     vec![
-                        param("package_name", "string", "app package name", true, None),
-                        param("activity", "string", "optional, activity class name", false, None)
+                        param("package_name", "string", "host app/package identifier or executable name", true, None),
+                        param("activity", "string", "optional, Android activity class name", false, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "stop_app",
-                    "Stop an app background process.",
+                    "Stop an app background process through the current host.",
                     "",
                     vec![
-                        param("package_name", "string", "app package name", true, None)
+                        param("package_name", "string", "host app/package identifier or process name", true, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "get_notifications",
-                    "Get device notifications.",
+                    "Get current host notifications when the host exposes a notification history/listener API.",
                     "",
                     vec![
                         param("limit", "integer", "optional", false, Some("10".to_string())),
@@ -1554,7 +1554,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "get_app_usage_time",
-                    "Get foreground app usage time from Android Usage Access. If permission is missing, ask the user to grant Usage Access first.",
+                    "Get foreground or process usage time from the current host. On Android this uses Usage Access; desktop hosts report the data exposed by the platform host.",
                     "",
                     vec![
                         param("package_name", "string", "optional, exact app package name to query", false, None),
@@ -1567,7 +1567,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "toast",
-                    "Show a short toast message on the device.",
+                    "Show a short toast/message on the current host.",
                     "",
                     vec![
                         param("message", "string", "toast text", true, None)
@@ -1588,7 +1588,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "get_device_location",
-                    "Get device location.",
+                    "Get current host device location.",
                     "",
                     vec![
                         param("timeout", "integer", "optional, seconds", false, Some("10".to_string())),
@@ -3087,20 +3087,20 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "install_app",
-                    "请求安装 APK（需要用户确认）。",
+                    "通过当前 host 请求安装应用（需要用户确认）。",
                     "",
                     vec![
-                        param("path", "string", "APK 文件路径（别名：path）", true, None)
+                        param("path", "string", "当前 host 的安装文件路径，例如 Android APK、Windows MSI/MSIX/EXE 或 Linux 桌面安装文件", true, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "uninstall_app",
-                    "请求卸载应用（需要用户确认）。",
+                    "通过当前 host 请求卸载应用（需要用户确认）。",
                     "",
                     vec![
-                        param("package_name", "string", "应用包名", true, None)
+                        param("package_name", "string", "host 应用/包标识，例如 Android 包名、Windows Appx/MSIX 包名或 MSI 产品码、Linux Flatpak 应用 ID 或本地 .desktop 文件", true, None)
                     ],
                     "",
                     "",
@@ -3117,28 +3117,28 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "start_app",
-                    "启动应用。",
+                    "通过当前 host 启动应用。",
                     "",
                     vec![
-                        param("package_name", "string", "应用包名", true, None),
-                        param("activity", "string", "可选，Activity 类名", false, None)
+                        param("package_name", "string", "host 应用/包标识或可执行文件名", true, None),
+                        param("activity", "string", "可选，Android Activity 类名", false, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "stop_app",
-                    "停止应用后台进程。",
+                    "通过当前 host 停止应用后台进程。",
                     "",
                     vec![
-                        param("package_name", "string", "应用包名", true, None)
+                        param("package_name", "string", "host 应用/包标识或进程名", true, None)
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "get_notifications",
-                    "获取设备通知。",
+                    "在当前 host 暴露通知历史/监听接口时获取通知。",
                     "",
                     vec![
                         param("limit", "integer", "可选", false, Some("10".to_string())),
@@ -3149,7 +3149,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "get_app_usage_time",
-                    "读取 Android 使用情况访问中的前台应用使用时长。若缺少权限，应先引导用户授予 Usage Access。",
+                    "读取当前 host 的前台或进程使用时长。Android 使用 Usage Access；桌面 host 返回平台 host 能提供的数据。",
                     "",
                     vec![
                         param("package_name", "string", "可选，精确应用包名", false, None),
@@ -3162,7 +3162,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "toast",
-                    "在设备上显示 Toast 提示。",
+                    "在当前 host 显示短提示。",
                     "",
                     vec![
                         param("message", "string", "Toast 文本", true, None)
@@ -3183,7 +3183,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "get_device_location",
-                    "获取设备位置信息。",
+                    "获取当前 host 的设备位置信息。",
                     "",
                     vec![
                         param("timeout", "integer", "可选，超时（秒）", false, Some("10".to_string())),

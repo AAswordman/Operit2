@@ -3,8 +3,10 @@ use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
 use operit_runtime::util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use super::theme;
 
 const TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT: usize = 160;
 const TOOL_RESULT_INLINE_DETAIL_CHAR_LIMIT: usize = 80;
@@ -13,11 +15,20 @@ const TOOL_RESULT_PREFIX_DISPLAY_WIDTH: usize = 8;
 pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<Line<'static>> {
     let nodes = content.nativeMarkdownSplitByBlock();
     let mut lines = Vec::new();
-    for (index, node) in nodes.iter().enumerate() {
-        if is_blank_block_between_tool_blocks(&nodes, index) {
+    let mut previous_kind: Option<RenderedBlockKind> = None;
+    for node in nodes.iter() {
+        if is_blank_text_block(node) {
             continue;
         }
-        render_block_node(&node, content_width, &mut lines);
+        let kind = rendered_block_kind(node);
+        if should_insert_block_spacing(previous_kind, kind) && !last_line_is_blank(&lines) {
+            lines.push(Line::from(""));
+        }
+        let before_len = lines.len();
+        render_block_node(node, content_width, &mut lines);
+        if lines.len() > before_len {
+            previous_kind = Some(kind);
+        }
     }
     if lines.is_empty() {
         lines.push(Line::from(""));
@@ -25,16 +36,73 @@ pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<
     lines
 }
 
-fn is_blank_block_between_tool_blocks(nodes: &[MarkdownNodeStable], index: usize) -> bool {
-    let Some(node) = nodes.get(index) else {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderedBlockKind {
+    Text,
+    Header,
+    Tool,
+    List,
+    Table,
+    HorizontalRule,
+    Code,
+    Other,
+}
+
+fn rendered_block_kind(node: &MarkdownNodeStable) -> RenderedBlockKind {
+    match node.r#type {
+        MarkdownProcessorType::Header => RenderedBlockKind::Header,
+        MarkdownProcessorType::CodeBlock | MarkdownProcessorType::BlockLatex => RenderedBlockKind::Code,
+        MarkdownProcessorType::OrderedList | MarkdownProcessorType::UnorderedList => RenderedBlockKind::List,
+        MarkdownProcessorType::HorizontalRule => RenderedBlockKind::HorizontalRule,
+        MarkdownProcessorType::Table => RenderedBlockKind::Table,
+        MarkdownProcessorType::XmlBlock => {
+            let raw_tag = ChatMarkupRegex::extract_opening_tag_name(&node.content);
+            match ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref()).as_deref() {
+                Some("tool") | Some("tool_result") => RenderedBlockKind::Tool,
+                _ => RenderedBlockKind::Other,
+            }
+        }
+        MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => RenderedBlockKind::Text,
+        _ => RenderedBlockKind::Other,
+    }
+}
+
+fn should_insert_block_spacing(
+    previous: Option<RenderedBlockKind>,
+    current: RenderedBlockKind,
+) -> bool {
+    let Some(previous) = previous else {
         return false;
     };
-    if !is_blank_text_block(node) {
+    if previous == RenderedBlockKind::Tool && current == RenderedBlockKind::Tool {
         return false;
     }
-    let previous_is_tool = previous_non_blank_node(nodes, index).map(is_tool_xml_block).unwrap_or(false);
-    let next_is_tool = next_non_blank_node(nodes, index).map(is_tool_xml_block).unwrap_or(false);
-    previous_is_tool && next_is_tool
+    if previous == RenderedBlockKind::List && current == RenderedBlockKind::List {
+        return false;
+    }
+    if previous == RenderedBlockKind::Table && current == RenderedBlockKind::Table {
+        return false;
+    }
+    matches!(
+        (previous, current),
+        (RenderedBlockKind::Tool, RenderedBlockKind::Text)
+            | (RenderedBlockKind::Tool, RenderedBlockKind::Header)
+            | (RenderedBlockKind::Text, RenderedBlockKind::Tool)
+            | (RenderedBlockKind::Header, RenderedBlockKind::Tool)
+            | (RenderedBlockKind::HorizontalRule, RenderedBlockKind::Text)
+            | (RenderedBlockKind::HorizontalRule, RenderedBlockKind::Header)
+            | (RenderedBlockKind::Text, RenderedBlockKind::HorizontalRule)
+            | (RenderedBlockKind::Header, RenderedBlockKind::HorizontalRule)
+            | (RenderedBlockKind::Text, RenderedBlockKind::Text)
+            | (RenderedBlockKind::Table, RenderedBlockKind::Text)
+            | (RenderedBlockKind::Text, RenderedBlockKind::Table)
+            | (RenderedBlockKind::Code, RenderedBlockKind::Text)
+            | (RenderedBlockKind::Text, RenderedBlockKind::Code)
+    )
+}
+
+fn last_line_is_blank(lines: &[Line<'static>]) -> bool {
+    lines.last().map(line_is_blank).unwrap_or(false)
 }
 
 fn is_blank_text_block(node: &MarkdownNodeStable) -> bool {
@@ -43,32 +111,6 @@ fn is_blank_text_block(node: &MarkdownNodeStable) -> bool {
         MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak
     ) && node.content.trim().is_empty()
         && node.children.iter().all(is_blank_text_block)
-}
-
-fn previous_non_blank_node(nodes: &[MarkdownNodeStable], index: usize) -> Option<&MarkdownNodeStable> {
-    nodes
-        .get(..index)?
-        .iter()
-        .rev()
-        .find(|node| !is_blank_text_block(node))
-}
-
-fn next_non_blank_node(nodes: &[MarkdownNodeStable], index: usize) -> Option<&MarkdownNodeStable> {
-    nodes
-        .get(index + 1..)?
-        .iter()
-        .find(|node| !is_blank_text_block(node))
-}
-
-fn is_tool_xml_block(node: &MarkdownNodeStable) -> bool {
-    if node.r#type != MarkdownProcessorType::XmlBlock {
-        return false;
-    }
-    let raw_tag = ChatMarkupRegex::extract_opening_tag_name(&node.content);
-    matches!(
-        ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref()).as_deref(),
-        Some("tool") | Some("tool_result")
-    )
 }
 
 fn render_block_node(node: &MarkdownNodeStable, content_width: usize, lines: &mut Vec<Line<'static>>) {
@@ -80,20 +122,26 @@ fn render_block_node(node: &MarkdownNodeStable, content_width: usize, lines: &mu
         MarkdownProcessorType::UnorderedList => render_list_block(node, false, lines),
         MarkdownProcessorType::HorizontalRule => lines.push(Line::from(Span::styled(
             "--------------------------------",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::TEXT_SUBTLE),
         ))),
         MarkdownProcessorType::BlockLatex => render_latex_block(&node.content, lines),
         MarkdownProcessorType::Table => render_table_block(&node.content, lines),
         MarkdownProcessorType::XmlBlock => render_xml_block(&node.content, content_width, lines),
         MarkdownProcessorType::Image => lines.extend(render_inline_nodes(&[node.clone()], Style::default())),
         MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => {
-            lines.extend(render_inline_nodes(&node.children, Style::default()));
-            if node.children.is_empty() {
-                lines.extend(render_plain_lines(&node.content, Style::default()));
-            }
+            render_plain_text_node(node, lines);
         }
         _ => lines.extend(render_inline_nodes(&[node.clone()], Style::default())),
     }
+}
+
+fn render_plain_text_node(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) {
+    let rendered = if node.children.is_empty() {
+        render_plain_lines(&node.content, Style::default())
+    } else {
+        render_inline_nodes(&node.children, Style::default())
+    };
+    lines.extend(compact_plain_text_lines(rendered));
 }
 
 fn render_header(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) {
@@ -103,13 +151,13 @@ fn render_header(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) {
     let prefix = "#".repeat(level.min(4));
     let mut spans = vec![Span::styled(
         format!("{prefix} "),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::TEXT_SUBTLE),
     )];
     let inline_nodes = text.nativeMarkdownSplitByInline();
     spans.extend(render_inline_spans(
         &inline_nodes,
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     ));
     lines.push(Line::from(spans));
@@ -136,8 +184,8 @@ fn render_block_quote(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>)
     render_prefixed_inline_block(
         &content,
         "> ",
-        Style::default().fg(Color::DarkGray),
-        Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+        Style::default().fg(theme::TEXT_SUBTLE),
+        Style::default().fg(theme::TEXT_MUTED).add_modifier(Modifier::ITALIC),
         lines,
     );
 }
@@ -157,7 +205,7 @@ fn render_code_block(content: &str, lines: &mut Vec<Line<'static>>) {
     };
     lines.push(Line::from(Span::styled(
         title,
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme::TEXT_SUBTLE).add_modifier(Modifier::BOLD),
     )));
     for raw in iter {
         if raw.trim_start().starts_with("```") {
@@ -165,12 +213,12 @@ fn render_code_block(content: &str, lines: &mut Vec<Line<'static>>) {
         }
         lines.push(Line::from(Span::styled(
             format!("  {raw}"),
-            Style::default().fg(Color::LightYellow).bg(Color::Black),
+            Style::default().fg(theme::ACCENT_STRONG).bg(theme::ACCENT_BG),
         )));
     }
     lines.push(Line::from(Span::styled(
         "```",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::TEXT_SUBTLE),
     )));
 }
 
@@ -181,7 +229,7 @@ fn render_list_block(node: &MarkdownNodeStable, ordered: bool, lines: &mut Vec<L
         ("- ".to_string(), strip_unordered_marker(&node.content))
     };
     let inline_nodes = text.trim_end().nativeMarkdownSplitByInline();
-    let mut spans = vec![Span::styled(marker, Style::default().fg(Color::Cyan))];
+    let mut spans = vec![Span::styled(marker, Style::default().fg(theme::ACCENT))];
     spans.extend(render_inline_spans(&inline_nodes, Style::default()));
     lines.push(Line::from(spans));
 }
@@ -189,15 +237,15 @@ fn render_list_block(node: &MarkdownNodeStable, ordered: bool, lines: &mut Vec<L
 fn render_latex_block(content: &str, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(Span::styled(
         "$$",
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme::TEXT_SUBTLE).add_modifier(Modifier::BOLD),
     )));
     for raw in strip_latex_block_delimiters(content).lines() {
         lines.push(Line::from(Span::styled(
             raw.to_string(),
-            Style::default().fg(Color::LightMagenta),
+            Style::default().fg(theme::ACCENT_STRONG),
         )));
     }
-    lines.push(Line::from(Span::styled("$$", Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(Span::styled("$$", Style::default().fg(theme::TEXT_SUBTLE))));
 }
 
 fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
@@ -209,7 +257,7 @@ fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
         if is_table_separator(trimmed) {
             lines.push(Line::from(Span::styled(
                 "--------------------------------",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::TEXT_SUBTLE),
             )));
             continue;
         }
@@ -221,12 +269,12 @@ fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
         let mut spans = Vec::new();
         for (index, cell) in cells.iter().enumerate() {
             if index > 0 {
-                spans.push(Span::styled(" | ".to_string(), Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(" | ".to_string(), Style::default().fg(theme::TEXT_SUBTLE)));
             }
             let inline_nodes = cell.nativeMarkdownSplitByInline();
             spans.extend(render_inline_spans(
                 &inline_nodes,
-                Style::default().fg(Color::Gray),
+                Style::default().fg(theme::TEXT_MUTED),
             ));
         }
         lines.push(Line::from(spans));
@@ -244,7 +292,7 @@ fn render_xml_block(content: &str, content_width: usize, lines: &mut Vec<Line<'s
         Some("status") => render_status_xml(content, lines),
         Some("meta") => {}
         Some(name) => render_named_xml_body(name, content, lines),
-        None => lines.extend(render_plain_lines(content, Style::default().fg(Color::DarkGray))),
+        None => lines.extend(render_plain_lines(content, Style::default().fg(theme::TEXT_SUBTLE))),
     }
 }
 
@@ -265,18 +313,54 @@ fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: 
     }
 
     let params = extract_param_pairs(body);
-    let summary = render_tool_param_summary(&params, body);
+    let is_strict_proxy = name == "package_proxy" || name == "proxy";
+    let (display_name, display_params) = normalize_tool_display_for_strict_proxy(&name, &params);
+    let summary = render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { body });
+    let leading_symbol = tool_leading_symbol(&display_name);
+    let name_width = display_width(&display_name);
+    let prefix_width = display_width(leading_symbol) + 1 + name_width;
+    let summary_limit = content_width
+        .saturating_sub(prefix_width)
+        .saturating_sub(1)
+        .min(TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT);
     let mut header = vec![
-        Span::styled("*".to_string(), Style::default().fg(Color::Cyan)),
+        Span::styled(leading_symbol.to_string(), Style::default().fg(theme::ACCENT)),
         Span::raw(" "),
-        Span::styled(name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(display_name, Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)),
     ];
-    let summary = compact_tool_summary(&summary, TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT);
-    if !summary.is_empty() {
+    let summary = if summary_limit >= 4 {
+        compact_tool_summary(&summary, summary_limit)
+    } else {
+        String::new()
+    };
+    if !summary.is_empty() && summary_limit > 0 {
         header.push(Span::styled(" ".to_string(), Style::default()));
-        header.push(Span::styled(summary, Style::default().fg(Color::DarkGray)));
+        header.push(Span::styled(summary, Style::default().fg(theme::TEXT_SUBTLE)));
     }
     lines.push(Line::from(header));
+}
+
+fn tool_leading_symbol(tool_name: &str) -> &'static str {
+    if tool_name.contains("file") || tool_name.contains("read") || tool_name.contains("write") {
+        "▣"
+    } else if tool_name.contains("search")
+        || tool_name.contains("find")
+        || tool_name.contains("query")
+    {
+        "⌕"
+    } else if tool_name.contains("terminal")
+        || tool_name.contains("exec")
+        || tool_name.contains("command")
+        || tool_name.contains("shell")
+    {
+        ">"
+    } else if tool_name.contains("code") || tool_name.contains("ffmpeg") {
+        "{}"
+    } else if tool_name.contains("http") || tool_name.contains("web") || tool_name.contains("visit") {
+        "◎"
+    } else {
+        "→"
+    }
 }
 
 fn render_tool_result_xml(
@@ -303,21 +387,21 @@ fn render_tool_result_xml(
     let mut header = vec![
         Span::raw("    "),
         Span::styled("↳".to_string(), Style::default().fg(if is_error {
-            Color::Red
+            theme::ERROR
         } else {
-            Color::DarkGray
+            theme::TOOL_RESULT
         })),
         Span::raw(" "),
         Span::styled(
             if is_error { "×" } else { "✓" }.to_string(),
-            Style::default().fg(if is_error { Color::Red } else { Color::DarkGray }),
+            Style::default().fg(if is_error { theme::ERROR } else { theme::TOOL_RESULT }),
         ),
         Span::raw(" "),
     ];
     if !result.is_empty() {
         header.push(Span::styled(
             result.clone(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::TOOL_RESULT),
         ));
     }
     lines.push(Line::from(header));
@@ -335,6 +419,90 @@ fn render_tool_param_summary(params: &[(String, String)], body: &str) -> String 
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn normalize_tool_display_for_strict_proxy(
+    tool_name: &str,
+    params: &[(String, String)],
+) -> (String, Vec<(String, String)>) {
+    if tool_name != "package_proxy" && tool_name != "proxy" {
+        return (tool_name.to_string(), params.to_vec());
+    }
+
+    let raw_target_tool_name = params
+        .iter()
+        .find(|(name, _)| name == "tool_name")
+        .map(|(_, value)| value.trim())
+        .unwrap_or("");
+    let raw_proxied_params = params
+        .iter()
+        .find(|(name, _)| name == "params")
+        .map(|(_, value)| value.trim())
+        .unwrap_or("");
+
+    let display_tool_name = normalize_escaped_text_for_display(raw_target_tool_name);
+    let display_params = if raw_proxied_params.is_empty() {
+        params.to_vec()
+    } else {
+        parse_proxy_json_params(normalize_escaped_text_for_display(raw_proxied_params).trim())
+            .unwrap_or_else(|| params.to_vec())
+    };
+
+    (
+        if display_tool_name.trim().is_empty() {
+            tool_name.to_string()
+        } else {
+            display_tool_name
+        },
+        display_params,
+    )
+}
+
+fn normalize_escaped_text_for_display(input: &str) -> String {
+    let unescaped = xml_unescape(input).replace("\\\"", "\"");
+    let trimmed = unescaped.trim();
+    if (trimmed.starts_with("\"{") && trimmed.ends_with("}\""))
+        || (trimmed.starts_with("\"[") && trimmed.ends_with("]\""))
+    {
+        trimmed[1..trimmed.len().saturating_sub(1)]
+            .replace("\\\"", "\"")
+    } else {
+        unescaped
+    }
+}
+
+fn parse_proxy_json_params(input: &str) -> Option<Vec<(String, String)>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    match value {
+        serde_json::Value::Object(object) => Some(
+            object
+                .into_iter()
+                .map(|(name, value)| (name, json_value_to_param_text(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(array) => Some(
+            array
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (index.to_string(), json_value_to_param_text(value)))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+fn json_value_to_param_text(value: serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => value.to_string(),
+    }
 }
 
 fn compact_tool_summary(value: &str, char_limit: usize) -> String {
@@ -478,8 +646,8 @@ fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     let status_type = attr_value(content, "type");
     let label = title.or(status_type).unwrap_or_else(|| "status".to_string());
     lines.push(Line::from(vec![
-        Span::styled("* ".to_string(), Style::default().fg(Color::DarkGray)),
-        Span::styled(label, Style::default().fg(Color::Gray)),
+        Span::styled("* ".to_string(), Style::default().fg(theme::TEXT_SUBTLE)),
+        Span::styled(label, Style::default().fg(theme::TEXT_MUTED)),
     ]));
 }
 
@@ -490,8 +658,8 @@ fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>) {
         .trim()
         .to_string();
     lines.push(Line::from(vec![
-        Span::styled("error: ".to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        Span::styled(body, Style::default().fg(Color::LightRed)),
+        Span::styled("error: ".to_string(), Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD)),
+        Span::styled(body, Style::default().fg(theme::ERROR_DIM)),
     ]));
 }
 
@@ -500,10 +668,10 @@ fn render_named_xml_body(name: &str, content: &str, lines: &mut Vec<Line<'static
     let body = tag_body(content, &tag_name).unwrap_or(content).trim();
     lines.push(Line::from(Span::styled(
         format!("<{name}>"),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::TEXT_SUBTLE),
     )));
     if !body.is_empty() {
-        lines.extend(render_plain_lines(body, Style::default().fg(Color::Gray)));
+        lines.extend(render_plain_lines(body, Style::default().fg(theme::TEXT_MUTED)));
     }
 }
 
@@ -526,14 +694,14 @@ fn render_inline_spans(nodes: &[MarkdownNodeStable], base_style: Style) -> Vec<S
             )),
             MarkdownProcessorType::InlineCode => spans.push(Span::styled(
                 strip_pair(&node.content, "`").unwrap_or_else(|| node.content.clone()),
-                Style::default().fg(Color::LightYellow).bg(Color::Black),
+                Style::default().fg(theme::ACCENT_STRONG).bg(theme::ACCENT_BG),
             )),
             MarkdownProcessorType::Link => spans.extend(render_link_spans(&node.content)),
             MarkdownProcessorType::Image => spans.extend(render_image_spans(&node.content)),
             MarkdownProcessorType::Strikethrough => {
                 spans.push(Span::styled(
                     strip_pair(&node.content, "~~").unwrap_or_else(|| node.content.clone()),
-                    base_style.fg(Color::DarkGray),
+                    base_style.fg(theme::TEXT_SUBTLE),
                 ))
             }
             MarkdownProcessorType::Underline => spans.push(Span::styled(
@@ -542,7 +710,7 @@ fn render_inline_spans(nodes: &[MarkdownNodeStable], base_style: Style) -> Vec<S
             )),
             MarkdownProcessorType::InlineLatex => spans.push(Span::styled(
                 strip_inline_latex_delimiters(&node.content),
-                Style::default().fg(Color::LightMagenta),
+                Style::default().fg(theme::ACCENT_STRONG),
             )),
             MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => {
                 spans.push(Span::styled(node.content.clone(), base_style))
@@ -564,32 +732,66 @@ fn render_link_spans(content: &str) -> Vec<Span<'static>> {
         Span::styled(
             label,
             Style::default()
-                .fg(Color::LightBlue)
+                .fg(theme::ACCENT_STRONG)
                 .add_modifier(Modifier::UNDERLINED),
         ),
-        Span::styled(format!(" ({url})"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" ({url})"), Style::default().fg(theme::TEXT_SUBTLE)),
     ]
 }
 
 fn render_image_spans(content: &str) -> Vec<Span<'static>> {
     let text = content.strip_prefix('!').unwrap_or(content);
     let Some((label, url)) = parse_markdown_link(text) else {
-        return vec![Span::styled(content.to_string(), Style::default().fg(Color::LightMagenta))];
+        return vec![Span::styled(content.to_string(), Style::default().fg(theme::ACCENT_STRONG))];
     };
     vec![
         Span::styled(
             format!("[image: {label}]"),
-            Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {url}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" {url}"), Style::default().fg(theme::TEXT_SUBTLE)),
     ]
 }
 
 fn render_plain_lines(content: &str, style: Style) -> Vec<Line<'static>> {
     content
+        .trim()
         .lines()
         .map(|line| Line::from(Span::styled(line.to_string(), style)))
         .collect::<Vec<_>>()
+}
+
+fn compact_plain_text_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut previous_blank = false;
+    for line in trim_empty_edge_lines(lines) {
+        let blank = line_is_blank(&line);
+        if blank && previous_blank {
+            continue;
+        }
+        previous_blank = blank;
+        out.push(line);
+    }
+    out
+}
+
+fn trim_empty_edge_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let start = lines
+        .iter()
+        .position(|line| !line_is_blank(line))
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line_is_blank(line))
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    lines[start..end].to_vec()
+}
+
+fn line_is_blank(line: &Line<'static>) -> bool {
+    line.spans
+        .iter()
+        .all(|span| span.content.trim().is_empty())
 }
 
 fn split_spans_by_newline(spans: Vec<Span<'static>>) -> Vec<Line<'static>> {

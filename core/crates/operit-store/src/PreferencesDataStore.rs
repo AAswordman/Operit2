@@ -516,6 +516,13 @@ impl Preferences {
     pub fn contains(&self, key: &PreferencesKey) -> bool {
         self.values.contains_key(&key.name)
     }
+
+    pub fn entries(&self) -> Vec<(String, String)> {
+        self.values
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    }
 }
 
 #[allow(non_snake_case)]

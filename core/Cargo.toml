@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/operit-host-api",
+    "crates/operit-link",
     "crates/operit-store",
     "crates/operit-runtime",
 ]
@@ -14,12 +15,14 @@ publish = false
 [workspace.dependencies]
 async-trait = "0.1"
 futures-util = "0.3"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "blocking", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 base64 = "0.22"
 regex = "1"
+json5 = "0.4"
+boa_engine = "0.20"
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

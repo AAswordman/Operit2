@@ -386,9 +386,45 @@ impl FileSystemHost for WindowsFileSystemHost {
 
     fn shareFile(&self, path: &str, _title: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        Err(HostError::new(
-            "File sharing is not supported in Windows host yet",
-        ))
+        let parent = Path::new(path)
+            .parent()
+            .ok_or_else(|| HostError::new(format!("File has no parent directory: {path}")))?;
+        let fileName = Path::new(path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| HostError::new(format!("File name is not valid UTF-8: {path}")))?;
+        let script = format!(
+            r#"
+$ErrorActionPreference = 'Stop'
+$folderPath = {folder}
+$fileName = {file_name}
+$shell = New-Object -ComObject Shell.Application
+$folder = $shell.Namespace($folderPath)
+if ($null -eq $folder) {{
+    throw "Cannot open shell folder: $folderPath"
+}}
+$item = $folder.ParseName($fileName)
+if ($null -eq $item) {{
+    throw "Cannot locate shell item: $fileName"
+}}
+$item.InvokeVerb("share")
+"OK"
+"#,
+            folder = powershell_string_literal(&parent.display().to_string()),
+            file_name = powershell_string_literal(fileName),
+        );
+        let output = Command::new("powershell.exe")
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg(script)
+            .output()?;
+        if !output.status.success() {
+            return Err(HostError::new(format!(
+                "Failed to open Windows share sheet: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -409,6 +445,10 @@ fn validate_readable_file(host: &WindowsFileSystemHost, path: &str) -> HostResul
         return Err(HostError::new(format!("Path is not a file: {path}")));
     }
     Ok(())
+}
+
+fn powershell_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 impl WindowsFileSystemHost {

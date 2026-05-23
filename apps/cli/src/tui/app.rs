@@ -9,9 +9,12 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_link::LocalCoreProxy;
+use operit_runtime::core::tools::ToolPermissionSystem::{
+    PermissionLevel, PermissionRequestResult,
+};
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
+use operit_runtime::data::model::ChatHistory::ChatHistory;
 use operit_runtime::data::model::CharacterCard::CharacterCardChatModelBindingMode;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::FunctionType::FunctionType;
@@ -19,23 +22,22 @@ use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 use operit_runtime::data::model::ModelConfigData::{
     getModelByIndex, getModelList, getValidModelIndex,
 };
-use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
-use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
-use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::util::AppLogger::AppLogger;
 
+use super::approval::TuiApprovalBridge;
 use super::helpers::{short_chat_label, split_command_line};
-use crate::{
-    begin_chat_message_with_application, current_shell_chat_id, ensure_chat_exists, parse_shell_args,
-    ChatSendArgs, ShellArgs,
-};
+use super::link_proxy_rs::TuiLocalCoreBorrowExt;
+use super::typewriter::TypewriterState;
+use crate::{parse_shell_args, ChatSendArgs, ShellArgs};
 
 pub(super) struct OperitTui {
-    pub(super) application: OperitApplication,
+    pub(super) core: LocalCoreProxy,
     pub(super) initial_shell_args: ShellArgs,
     pub(super) chats: Vec<ChatListItem>,
     pub(super) selected_chat_index: usize,
+    pub(super) model_choices: Vec<ModelChoiceItem>,
+    pub(super) selected_model_choice_index: usize,
+    pub(super) show_model_chooser: bool,
     pub(super) focus: FocusArea,
     pub(super) input: String,
     pub(super) input_cursor: usize,
@@ -51,6 +53,8 @@ pub(super) struct OperitTui {
     pub(super) ctrl_c_pending: bool,
     pub(super) last_current_chat_loading: bool,
     pub(super) awaiting_runtime_loading: bool,
+    pub(super) typewriter_state: TypewriterState,
+    pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) show_help: bool,
     pub(super) should_quit: bool,
 }
@@ -60,37 +64,63 @@ pub(super) struct ChatListItem {
     pub(super) id: String,
     pub(super) title: String,
     pub(super) secondary: String,
+    pub(super) updated_at: i64,
+    pub(super) display_order: i64,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ModelChoiceItem {
+    pub(super) config_id: String,
+    pub(super) config_name: String,
+    pub(super) model_index: i32,
+    pub(super) provider_name: &'static str,
+    pub(super) model_name: String,
+    pub(super) selected: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusArea {
     Chats,
+    ModelChooser,
     Input,
 }
 
 impl OperitTui {
     pub(super) fn new(
-        mut application: OperitApplication,
+        mut core: LocalCoreProxy,
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
     ) -> Result<Self, String> {
         let chats = {
-            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            load_chat_list_from_core(core)
+            core.withMainChatCore(load_chat_list_from_core)
         };
         let selected_chat_index = chats
             .iter()
             .position(|item| item.id == initial_chat_id)
             .unwrap_or(0);
         let status_message =
-            "F3 chats | Enter send | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help"
+            "F3 chats | Enter send | Esc cancel | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help"
                 .to_string();
-        let _ = current_shell_chat_id(&mut application)?;
+        let _ = core
+            .withMainChatCore(|core| core.currentChatIdFlow().value())
+            .ok_or_else(|| "no active chat in tui".to_string())?;
+        let approval_bridge = TuiApprovalBridge::new();
+        {
+            let bridge = approval_bridge.clone();
+            core.withToolHandler(|handler| {
+                handler
+                .getToolPermissionSystem()
+                .setPermissionRequester(move |tool, description| bridge.request(tool, description));
+            });
+        }
         Ok(Self {
-            application,
+            core,
             initial_shell_args,
             chats,
             selected_chat_index,
+            model_choices: Vec::new(),
+            selected_model_choice_index: 0,
+            show_model_chooser: false,
             focus: FocusArea::Input,
             input: String::new(),
             input_cursor: 0,
@@ -106,6 +136,8 @@ impl OperitTui {
             ctrl_c_pending: false,
             last_current_chat_loading: false,
             awaiting_runtime_loading: false,
+            typewriter_state: TypewriterState::default(),
+            approval_bridge,
             show_help: false,
             should_quit: false,
         })
@@ -155,7 +187,7 @@ impl OperitTui {
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
 
-            if event::poll(Duration::from_millis(120)).map_err(|error| error.to_string())? {
+            if event::poll(Duration::from_millis(16)).map_err(|error| error.to_string())? {
                 if let Event::Key(key) = event::read().map_err(|error| error.to_string())? {
                     self.handle_key_event(key).await?;
                 }
@@ -180,6 +212,11 @@ impl OperitTui {
         }
 
         self.ctrl_c_pending = false;
+
+        if self.approval_bridge.current().is_some() {
+            self.handle_approval_key(key);
+            return Ok(());
+        }
 
         if self.show_help {
             match key.code {
@@ -234,6 +271,14 @@ impl OperitTui {
                 return Ok(());
             }
             (KeyCode::Esc, _) => {
+                if self.current_chat_is_loading() {
+                    self.cancel_current_request()?;
+                    return Ok(());
+                }
+                if self.show_model_chooser {
+                    self.close_model_chooser();
+                    return Ok(());
+                }
                 if self.show_chat_list && self.focus == FocusArea::Chats {
                     self.show_chat_list = false;
                     self.focus = FocusArea::Input;
@@ -257,6 +302,7 @@ impl OperitTui {
                 }
                 self.focus = match self.focus {
                     FocusArea::Chats => FocusArea::Input,
+                    FocusArea::ModelChooser => FocusArea::Input,
                     FocusArea::Input => FocusArea::Chats,
                 };
                 return Ok(());
@@ -266,6 +312,7 @@ impl OperitTui {
 
         match self.focus {
             FocusArea::Chats => self.handle_chat_list_key(key),
+            FocusArea::ModelChooser => self.handle_model_chooser_key(key),
             FocusArea::Input => self.handle_input_key(key).await,
         }
     }
@@ -340,6 +387,37 @@ impl OperitTui {
         Ok(())
     }
 
+    fn handle_model_chooser_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        match key.code {
+            KeyCode::Up => {
+                if self.selected_model_choice_index > 0 {
+                    self.selected_model_choice_index -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.selected_model_choice_index + 1 < self.model_choices.len() {
+                    self.selected_model_choice_index += 1;
+                }
+            }
+            KeyCode::Enter => {
+                self.apply_selected_model_choice()?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn cancel_current_request(&mut self) -> Result<(), String> {
+        let chat_id = self.current_chat_id()?;
+        self.core
+            .withMainChatCore(|core| core.cancelCurrentMessage());
+        self.last_current_chat_loading = false;
+        self.awaiting_runtime_loading = false;
+        self.follow_transcript = true;
+        self.status_message = format!("request cancelled: {}", short_chat_label(&chat_id));
+        Ok(())
+    }
+
     pub(super) async fn submit_input(&mut self) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "request already running".to_string();
@@ -371,7 +449,7 @@ impl OperitTui {
             attachmentPaths: attachment_paths,
             replyToTimestamp: None,
         };
-        let result = begin_chat_message_with_application(&mut self.application, send_args).await?;
+        let result = self.core.beginChatMessage(send_args).await?;
         let active_chat_id = result.chatId;
         self.refresh_chats();
         self.select_chat_by_id(&active_chat_id);
@@ -401,11 +479,17 @@ impl OperitTui {
             "switch" => {
                 self.toggle_chat_list();
             }
+            "resume" => {
+                self.resume_previous_chat()?;
+            }
             "max" => {
                 self.toggle_max_context_mode()?;
             }
             "model" => {
                 self.handle_model_command(&parts[1..])?;
+            }
+            "approval" => {
+                self.handle_approval_command(&parts[1..])?;
             }
             "attach" => {
                 let path = parts
@@ -436,14 +520,108 @@ impl OperitTui {
         Ok(())
     }
 
+    fn handle_approval_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.approval_bridge.respond(PermissionRequestResult::ALLOW);
+                self.status_message = "tool approved once".to_string();
+            }
+            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.approval_bridge.respond(PermissionRequestResult::DENY);
+                self.status_message = "tool denied".to_string();
+            }
+            KeyCode::Char('3') | KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.approval_bridge
+                    .respond(PermissionRequestResult::ALWAYS_ALLOW);
+                self.status_message = "tool approved and remembered".to_string();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_approval_command(&mut self, args: &[String]) -> Result<(), String> {
+        let permissionSystem = self
+            .core
+            .withToolHandler(|handler| handler.getToolPermissionSystem());
+        match args.first().map(String::as_str) {
+            None | Some("status") => {
+                let master = permissionSystem
+                    .getMasterSwitch()
+                    .map_err(|error| error.to_string())?;
+                let overrides = permissionSystem
+                    .getToolPermissionOverrides()
+                    .map_err(|error| error.to_string())?;
+                self.status_message = format!(
+                    "approval master={} overrides={}",
+                    master.name(),
+                    overrides.len()
+                );
+            }
+            Some("allow") | Some("ask") | Some("forbid") => {
+                let level = parse_permission_level(args.first().map(String::as_str))?;
+                permissionSystem
+                    .saveMasterSwitch(level.clone())
+                    .map_err(|error| error.to_string())?;
+                self.status_message = format!("approval master={}", level.name());
+            }
+            Some("tool") => {
+                let toolName = args
+                    .get(1)
+                    .ok_or_else(|| "usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string())?;
+                match args.get(2).map(String::as_str) {
+                    Some("clear") => {
+                        permissionSystem
+                            .clearToolPermission(toolName)
+                            .map_err(|error| error.to_string())?;
+                        self.status_message = format!("approval cleared: {toolName}");
+                    }
+                    value @ (Some("allow") | Some("ask") | Some("forbid")) => {
+                        let level = parse_permission_level(value)?;
+                        permissionSystem
+                            .saveToolPermission(toolName, level.clone())
+                            .map_err(|error| error.to_string())?;
+                        self.status_message = format!("approval {toolName}={}", level.name());
+                    }
+                    _ => {
+                        return Err("usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string());
+                    }
+                }
+            }
+            Some("list") => {
+                let overrides = permissionSystem
+                    .getToolPermissionOverrides()
+                    .map_err(|error| error.to_string())?;
+                self.status_message = if overrides.is_empty() {
+                    "approval overrides=none".to_string()
+                } else {
+                    overrides
+                        .iter()
+                        .map(|(tool, level)| format!("{tool}={}", level.name()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+            }
+            Some("help") => {
+                self.status_message =
+                    "usage: /approval | /approval list|allow|ask|forbid|tool <tool> <allow|ask|forbid|clear>"
+                        .to_string();
+            }
+            Some(other) => {
+                self.status_message = format!("unknown /approval command: {other}");
+            }
+        }
+        Ok(())
+    }
+
     fn handle_model_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
             None | Some("current") => self.show_current_chat_model(),
             Some("list") => self.list_chat_models(),
+            Some("choose") => self.open_model_chooser(),
             Some("use") => self.use_chat_model(&args[1..]),
             Some("help") => {
                 self.status_message =
-                    "usage: /model current | /model list | /model use <config-id> [model-index]"
+                    "usage: /model current | /model list | /model choose | /model use <config-id> [model-index]"
                         .to_string();
                 Ok(())
             }
@@ -468,9 +646,9 @@ impl OperitTui {
         Ok(())
     }
 
-    fn current_chat_model_status_parts(&self) -> Result<(String, i32, &'static str, String), String> {
-        let model_config_manager = ModelConfigManager::default();
-        let functional_config_manager = FunctionalConfigManager::default();
+    fn current_chat_model_status_parts(&mut self) -> Result<(String, i32, &'static str, String), String> {
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
+        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
         model_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -494,13 +672,13 @@ impl OperitTui {
         ))
     }
 
-    fn current_chat_model_status_label(&self) -> Result<String, String> {
+    fn current_chat_model_status_label(&mut self) -> Result<String, String> {
         let (_, _, _, selected_model_name) = self.current_chat_model_status_parts()?;
         Ok(selected_model_name)
     }
 
     fn list_chat_models(&mut self) -> Result<(), String> {
-        let model_config_manager = ModelConfigManager::default();
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
         model_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -527,6 +705,82 @@ impl OperitTui {
         Ok(())
     }
 
+    fn open_model_chooser(&mut self) -> Result<(), String> {
+        self.model_choices = self.load_model_choices()?;
+        if self.model_choices.is_empty() {
+            self.status_message = "no model configs".to_string();
+            return Ok(());
+        }
+        self.selected_model_choice_index = self
+            .model_choices
+            .iter()
+            .position(|choice| choice.selected)
+            .expect("current chat model mapping must be present in model choices");
+        self.show_model_chooser = true;
+        self.focus = FocusArea::ModelChooser;
+        self.status_message = "choose model | Up/Down select | Enter apply | Esc close".to_string();
+        Ok(())
+    }
+
+    fn close_model_chooser(&mut self) {
+        self.show_model_chooser = false;
+        self.focus = FocusArea::Input;
+        self.status_message = "model chooser closed".to_string();
+    }
+
+    fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
+        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
+        model_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        functional_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+
+        let mapping = functional_config_manager
+            .getConfigMappingForFunction(FunctionType::CHAT)
+            .map_err(|error| error.to_string())?;
+        let mut choices = Vec::new();
+        for config_id in model_config_manager
+            .getConfigIds()
+            .map_err(|error| error.to_string())?
+        {
+            let config = model_config_manager
+                .getModelConfig(&config_id)
+                .map_err(|error| error.to_string())?;
+            let active_model_index = if mapping.configId == config.id {
+                getValidModelIndex(&config.modelName, mapping.modelIndex)
+            } else {
+                -1
+            };
+            for (index, model_name) in getModelList(&config.modelName).into_iter().enumerate() {
+                let model_index = index as i32;
+                choices.push(ModelChoiceItem {
+                    config_id: config.id.clone(),
+                    config_name: config.name.clone(),
+                    model_index,
+                    provider_name: config.apiProviderType.name(),
+                    model_name,
+                    selected: mapping.configId == config.id && active_model_index == model_index,
+                });
+            }
+        }
+        Ok(choices)
+    }
+
+    fn apply_selected_model_choice(&mut self) -> Result<(), String> {
+        let choice = self
+            .model_choices
+            .get(self.selected_model_choice_index)
+            .cloned()
+            .ok_or_else(|| "no selected model".to_string())?;
+        self.apply_chat_model_choice(&choice)?;
+        self.show_model_chooser = false;
+        self.focus = FocusArea::Input;
+        Ok(())
+    }
+
     fn use_chat_model(&mut self, args: &[String]) -> Result<(), String> {
         let config_id = match args.first() {
             Some(value) if !value.trim().is_empty() => value.trim().to_string(),
@@ -537,8 +791,8 @@ impl OperitTui {
         };
         let requested_model_index = parse_optional_model_index(args.get(1))?;
 
-        let model_config_manager = ModelConfigManager::default();
-        let functional_config_manager = FunctionalConfigManager::default();
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
+        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
         model_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -562,25 +816,43 @@ impl OperitTui {
             return Ok(());
         }
 
+        let choice = ModelChoiceItem {
+            config_id,
+            config_name: config.name,
+            model_index: requested_model_index,
+            provider_name: config.apiProviderType.name(),
+            model_name: model_names[requested_model_index as usize].clone(),
+            selected: true,
+        };
+        self.apply_chat_model_choice(&choice)?;
+        Ok(())
+    }
+
+    fn apply_chat_model_choice(&mut self, choice: &ModelChoiceItem) -> Result<(), String> {
+        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
+        functional_config_manager
+            .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
         functional_config_manager
             .setConfigForFunctionWithIndex(
                 FunctionType::CHAT,
-                config_id.clone(),
-                requested_model_index,
+                choice.config_id.clone(),
+                choice.model_index,
             )
             .map_err(|error| error.to_string())?;
         {
-            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            if let Some(service) = core.enhancedAiService.as_mut() {
-                service.refreshServiceForFunction(FunctionType::CHAT);
-            }
+            self.core.withMainChatCore(|core| {
+                if let Some(service) = core.enhancedAiService.as_mut() {
+                    service.refreshServiceForFunction(FunctionType::CHAT);
+                }
+            });
         }
         self.status_message = format!(
             "CHAT -> {}[{}] {} / {}",
-            config_id,
-            requested_model_index,
-            config.apiProviderType.name(),
-            model_names[requested_model_index as usize]
+            choice.config_id,
+            choice.model_index,
+            choice.provider_name,
+            choice.model_name
         );
         self.refresh_context_usage_label();
         Ok(())
@@ -588,7 +860,7 @@ impl OperitTui {
 
     fn toggle_max_context_mode(&mut self) -> Result<(), String> {
         let config_id = self.resolve_editable_chat_config_id()?;
-        let model_config_manager = ModelConfigManager::default();
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
         model_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -618,13 +890,13 @@ impl OperitTui {
         Ok(())
     }
 
-    fn resolve_editable_chat_config_id(&self) -> Result<String, String> {
-        let active_prompt_manager = ActivePromptManager::getInstance();
+    fn resolve_editable_chat_config_id(&mut self) -> Result<String, String> {
+        let active_prompt_manager = self.core.withActivePromptManager(|manager| manager);
         if let ActivePrompt::CharacterCard { id } = active_prompt_manager
             .getActivePrompt()
             .map_err(|error| error.to_string())?
         {
-            let character_card_manager = CharacterCardManager::getInstance();
+            let character_card_manager = self.core.withCharacterCardManager(|manager| manager);
             let card = character_card_manager
                 .getCharacterCard(&id)
                 .map_err(|error| error.to_string())?;
@@ -641,7 +913,7 @@ impl OperitTui {
             }
         }
 
-        let functional_config_manager = FunctionalConfigManager::default();
+        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
         functional_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -656,15 +928,17 @@ impl OperitTui {
             return Ok(());
         }
 
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.createNewChat(
-            shell_args.characterCardName,
-            shell_args.group,
-            true,
-            true,
-            shell_args.characterGroupId,
-        );
-        let chat_id = current_shell_chat_id(&mut self.application)?;
+        let chat_id = self.core.withMainChatCore(|core| {
+            core.createNewChat(
+                shell_args.characterCardName,
+                shell_args.group,
+                true,
+                true,
+                shell_args.characterGroupId,
+            );
+            core.currentChatIdFlow().value()
+        })
+        .ok_or_else(|| "core did not create chat".to_string())?;
         self.follow_transcript = true;
         self.refresh_chats();
         self.select_chat_by_id(&chat_id);
@@ -687,15 +961,54 @@ impl OperitTui {
         }
     }
 
+    fn resume_previous_chat(&mut self) -> Result<(), String> {
+        if self.current_chat_is_loading() {
+            self.status_message = "wait for current request to finish".to_string();
+            return Ok(());
+        }
+
+        self.refresh_chats();
+        let current_chat_id = self.current_chat_id()?;
+        let target = self
+            .chats
+            .iter()
+            .filter(|chat| chat.id != current_chat_id)
+            .max_by(|left, right| {
+                left.updated_at
+                    .cmp(&right.updated_at)
+                    .then_with(|| right.display_order.cmp(&left.display_order))
+            })
+            .cloned();
+        let Some(target) = target else {
+            self.status_message = "no previous chat to resume".to_string();
+            return Ok(());
+        };
+
+        self.core
+            .withMainChatCore(|core| core.switchChat(target.id.clone()));
+        self.follow_transcript = true;
+        self.select_chat_by_id(&target.id);
+        self.status_message = format!("resumed chat: {}", target.title);
+        Ok(())
+    }
+
     fn switch_to_chat(&mut self, chat_id: String) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
 
-        ensure_chat_exists(&chat_id)?;
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.switchChat(chat_id.clone());
+        let exists = self.core.withMainChatCore(|core| {
+            core.chatHistoriesFlow()
+                .value()
+                .iter()
+                .any(|chat| chat.id == chat_id)
+        });
+        if !exists {
+            return Err(format!("chat not found: {chat_id}"));
+        }
+        self.core
+            .withMainChatCore(|core| core.switchChat(chat_id.clone()));
         self.follow_transcript = true;
         self.select_chat_by_id(&chat_id);
         self.status_message = "switched chat".to_string();
@@ -705,8 +1018,7 @@ impl OperitTui {
     fn refresh_chats(&mut self) {
         let current_chat_id = self.current_chat_id().ok();
         self.chats = {
-            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            load_chat_list_from_core(core)
+            self.core.withMainChatCore(load_chat_list_from_core)
         };
         if let Some(chat_id) = current_chat_id {
             self.select_chat_by_id(&chat_id);
@@ -722,15 +1034,14 @@ impl OperitTui {
     }
 
     pub(super) fn current_chat_id(&mut self) -> Result<String, String> {
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.currentChatIdFlow()
-            .value()
+        self.core
+            .withMainChatCore(|core| core.currentChatIdFlow().value())
             .ok_or_else(|| "no active chat in tui".to_string())
     }
 
     pub(super) fn current_messages(&mut self) -> Vec<ChatMessage> {
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.chatHistoryFlow().value()
+        self.core
+            .withMainChatCore(|core| core.chatHistoryFlow().value())
     }
 
     pub(super) fn current_chat_is_loading(&mut self) -> bool {
@@ -738,13 +1049,12 @@ impl OperitTui {
     }
 
     fn raw_current_chat_is_loading(&mut self) -> bool {
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.currentChatIsLoading()
+        self.core.withMainChatCore(|core| core.currentChatIsLoading())
     }
 
     pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
-        let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        core.currentChatInputProcessingState()
+        self.core
+            .withMainChatCore(|core| core.currentChatInputProcessingState())
     }
 
     fn refresh_runtime_status(&mut self) {
@@ -824,7 +1134,7 @@ impl OperitTui {
 
     fn current_context_usage_label(&mut self) -> Result<String, String> {
         let config_id = self.resolve_editable_chat_config_id()?;
-        let model_config_manager = ModelConfigManager::default();
+        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
         model_config_manager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
@@ -838,18 +1148,8 @@ impl OperitTui {
         };
         let max_tokens = (effective_context_length * 1024.0) as i32;
         let current_window_size = {
-            let core = self.application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            let current_chat_id = core.currentChatIdFlow().value();
-            current_chat_id
-                .as_ref()
-                .and_then(|chat_id| {
-                    core.chatHistoriesFlow()
-                        .value()
-                        .into_iter()
-                        .find(|chat| chat.id == *chat_id)
-                        .map(|chat| chat.currentWindowSize)
-                })
-                .expect("current chat context window must be loaded")
+            self.core
+                .withMainChatCore(|core| core.currentWindowSizeFlow().value())
         };
         if max_tokens <= 0 {
             return Ok(format!("context {} / {}", current_window_size.max(0), max_tokens));
@@ -898,6 +1198,15 @@ fn resolve_processing_message(message: &str) -> String {
     }
 }
 
+fn parse_permission_level(value: Option<&str>) -> Result<PermissionLevel, String> {
+    match value {
+        Some("allow") | Some("ALLOW") => Ok(PermissionLevel::ALLOW),
+        Some("ask") | Some("ASK") => Ok(PermissionLevel::ASK),
+        Some("forbid") | Some("FORBID") => Ok(PermissionLevel::FORBID),
+        _ => Err("expected allow, ask, or forbid".to_string()),
+    }
+}
+
 fn load_chat_list_from_core(
     core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore,
 ) -> Vec<ChatListItem> {
@@ -926,6 +1235,11 @@ fn load_chat_list_from_core(
                 id: chat.id,
                 title,
                 secondary,
+                updated_at: chat
+                    .updatedAt
+                    .parse::<i64>()
+                    .expect("chat.updatedAt must be epoch millis"),
+                display_order: chat.displayOrder,
             }
         })
         .collect()

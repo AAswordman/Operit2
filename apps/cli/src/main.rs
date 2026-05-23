@@ -26,10 +26,14 @@ use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::data::skill::SkillRepository::SkillRepository;
+use operit_runtime::data::mcp::MCPLocalServer::MCPLocalServer;
+use operit_runtime::data::mcp::plugins::MCPStarter::{MCPStarter, StartStatus};
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_runtime::core::tools::ToolPermissionSystem::PermissionLevel;
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
@@ -39,7 +43,7 @@ use operit_runtime::util::stream::Stream::Stream;
 mod bootstrap;
 mod tui;
 
-use bootstrap::create_cli_application;
+use bootstrap::{create_cli_application, create_local_core};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -90,7 +94,10 @@ async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "character" => run_character_command(&args[1..]),
         "group" => run_group_command(&args[1..]),
         "active-prompt" => run_active_prompt_command(&args[1..]),
+        "approval" => run_approval_command(&application, &args[1..]),
         "skill" => run_skill_command(&application, &args[1..]),
+        "package" => run_package_command(&application, &args[1..]),
+        "mcp" => run_mcp_command(&application, &args[1..]),
         _ => {
             print_cli_usage();
             Ok(())
@@ -736,6 +743,67 @@ fn run_tag_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_approval_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_approval_usage();
+        return Ok(());
+    }
+    let handler = AIToolHandler::getInstance(application.applicationContext.clone());
+    let permissionSystem = handler.getToolPermissionSystem();
+    match args[0].as_str() {
+        "status" => {
+            let master = permissionSystem
+                .getMasterSwitch()
+                .map_err(|error| error.to_string())?;
+            println!("master={}", master.name());
+            let overrides = permissionSystem
+                .getToolPermissionOverrides()
+                .map_err(|error| error.to_string())?;
+            println!("overrides={}", overrides.len());
+        }
+        "list" => {
+            let overrides = permissionSystem
+                .getToolPermissionOverrides()
+                .map_err(|error| error.to_string())?;
+            for (toolName, level) in overrides {
+                println!("{toolName}\t{}", level.name());
+            }
+        }
+        "allow" | "ask" | "forbid" => {
+            let level = parse_permission_level_arg(Some(args[0].as_str()))?;
+            permissionSystem
+                .saveMasterSwitch(level.clone())
+                .map_err(|error| error.to_string())?;
+            println!("master={}", level.name());
+        }
+        "tool" => {
+            let toolName = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>".to_string())?;
+            match args.get(2).map(String::as_str) {
+                Some("clear") => {
+                    permissionSystem
+                        .clearToolPermission(toolName)
+                        .map_err(|error| error.to_string())?;
+                    println!("cleared={toolName}");
+                }
+                value @ (Some("allow") | Some("ask") | Some("forbid")) => {
+                    let level = parse_permission_level_arg(value)?;
+                    permissionSystem
+                        .saveToolPermission(toolName, level.clone())
+                        .map_err(|error| error.to_string())?;
+                    println!("{toolName}={}", level.name());
+                }
+                _ => {
+                    return Err("usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>".to_string());
+                }
+            }
+        }
+        _ => print_approval_usage(),
+    }
+    Ok(())
+}
+
 fn run_skill_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         print_skill_usage();
@@ -858,6 +926,312 @@ fn read_skill_content_arg(value: &str) -> Result<String, String> {
         return fs::read_to_string(path).map_err(|error| error.to_string());
     }
     Ok(value.to_string())
+}
+
+fn run_package_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_package_usage();
+        return Ok(());
+    }
+
+    let handler = AIToolHandler::getInstance(application.applicationContext.clone());
+    let packageManager = handler.getOrCreatePackageManager();
+    match args[0].as_str() {
+        "dir" => {
+            let guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            println!("{}", guard.getExternalPackagesPath());
+        }
+        "list" => {
+            let guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            let enabled = guard.getEnabledPackageNames();
+            for (name, package) in guard.getAvailablePackages() {
+                println!(
+                    "{}\tenabled={}\t{}\ttools={}",
+                    name,
+                    enabled.contains(&name),
+                    package.description.resolve(false),
+                    package.tools.len()
+                );
+            }
+        }
+        "show" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package show <name>".to_string())?;
+            let guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            let package = guard
+                .getPackageTools(name)
+                .ok_or_else(|| format!("package not found: {name}"))?;
+            println!("name={}", package.name);
+            println!("displayName={}", package.display_name.resolve(false));
+            println!("description={}", package.description.resolve(false));
+            println!("category={}", package.category);
+            println!("enabledByDefault={}", package.enabled_by_default);
+            println!("isBuiltIn={}", package.is_built_in);
+            println!("tools={}", package.tools.len());
+            for tool in package.tools {
+                println!(
+                    "- {}\tadvice={}\t{}",
+                    tool.name,
+                    tool.advice,
+                    tool.description.resolve(false)
+                );
+                for parameter in tool.parameters {
+                    println!(
+                        "  - {}\t{}\trequired={}\t{}",
+                        parameter.name,
+                        parameter.parameter_type,
+                        parameter.required,
+                        parameter.description.resolve(false)
+                    );
+                }
+            }
+        }
+        "import" => {
+            let path = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package import <js-ts-hjson-path>".to_string())?;
+            let mut guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            println!("{}", guard.addPackageFileFromExternalStorage(path));
+        }
+        "enable" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package enable <name>".to_string())?;
+            let mut guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            println!("{}", guard.enablePackage(name));
+        }
+        "disable" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package disable <name>".to_string())?;
+            let mut guard = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?;
+            println!("{}", guard.disablePackage(name));
+        }
+        "use" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package use <name>".to_string())?;
+            let tool = operit_runtime::api::chat::enhance::ToolExecutionManager::AITool {
+                name: "use_package".to_string(),
+                parameters: vec![operit_runtime::api::chat::enhance::ToolExecutionManager::ToolParameter {
+                    name: "package_name".to_string(),
+                    value: name.clone(),
+                }],
+            };
+            let mut clonedHandler = handler.clone();
+            let result = clonedHandler.executeTool(tool);
+            if result.success {
+                println!("{}", result.result);
+            } else {
+                return Err(result.error.unwrap_or_else(|| "package use failed".to_string()));
+            }
+        }
+        "exec" => {
+            let toolName = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package exec <package:tool> <params-json>".to_string())?;
+            let paramsJson = args
+                .get(2)
+                .ok_or_else(|| "usage: operit2 package exec <package:tool> <params-json>".to_string())?;
+            let packageName = toolName
+                .split_once(':')
+                .map(|(packageName, _)| packageName.to_string())
+                .ok_or_else(|| "package exec tool name must use package:tool format".to_string())?;
+
+            let useTool = operit_runtime::api::chat::enhance::ToolExecutionManager::AITool {
+                name: "use_package".to_string(),
+                parameters: vec![operit_runtime::api::chat::enhance::ToolExecutionManager::ToolParameter {
+                    name: "package_name".to_string(),
+                    value: packageName,
+                }],
+            };
+            let mut clonedHandler = handler.clone();
+            let useResult = clonedHandler.executeTool(useTool);
+            if !useResult.success {
+                return Err(useResult.error.unwrap_or_else(|| "package use failed".to_string()));
+            }
+
+            let parsedParams = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(paramsJson)
+                .map_err(|error| error.to_string())?;
+            let parameters = parsedParams
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = match value {
+                        serde_json::Value::String(value) => value,
+                        other => other.to_string(),
+                    };
+                    operit_runtime::api::chat::enhance::ToolExecutionManager::ToolParameter {
+                        name,
+                        value,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let tool = operit_runtime::api::chat::enhance::ToolExecutionManager::AITool {
+                name: toolName.clone(),
+                parameters,
+            };
+            let result = clonedHandler.executeTool(tool);
+            if result.success {
+                println!("{}", result.result);
+            } else {
+                return Err(result.error.unwrap_or_else(|| "package exec failed".to_string()));
+            }
+        }
+        _ => print_package_usage(),
+    }
+    Ok(())
+}
+
+fn run_mcp_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_mcp_usage();
+        return Ok(());
+    }
+
+    let localServer = MCPLocalServer::getInstance(&application.applicationContext);
+    match args[0].as_str() {
+        "dir" => {
+            println!("configDir={}", localServer.getConfigDirectory());
+            println!("configFile={}", localServer.getConfigFilePath());
+        }
+        "list" => {
+            let servers = localServer.getAllMCPServers();
+            let metadata = localServer.getAllPluginMetadata();
+            let status = localServer.getAllServerStatus();
+            for (serverId, serverConfig) in servers {
+                let meta = metadata.get(&serverId);
+                let state = status.get(&serverId);
+                println!(
+                    "{}\tenabled={}\tcommand={}\targs={}\tname={}\ttoolsCached={}",
+                    serverId,
+                    localServer.isServerEnabled(&serverId),
+                    serverConfig.command,
+                    serverConfig.args.join(" "),
+                    meta.map(|item| item.name.as_str()).unwrap_or(""),
+                    state
+                        .and_then(|item| item.cachedTools.as_ref())
+                        .map(|tools| tools.len())
+                        .unwrap_or(0)
+                );
+            }
+            for (pluginId, meta) in metadata {
+                if meta.r#type == "remote" {
+                    println!(
+                        "{}\tenabled={}\tremote={}\tname={}",
+                        pluginId,
+                        localServer.isServerEnabled(&pluginId),
+                        meta.endpoint.unwrap_or_default(),
+                        meta.name
+                    );
+                }
+            }
+        }
+        "show" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp show <name>".to_string())?;
+            if let Some(serverConfig) = localServer.getMCPServer(name) {
+                println!("id={name}");
+                println!("enabled={}", localServer.isServerEnabled(name));
+                println!("command={}", serverConfig.command);
+                println!("args={}", serverConfig.args.join(" "));
+                println!("envKeys={}", serverConfig.env.keys().cloned().collect::<Vec<_>>().join(","));
+                println!("autoApprove={}", serverConfig.autoApprove.join(","));
+            }
+            if let Some(metadata) = localServer.getPluginMetadata(name) {
+                println!("metadataId={}", metadata.id);
+                println!("name={}", metadata.name);
+                println!("description={}", metadata.description);
+                println!("type={}", metadata.r#type);
+                println!("endpoint={}", metadata.endpoint.unwrap_or_default());
+                println!("connectionType={}", metadata.connectionType.unwrap_or_default());
+            }
+            if let Some(status) = localServer.getServerStatus(name) {
+                println!("lastStartTime={}", status.lastStartTime);
+                println!("lastStopTime={}", status.lastStopTime);
+                println!("errorMessage={}", status.errorMessage.unwrap_or_default());
+                println!(
+                    "cachedTools={}",
+                    status.cachedTools.as_ref().map(|tools| tools.len()).unwrap_or(0)
+                );
+            }
+        }
+        "import" => {
+            let configArg = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp import <json-or-@file>".to_string())?;
+            let configJson = read_skill_content_arg(configArg)?;
+            let count = localServer
+                .mergeConfigFromJson(&configJson)
+                .map_err(|error| error.to_string())?;
+            println!("imported={count}");
+        }
+        "enable" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp enable <name>".to_string())?;
+            localServer
+                .setServerEnabled(name, true)
+                .map_err(|error| error.to_string())?;
+            println!("enabled={name}");
+        }
+        "disable" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp disable <name>".to_string())?;
+            localServer
+                .setServerEnabled(name, false)
+                .map_err(|error| error.to_string())?;
+            println!("disabled={name}");
+        }
+        "start" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp start <name>".to_string())?;
+            let starter = MCPStarter::new(application.applicationContext.clone());
+            let success = starter.startPlugin(name, |status| {
+                println!("{}", describe_mcp_start_status(status));
+            });
+            println!("started={success}");
+        }
+        "cached" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 mcp cached <name>".to_string())?;
+            for tool in localServer.getCachedTools(name).unwrap_or_default() {
+                println!("{}\t{}\t{}", tool.name, tool.description, tool.inputSchema);
+            }
+        }
+        "export" => {
+            println!("{}", localServer.exportConfigAsJson());
+        }
+        _ => print_mcp_usage(),
+    }
+    Ok(())
+}
+
+fn describe_mcp_start_status(status: StartStatus) -> String {
+    match status {
+        StartStatus::NotStarted => "not started".to_string(),
+        StartStatus::InProgress(message) => message,
+        StartStatus::Success(message) => message,
+        StartStatus::Error(message) => message,
+        StartStatus::TerminalServiceUnavailable(message) => message,
+        StartStatus::PnpmMissing(message) => message,
+    }
 }
 
 fn run_character_command(args: &[String]) -> Result<(), String> {
@@ -1682,6 +2056,34 @@ async fn handle_shell_command(
             core.switchChat(chatId.clone());
             println!("chat={chatId}");
         }
+        "resume" => {
+            let currentChatId = current_shell_chat_id(application)?;
+            let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
+            let target = manager
+                .chatHistoriesFlow()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|chat| chat.id != currentChatId)
+                .max_by(|left, right| {
+                    left.updatedAt
+                        .parse::<i64>()
+                        .expect("chat.updatedAt must be epoch millis")
+                        .cmp(
+                            &right
+                                .updatedAt
+                                .parse::<i64>()
+                                .expect("chat.updatedAt must be epoch millis"),
+                        )
+                        .then_with(|| right.displayOrder.cmp(&left.displayOrder))
+                });
+            let Some(target) = target else {
+                println!("no previous chat to resume");
+                return Ok(ShellLoopControl::Continue);
+            };
+            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+            core.switchChat(target.id.clone());
+            println!("chat={}", target.id);
+        }
         "show" => {
             let chatId = current_shell_chat_id(application)?;
             let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
@@ -1799,6 +2201,7 @@ fn print_shell_usage() {
     println!("/chat");
     println!("/new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("/switch <chat-id>");
+    println!("/resume");
     println!("/show");
     println!("/attach <path>");
     println!("/attachments");
@@ -1961,6 +2364,15 @@ pub(crate) fn launch_chat_message_with_application(
     let chatHistoryDelegate = core.chatHistoryDelegate.clone_for_core();
     let messageProcessingDelegate = core.messageProcessingDelegate.clone_for_core();
     let mut delegate = MessageCoordinationDelegate::new(chatHistoryDelegate, messageProcessingDelegate);
+    if let Some(coreDelegate) = core.messageCoordinationDelegate.as_mut() {
+        coreDelegate
+            .tokenStatisticsDelegate
+            .setActiveChatId(Some(chatId.clone()));
+        coreDelegate
+            .tokenStatisticsDelegate
+            .bindChatService(Some(chatId.clone()), &service);
+        delegate.tokenStatisticsDelegate = coreDelegate.tokenStatisticsDelegate.clone();
+    }
     let threadChatId = chatId.clone();
     std::thread::spawn(move || {
         let runtimeResult = tokio::runtime::Builder::new_current_thread()
@@ -2117,7 +2529,7 @@ fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <model|chat|tag|character|group|active-prompt|skill|shell>");
+    println!("operit2 cli <model|chat|tag|character|group|active-prompt|approval|skill|package|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -2128,7 +2540,10 @@ fn print_cli_usage() {
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
     println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
     println!("operit2 cli active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
+    println!("operit2 cli approval <status|list|allow|ask|forbid|tool>");
     println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
+    println!("operit2 cli package <dir|list|show|import|enable|disable|use|exec>");
+    println!("operit2 cli mcp <dir|list|show|import|enable|disable|start|cached|export>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -2225,6 +2640,15 @@ fn print_active_prompt_usage() {
     println!("operit2 cli active-prompt resolved-card");
 }
 
+fn print_approval_usage() {
+    println!("operit2 cli approval status");
+    println!("operit2 cli approval list");
+    println!("operit2 cli approval allow");
+    println!("operit2 cli approval ask");
+    println!("operit2 cli approval forbid");
+    println!("operit2 cli approval tool <tool-name> <allow|ask|forbid|clear>");
+}
+
 fn print_skill_usage() {
     println!("operit2 cli skill dir");
     println!("operit2 cli skill list");
@@ -2234,6 +2658,29 @@ fn print_skill_usage() {
     println!("operit2 cli skill delete <name>");
     println!("operit2 cli skill visible <name> [true|false]");
     println!("operit2 cli skill errors");
+}
+
+fn print_package_usage() {
+    println!("operit2 cli package dir");
+    println!("operit2 cli package list");
+    println!("operit2 cli package show <name>");
+    println!("operit2 cli package import <js-ts-hjson-path>");
+    println!("operit2 cli package enable <name>");
+    println!("operit2 cli package disable <name>");
+    println!("operit2 cli package use <name>");
+    println!("operit2 cli package exec <package:tool> <params-json>");
+}
+
+fn print_mcp_usage() {
+    println!("operit2 cli mcp dir");
+    println!("operit2 cli mcp list");
+    println!("operit2 cli mcp show <name>");
+    println!("operit2 cli mcp import <json-or-@file>");
+    println!("operit2 cli mcp enable <name>");
+    println!("operit2 cli mcp disable <name>");
+    println!("operit2 cli mcp start <name>");
+    println!("operit2 cli mcp cached <name>");
+    println!("operit2 cli mcp export");
 }
 
 fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {
@@ -2346,6 +2793,15 @@ fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
         "FUNCTION" => Ok(TagType::FUNCTION),
         "CUSTOM" => Ok(TagType::CUSTOM),
         other => Err(format!("invalid tagType: {other}; expected TONE | CHARACTER | FUNCTION | CUSTOM")),
+    }
+}
+
+fn parse_permission_level_arg(value: Option<&str>) -> Result<PermissionLevel, String> {
+    match value {
+        Some("allow") | Some("ALLOW") => Ok(PermissionLevel::ALLOW),
+        Some("ask") | Some("ASK") => Ok(PermissionLevel::ASK),
+        Some("forbid") | Some("FORBID") => Ok(PermissionLevel::FORBID),
+        _ => Err("expected allow, ask, or forbid".to_string()),
     }
 }
 

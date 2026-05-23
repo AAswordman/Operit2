@@ -17,7 +17,11 @@ impl OperitTui {
                 self.move_command_selection_down();
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
-                self.submit_input().await?;
+                if self.should_complete_selected_command_on_enter() {
+                    self.complete_selected_command();
+                } else {
+                    self.submit_input().await?;
+                }
             }
             (KeyCode::Char('j'), KeyModifiers::CONTROL) => self.insert_char('\n'),
             (KeyCode::Backspace, _) => self.delete_before_cursor(),
@@ -83,10 +87,26 @@ impl OperitTui {
             return;
         }
         let index = self.selected_command_index(suggestions.len());
-        let (input, cursor) = complete_command_input(&self.input, suggestions[index].name);
+        let (input, cursor) = complete_command_input(&self.input, suggestions[index]);
         self.input = input;
         self.input_cursor = cursor;
         self.autocomplete_index = 0;
+    }
+
+    fn should_complete_selected_command_on_enter(&self) -> bool {
+        let suggestions = self.command_suggestions();
+        if suggestions.is_empty() || self.input.contains('\n') {
+            return false;
+        }
+        let index = self.selected_command_index(suggestions.len());
+        let current = self
+            .input
+            .strip_prefix('/')
+            .map(str::trim_start)
+            .unwrap_or("")
+            .trim_end()
+            .to_ascii_lowercase();
+        !current.is_empty() && current != suggestions[index].name
     }
 
     fn move_command_selection_up(&mut self) {

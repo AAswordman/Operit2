@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::collections::BTreeMap;
 
 pub type HostResult<T> = Result<T, HostError>;
 
@@ -37,6 +38,12 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "system.location".to_string(),
+                "system.notifications.read".to_string(),
+                "system.app_usage".to_string(),
+                "system.app.install".to_string(),
+                "system.app.uninstall".to_string(),
+                "system.settings".to_string(),
             ],
         }
     }
@@ -61,6 +68,12 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "system.location".to_string(),
+                "system.notifications.read".to_string(),
+                "system.app_usage".to_string(),
+                "system.app.install".to_string(),
+                "system.app.uninstall".to_string(),
+                "system.settings".to_string(),
             ],
         }
     }
@@ -85,6 +98,12 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "system.location".to_string(),
+                "system.notifications.read".to_string(),
+                "system.app_usage".to_string(),
+                "system.app.install".to_string(),
+                "system.app.uninstall".to_string(),
+                "system.settings".to_string(),
             ],
         }
     }
@@ -189,6 +208,200 @@ pub struct GrepCodeResult {
     pub matches: Vec<GrepFileMatch>,
     pub totalMatches: usize,
     pub filesSearched: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebVisitRequest {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub userAgent: String,
+    pub includeImageLinks: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebVisitLinkData {
+    pub url: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebVisitResult {
+    pub url: String,
+    pub title: String,
+    pub content: String,
+    pub metadata: Vec<(String, String)>,
+    pub links: Vec<WebVisitLinkData>,
+    pub imageLinks: Vec<String>,
+}
+
+pub trait WebVisitHost: Send + Sync {
+    fn visitWeb(&self, request: WebVisitRequest) -> HostResult<WebVisitResult>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ManagedRuntimeProgram {
+    Node,
+    Python,
+    Uv,
+    Pnpm,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeProcessRequest {
+    pub program: ManagedRuntimeProgram,
+    pub executablePath: Option<String>,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeCommandOutput {
+    pub exitCode: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub trait ManagedRuntimeProcess: Send {
+    fn writeLine(&self, line: &str) -> HostResult<()>;
+    fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>>;
+    fn drainStderr(&self) -> HostResult<String>;
+    fn isRunning(&self) -> HostResult<bool>;
+    fn kill(&self) -> HostResult<()>;
+}
+
+pub trait ManagedRuntimeHost: Send + Sync {
+    fn runtimeWorkspaceDir(&self) -> HostResult<String>;
+    fn resolveRuntimeExecutable(
+        &self,
+        program: ManagedRuntimeProgram,
+        executablePath: Option<&str>,
+    ) -> HostResult<String>;
+    fn startRuntimeProcess(
+        &self,
+        request: RuntimeProcessRequest,
+    ) -> HostResult<Box<dyn ManagedRuntimeProcess>>;
+    fn runRuntimeCommand(&self, request: RuntimeProcessRequest) -> HostResult<RuntimeCommandOutput>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemSettingData {
+    pub namespace: String,
+    pub setting: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppOperationData {
+    pub operationType: String,
+    pub packageName: String,
+    pub success: bool,
+    pub details: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppListData {
+    pub includesSystemApps: bool,
+    pub packages: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationEntry {
+    pub packageName: String,
+    pub text: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationData {
+    pub notifications: Vec<NotificationEntry>,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppUsageTimeEntry {
+    pub packageName: String,
+    pub appName: String,
+    pub totalForegroundTimeMs: i64,
+    pub lastTimeUsed: i64,
+    pub isSystemApp: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppUsageTimeResultData {
+    pub startTime: i64,
+    pub endTime: i64,
+    pub sinceHours: i32,
+    pub requestedPackageName: Option<String>,
+    pub includesSystemApps: bool,
+    pub totalEntries: i32,
+    pub entries: Vec<AppUsageTimeEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocationData {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub accuracy: f32,
+    pub provider: String,
+    pub timestamp: i64,
+    pub rawData: String,
+    pub address: String,
+    pub city: String,
+    pub province: String,
+    pub country: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviceInfoData {
+    pub deviceId: String,
+    pub model: String,
+    pub manufacturer: String,
+    pub androidVersion: String,
+    pub sdkVersion: i32,
+    pub screenResolution: String,
+    pub screenDensity: f32,
+    pub totalMemory: String,
+    pub availableMemory: String,
+    pub totalStorage: String,
+    pub availableStorage: String,
+    pub batteryLevel: i32,
+    pub batteryCharging: bool,
+    pub cpuInfo: String,
+    pub networkType: String,
+    pub additionalInfo: BTreeMap<String, String>,
+}
+
+pub trait SystemOperationHost: Send + Sync {
+    fn toast(&self, message: &str) -> HostResult<()>;
+    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()>;
+    fn modifySystemSetting(
+        &self,
+        namespace: &str,
+        setting: &str,
+        value: &str,
+    ) -> HostResult<SystemSettingData>;
+    fn getSystemSetting(&self, namespace: &str, setting: &str) -> HostResult<SystemSettingData>;
+    fn installApp(&self, path: &str) -> HostResult<AppOperationData>;
+    fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData>;
+    fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData>;
+    fn startApp(&self, packageName: &str) -> HostResult<AppOperationData>;
+    fn stopApp(&self, packageName: &str) -> HostResult<AppOperationData>;
+    fn getNotifications(&self, limit: i32, includeOngoing: bool) -> HostResult<NotificationData>;
+    fn getAppUsageTime(
+        &self,
+        packageName: &str,
+        sinceHours: i32,
+        limit: i32,
+        includeSystemApps: bool,
+    ) -> HostResult<AppUsageTimeResultData>;
+    fn getDeviceLocation(
+        &self,
+        timeout: i32,
+        highAccuracy: bool,
+        includeAddress: bool,
+    ) -> HostResult<LocationData>;
+    fn getDeviceInfo(&self) -> HostResult<DeviceInfoData>;
 }
 
 pub trait FileSystemHost: Send + Sync {

@@ -10,12 +10,21 @@ use crate::api::chat::enhance::ToolExecutionManager::{
 };
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
+use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
+use crate::core::tools::mcp::MCPManager::MCPManager;
+use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::defaultTool::ToolGetter::ToolGetter;
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::{
     FileSystemToolExecutor, FileSystemToolOperation, StandardFileSystemTools,
+};
+use crate::core::tools::defaultTool::standard::StandardHttpTools::{
+    HttpToolExecutor, HttpToolOperation, StandardHttpTools,
+};
+use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::{
+    StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use operit_host_api::FileSystemHost;
@@ -39,12 +48,18 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
         registerFileSystemTools(handler, fileSystemTools);
     }
+    handler.registerTool(
+        "visit_web".to_string(),
+        Box::new(ToolGetter::getWebVisitTool(context)),
+    );
+    registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
 
     let packageManager = handler.getOrCreatePackageManager();
     handler.registerTool(
         "use_package".to_string(),
         Box::new(UsePackageToolExecutor {
             packageManager: packageManager.clone(),
+            handler: handler.clone(),
         }),
     );
     handler.registerTool(
@@ -63,7 +78,110 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
 }
 
 #[allow(non_snake_case)]
+fn registerSystemOperationTools(
+    handler: &mut AIToolHandler,
+    systemOperationTools: StandardSystemOperationTools,
+) {
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "toast",
+        SystemOperationToolOperation::Toast,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "send_notification",
+        SystemOperationToolOperation::SendNotification,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "modify_system_setting",
+        SystemOperationToolOperation::ModifySystemSetting,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "get_system_setting",
+        SystemOperationToolOperation::GetSystemSetting,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "install_app",
+        SystemOperationToolOperation::InstallApp,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "uninstall_app",
+        SystemOperationToolOperation::UninstallApp,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "list_installed_apps",
+        SystemOperationToolOperation::ListInstalledApps,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "start_app",
+        SystemOperationToolOperation::StartApp,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "stop_app",
+        SystemOperationToolOperation::StopApp,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "get_notifications",
+        SystemOperationToolOperation::GetNotifications,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "get_app_usage_time",
+        SystemOperationToolOperation::GetAppUsageTime,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "get_device_location",
+        SystemOperationToolOperation::GetDeviceLocation,
+    );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "device_info",
+        SystemOperationToolOperation::GetDeviceInfo,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerSystemOperationTool(
+    handler: &mut AIToolHandler,
+    systemOperationTools: &StandardSystemOperationTools,
+    name: &str,
+    operation: SystemOperationToolOperation,
+) {
+    handler.registerInternalTool(
+        name.to_string(),
+        Box::new(SystemOperationToolExecutor {
+            tools: systemOperationTools.clone(),
+            operation,
+        }),
+    );
+}
+
+#[allow(non_snake_case)]
 fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicationContext) {
+    registerHttpTools(handler, ToolGetter::getHttpTools(context));
+
     if let Some(fileSystemHost) = context.fileSystemHost.clone() {
         handler.registerInternalTool(
             "apply_file".to_string(),
@@ -78,6 +196,44 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
         "package_proxy".to_string(),
         Box::new(PackageProxyToolExecutor {
             handler: handler.clone(),
+        }),
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerHttpTools(handler: &mut AIToolHandler, httpTools: StandardHttpTools) {
+    registerHttpTool(
+        handler,
+        &httpTools,
+        "http_request",
+        HttpToolOperation::HttpRequest,
+    );
+    registerHttpTool(
+        handler,
+        &httpTools,
+        "multipart_request",
+        HttpToolOperation::MultipartRequest,
+    );
+    registerHttpTool(
+        handler,
+        &httpTools,
+        "manage_cookies",
+        HttpToolOperation::ManageCookies,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerHttpTool(
+    handler: &mut AIToolHandler,
+    httpTools: &StandardHttpTools,
+    name: &str,
+    operation: HttpToolOperation,
+) {
+    handler.registerInternalTool(
+        name.to_string(),
+        Box::new(HttpToolExecutor {
+            tools: httpTools.clone(),
+            operation,
         }),
     );
 }
@@ -210,6 +366,12 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
         "grep_code",
         FileSystemToolOperation::GrepCode,
     );
+    registerFileSystemTool(
+        handler,
+        &fileSystemTools,
+        "download_file",
+        FileSystemToolOperation::DownloadFile,
+    );
 }
 
 #[allow(non_snake_case)]
@@ -271,6 +433,7 @@ struct ApplyFileToolExecutor {
 
 struct UsePackageToolExecutor {
     packageManager: Arc<Mutex<PackageManager>>,
+    handler: AIToolHandler,
 }
 
 struct PackageProxyToolExecutor {
@@ -306,7 +469,7 @@ impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for UsePackag
     }
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeUsePackage(&self.packageManager, tool)]
+        vec![executeUsePackage(&self.packageManager, &self.handler, tool)]
     }
 }
 
@@ -480,10 +643,67 @@ fn validateUsePackage(tool: &AITool) -> ToolValidationResult {
     }
 }
 
-fn executeUsePackage(packageManager: &Arc<Mutex<PackageManager>>, tool: &AITool) -> ToolResult {
+fn executeUsePackage(
+    packageManager: &Arc<Mutex<PackageManager>>,
+    handler: &AIToolHandler,
+    tool: &AITool,
+) -> ToolResult {
     let packageName = requiredParameterValue(tool, "package_name");
-    let mut guard = packageManager.lock().expect("package manager mutex poisoned");
-    guard.executeUsePackageTool(&tool.name, &packageName)
+    let (result, selectedPackage) = {
+        let mut guard = packageManager.lock().expect("package manager mutex poisoned");
+        let result = guard.executeUsePackageTool(&tool.name, &packageName);
+        let selectedPackage = if result.success {
+            guard.getEffectivePackageTools(&packageName)
+                .filter(|package| !guard.isToolPkgContainer(&package.name))
+        } else {
+            None
+        };
+        (result, selectedPackage)
+    };
+    if let Some(selectedPackage) = selectedPackage {
+        registerPackageTools(handler, packageManager.clone(), selectedPackage);
+    }
+    result
+}
+
+#[allow(non_snake_case)]
+fn registerPackageTools(
+    handler: &AIToolHandler,
+    packageManager: Arc<Mutex<PackageManager>>,
+    toolPackage: ToolPackage,
+) {
+    let isMcpPackage = toolPackage.category == "MCP"
+        || toolPackage
+            .tools
+            .first()
+            .map(|tool| tool.script.contains("/* MCPJS"))
+            .unwrap_or(false);
+    let executableTools = toolPackage
+        .tools
+        .iter()
+        .filter(|packageTool| !packageTool.advice)
+        .cloned()
+        .collect::<Vec<_>>();
+    let context = handler.getContext();
+    for packageTool in executableTools {
+        let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
+        let mut clonedHandler = handler.clone();
+        if isMcpPackage {
+            clonedHandler.registerTool(
+                toolName,
+                Box::new(MCPToolExecutor::new(MCPManager::getInstance(context.clone()))),
+            );
+        } else {
+            clonedHandler.registerTool(
+                toolName,
+                Box::new(PackageToolExecutor::new(
+                    toolPackage.clone(),
+                    packageManager.clone(),
+                    handler.clone(),
+                )),
+            );
+        }
+    }
 }
 
 #[allow(non_snake_case)]

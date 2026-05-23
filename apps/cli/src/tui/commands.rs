@@ -5,7 +5,7 @@ pub(super) struct TuiCommandSpec {
     pub(super) description: &'static str,
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 13] = [
+const COMMAND_SPECS: [TuiCommandSpec; 20] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -20,6 +20,11 @@ const COMMAND_SPECS: [TuiCommandSpec; 13] = [
         name: "switch",
         usage: "/switch",
         description: "toggle chats",
+    },
+    TuiCommandSpec {
+        name: "resume",
+        usage: "/resume",
+        description: "resume previous chat",
     },
     TuiCommandSpec {
         name: "max",
@@ -42,9 +47,39 @@ const COMMAND_SPECS: [TuiCommandSpec; 13] = [
         description: "list model configs",
     },
     TuiCommandSpec {
+        name: "model choose",
+        usage: "/model choose",
+        description: "choose chat model",
+    },
+    TuiCommandSpec {
         name: "model use",
         usage: "/model use <config-id> [model-index]",
         description: "switch chat model binding",
+    },
+    TuiCommandSpec {
+        name: "approval",
+        usage: "/approval",
+        description: "show tool approval",
+    },
+    TuiCommandSpec {
+        name: "approval allow",
+        usage: "/approval allow",
+        description: "allow all tools",
+    },
+    TuiCommandSpec {
+        name: "approval ask",
+        usage: "/approval ask",
+        description: "ask before tools",
+    },
+    TuiCommandSpec {
+        name: "approval forbid",
+        usage: "/approval forbid",
+        description: "deny all tools",
+    },
+    TuiCommandSpec {
+        name: "approval tool",
+        usage: "/approval tool <tool> <allow|ask|forbid|clear>",
+        description: "set tool approval",
     },
     TuiCommandSpec {
         name: "attach",
@@ -101,8 +136,14 @@ pub(super) fn matching_command_specs(input: &str) -> Vec<TuiCommandSpec> {
         .collect()
 }
 
-pub(super) fn complete_command_input(_input: &str, command_name: &str) -> (String, usize) {
-    let completed = format!("/{command_name} ");
+pub(super) fn complete_command_input(_input: &str, command: TuiCommandSpec) -> (String, usize) {
+    let command_text = command
+        .usage
+        .split_whitespace()
+        .take_while(|part| !part.starts_with('<') && !part.starts_with('['))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let completed = format!("{command_text} ");
     let cursor = completed.chars().count();
     (completed, cursor)
 }

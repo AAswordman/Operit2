@@ -1,11 +1,13 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use super::theme;
 
 pub(super) fn render_blue_cat_lines(content_width: usize) -> Vec<Line<'static>> {
     let cat_style = Style::default()
-        .fg(Color::LightBlue)
+        .fg(theme::ACCENT_STRONG)
         .add_modifier(Modifier::BOLD);
-    let hint_style = Style::default().fg(Color::DarkGray);
+    let hint_style = Style::default().fg(theme::TEXT_SUBTLE);
     let cat_lines = [
         r" /\_/\ ",
         r"( o.o )",

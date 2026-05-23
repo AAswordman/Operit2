@@ -493,11 +493,22 @@ impl MessageProcessingDelegate {
         if !keepPartialResponse {
             self.detachStreamingAiMessage(chatId.clone());
         }
+        self.clearCurrentTurnToolInvocationCount(chatId.clone());
+        AIMessageManager::cancelOperation(chatId.clone());
         if let Some(runtime) = self.chatRuntimes.get_mut(&Self::chatKey(Some(chatId.clone()))) {
+            if let Some(responseStream) = runtime.responseStream.as_ref() {
+                responseStream.upstream.close();
+                responseStream.event_channel.close();
+            }
             runtime.isLoading = false;
+            runtime.responseStream = None;
             runtime.sendJob = None;
             runtime.streamCollectionJob = None;
             runtime.stateCollectionJob = None;
+            runtime.currentTurnOptions = ChatTurnOptions::default();
+            runtime.requestSentAt = 0;
+            runtime.requestStartElapsed = 0;
+            runtime.firstResponseElapsed = None;
         }
         self.setInputProcessingStateForChat(chatId, InputProcessingState::Idle);
         self.updateGlobalLoadingState();
@@ -756,7 +767,7 @@ impl MessageProcessingDelegate {
                             chatModelConfigIdOverride,
                             chatModelIndexOverride,
                             preferenceProfileIdOverride,
-                            publishEstimate: false,
+                            publishEstimate: true,
                             runtime,
                         },
                     ))

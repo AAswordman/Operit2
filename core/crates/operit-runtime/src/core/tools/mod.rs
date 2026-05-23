@@ -27,6 +27,12 @@ pub mod climode;
 #[path = "defaultTool/mod.rs"]
 pub mod defaultTool;
 
+#[path = "javascript/mod.rs"]
+pub mod javascript;
+
+#[path = "mcp/mod.rs"]
+pub mod mcp;
+
 #[path = "packTool/mod.rs"]
 pub mod packTool;
 

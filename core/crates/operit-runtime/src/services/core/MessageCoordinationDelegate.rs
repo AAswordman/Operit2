@@ -394,6 +394,10 @@ impl MessageCoordinationDelegate {
                     .clone()
                     .unwrap_or_default()
             });
+        self.tokenStatisticsDelegate
+            .setActiveChatId(Some(chatId.clone()));
+        self.tokenStatisticsDelegate
+            .bindChatService(Some(chatId.clone()), enhancedAiService);
         let messageText = messageTextOverride.unwrap_or_else(|| {
             self.messageProcessingDelegate.userMessage.text.clone()
         });

@@ -739,6 +739,12 @@ impl ChatHistoryDelegate {
                 || outputTokens != 0
                 || actualContextWindowSize != 0;
             if shouldSave {
+                if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
+                    chat.inputTokens = inputTokens;
+                    chat.outputTokens = outputTokens;
+                    chat.currentWindowSize = actualContextWindowSize;
+                }
+                self.emitChatHistoriesState();
                 self.chatHistoryManager
                     .updateChatTokenCounts(
                         chatId.clone(),

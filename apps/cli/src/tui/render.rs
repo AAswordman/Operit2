@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
@@ -7,8 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::app::{FocusArea, OperitTui};
 use super::helpers::{
-    centered_rect, render_message_lines, short_chat_label, transcript_max_scroll,
+    centered_rect, render_message_lines, short_chat_label, transcript_max_scroll, wrap_approx_lines,
 };
+use super::theme;
 
 const INPUT_PROMPT: &str = "> ";
 
@@ -36,9 +37,10 @@ impl OperitTui {
             root[1]
         };
 
+        let input_height = self.input_panel_height(main_area.width, main_area.height);
         let main = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .constraints([Constraint::Min(0), Constraint::Length(input_height)])
             .split(main_area);
 
         self.render_transcript(frame, main[0]);
@@ -46,29 +48,37 @@ impl OperitTui {
         self.render_footer(frame, root[2]);
         self.render_command_popup(frame, main[1]);
 
+        if self.show_model_chooser {
+            self.render_model_chooser(frame);
+        }
+
         if self.show_help {
             self.render_help_modal(frame);
+        }
+
+        if self.approval_bridge.current().is_some() {
+            self.render_approval_modal(frame);
         }
     }
 
     fn render_header(&mut self, frame: &mut Frame, area: Rect) {
         let current_chat_id = self.current_chat_id().unwrap_or_default();
-        let focus_label = match self.focus {
-            FocusArea::Chats => "chats",
-            FocusArea::Input => "input",
-        };
-        let attachment_count = self.queued_attachment_paths.len();
-        let chat_list_label = if self.show_chat_list { "shown" } else { "hidden" };
+        let title = self
+            .chats
+            .iter()
+            .find(|item| item.id == current_chat_id)
+            .map(|item| item.title.as_str())
+            .unwrap_or("New Chat");
         let spans = Line::from(vec![
-            Span::styled(" Operit2 ", Style::default().fg(Color::Black).bg(Color::Cyan)),
+            Span::styled(
+                format!(" {} ", short_chat_label(&current_chat_id)),
+                Style::default().fg(theme::TEXT_INVERTED).bg(theme::ACCENT),
+            ),
             Span::raw(" "),
             Span::styled(
-                format!("chat={} ", short_chat_label(&current_chat_id)),
+                title.to_string(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("focus={} ", focus_label)),
-            Span::raw(format!("chats={} ", chat_list_label)),
-            Span::raw(format!("attachments={} ", attachment_count)),
         ]);
         frame.render_widget(Paragraph::new(spans), area);
     }
@@ -87,7 +97,7 @@ impl OperitTui {
                         )),
                         Line::from(Span::styled(
                             item.secondary.clone(),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(theme::TEXT_SUBTLE),
                         )),
                     ])
                 })
@@ -95,7 +105,7 @@ impl OperitTui {
         };
 
         let border_style = if self.focus == FocusArea::Chats {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme::ACCENT)
         } else {
             Style::default()
         };
@@ -103,8 +113,8 @@ impl OperitTui {
             .block(Block::default().title("Chats").borders(Borders::ALL).border_style(border_style))
             .highlight_style(
                 Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::TEXT)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">> ");
@@ -119,14 +129,15 @@ impl OperitTui {
         let messages = self.current_messages();
         let is_loading = self.current_chat_is_loading();
         let input_state = self.current_chat_input_processing_state();
-        let thinking_text = thinking_indicator_text();
+        let thinking_line = thinking_indicator_line();
         let content_width = area.width.saturating_sub(2).max(1) as usize;
         let transcript_lines = render_message_lines(
             &messages,
             content_width,
             is_loading,
             &input_state,
-            &thinking_text,
+            &thinking_line,
+            &mut self.typewriter_state,
         );
         let max_scroll = transcript_max_scroll(&transcript_lines, area);
         self.transcript_viewport_height = area.height.saturating_sub(2).max(1);
@@ -140,14 +151,13 @@ impl OperitTui {
 
         let paragraph = Paragraph::new(Text::from(transcript_lines))
             .block(Block::default().title("Conversation").borders(Borders::ALL))
-            .wrap(Wrap { trim: false })
             .scroll((self.transcript_scroll, 0));
         frame.render_widget(paragraph, area);
     }
 
     fn render_input(&self, frame: &mut Frame, area: Rect) {
         let border_style = if self.focus == FocusArea::Input {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme::ACCENT)
         } else {
             Style::default()
         };
@@ -161,7 +171,19 @@ impl OperitTui {
             .saturating_sub(prompt_width as u16)
             .saturating_sub(1) as usize;
         let visible_text = self.input_view_text(text_width, inner.height as usize);
-        let rendered_text = format!("{INPUT_PROMPT}{visible_text}");
+        let prompt_indent = " ".repeat(prompt_width);
+        let rendered_text = visible_text
+            .split('\n')
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    format!("{INPUT_PROMPT}{line}")
+                } else {
+                    format!("{prompt_indent}{line}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         let input = Paragraph::new(rendered_text)
             .block(input_block)
             .wrap(Wrap { trim: false });
@@ -174,6 +196,21 @@ impl OperitTui {
                 inner.y + cursor_y as u16,
             ));
         }
+    }
+
+    fn input_panel_height(&self, area_width: u16, area_height: u16) -> u16 {
+        let prompt_width = INPUT_PROMPT.chars().count() as u16;
+        let text_width = area_width
+            .saturating_sub(2)
+            .saturating_sub(prompt_width)
+            .saturating_sub(1)
+            .max(1) as usize;
+        let content_lines = wrap_approx_lines(&self.input, text_width).len() as u16;
+        let max_content_lines = area_height
+            .saturating_sub(6)
+            .min(8)
+            .max(1);
+        content_lines.min(max_content_lines).max(1) + 2
     }
 
     fn render_command_popup(&self, frame: &mut Frame, input_area: Rect) {
@@ -207,8 +244,8 @@ impl OperitTui {
             .map(|(index, spec)| {
                 let style = if index == selected {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
+                        .fg(theme::TEXT_INVERTED)
+                        .bg(theme::ACCENT)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
@@ -217,7 +254,7 @@ impl OperitTui {
                     Span::styled(spec.usage.to_string(), style),
                     Span::styled(
                         format!("  {}", spec.description),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(theme::TEXT_SUBTLE),
                     ),
                 ]))
             })
@@ -243,10 +280,63 @@ impl OperitTui {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {text}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::TEXT_SUBTLE),
             ))),
             area,
         );
+    }
+
+    fn render_model_chooser(&self, frame: &mut Frame) {
+        let popup = centered_rect(84, 70, frame.area());
+        frame.render_widget(Clear, popup);
+        let items = self
+            .model_choices
+            .iter()
+            .map(|choice| {
+                let marker = if choice.selected { "current" } else { "" };
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{}[{}]", choice.config_name, choice.model_index),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(choice.provider_name, Style::default().fg(theme::ACCENT)),
+                        Span::raw(" "),
+                        Span::styled(marker, Style::default().fg(theme::ACCENT_STRONG)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(&choice.model_name, Style::default()),
+                        Span::styled(
+                            format!("  {}", choice.config_id),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        ),
+                    ]),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .title("Choose Chat Model")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::ACCENT)),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::TEXT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+        let mut state = ListState::default();
+        if !self.model_choices.is_empty() {
+            state.select(Some(
+                self.selected_model_choice_index
+                    .min(self.model_choices.len().saturating_sub(1)),
+            ));
+        }
+        frame.render_stateful_widget(list, popup, &mut state);
     }
 
     fn render_help_modal(&self, frame: &mut Frame) {
@@ -261,6 +351,7 @@ impl OperitTui {
             Line::from("Tab: complete command / switch focus"),
             Line::from("Enter: send message / activate selected chat"),
             Line::from("F3 or /switch: toggle chat list"),
+            Line::from("/resume: resume previous chat"),
             Line::from("Up/Down: select chat when chat list is focused"),
             Line::from("Ctrl+J: insert newline in input"),
             Line::from("Ctrl+N: create new chat"),
@@ -269,14 +360,18 @@ impl OperitTui {
             Line::from("PageUp/PageDown: scroll conversation by page"),
             Line::from("Ctrl+U/Ctrl+D: scroll conversation by half page"),
             Line::from("Ctrl+Home/Ctrl+End: top / bottom conversation"),
-            Line::from("Esc: close help / clear status"),
+            Line::from("Esc: cancel request / close help / clear status"),
             Line::from(""),
             Line::from("Local commands:"),
             Line::from("/help"),
             Line::from("/new [--character <name>] [--group-card <id>] [--group <name>]"),
             Line::from("/switch"),
+            Line::from("/resume"),
             Line::from("/max"),
-            Line::from("/model current | /model list | /model use <config-id> [model-index]"),
+            Line::from("/model current | /model list | /model choose"),
+            Line::from("/model use <config-id> [model-index]"),
+            Line::from("/approval | /approval list|allow|ask|forbid"),
+            Line::from("/approval tool <tool> <allow|ask|forbid|clear>"),
             Line::from("/attach <path>"),
             Line::from("/attachments"),
             Line::from("/clear-attachments"),
@@ -287,13 +382,112 @@ impl OperitTui {
             .wrap(Wrap { trim: false });
         frame.render_widget(help, popup);
     }
+
+    fn render_approval_modal(&self, frame: &mut Frame) {
+        let Some(request) = self.approval_bridge.current() else {
+            return;
+        };
+        let popup = centered_rect(76, 44, frame.area());
+        frame.render_widget(Clear, popup);
+        let elapsed = request.requested_at.elapsed().as_secs();
+        let params = if request.tool.parameters.is_empty() {
+            "params: none".to_string()
+        } else {
+            request
+                .tool
+                .parameters
+                .iter()
+                .map(|parameter| format!("{}={}", parameter.name, parameter.value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let lines = vec![
+            Line::from(Span::styled(
+                "Tool approval required",
+                Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("tool: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(request.tool.name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("operation: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::raw(request.description),
+            ]),
+            Line::from(vec![
+                Span::styled("parameters: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(params, Style::default().fg(theme::TEXT_MUTED)),
+            ]),
+            Line::from(vec![
+                Span::styled("timeout: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::raw(format!("{}s / 60s", elapsed.min(60))),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("1 ", Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD)),
+                Span::raw("yes, allow once"),
+            ]),
+            Line::from(vec![
+                Span::styled("2 ", Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD)),
+                Span::raw("no, deny"),
+            ]),
+            Line::from(vec![
+                Span::styled("3 ", Style::default().fg(theme::ACCENT_DIM).add_modifier(Modifier::BOLD)),
+                Span::raw("yes, always allow this tool"),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Shortcuts: y=yes, n=no, a=always, Esc=no",
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+        ];
+        let modal = Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .title("Approval")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(modal, popup);
+    }
 }
 
-fn thinking_indicator_text() -> String {
+fn thinking_indicator_line() -> Line<'static> {
     let elapsed_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_millis();
-    let dots = ((elapsed_ms / 450) % 4) as usize;
-    format!("thinking{}", ".".repeat(dots))
+    let text = "thinking";
+    let chars = text.chars().collect::<Vec<_>>();
+    let sweep_len = chars.len() + 5;
+    let sweep = ((elapsed_ms / 145) % sweep_len as u128) as isize - 2;
+    let mut spans = Vec::new();
+    for (index, ch) in chars.into_iter().enumerate() {
+        let distance = (index as isize - sweep).abs();
+        let style = match distance {
+            0 => Style::default()
+                .fg(theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD),
+            1 => Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::ITALIC),
+            2 => Style::default()
+                .fg(theme::TEXT_MUTED)
+                .add_modifier(Modifier::ITALIC),
+            _ => Style::default()
+                .fg(theme::TEXT_SUBTLE)
+                .add_modifier(Modifier::DIM | Modifier::ITALIC),
+        };
+        spans.push(Span::styled(ch.to_string(), style));
+    }
+    let dots = ((elapsed_ms / 360) % 4) as usize;
+    spans.push(Span::styled(
+        ".".repeat(dots),
+        Style::default()
+            .fg(theme::TEXT_SUBTLE)
+            .add_modifier(Modifier::DIM | Modifier::ITALIC),
+    ));
+    Line::from(spans)
 }
