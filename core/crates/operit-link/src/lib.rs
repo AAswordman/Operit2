@@ -1,12 +1,15 @@
 pub mod client;
-pub mod local;
 pub mod protocol;
-pub mod registry;
+pub mod remote;
 
 pub use client::CoreLinkClient;
-pub use local::LocalCoreProxy;
 pub use protocol::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreLinkError, CoreObjectPath,
-    CoreRequestId, CoreValue, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
+    CoreObjectPath, CoreRequestId, CoreValue, CoreWatchRequest,
 };
-pub use registry::{CoreMethodRegistry, CoreWatchRegistry};
+pub use remote::{
+    PairedRemoteSession, PairedRemoteSessionRecord, PairFinishRequest, PairFinishResponse,
+    PairStartRequest, PairStartResponse, PairStartState, RemoteLinkClient, RemoteLinkServer,
+    RemoteLinkServerConfig, RemoteSessionInfoEnvelope, RemoteSessionInfoResponse, RemoteWsEnvelope,
+    RemoteWsPayload, RemoteWsResponse,
+};

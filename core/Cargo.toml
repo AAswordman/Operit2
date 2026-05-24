@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/operit-host-api",
+    "crates/operit-core-proxy",
     "crates/operit-link",
     "crates/operit-store",
     "crates/operit-runtime",

@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Stdout};
 use std::time::Duration;
 
@@ -9,30 +10,40 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use operit_link::LocalCoreProxy;
 use operit_runtime::core::tools::ToolPermissionSystem::{
     PermissionLevel, PermissionRequestResult,
 };
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
+use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
 use operit_runtime::data::model::ChatHistory::ChatHistory;
 use operit_runtime::data::model::CharacterCard::CharacterCardChatModelBindingMode;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
+use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::FunctionType::FunctionType;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 use operit_runtime::data::model::ModelConfigData::{
     getModelByIndex, getModelList, getValidModelIndex,
 };
+use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::util::AppLogger::AppLogger;
+use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use serde::Deserialize;
 
 use super::approval::TuiApprovalBridge;
 use super::helpers::{short_chat_label, split_command_line};
-use super::link_proxy_rs::TuiLocalCoreBorrowExt;
+use super::link_proxy_rs::TuiCore;
 use super::typewriter::TypewriterState;
-use crate::{parse_shell_args, ChatSendArgs, ShellArgs};
+use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
 
 pub(super) struct OperitTui {
-    pub(super) core: LocalCoreProxy,
+    pub(super) core: TuiCore,
     pub(super) initial_shell_args: ShellArgs,
+    pub(super) current_chat_id_cache: Option<String>,
+    pub(super) current_messages_cache: Vec<ChatMessage>,
+    pub(super) current_chat_is_loading_cache: bool,
+    pub(super) current_chat_input_processing_state_cache: InputProcessingState,
+    pub(super) active_streaming_chat_ids_cache: HashSet<String>,
+    pub(super) current_window_size_cache: i32,
     pub(super) chats: Vec<ChatListItem>,
     pub(super) selected_chat_index: usize,
     pub(super) model_choices: Vec<ModelChoiceItem>,
@@ -54,6 +65,9 @@ pub(super) struct OperitTui {
     pub(super) last_current_chat_loading: bool,
     pub(super) awaiting_runtime_loading: bool,
     pub(super) typewriter_state: TypewriterState,
+    pub(super) response_stream_subscription_chat_ids: HashSet<String>,
+    pub(super) response_stream_text_by_chat_id: HashMap<String, String>,
+    pub(super) response_stream_revision_tracker_by_chat_id: HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) show_help: bool,
     pub(super) should_quit: bool,
@@ -78,6 +92,16 @@ pub(super) struct ModelChoiceItem {
     pub(super) selected: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct ResponseStreamLinkEvent {
+    #[serde(rename = "chatId")]
+    chatId: String,
+    #[serde(rename = "type")]
+    event_type: String,
+    value: Option<String>,
+    id: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusArea {
     Chats,
@@ -86,14 +110,18 @@ pub(super) enum FocusArea {
 }
 
 impl OperitTui {
-    pub(super) fn new(
-        mut core: LocalCoreProxy,
+    pub(super) async fn new(
+        mut core: TuiCore,
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
+        approval_bridge: TuiApprovalBridge,
     ) -> Result<Self, String> {
-        let chats = {
-            core.withMainChatCore(load_chat_list_from_core)
-        };
+        let chat_histories = core
+            .chat_runtime_holder_main()
+            .chatHistoriesFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        let chats = chat_histories_to_list(chat_histories);
         let selected_chat_index = chats
             .iter()
             .position(|item| item.id == initial_chat_id)
@@ -101,21 +129,51 @@ impl OperitTui {
         let status_message =
             "F3 chats | Enter send | Esc cancel | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help"
                 .to_string();
-        let _ = core
-            .withMainChatCore(|core| core.currentChatIdFlow().value())
+        let current_chat_id_cache = core
+            .chat_runtime_holder_main()
+            .currentChatIdFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        let current_messages_cache = core
+            .chat_runtime_holder_main()
+            .chatHistoryFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        let current_chat_is_loading_cache = core
+            .chat_runtime_holder_main()
+            .currentChatIsLoading()
+            .await
+            .map_err(|error| error.to_string())?;
+        let current_chat_input_processing_state_cache = core
+            .chat_runtime_holder_main()
+            .currentChatInputProcessingState()
+            .await
+            .map_err(|error| error.to_string())?;
+        let active_streaming_chat_ids_cache = core
+            .chat_runtime_holder_main()
+            .activeStreamingChatIdsFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        let current_window_size_cache = core
+            .chat_runtime_holder_main()
+            .currentWindowSizeFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        current_chat_id_cache
+            .as_ref()
             .ok_or_else(|| "no active chat in tui".to_string())?;
-        let approval_bridge = TuiApprovalBridge::new();
-        {
-            let bridge = approval_bridge.clone();
-            core.withToolHandler(|handler| {
-                handler
-                .getToolPermissionSystem()
-                .setPermissionRequester(move |tool, description| bridge.request(tool, description));
-            });
-        }
+        core.watchMainChatGeneratedStateFlows()
+            .await
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             core,
             initial_shell_args,
+            current_chat_id_cache,
+            current_messages_cache,
+            current_chat_is_loading_cache,
+            current_chat_input_processing_state_cache,
+            active_streaming_chat_ids_cache,
+            current_window_size_cache,
             chats,
             selected_chat_index,
             model_choices: Vec::new(),
@@ -137,6 +195,9 @@ impl OperitTui {
             last_current_chat_loading: false,
             awaiting_runtime_loading: false,
             typewriter_state: TypewriterState::default(),
+            response_stream_subscription_chat_ids: HashSet::new(),
+            response_stream_text_by_chat_id: HashMap::new(),
+            response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
             show_help: false,
             should_quit: false,
@@ -182,7 +243,9 @@ impl OperitTui {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<(), String> {
         while !self.should_quit {
-            self.refresh_runtime_status();
+            self.apply_pushed_events();
+            self.sync_response_stream_subscriptions().await;
+            self.refresh_runtime_status().await;
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
@@ -234,16 +297,16 @@ impl OperitTui {
                 return Ok(());
             }
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.create_new_chat(self.initial_shell_args.clone())?;
+                self.create_new_chat(self.initial_shell_args.clone()).await?;
                 return Ok(());
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
-                self.refresh_chats();
+                self.refresh_chats().await;
                 self.status_message = "chat list refreshed".to_string();
                 return Ok(());
             }
             (KeyCode::F(3), _) => {
-                self.toggle_chat_list();
+                self.toggle_chat_list().await;
                 return Ok(());
             }
             (KeyCode::PageUp, _) => {
@@ -272,7 +335,7 @@ impl OperitTui {
             }
             (KeyCode::Esc, _) => {
                 if self.current_chat_is_loading() {
-                    self.cancel_current_request()?;
+                    self.cancel_current_request().await?;
                     return Ok(());
                 }
                 if self.show_model_chooser {
@@ -311,8 +374,8 @@ impl OperitTui {
         }
 
         match self.focus {
-            FocusArea::Chats => self.handle_chat_list_key(key),
-            FocusArea::ModelChooser => self.handle_model_chooser_key(key),
+            FocusArea::Chats => self.handle_chat_list_key(key).await,
+            FocusArea::ModelChooser => self.handle_model_chooser_key(key).await,
             FocusArea::Input => self.handle_input_key(key).await,
         }
     }
@@ -365,7 +428,7 @@ impl OperitTui {
         (self.transcript_viewport_height / 2).max(1)
     }
 
-    fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
+    async fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
         match key.code {
             KeyCode::Up => {
                 if self.selected_chat_index > 0 {
@@ -379,7 +442,7 @@ impl OperitTui {
             }
             KeyCode::Enter => {
                 if let Some(item) = self.chats.get(self.selected_chat_index) {
-                    self.switch_to_chat(item.id.clone())?;
+                    self.switch_to_chat(item.id.clone()).await?;
                 }
             }
             _ => {}
@@ -387,7 +450,7 @@ impl OperitTui {
         Ok(())
     }
 
-    fn handle_model_chooser_key(&mut self, key: KeyEvent) -> Result<(), String> {
+    async fn handle_model_chooser_key(&mut self, key: KeyEvent) -> Result<(), String> {
         match key.code {
             KeyCode::Up => {
                 if self.selected_model_choice_index > 0 {
@@ -400,17 +463,20 @@ impl OperitTui {
                 }
             }
             KeyCode::Enter => {
-                self.apply_selected_model_choice()?;
+                self.apply_selected_model_choice().await?;
             }
             _ => {}
         }
         Ok(())
     }
 
-    fn cancel_current_request(&mut self) -> Result<(), String> {
+    async fn cancel_current_request(&mut self) -> Result<(), String> {
         let chat_id = self.current_chat_id()?;
         self.core
-            .withMainChatCore(|core| core.cancelCurrentMessage());
+            .chat_runtime_holder_main()
+            .cancelCurrentMessage()
+            .await
+            .map_err(|error| error.to_string())?;
         self.last_current_chat_loading = false;
         self.awaiting_runtime_loading = false;
         self.follow_transcript = true;
@@ -449,14 +515,73 @@ impl OperitTui {
             attachmentPaths: attachment_paths,
             replyToTimestamp: None,
         };
-        let result = self.core.beginChatMessage(send_args).await?;
-        let active_chat_id = result.chatId;
-        self.refresh_chats();
+        let active_chat_id = self.begin_chat_message(send_args).await?;
+        self.refresh_chats().await;
         self.select_chat_by_id(&active_chat_id);
         self.last_current_chat_loading = true;
         self.awaiting_runtime_loading = true;
         self.status_message = "streaming".to_string();
         Ok(())
+    }
+
+    async fn begin_chat_message(&mut self, send_args: ChatSendArgs) -> Result<String, String> {
+        self.core
+            .preferences_model_config_manager()
+            .initializeIfNeeded()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.core
+            .preferences_functional_config_manager()
+            .initializeIfNeeded()
+            .await
+            .map_err(|error| error.to_string())?;
+        let chat_mapping = self
+            .core
+            .preferences_functional_config_manager()
+            .getConfigMappingForFunction(FunctionType::CHAT)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(chat_id) = send_args.chatId.as_ref() {
+            self.core
+                .chat_runtime_holder_main()
+                .switchChat(chat_id.clone())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        let attachments = build_attachments(&send_args.attachmentPaths)?;
+        let reply_to_message = match send_args.replyToTimestamp {
+            Some(timestamp) => Some(
+                self.current_messages_cache
+                    .iter()
+                    .find(|message| message.timestamp == timestamp)
+                    .cloned()
+                    .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
+            ),
+            None => None,
+        };
+        self.core
+            .chat_runtime_holder_main()
+            .updateUserMessage(send_args.message)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.core
+            .chat_runtime_holder_main()
+            .sendUserMessage(
+                PromptFunctionType::CHAT,
+                None,
+                None,
+                None,
+                None,
+                Some(chat_mapping.configId),
+                Some(chat_mapping.modelIndex),
+                attachments,
+                reply_to_message,
+                ChatTurnOptions::default(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        self.refresh_core_snapshot().await?;
+        self.current_chat_id()
     }
 
     async fn handle_local_command(&mut self, input: &str) -> Result<(), String> {
@@ -474,22 +599,22 @@ impl OperitTui {
             }
             "new" => {
                 let shell_args = parse_shell_args(&parts[1..])?;
-                self.create_new_chat(shell_args)?;
+                self.create_new_chat(shell_args).await?;
             }
             "switch" => {
-                self.toggle_chat_list();
+                self.toggle_chat_list().await;
             }
             "resume" => {
-                self.resume_previous_chat()?;
+                self.resume_previous_chat().await?;
             }
             "max" => {
-                self.toggle_max_context_mode()?;
+                self.toggle_max_context_mode().await?;
             }
             "model" => {
-                self.handle_model_command(&parts[1..])?;
+                self.handle_model_command(&parts[1..]).await?;
             }
             "approval" => {
-                self.handle_approval_command(&parts[1..])?;
+                self.handle_approval_command(&parts[1..]).await?;
             }
             "attach" => {
                 let path = parts
@@ -539,17 +664,20 @@ impl OperitTui {
         }
     }
 
-    fn handle_approval_command(&mut self, args: &[String]) -> Result<(), String> {
-        let permissionSystem = self
-            .core
-            .withToolHandler(|handler| handler.getToolPermissionSystem());
+    async fn handle_approval_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
             None | Some("status") => {
-                let master = permissionSystem
+                let master = self
+                    .core
+                    .permissions_tool_permission_system()
                     .getMasterSwitch()
+                    .await
                     .map_err(|error| error.to_string())?;
-                let overrides = permissionSystem
+                let overrides = self
+                    .core
+                    .permissions_tool_permission_system()
                     .getToolPermissionOverrides()
+                    .await
                     .map_err(|error| error.to_string())?;
                 self.status_message = format!(
                     "approval master={} overrides={}",
@@ -559,8 +687,10 @@ impl OperitTui {
             }
             Some("allow") | Some("ask") | Some("forbid") => {
                 let level = parse_permission_level(args.first().map(String::as_str))?;
-                permissionSystem
+                self.core
+                    .permissions_tool_permission_system()
                     .saveMasterSwitch(level.clone())
+                    .await
                     .map_err(|error| error.to_string())?;
                 self.status_message = format!("approval master={}", level.name());
             }
@@ -570,15 +700,19 @@ impl OperitTui {
                     .ok_or_else(|| "usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string())?;
                 match args.get(2).map(String::as_str) {
                     Some("clear") => {
-                        permissionSystem
+                        self.core
+                            .permissions_tool_permission_system()
                             .clearToolPermission(toolName)
+                            .await
                             .map_err(|error| error.to_string())?;
                         self.status_message = format!("approval cleared: {toolName}");
                     }
                     value @ (Some("allow") | Some("ask") | Some("forbid")) => {
                         let level = parse_permission_level(value)?;
-                        permissionSystem
+                        self.core
+                            .permissions_tool_permission_system()
                             .saveToolPermission(toolName, level.clone())
+                            .await
                             .map_err(|error| error.to_string())?;
                         self.status_message = format!("approval {toolName}={}", level.name());
                     }
@@ -588,8 +722,11 @@ impl OperitTui {
                 }
             }
             Some("list") => {
-                let overrides = permissionSystem
+                let overrides = self
+                    .core
+                    .permissions_tool_permission_system()
                     .getToolPermissionOverrides()
+                    .await
                     .map_err(|error| error.to_string())?;
                 self.status_message = if overrides.is_empty() {
                     "approval overrides=none".to_string()
@@ -613,12 +750,12 @@ impl OperitTui {
         Ok(())
     }
 
-    fn handle_model_command(&mut self, args: &[String]) -> Result<(), String> {
+    async fn handle_model_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
-            None | Some("current") => self.show_current_chat_model(),
-            Some("list") => self.list_chat_models(),
-            Some("choose") => self.open_model_chooser(),
-            Some("use") => self.use_chat_model(&args[1..]),
+            None | Some("current") => self.show_current_chat_model().await,
+            Some("list") => self.list_chat_models().await,
+            Some("choose") => self.open_model_chooser().await,
+            Some("use") => self.use_chat_model(&args[1..]).await,
             Some("help") => {
                 self.status_message =
                     "usage: /model current | /model list | /model choose | /model use <config-id> [model-index]"
@@ -632,9 +769,9 @@ impl OperitTui {
         }
     }
 
-    fn show_current_chat_model(&mut self) -> Result<(), String> {
+    async fn show_current_chat_model(&mut self) -> Result<(), String> {
         let (config_id, actual_index, provider_name, selected_model_name) =
-            self.current_chat_model_status_parts()?;
+            self.current_chat_model_status_parts().await?;
         self.status_message = format!(
             "CHAT -> {}[{}] {} / {}",
             config_id,
@@ -642,25 +779,31 @@ impl OperitTui {
             provider_name,
             selected_model_name
         );
-        self.refresh_context_usage_label();
+        self.refresh_context_usage_label().await;
         Ok(())
     }
 
-    fn current_chat_model_status_parts(&mut self) -> Result<(String, i32, &'static str, String), String> {
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
-        model_config_manager
+    async fn current_chat_model_status_parts(&mut self) -> Result<(String, i32, &'static str, String), String> {
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = functional_config_manager
+        let mapping = self.core
+            .preferences_functional_config_manager()
             .getConfigMappingForFunction(FunctionType::CHAT)
+            .await
             .map_err(|error| error.to_string())?;
-        let config = model_config_manager
+        let config = self.core
+            .preferences_model_config_manager()
             .getModelConfig(&mapping.configId)
+            .await
             .map_err(|error| error.to_string())?;
         let actual_index = getValidModelIndex(&config.modelName, mapping.modelIndex);
         let selected_model_name = getModelByIndex(&config.modelName, actual_index);
@@ -672,23 +815,28 @@ impl OperitTui {
         ))
     }
 
-    fn current_chat_model_status_label(&mut self) -> Result<String, String> {
-        let (_, _, _, selected_model_name) = self.current_chat_model_status_parts()?;
+    async fn current_chat_model_status_label(&mut self) -> Result<String, String> {
+        let (_, _, _, selected_model_name) = self.current_chat_model_status_parts().await?;
         Ok(selected_model_name)
     }
 
-    fn list_chat_models(&mut self) -> Result<(), String> {
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        model_config_manager
+    async fn list_chat_models(&mut self) -> Result<(), String> {
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
         let mut entries = Vec::new();
-        for config_id in model_config_manager
+        for config_id in self.core
+            .preferences_model_config_manager()
             .getConfigIds()
+            .await
             .map_err(|error| error.to_string())?
         {
-            let config = model_config_manager
+            let config = self.core
+                .preferences_model_config_manager()
                 .getModelConfig(&config_id)
+                .await
                 .map_err(|error| error.to_string())?;
             let model_names = getModelList(&config.modelName);
             for (index, model_name) in model_names.into_iter().enumerate() {
@@ -705,8 +853,8 @@ impl OperitTui {
         Ok(())
     }
 
-    fn open_model_chooser(&mut self) -> Result<(), String> {
-        self.model_choices = self.load_model_choices()?;
+    async fn open_model_chooser(&mut self) -> Result<(), String> {
+        self.model_choices = self.load_model_choices().await?;
         if self.model_choices.is_empty() {
             self.status_message = "no model configs".to_string();
             return Ok(());
@@ -728,26 +876,34 @@ impl OperitTui {
         self.status_message = "model chooser closed".to_string();
     }
 
-    fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
-        model_config_manager
+    async fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = functional_config_manager
+        let mapping = self.core
+            .preferences_functional_config_manager()
             .getConfigMappingForFunction(FunctionType::CHAT)
+            .await
             .map_err(|error| error.to_string())?;
         let mut choices = Vec::new();
-        for config_id in model_config_manager
+        for config_id in self.core
+            .preferences_model_config_manager()
             .getConfigIds()
+            .await
             .map_err(|error| error.to_string())?
         {
-            let config = model_config_manager
+            let config = self.core
+                .preferences_model_config_manager()
                 .getModelConfig(&config_id)
+                .await
                 .map_err(|error| error.to_string())?;
             let active_model_index = if mapping.configId == config.id {
                 getValidModelIndex(&config.modelName, mapping.modelIndex)
@@ -769,19 +925,19 @@ impl OperitTui {
         Ok(choices)
     }
 
-    fn apply_selected_model_choice(&mut self) -> Result<(), String> {
+    async fn apply_selected_model_choice(&mut self) -> Result<(), String> {
         let choice = self
             .model_choices
             .get(self.selected_model_choice_index)
             .cloned()
             .ok_or_else(|| "no selected model".to_string())?;
-        self.apply_chat_model_choice(&choice)?;
+        self.apply_chat_model_choice(&choice).await?;
         self.show_model_chooser = false;
         self.focus = FocusArea::Input;
         Ok(())
     }
 
-    fn use_chat_model(&mut self, args: &[String]) -> Result<(), String> {
+    async fn use_chat_model(&mut self, args: &[String]) -> Result<(), String> {
         let config_id = match args.first() {
             Some(value) if !value.trim().is_empty() => value.trim().to_string(),
             _ => {
@@ -791,16 +947,20 @@ impl OperitTui {
         };
         let requested_model_index = parse_optional_model_index(args.get(1))?;
 
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
-        model_config_manager
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        let config = model_config_manager
+        let config = self.core
+            .preferences_model_config_manager()
             .getModelConfig(&config_id)
+            .await
             .map_err(|error| error.to_string())?;
         let model_names = getModelList(&config.modelName);
         if model_names.is_empty() {
@@ -824,29 +984,25 @@ impl OperitTui {
             model_name: model_names[requested_model_index as usize].clone(),
             selected: true,
         };
-        self.apply_chat_model_choice(&choice)?;
+        self.apply_chat_model_choice(&choice).await?;
         Ok(())
     }
 
-    fn apply_chat_model_choice(&mut self, choice: &ModelChoiceItem) -> Result<(), String> {
-        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
-        functional_config_manager
+    async fn apply_chat_model_choice(&mut self, choice: &ModelChoiceItem) -> Result<(), String> {
+        self.core
+            .preferences_functional_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .setConfigForFunctionWithIndex(
                 FunctionType::CHAT,
                 choice.config_id.clone(),
                 choice.model_index,
             )
+            .await
             .map_err(|error| error.to_string())?;
-        {
-            self.core.withMainChatCore(|core| {
-                if let Some(service) = core.enhancedAiService.as_mut() {
-                    service.refreshServiceForFunction(FunctionType::CHAT);
-                }
-            });
-        }
         self.status_message = format!(
             "CHAT -> {}[{}] {} / {}",
             choice.config_id,
@@ -854,27 +1010,32 @@ impl OperitTui {
             choice.provider_name,
             choice.model_name
         );
-        self.refresh_context_usage_label();
+        self.refresh_context_usage_label().await;
         Ok(())
     }
 
-    fn toggle_max_context_mode(&mut self) -> Result<(), String> {
-        let config_id = self.resolve_editable_chat_config_id()?;
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        model_config_manager
+    async fn toggle_max_context_mode(&mut self) -> Result<(), String> {
+        let config_id = self.resolve_editable_chat_config_id().await?;
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        let current = model_config_manager
+        let current = self.core
+            .preferences_model_config_manager()
             .getModelConfig(&config_id)
+            .await
             .map_err(|error| error.to_string())?;
         let new_value = !current.enableMaxContextMode;
-        let updated = model_config_manager
+        let updated = self.core
+            .preferences_model_config_manager()
             .updateContextSettings(
                 &config_id,
                 current.contextLength,
                 current.maxContextLength,
                 new_value,
             )
+            .await
             .map_err(|error| error.to_string())?;
         let effective_context_length = if updated.enableMaxContextMode {
             updated.maxContextLength
@@ -886,19 +1047,21 @@ impl OperitTui {
             config_id,
             format_context_length(effective_context_length)
         );
-        self.refresh_context_usage_label();
+        self.refresh_context_usage_label().await;
         Ok(())
     }
 
-    fn resolve_editable_chat_config_id(&mut self) -> Result<String, String> {
-        let active_prompt_manager = self.core.withActivePromptManager(|manager| manager);
-        if let ActivePrompt::CharacterCard { id } = active_prompt_manager
+    async fn resolve_editable_chat_config_id(&mut self) -> Result<String, String> {
+        if let ActivePrompt::CharacterCard { id } = self.core
+            .preferences_active_prompt_manager()
             .getActivePrompt()
+            .await
             .map_err(|error| error.to_string())?
         {
-            let character_card_manager = self.core.withCharacterCardManager(|manager| manager);
-            let card = character_card_manager
+            let card = self.core
+                .preferences_character_card_manager()
                 .getCharacterCard(&id)
+                .await
                 .map_err(|error| error.to_string())?;
             let binding_mode =
                 CharacterCardChatModelBindingMode::normalize(Some(card.chatModelBindingMode.as_str()));
@@ -913,44 +1076,49 @@ impl OperitTui {
             }
         }
 
-        let functional_config_manager = self.core.withFunctionalConfigManager(|manager| manager);
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        functional_config_manager
+        self.core
+            .preferences_functional_config_manager()
             .getConfigIdForFunction(FunctionType::CHAT)
+            .await
             .map_err(|error| error.to_string())
     }
 
-    fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
+    async fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
 
-        let chat_id = self.core.withMainChatCore(|core| {
-            core.createNewChat(
+        self.core
+            .chat_runtime_holder_main()
+            .createNewChat(
                 shell_args.characterCardName,
                 shell_args.group,
                 true,
                 true,
                 shell_args.characterGroupId,
-            );
-            core.currentChatIdFlow().value()
-        })
-        .ok_or_else(|| "core did not create chat".to_string())?;
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        self.refresh_core_snapshot().await?;
+        let chat_id = self.current_chat_id()?;
         self.follow_transcript = true;
-        self.refresh_chats();
+        self.refresh_chats().await;
         self.select_chat_by_id(&chat_id);
         self.status_message = "new chat".to_string();
         Ok(())
     }
 
-    fn toggle_chat_list(&mut self) {
+    async fn toggle_chat_list(&mut self) {
         self.show_chat_list = !self.show_chat_list;
         if self.show_chat_list {
             self.focus = FocusArea::Chats;
-            self.refresh_chats();
+            self.refresh_chats().await;
             if let Ok(chat_id) = self.current_chat_id() {
                 self.select_chat_by_id(&chat_id);
             }
@@ -961,13 +1129,13 @@ impl OperitTui {
         }
     }
 
-    fn resume_previous_chat(&mut self) -> Result<(), String> {
+    async fn resume_previous_chat(&mut self) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
 
-        self.refresh_chats();
+        self.refresh_chats().await;
         let current_chat_id = self.current_chat_id()?;
         let target = self
             .chats
@@ -985,41 +1153,50 @@ impl OperitTui {
         };
 
         self.core
-            .withMainChatCore(|core| core.switchChat(target.id.clone()));
+            .chat_runtime_holder_main()
+            .switchChat(target.id.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.refresh_core_snapshot().await?;
         self.follow_transcript = true;
         self.select_chat_by_id(&target.id);
         self.status_message = format!("resumed chat: {}", target.title);
         Ok(())
     }
 
-    fn switch_to_chat(&mut self, chat_id: String) -> Result<(), String> {
+    async fn switch_to_chat(&mut self, chat_id: String) -> Result<(), String> {
         if self.current_chat_is_loading() {
             self.status_message = "wait for current request to finish".to_string();
             return Ok(());
         }
 
-        let exists = self.core.withMainChatCore(|core| {
-            core.chatHistoriesFlow()
-                .value()
-                .iter()
-                .any(|chat| chat.id == chat_id)
-        });
+        self.refresh_chats().await;
+        let exists = self.chats.iter().any(|chat| chat.id == chat_id);
         if !exists {
             return Err(format!("chat not found: {chat_id}"));
         }
         self.core
-            .withMainChatCore(|core| core.switchChat(chat_id.clone()));
+            .chat_runtime_holder_main()
+            .switchChat(chat_id.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.refresh_core_snapshot().await?;
         self.follow_transcript = true;
         self.select_chat_by_id(&chat_id);
         self.status_message = "switched chat".to_string();
         Ok(())
     }
 
-    fn refresh_chats(&mut self) {
+    async fn refresh_chats(&mut self) {
         let current_chat_id = self.current_chat_id().ok();
-        self.chats = {
-            self.core.withMainChatCore(load_chat_list_from_core)
-        };
+        if let Ok(chat_histories) = self
+            .core
+            .chat_runtime_holder_main()
+            .chatHistoriesFlowSnapshot()
+            .await
+        {
+            self.chats = chat_histories_to_list(chat_histories);
+        }
         if let Some(chat_id) = current_chat_id {
             self.select_chat_by_id(&chat_id);
         } else if self.selected_chat_index >= self.chats.len() {
@@ -1033,15 +1210,204 @@ impl OperitTui {
         }
     }
 
+    async fn refresh_core_snapshot(&mut self) -> Result<(), String> {
+        self.current_chat_id_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .currentChatIdFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.current_messages_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .chatHistoryFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.current_chat_is_loading_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .currentChatIsLoading()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.current_chat_input_processing_state_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .currentChatInputProcessingState()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.active_streaming_chat_ids_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .activeStreamingChatIdsFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.current_window_size_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .currentWindowSizeFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn apply_pushed_events(&mut self) {
+        for event in self.core.drainEvents() {
+            match event.propertyName.as_str() {
+                "currentChatIdFlow" => {
+                    if let Ok(value) = serde_json::from_value::<Option<String>>(event.value) {
+                        self.current_chat_id_cache = value;
+                    }
+                }
+                "chatHistoryFlow" => {
+                    if let Ok(value) = serde_json::from_value::<Vec<ChatMessage>>(event.value) {
+                        self.current_messages_cache = value;
+                    }
+                }
+                "chatHistoriesFlow" => {
+                    if let Ok(value) = serde_json::from_value::<Vec<ChatHistory>>(event.value) {
+                        self.chats = chat_histories_to_list(value);
+                        if let Some(chat_id) = self.current_chat_id_cache.clone() {
+                            self.select_chat_by_id(&chat_id);
+                        }
+                    }
+                }
+                "activeStreamingChatIdsFlow" => {
+                    if let Ok(value) = serde_json::from_value::<HashSet<String>>(event.value) {
+                        self.active_streaming_chat_ids_cache = value;
+                        self.update_current_chat_loading_from_streaming_ids();
+                        self.retain_active_response_stream_state();
+                    }
+                }
+                "getResponseStream" => {
+                    self.apply_response_stream_event(event.value);
+                }
+                "inputProcessingStateByChatIdFlow" => {
+                    if let Ok(value) = serde_json::from_value::<HashMap<String, InputProcessingState>>(event.value) {
+                        self.current_chat_input_processing_state_cache =
+                            current_input_processing_state_from_map(
+                                &value,
+                                self.current_chat_id_cache.as_ref(),
+                            );
+                    }
+                }
+                "currentWindowSizeFlow" => {
+                    if let Ok(value) = serde_json::from_value::<i32>(event.value) {
+                        self.current_window_size_cache = value;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn sync_response_stream_subscriptions(&mut self) {
+        let Some(current_chat_id) = self.current_chat_id_cache.clone() else {
+            return;
+        };
+        if !self.active_streaming_chat_ids_cache.contains(&current_chat_id) {
+            return;
+        }
+        if self.response_stream_subscription_chat_ids.contains(&current_chat_id) {
+            return;
+        }
+        if !self.current_messages_cache.iter().rev().any(|message| message.sender == "ai") {
+            return;
+        }
+        if self
+            .core
+            .watchMainChatResponseStream(current_chat_id.clone())
+            .await
+            .is_ok()
+        {
+            self.response_stream_subscription_chat_ids.insert(current_chat_id);
+        }
+    }
+
+    fn apply_response_stream_event(&mut self, value: serde_json::Value) {
+        let Ok(event) = serde_json::from_value::<ResponseStreamLinkEvent>(value) else {
+            return;
+        };
+        match event.event_type.as_str() {
+            "chunk" => {
+                let Some(chunk) = event.value else {
+                    return;
+                };
+                let tracker = self
+                    .response_stream_revision_tracker_by_chat_id
+                    .entry(event.chatId.clone())
+                    .or_insert_with(|| TextStreamRevisionTracker::new(""));
+                let content = tracker.append(&chunk);
+                self.response_stream_text_by_chat_id
+                    .insert(event.chatId, content);
+            }
+            "savepoint" => {
+                let Some(id) = event.id else {
+                    return;
+                };
+                let tracker = self
+                    .response_stream_revision_tracker_by_chat_id
+                    .entry(event.chatId)
+                    .or_insert_with(|| TextStreamRevisionTracker::new(""));
+                tracker.savepoint(&id);
+            }
+            "rollback" => {
+                let Some(id) = event.id else {
+                    return;
+                };
+                if let Some(tracker) = self
+                    .response_stream_revision_tracker_by_chat_id
+                    .get_mut(&event.chatId)
+                {
+                    if let Some(content) = tracker.rollback(&id) {
+                        self.response_stream_text_by_chat_id
+                            .insert(event.chatId, content);
+                    }
+                }
+            }
+            "completed" => {}
+            _ => {}
+        }
+    }
+
+    fn retain_active_response_stream_state(&mut self) {
+        let active = &self.active_streaming_chat_ids_cache;
+        self.response_stream_subscription_chat_ids
+            .retain(|chat_id| active.contains(chat_id));
+        self.response_stream_text_by_chat_id
+            .retain(|chat_id, _| active.contains(chat_id));
+        self.response_stream_revision_tracker_by_chat_id
+            .retain(|chat_id, _| active.contains(chat_id));
+    }
+
+    fn update_current_chat_loading_from_streaming_ids(&mut self) {
+        self.current_chat_is_loading_cache = self
+            .current_chat_id_cache
+            .as_ref()
+            .map(|chat_id| self.active_streaming_chat_ids_cache.contains(chat_id))
+            .unwrap_or(false);
+    }
+
     pub(super) fn current_chat_id(&mut self) -> Result<String, String> {
-        self.core
-            .withMainChatCore(|core| core.currentChatIdFlow().value())
+        self.current_chat_id_cache
+            .clone()
             .ok_or_else(|| "no active chat in tui".to_string())
     }
 
     pub(super) fn current_messages(&mut self) -> Vec<ChatMessage> {
-        self.core
-            .withMainChatCore(|core| core.chatHistoryFlow().value())
+        let mut messages = self.current_messages_cache.clone();
+        let Some(chat_id) = self.current_chat_id_cache.as_ref() else {
+            return messages;
+        };
+        let Some(content) = self.response_stream_text_by_chat_id.get(chat_id) else {
+            return messages;
+        };
+        if content.is_empty() {
+            return messages;
+        }
+        if let Some(message) = messages.iter_mut().rev().find(|message| message.sender == "ai") {
+            message.content = content.clone();
+        }
+        messages
     }
 
     pub(super) fn current_chat_is_loading(&mut self) -> bool {
@@ -1049,16 +1415,15 @@ impl OperitTui {
     }
 
     fn raw_current_chat_is_loading(&mut self) -> bool {
-        self.core.withMainChatCore(|core| core.currentChatIsLoading())
+        self.current_chat_is_loading_cache
     }
 
     pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
-        self.core
-            .withMainChatCore(|core| core.currentChatInputProcessingState())
+        self.current_chat_input_processing_state_cache.clone()
     }
 
-    fn refresh_runtime_status(&mut self) {
-        self.refresh_context_usage_label();
+    async fn refresh_runtime_status(&mut self) {
+        self.refresh_context_usage_label().await;
         let is_loading = self.raw_current_chat_is_loading();
         let state = self.current_chat_input_processing_state();
         if self.awaiting_runtime_loading && !is_loading {
@@ -1083,7 +1448,7 @@ impl OperitTui {
             self.awaiting_runtime_loading = false;
             self.follow_transcript = true;
             let status = match &state {
-                InputProcessingState::Idle => match self.current_chat_model_status_label() {
+                InputProcessingState::Idle => match self.current_chat_model_status_label().await {
                     Ok(label) => label,
                     Err(error) => error,
                 },
@@ -1094,13 +1459,13 @@ impl OperitTui {
         } else if self.last_current_chat_loading {
             self.awaiting_runtime_loading = false;
             self.follow_transcript = true;
-            self.refresh_chats();
-            match self.current_chat_model_status_label() {
+            self.refresh_chats().await;
+            match self.current_chat_model_status_label().await {
                 Ok(label) => self.set_status_message(label),
                 Err(error) => self.set_status_message(error),
             }
         } else if matches!(state, InputProcessingState::Idle | InputProcessingState::Completed) {
-            match self.current_chat_model_status_label() {
+            match self.current_chat_model_status_label().await {
                 Ok(label) => self.set_status_message(label),
                 Err(error) => self.set_status_message(error),
             }
@@ -1121,8 +1486,8 @@ impl OperitTui {
         self.status_message = message;
     }
 
-    fn refresh_context_usage_label(&mut self) {
-        match self.current_context_usage_label() {
+    async fn refresh_context_usage_label(&mut self) {
+        match self.current_context_usage_label().await {
             Ok(label) => {
                 self.context_usage_label = label;
             }
@@ -1132,14 +1497,17 @@ impl OperitTui {
         }
     }
 
-    fn current_context_usage_label(&mut self) -> Result<String, String> {
-        let config_id = self.resolve_editable_chat_config_id()?;
-        let model_config_manager = self.core.withModelConfigManager(|manager| manager);
-        model_config_manager
+    async fn current_context_usage_label(&mut self) -> Result<String, String> {
+        let config_id = self.resolve_editable_chat_config_id().await?;
+        self.core
+            .preferences_model_config_manager()
             .initializeIfNeeded()
+            .await
             .map_err(|error| error.to_string())?;
-        let config = model_config_manager
+        let config = self.core
+            .preferences_model_config_manager()
             .getModelConfig(&config_id)
+            .await
             .map_err(|error| error.to_string())?;
         let effective_context_length = if config.enableMaxContextMode {
             config.maxContextLength
@@ -1147,10 +1515,7 @@ impl OperitTui {
             config.contextLength
         };
         let max_tokens = (effective_context_length * 1024.0) as i32;
-        let current_window_size = {
-            self.core
-                .withMainChatCore(|core| core.currentWindowSizeFlow().value())
-        };
+        let current_window_size = self.current_window_size_cache;
         if max_tokens <= 0 {
             return Ok(format!("context {} / {}", current_window_size.max(0), max_tokens));
         }
@@ -1207,11 +1572,8 @@ fn parse_permission_level(value: Option<&str>) -> Result<PermissionLevel, String
     }
 }
 
-fn load_chat_list_from_core(
-    core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore,
-) -> Vec<ChatListItem> {
-    core.chatHistoriesFlow()
-        .value()
+fn chat_histories_to_list(chat_histories: Vec<ChatHistory>) -> Vec<ChatListItem> {
+    chat_histories
         .into_iter()
         .map(|chat| {
             let title = if chat.title.trim().is_empty() {
@@ -1243,6 +1605,24 @@ fn load_chat_list_from_core(
             }
         })
         .collect()
+}
+
+fn build_attachments(paths: &[String]) -> Result<Vec<AttachmentInfo>, String> {
+    paths
+        .iter()
+        .map(|path| build_attachment_info(path))
+        .collect()
+}
+
+fn current_input_processing_state_from_map(
+    value: &HashMap<String, InputProcessingState>,
+    chat_id: Option<&String>,
+) -> InputProcessingState {
+    chat_id
+        .and_then(|chat_id| value.get(chat_id))
+        .or_else(|| value.get("__DEFAULT_CHAT__"))
+        .cloned()
+        .unwrap_or(InputProcessingState::Idle)
 }
 
 fn format_context_length(value: f32) -> String {

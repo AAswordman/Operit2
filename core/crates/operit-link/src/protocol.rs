@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CoreRequestId(pub String);
@@ -50,6 +51,7 @@ impl From<String> for CoreObjectPath {
 }
 
 pub type CoreValue = Value;
+pub type CoreEventStream = mpsc::UnboundedReceiver<CoreEvent>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreCallRequest {
@@ -171,3 +173,11 @@ impl CoreLinkError {
         Self::new("INTERNAL_ERROR", message)
     }
 }
+
+impl std::fmt::Display for CoreLinkError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CoreLinkError {}

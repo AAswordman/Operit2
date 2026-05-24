@@ -80,7 +80,8 @@ pub(super) fn render_message_lines(
             block_style,
             message_layout,
         ));
-        let is_streaming_message = message.sender == "ai" && message.contentStream.is_some();
+        let is_streaming_message = message.sender == "ai"
+            && (message.contentStream.is_some() || (is_loading && index + 1 == messages.len()));
         let full_content = if is_streaming_message {
             message
                 .contentStream

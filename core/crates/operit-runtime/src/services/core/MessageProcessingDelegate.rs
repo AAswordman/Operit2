@@ -27,7 +27,6 @@ use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStrea
 use crate::util::stream::Stream::Stream;
 use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 
-pub const STREAM_SCROLL_THROTTLE_MS: i64 = 200;
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 

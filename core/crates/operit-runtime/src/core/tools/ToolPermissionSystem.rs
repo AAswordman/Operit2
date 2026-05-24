@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
+
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -8,7 +10,7 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::api::chat::enhance::ToolExecutionManager::AITool;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionLevel {
     ALLOW,
     ASK,

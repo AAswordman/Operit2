@@ -14,9 +14,9 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsWebVisitHost as NativeWebVisitHost,
 };
-use operit_link::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_core_proxy::LocalCoreProxy;
 
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("operit2 CLI host is implemented for Windows and Linux.");

@@ -1,107 +1,71 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::ops::{Deref, DerefMut};
 
-use operit_link::LocalCoreProxy;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
-use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
-use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::services::ChatServiceCore::ChatServiceCore;
+use operit_core_proxy::GeneratedCoreProxy;
+use operit_link::{CoreEvent, CoreLinkClient, CoreLinkError};
 
-use crate::{begin_chat_message_with_application, ChatSendArgs, ChatSendResult};
-
-pub(super) trait TuiLocalCoreBorrowExt {
-    #[allow(non_snake_case)]
-    fn borrowApplication(&mut self) -> &mut OperitApplication;
-
-    #[allow(non_snake_case)]
-    fn withApplication<R>(&mut self, block: impl FnOnce(&mut OperitApplication) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn withMainChatCore<R>(&mut self, block: impl FnOnce(&mut ChatServiceCore) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn withToolHandler<R>(&mut self, block: impl FnOnce(AIToolHandler) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn withModelConfigManager<R>(&mut self, block: impl FnOnce(ModelConfigManager) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn withFunctionalConfigManager<R>(
-        &mut self,
-        block: impl FnOnce(FunctionalConfigManager) -> R,
-    ) -> R;
-
-    #[allow(non_snake_case)]
-    fn withActivePromptManager<R>(&mut self, block: impl FnOnce(ActivePromptManager) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn withCharacterCardManager<R>(&mut self, block: impl FnOnce(CharacterCardManager) -> R) -> R;
-
-    #[allow(non_snake_case)]
-    fn beginChatMessage(
-        &mut self,
-        sendArgs: ChatSendArgs,
-    ) -> Pin<Box<dyn Future<Output = Result<ChatSendResult, String>> + '_>>;
+pub(super) struct TuiCore {
+    proxy: GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>,
+    eventSender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    eventReceiver: tokio::sync::mpsc::UnboundedReceiver<CoreEvent>,
 }
 
-impl TuiLocalCoreBorrowExt for LocalCoreProxy {
+pub(super) fn tui_core(client: impl CoreLinkClient + Send + 'static) -> TuiCore {
+    let (eventSender, eventReceiver) = tokio::sync::mpsc::unbounded_channel();
+    TuiCore {
+        proxy: GeneratedCoreProxy::new(Box::new(client)),
+        eventSender,
+        eventReceiver,
+    }
+}
+
+impl TuiCore {
     #[allow(non_snake_case)]
-    fn borrowApplication(&mut self) -> &mut OperitApplication {
-        self.localApplicationMut()
+    pub(super) async fn watchMainChatGeneratedStateFlows(&mut self) -> Result<(), CoreLinkError> {
+        self.proxy
+            .chat_runtime_holder_main()
+            .watchAllGeneratedStateFlows(self.eventSender.clone())
+            .await
     }
 
     #[allow(non_snake_case)]
-    fn withApplication<R>(&mut self, block: impl FnOnce(&mut OperitApplication) -> R) -> R {
-        block(self.borrowApplication())
-    }
-
-    #[allow(non_snake_case)]
-    fn withMainChatCore<R>(&mut self, block: impl FnOnce(&mut ChatServiceCore) -> R) -> R {
-        self.withApplication(|application| {
-            block(application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN))
-        })
-    }
-
-    #[allow(non_snake_case)]
-    fn withToolHandler<R>(&mut self, block: impl FnOnce(AIToolHandler) -> R) -> R {
-        let context = self.withApplication(|application| application.applicationContext.clone());
-        block(AIToolHandler::getInstance(context))
-    }
-
-    #[allow(non_snake_case)]
-    fn withModelConfigManager<R>(&mut self, block: impl FnOnce(ModelConfigManager) -> R) -> R {
-        block(ModelConfigManager::default())
-    }
-
-    #[allow(non_snake_case)]
-    fn withFunctionalConfigManager<R>(
+    pub(super) async fn watchMainChatResponseStream(
         &mut self,
-        block: impl FnOnce(FunctionalConfigManager) -> R,
-    ) -> R {
-        block(FunctionalConfigManager::default())
+        chatId: String,
+    ) -> Result<(), CoreLinkError> {
+        let mut stream = self
+            .proxy
+            .chat_runtime_holder_main()
+            .getResponseStream(chatId)
+            .await?;
+        let sender = self.eventSender.clone();
+        tokio::spawn(async move {
+            while let Some(event) = stream.recv().await {
+                let _ = sender.send(event);
+            }
+        });
+        Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn withActivePromptManager<R>(&mut self, block: impl FnOnce(ActivePromptManager) -> R) -> R {
-        block(ActivePromptManager::getInstance())
+    pub(super) fn drainEvents(&mut self) -> Vec<CoreEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.eventReceiver.try_recv() {
+            events.push(event);
+        }
+        events
     }
+}
 
-    #[allow(non_snake_case)]
-    fn withCharacterCardManager<R>(&mut self, block: impl FnOnce(CharacterCardManager) -> R) -> R {
-        block(CharacterCardManager::getInstance())
+impl Deref for TuiCore {
+    type Target = GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.proxy
     }
+}
 
-    #[allow(non_snake_case)]
-    fn beginChatMessage(
-        &mut self,
-        sendArgs: ChatSendArgs,
-    ) -> Pin<Box<dyn Future<Output = Result<ChatSendResult, String>> + '_>> {
-        Box::pin(async move {
-            begin_chat_message_with_application(self.borrowApplication(), sendArgs).await
-        })
+impl DerefMut for TuiCore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.proxy
     }
 }

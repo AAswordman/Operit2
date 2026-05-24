@@ -13,12 +13,12 @@ use crate::api::chat::enhance::ConversationService::{
     PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
 };
 use crate::api::chat::enhance::ConversationMarkupManager::ConversationMarkupManager;
-use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
+use crate::api::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
 use crate::api::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
+    response_stream_from_chunks, AiServiceError, SendMessageRequest,
     SharedAiResponseStream, TokenCounts,
 };
 use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
@@ -49,7 +49,7 @@ use crate::util::ChatUtils::ChatUtils;
 const TAG: &str = "EnhancedAIService";
 
 pub struct EnhancedAIService {
-    pub multi_service_manager: MultiServiceManagerMirror,
+    pub multi_service_manager: MultiServiceManager,
     pub init_scope: InitScopeMirror,
     pub init_mutex: InitMutexMirror,
     pub conversation_service: ConversationService,
@@ -258,12 +258,7 @@ pub struct SendMessageRuntime {
     pub modelConfig: ModelConfigData,
     pub modelParameters: Vec<ModelParameter<Value>>,
     pub availableTools: Vec<ToolPrompt>,
-    pub aiService: Box<dyn AIService>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MultiServiceManagerMirror {
-    pub initialized: bool,
+    pub aiService: SharedAIServiceHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -472,7 +467,7 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
 impl EnhancedAIService {
     pub fn new(conversation_service: ConversationService) -> Self {
         Self {
-            multi_service_manager: MultiServiceManagerMirror { initialized: false },
+            multi_service_manager: MultiServiceManager::default(),
             init_scope: InitScopeMirror,
             init_mutex: InitMutexMirror,
             conversation_service,
@@ -516,19 +511,21 @@ impl EnhancedAIService {
         if self.shared_state().is_service_manager_initialized {
             return;
         }
-        self.multi_service_manager.initialized = true;
+        self.multi_service_manager
+            .initialize()
+            .expect("MultiServiceManager initialization must succeed");
         self.shared_state().is_service_manager_initialized = true;
     }
 
-    pub fn getAIServiceForFunction<'a>(
+    pub fn getAIServiceForFunction(
         &mut self,
         _functionType: FunctionType,
         _chatModelConfigIdOverride: Option<String>,
         _chatModelIndexOverride: Option<i32>,
-        runtime: &'a mut SendMessageRuntime,
-    ) -> &'a mut dyn AIService {
+        runtime: &SendMessageRuntime,
+    ) -> SharedAIServiceHandle {
         self.ensureInitialized();
-        runtime.aiService.as_mut()
+        runtime.aiService.clone()
     }
 
     pub fn getProviderAndModelForFunction(&self, providerModel: &str) -> (String, String) {
@@ -550,12 +547,18 @@ impl EnhancedAIService {
         runtime.modelConfig.clone()
     }
 
-    pub fn refreshServiceForFunction(&mut self, _functionType: FunctionType) {
+    pub fn refreshServiceForFunction(&mut self, functionType: FunctionType) {
         self.ensureInitialized();
+        self.multi_service_manager
+            .refreshServiceForFunction(functionType)
+            .expect("refreshServiceForFunction must succeed");
     }
 
     pub fn refreshAllServices(&mut self) {
         self.ensureInitialized();
+        self.multi_service_manager
+            .refreshAllServices()
+            .expect("refreshAllServices must succeed");
     }
 
     pub fn getModelParametersForFunction(
@@ -576,14 +579,17 @@ impl EnhancedAIService {
 
     pub async fn estimatePreparedRequestWindow(
         &mut self,
-        serviceForFunction: &mut dyn AIService,
+        serviceForFunction: SharedAIServiceHandle,
         preparedHistory: &[PromptTurn],
         availableTools: &[ToolPrompt],
         publishEstimate: bool,
     ) -> Result<i32, AiServiceError> {
-        let windowSize = serviceForFunction
-            .calculate_input_tokens(preparedHistory, availableTools)
-            .await?;
+        let windowSize = {
+            let service = serviceForFunction.lock().await;
+            service
+                .calculate_input_tokens(preparedHistory, availableTools)
+                .await?
+        };
         if publishEstimate {
             self.publishRequestWindowEstimate(windowSize);
         }
@@ -710,7 +716,7 @@ impl EnhancedAIService {
         messages: Vec<(String, String)>,
         previousSummary: Option<String>,
     ) -> Result<String, AiServiceError> {
-        let mut multiServiceManager = MultiServiceManager::default();
+        let mut multiServiceManager = self.multi_service_manager.clone();
         multiServiceManager.initialize()?;
         self.conversation_service
             .generateSummary(messages, previousSummary, &mut multiServiceManager)
@@ -722,7 +728,7 @@ impl EnhancedAIService {
         messages: Vec<PromptTurn>,
         previousSummary: Option<String>,
     ) -> Result<String, AiServiceError> {
-        let mut multiServiceManager = MultiServiceManager::default();
+        let mut multiServiceManager = self.multi_service_manager.clone();
         multiServiceManager.initialize()?;
         self.conversation_service
             .generateSummaryFromPromptTurns(messages, previousSummary, &mut multiServiceManager)
@@ -957,17 +963,18 @@ impl EnhancedAIService {
         &mut self,
         options: &SendMessageOptions,
     ) -> Result<SendMessageRuntime, AiServiceError> {
-        let mut multiServiceManager = MultiServiceManager::default();
-        multiServiceManager.initialize()?;
+        self.ensureInitialized();
         let (modelConfig, modelParameters, selectedService) = match &options.chatModelConfigIdOverride {
             Some(configId) if !configId.trim().is_empty() => {
                 let index = match options.chatModelIndexOverride {
                     Some(value) => value,
                     None => 0,
                 };
-                multiServiceManager.createOwnedServiceBundleForConfig(configId.clone(), index)?
+                self.multi_service_manager.getServiceBundleForConfig(configId.clone(), index)?
             }
-            _ => multiServiceManager.createOwnedServiceBundleForFunction(options.functionType.clone())?,
+            _ => self
+                .multi_service_manager
+                .getServiceBundleForFunction(options.functionType.clone())?,
         };
         let characterCardManager = CharacterCardManager::getInstance();
         let activeCard = options
@@ -1268,24 +1275,32 @@ impl EnhancedAIService {
 
         lifecycle.push(SendMessageLifecycleStage::EstimatePreparedRequestWindow);
         let requestWindowSize = self.estimatePreparedRequestWindow(
-            serviceForFunction,
+            serviceForFunction.clone(),
             &requestHistory,
             &availableTools,
             true,
         ).await?;
 
         lifecycle.push(SendMessageLifecycleStage::SendMessageRequest);
-        let providerModel = serviceForFunction.provider_model();
-        let mut provider_stream = serviceForFunction.send_message(SendMessageRequest {
-            chat_history: requestHistory.clone(),
-            model_parameters: modelParameters.clone(),
-            enable_thinking: enableThinking,
-            stream,
-            available_tools: availableTools.clone(),
-            preserve_think_in_history: false,
-            enable_retry: true,
-            on_tool_invocation: onToolInvocation.clone(),
-        }).await?;
+        let providerModel = {
+            let service = serviceForFunction.lock().await;
+            service.provider_model()
+        };
+        let mut provider_stream = {
+            let mut service = serviceForFunction.lock().await;
+            service
+                .send_message(SendMessageRequest {
+                    chat_history: requestHistory.clone(),
+                    model_parameters: modelParameters.clone(),
+                    enable_thinking: enableThinking,
+                    stream,
+                    available_tools: availableTools.clone(),
+                    preserve_think_in_history: false,
+                    enable_retry: true,
+                    on_tool_invocation: onToolInvocation.clone(),
+                })
+                .await?
+        };
 
         lifecycle.push(SendMessageLifecycleStage::StartAssistantResponseRound);
         self.startAssistantResponseRound(&mut execContext);
@@ -1322,9 +1337,14 @@ impl EnhancedAIService {
         let _ = eventForwarder.join();
 
         lifecycle.push(SendMessageLifecycleStage::PersistTokenUsage);
-        let inputTokens = serviceForFunction.input_token_count();
-        let cachedInputTokens = serviceForFunction.cached_input_token_count();
-        let outputTokens = serviceForFunction.output_token_count();
+        let (inputTokens, cachedInputTokens, outputTokens) = {
+            let service = serviceForFunction.lock().await;
+            (
+                service.input_token_count(),
+                service.cached_input_token_count(),
+                service.output_token_count(),
+            )
+        };
         {
             let mut shared = self.shared_state();
             shared.accumulated_input_token_count += inputTokens;
@@ -1497,7 +1517,7 @@ impl EnhancedAIService {
 
         let currentTokens = self
             .estimatePreparedRequestWindow(
-                runtime.aiService.as_mut(),
+                runtime.aiService.clone(),
                 &currentChatHistory,
                 &availableTools,
                 true,
@@ -1526,19 +1546,21 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
         }
 
-        let mut response = runtime
-            .aiService
-            .send_message(SendMessageRequest {
-                chat_history: currentChatHistory,
-                model_parameters: modelParameters,
-                enable_thinking: enableThinking,
-                stream,
-                available_tools: availableTools,
-                preserve_think_in_history: false,
-                enable_retry: true,
-                on_tool_invocation: onToolInvocation.clone(),
-            })
-            .await?;
+        let mut response = {
+            let mut service = runtime.aiService.lock().await;
+            service
+                .send_message(SendMessageRequest {
+                    chat_history: currentChatHistory,
+                    model_parameters: modelParameters,
+                    enable_thinking: enableThinking,
+                    stream,
+                    available_tools: availableTools,
+                    preserve_think_in_history: false,
+                    enable_retry: true,
+                    on_tool_invocation: onToolInvocation.clone(),
+                })
+                .await?
+        };
 
         if !isSubTask {
             self.setInputProcessingState(InputProcessingState::Receiving {

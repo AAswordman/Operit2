@@ -371,10 +371,14 @@ impl ConversationService {
             multiServiceManager.getModelParametersForFunction(FunctionType::SUMMARY)?;
         let serializedModelParameters = serializeSummaryHookModelParameters(&modelParameters);
         let summaryService = multiServiceManager.getServiceForFunction(FunctionType::SUMMARY)?;
+        let providerModel = {
+            let service = summaryService.lock().await;
+            service.provider_model()
+        };
         let mut summaryHistory = stripGeminiThoughtSignatureMetaTurns(messages);
         let mut summaryPrompt = FunctionalPrompts::summaryUserMessage(useEnglish).to_string();
         let baseSummaryMetadata = std::collections::HashMap::from([
-            ("providerModel".to_string(), json!(summaryService.provider_model())),
+            ("providerModel".to_string(), json!(providerModel)),
             ("sourceMessageCount".to_string(), json!(summaryHistory.len())),
         ]);
 
@@ -448,21 +452,32 @@ impl ConversationService {
             )
         };
 
-        let summaryStream = summaryService
-            .send_message(SendMessageRequest {
-                chat_history: preparedHistory.clone(),
-                model_parameters: modelParameters,
-                enable_thinking: false,
-                stream: true,
-                available_tools: Vec::new(),
-                preserve_think_in_history: false,
-                enable_retry: true,
-                on_tool_invocation: None,
-            })
-            .await?;
+        let summaryStream = {
+            let mut service = summaryService.lock().await;
+            service
+                .send_message(SendMessageRequest {
+                    chat_history: preparedHistory.clone(),
+                    model_parameters: modelParameters,
+                    enable_thinking: false,
+                    stream: true,
+                    available_tools: Vec::new(),
+                    preserve_think_in_history: false,
+                    enable_retry: true,
+                    on_tool_invocation: None,
+                })
+                .await?
+        };
         let summaryChunks = collect_stream_chunks(summaryStream);
         let mut summaryContent =
             removeThinkingContent(&summaryChunks.join("").trim().to_string());
+        let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
+            let service = summaryService.lock().await;
+            (
+                service.input_token_count(),
+                service.cached_input_token_count(),
+                service.output_token_count(),
+            )
+        };
 
         let afterGenerateContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(
             SummaryHookContext {
@@ -483,15 +498,15 @@ impl ConversationService {
                     );
                     metadata.insert(
                         "inputTokens".to_string(),
-                        json!(summaryService.input_token_count()),
+                        json!(summaryInputTokens),
                     );
                     metadata.insert(
                         "cachedInputTokens".to_string(),
-                        json!(summaryService.cached_input_token_count()),
+                        json!(summaryCachedInputTokens),
                     );
                     metadata.insert(
                         "outputTokens".to_string(),
-                        json!(summaryService.output_token_count()),
+                        json!(summaryOutputTokens),
                     );
                     metadata
                 },

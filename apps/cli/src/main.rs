@@ -1794,7 +1794,7 @@ fn parse_chat_new_args(args: &[String]) -> Result<(Option<String>, Option<String
     Ok((characterCardName, characterGroupId, group))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ChatSendArgs {
     chatId: Option<String>,
     message: String,
@@ -1810,7 +1810,7 @@ pub(crate) struct ShellArgs {
     group: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ChatSendResult {
     chatId: String,
     aiMessage: ChatMessage,

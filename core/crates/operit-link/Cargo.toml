@@ -6,7 +6,16 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-operit-runtime = { path = "../operit-runtime" }
+async-trait.workspace = true
+axum = { version = "0.7", features = ["ws"] }
+base64.workspace = true
+futures-util.workspace = true
+hmac = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "sync"] }
+uuid.workspace = true
+x25519-dalek = { version = "2", features = ["static_secrets"] }
