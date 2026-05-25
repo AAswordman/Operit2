@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::collections::BTreeMap;
@@ -96,6 +98,41 @@ impl HostEnvironmentDescriptor {
                 "fs.write".to_string(),
                 "fs.search".to_string(),
                 "fs.archive".to_string(),
+                "os.open".to_string(),
+                "os.share".to_string(),
+                "system.location".to_string(),
+                "system.notifications.read".to_string(),
+                "system.app_usage".to_string(),
+                "system.app.install".to_string(),
+                "system.app.uninstall".to_string(),
+                "system.settings".to_string(),
+            ],
+        }
+    }
+
+    pub fn web() -> Self {
+        Self {
+            id: "web".to_string(),
+            displayName: "Web".to_string(),
+            pathStyleDescriptionEn: "Use paths exposed by the browser host bridge.".to_string(),
+            pathStyleDescriptionCn: "使用浏览器 host bridge 暴露的路径。".to_string(),
+            examplePaths: vec![
+                "operit.db".to_string(),
+                "preferences/models.json".to_string(),
+                "workspace/project".to_string(),
+            ],
+            usesEnvironmentParameter: false,
+            environmentParameterDescriptionEn: String::new(),
+            environmentParameterDescriptionCn: String::new(),
+            capabilities: vec![
+                "fs.read".to_string(),
+                "fs.write".to_string(),
+                "fs.search".to_string(),
+                "fs.archive".to_string(),
+                "web.visit".to_string(),
+                "runtime.process".to_string(),
+                "runtime.storage".to_string(),
+                "runtime.sqlite".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
                 "system.location".to_string(),
@@ -282,6 +319,100 @@ pub trait ManagedRuntimeHost: Send + Sync {
         request: RuntimeProcessRequest,
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>>;
     fn runRuntimeCommand(&self, request: RuntimeProcessRequest) -> HostResult<RuntimeCommandOutput>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeStorageEntry {
+    pub path: String,
+    pub isDirectory: bool,
+    pub size: i64,
+}
+
+pub trait RuntimeStorageHost: Send + Sync {
+    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>>;
+    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
+    fn exists(&self, path: &str) -> HostResult<bool>;
+    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SqliteValue {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+impl SqliteValue {
+    pub fn asI64(&self) -> HostResult<i64> {
+        match self {
+            SqliteValue::Integer(value) => Ok(*value),
+            other => Err(HostError::new(format!("expected sqlite integer, got {other:?}"))),
+        }
+    }
+
+    pub fn asF64(&self) -> HostResult<f64> {
+        match self {
+            SqliteValue::Real(value) => Ok(*value),
+            SqliteValue::Integer(value) => Ok(*value as f64),
+            other => Err(HostError::new(format!("expected sqlite real, got {other:?}"))),
+        }
+    }
+
+    pub fn asString(&self) -> HostResult<String> {
+        match self {
+            SqliteValue::Text(value) => Ok(value.clone()),
+            other => Err(HostError::new(format!("expected sqlite text, got {other:?}"))),
+        }
+    }
+
+    pub fn isNull(&self) -> bool {
+        matches!(self, SqliteValue::Null)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SqliteRow {
+    pub columns: Vec<String>,
+    pub values: Vec<SqliteValue>,
+}
+
+impl SqliteRow {
+    pub fn valueAt(&self, index: usize) -> HostResult<&SqliteValue> {
+        self.values
+            .get(index)
+            .ok_or_else(|| HostError::new(format!("sqlite column index out of bounds: {index}")))
+    }
+
+    pub fn valueNamed(&self, name: &str) -> HostResult<&SqliteValue> {
+        let index = self
+            .columns
+            .iter()
+            .position(|column| column == name)
+            .ok_or_else(|| HostError::new(format!("sqlite column not found: {name}")))?;
+        self.valueAt(index)
+    }
+}
+
+pub trait RuntimeSqliteConnection: Send {
+    fn executeBatch(&mut self, sql: &str) -> HostResult<()>;
+    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize>;
+    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>>;
+    fn lastInsertRowId(&self) -> HostResult<i64>;
+    fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>>;
+}
+
+pub trait RuntimeSqliteTransaction {
+    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize>;
+    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>>;
+    fn lastInsertRowId(&self) -> HostResult<i64>;
+    fn commit(self: Box<Self>) -> HostResult<()>;
+}
+
+pub trait RuntimeSqliteHost: Send + Sync {
+    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

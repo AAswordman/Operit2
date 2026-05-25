@@ -94,6 +94,29 @@ impl ApiPreferences {
         })
     }
 
+    pub fn saveDisableStreamOutput(&self, isDisabled: bool) -> Result<(), PreferencesDataStoreError> {
+        self.apiDataStore.edit(|preferences| {
+            preferences.set(&stringPreferencesKey("disable_stream_output"), isDisabled.to_string());
+        })
+    }
+
+    pub fn updateMediaHistorySettings(
+        &self,
+        maxImageHistoryUserTurns: i32,
+        maxMediaHistoryUserTurns: i32,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.apiDataStore.edit(|preferences| {
+            preferences.set(
+                &stringPreferencesKey("max_image_history_user_turns"),
+                maxImageHistoryUserTurns.to_string(),
+            );
+            preferences.set(
+                &stringPreferencesKey("max_media_history_user_turns"),
+                maxMediaHistoryUserTurns.to_string(),
+            );
+        })
+    }
+
     pub fn updateThinkingSettings(
         &self,
         enableThinkingMode: Option<bool>,

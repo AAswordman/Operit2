@@ -1,5 +1,7 @@
-use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
-use rusqlite::{params, params_from_iter, Row};
+use operit_store::sqliteParams;
+use operit_store::SqliteStore::{
+    SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue,
+};
 
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::model::MessageEntity::{ChatMessageCount, MessageEntity};
@@ -15,15 +17,13 @@ impl MessageDao {
     }
 
     pub fn getTotalMessageCount(&self) -> Result<i32, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
-        })
+        self.store.queryScalar("SELECT COUNT(*) FROM messages", sqliteParams![])
     }
 
     pub fn getMessagesForChat(&self, chatId: &str) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
-            params![chatId],
+            sqliteParams![chatId],
         )
     }
 
@@ -32,13 +32,10 @@ impl MessageDao {
         chatId: &str,
         upToTimestampInclusive: Option<i64>,
     ) -> Result<i32, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.query_row(
-                "SELECT COUNT(*) FROM messages WHERE chatId = ?1 AND (?2 IS NULL OR timestamp <= ?2)",
-                params![chatId, upToTimestampInclusive],
-                |row| row.get(0),
-            )
-        })
+        self.store.queryScalar(
+            "SELECT COUNT(*) FROM messages WHERE chatId = ?1 AND (?2 IS NULL OR timestamp <= ?2)",
+            sqliteParams![chatId, upToTimestampInclusive],
+        )
     }
 
     pub fn getLocatorPreviewsForChat(
@@ -46,8 +43,8 @@ impl MessageDao {
         chatId: &str,
         previewCharCount: i32,
     ) -> Result<Vec<ChatMessageLocatorPreview>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 r#"
                 SELECT
                     timestamp AS timestamp,
@@ -66,8 +63,10 @@ impl MessageDao {
                 WHERE chatId = ?1
                 ORDER BY timestamp ASC
                 "#,
-            )?;
-            let rows = statement.query_map(params![chatId, previewCharCount], |row| {
+                sqliteParams![chatId, previewCharCount],
+            )?
+            .into_iter()
+            .map(|row| {
                 Ok(ChatMessageLocatorPreview {
                     timestamp: row.get(0)?,
                     sender: row.get(1)?,
@@ -76,9 +75,8 @@ impl MessageDao {
                     displayMode: row.get(4)?,
                     isFavorite: row.get(5)?,
                 })
-            })?;
-            rows.collect()
-        })
+            })
+            .collect()
     }
 
     pub fn getMessagesForChatFromTimestampAsc(
@@ -88,7 +86,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC",
-            params![chatId, startTimestampInclusive],
+            sqliteParams![chatId, startTimestampInclusive],
         )
     }
 
@@ -100,7 +98,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC",
-            params![chatId, startTimestampInclusive, endTimestampInclusive],
+            sqliteParams![chatId, startTimestampInclusive, endTimestampInclusive],
         )
     }
 
@@ -111,7 +109,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC LIMIT ?2",
-            params![chatId, limit],
+            sqliteParams![chatId, limit],
         )
     }
 
@@ -122,7 +120,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp DESC LIMIT ?2",
-            params![chatId, limit],
+            sqliteParams![chatId, limit],
         )
     }
 
@@ -134,7 +132,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp > ?2 ORDER BY timestamp ASC LIMIT ?3",
-            params![chatId, afterTimestampExclusive, limit],
+            sqliteParams![chatId, afterTimestampExclusive, limit],
         )
     }
 
@@ -145,8 +143,8 @@ impl MessageDao {
         beforeTimestampExclusive: Option<i64>,
         upToTimestampInclusive: Option<i64>,
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 r#"
                 SELECT * FROM messages
                 WHERE chatId = ?1
@@ -155,18 +153,16 @@ impl MessageDao {
                     AND (?4 IS NULL OR timestamp <= ?4)
                 ORDER BY timestamp ASC
                 "#,
-            )?;
-            let rows = statement.query_map(
-                params![
+                sqliteParams![
                     chatId,
                     afterTimestampExclusive,
                     beforeTimestampExclusive,
                     upToTimestampInclusive,
                 ],
-                mapMessageEntity,
-            )?;
-            rows.collect()
-        })
+            )?
+            .into_iter()
+            .map(|row| mapMessageEntity(&row))
+            .collect()
     }
 
     pub fn getMessagesForChatBeforeTimestampDesc(
@@ -177,7 +173,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp <= ?2 ORDER BY timestamp DESC LIMIT ?3",
-            params![chatId, maxTimestamp, limit],
+            sqliteParams![chatId, maxTimestamp, limit],
         )
     }
 
@@ -189,7 +185,7 @@ impl MessageDao {
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
-            params![chatId, beforeTimestampExclusive, limit],
+            sqliteParams![chatId, beforeTimestampExclusive, limit],
         )
     }
 
@@ -200,7 +196,7 @@ impl MessageDao {
     ) -> Result<bool, SqliteStoreError> {
         self.exists(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = ?1 AND timestamp < ?2 LIMIT 1)",
-            params![chatId, beforeTimestampExclusive],
+            sqliteParams![chatId, beforeTimestampExclusive],
         )
     }
 
@@ -211,14 +207,14 @@ impl MessageDao {
     ) -> Result<bool, SqliteStoreError> {
         self.exists(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = ?1 AND timestamp > ?2 LIMIT 1)",
-            params![chatId, afterTimestampExclusive],
+            sqliteParams![chatId, afterTimestampExclusive],
         )
     }
 
     pub fn getLatestSummaryTimestamp(&self, chatId: &str) -> Result<Option<i64>, SqliteStoreError> {
         self.optionalTimestamp(
             "SELECT timestamp FROM messages WHERE chatId = ?1 AND sender = 'summary' ORDER BY timestamp DESC LIMIT 1",
-            params![chatId],
+            sqliteParams![chatId],
         )
     }
 
@@ -229,7 +225,7 @@ impl MessageDao {
     ) -> Result<Option<i64>, SqliteStoreError> {
         self.optionalTimestamp(
             "SELECT timestamp FROM messages WHERE chatId = ?1 AND sender = 'summary' AND timestamp < ?2 ORDER BY timestamp DESC LIMIT 1",
-            params![chatId, beforeTimestampExclusive],
+            sqliteParams![chatId, beforeTimestampExclusive],
         )
     }
 
@@ -240,43 +236,38 @@ impl MessageDao {
     ) -> Result<Option<i64>, SqliteStoreError> {
         self.optionalTimestamp(
             "SELECT timestamp FROM messages WHERE chatId = ?1 AND sender = 'summary' AND timestamp <= ?2 ORDER BY timestamp DESC LIMIT 1",
-            params![chatId, upToTimestampInclusive],
+            sqliteParams![chatId, upToTimestampInclusive],
         )
     }
 
     pub fn existsUserMessage(&self, chatId: &str) -> Result<bool, SqliteStoreError> {
         self.exists(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = ?1 AND sender = 'user' LIMIT 1)",
-            params![chatId],
+            sqliteParams![chatId],
         )
     }
 
     pub fn getMaxOrderIndex(&self, chatId: &str) -> Result<Option<i32>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.query_row(
+        self.store
+            .queryOne(
                 "SELECT MAX(orderIndex) FROM messages WHERE chatId = ?1",
-                params![chatId],
-                |row| row.get(0),
-            )
-        })
+                sqliteParams![chatId],
+            )?
+            .map(|row| row.get(0))
+            .transpose()
     }
 
     pub fn insertMessage(&self, message: MessageEntity) -> Result<i64, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            if message.messageId == 0 {
-                connection.execute(
-                    insertMessageSql(false),
-                    params_from_iter(insertMessageParams(&message, false)),
-                )?;
-                Ok(connection.last_insert_rowid())
-            } else {
-                connection.execute(
-                    insertMessageSql(true),
-                    params_from_iter(insertMessageParams(&message, true)),
-                )?;
-                Ok(message.messageId)
-            }
-        })
+        if message.messageId == 0 {
+            self.store
+                .execute(insertMessageSql(false), insertMessageParams(&message, false))?;
+            let rowId: i64 = self.store.queryScalar("SELECT last_insert_rowid()", sqliteParams![])?;
+            Ok(rowId)
+        } else {
+            self.store
+                .execute(insertMessageSql(true), insertMessageParams(&message, true))?;
+            Ok(message.messageId)
+        }
     }
 
     pub fn insertMessages(&self, messages: Vec<MessageEntity>) -> Result<(), SqliteStoreError> {
@@ -285,12 +276,12 @@ impl MessageDao {
                 if message.messageId == 0 {
                     transaction.execute(
                         insertMessageSql(false),
-                        params_from_iter(insertMessageParams(&message, false)),
+                        insertMessageParams(&message, false),
                     )?;
                 } else {
                     transaction.execute(
                         insertMessageSql(true),
-                        params_from_iter(insertMessageParams(&message, true)),
+                        insertMessageParams(&message, true),
                     )?;
                 }
             }
@@ -304,9 +295,8 @@ impl MessageDao {
         targetChatId: &str,
         upToTimestampInclusive: Option<i64>,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                r#"
+        self.store.execute(
+            r#"
                 INSERT INTO messages (
                     chatId, sender, content, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
@@ -321,16 +311,14 @@ impl MessageDao {
                 FROM messages
                 WHERE chatId = ?1 AND (?3 IS NULL OR timestamp <= ?3)
                 "#,
-                params![sourceChatId, targetChatId, upToTimestampInclusive],
-            )?;
-            Ok(())
-        })
+            sqliteParams![sourceChatId, targetChatId, upToTimestampInclusive],
+        )?;
+        Ok(())
     }
 
     pub fn updateMessage(&self, message: MessageEntity) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                r#"
+        self.store.execute(
+            r#"
                 UPDATE messages
                 SET chatId = ?2, sender = ?3, content = ?4, timestamp = ?5,
                     orderIndex = ?6, roleName = ?7, selectedVariantIndex = ?8,
@@ -340,30 +328,29 @@ impl MessageDao {
                     displayMode = ?18, isFavorite = ?19
                 WHERE messageId = ?1
                 "#,
-                params![
-                    message.messageId,
-                    message.chatId,
-                    message.sender,
-                    message.content,
-                    message.timestamp,
-                    message.orderIndex,
-                    message.roleName,
-                    message.selectedVariantIndex,
-                    message.provider,
-                    message.modelName,
-                    message.inputTokens,
-                    message.outputTokens,
-                    message.cachedInputTokens,
-                    message.sentAt,
-                    message.outputDurationMs,
-                    message.waitDurationMs,
-                    message.completedAt,
-                    message.displayMode,
-                    message.isFavorite,
-                ],
-            )?;
-            Ok(())
-        })
+            sqliteParams![
+                message.messageId,
+                message.chatId,
+                message.sender,
+                message.content,
+                message.timestamp,
+                message.orderIndex,
+                message.roleName,
+                message.selectedVariantIndex,
+                message.provider,
+                message.modelName,
+                message.inputTokens,
+                message.outputTokens,
+                message.cachedInputTokens,
+                message.sentAt,
+                message.outputDurationMs,
+                message.waitDurationMs,
+                message.completedAt,
+                message.displayMode,
+                message.isFavorite,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn updateMessageContent(
@@ -371,20 +358,17 @@ impl MessageDao {
         messageId: i64,
         content: String,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "UPDATE messages SET content = ?2 WHERE messageId = ?1",
-                params![messageId, content],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "UPDATE messages SET content = ?2 WHERE messageId = ?1",
+            sqliteParams![messageId, content],
+        )?;
+        Ok(())
     }
 
     pub fn deleteAllMessagesForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute("DELETE FROM messages WHERE chatId = ?1", params![chatId])?;
-            Ok(())
-        })
+        self.store
+            .execute("DELETE FROM messages WHERE chatId = ?1", sqliteParams![chatId])?;
+        Ok(())
     }
 
     pub fn getMessageByTimestamp(
@@ -392,21 +376,17 @@ impl MessageDao {
         chatId: &str,
         timestamp: i64,
     ) -> Result<Option<MessageEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryOne(
                 r#"
                 SELECT * FROM messages
                 WHERE chatId = ?1 AND timestamp = ?2
                 LIMIT 1
                 "#,
-            )?;
-            let result = statement.query_row(params![chatId, timestamp], mapMessageEntity);
-            match result {
-                Ok(message) => Ok(Some(message)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(error) => Err(error),
-            }
-        })
+                sqliteParams![chatId, timestamp],
+            )?
+            .map(|row| mapMessageEntity(&row))
+            .transpose()
     }
 
     pub fn deleteMessagesFrom(
@@ -414,13 +394,11 @@ impl MessageDao {
         chatId: &str,
         timestamp: i64,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "DELETE FROM messages WHERE chatId = ?1 AND timestamp >= ?2",
-                params![chatId, timestamp],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "DELETE FROM messages WHERE chatId = ?1 AND timestamp >= ?2",
+            sqliteParams![chatId, timestamp],
+        )?;
+        Ok(())
     }
 
     pub fn deleteMessageByTimestamp(
@@ -428,28 +406,27 @@ impl MessageDao {
         chatId: &str,
         timestamp: i64,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
-                params![chatId, timestamp],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+            sqliteParams![chatId, timestamp],
+        )?;
+        Ok(())
     }
 
     pub fn getMessageCountsByChatId(&self) -> Result<Vec<ChatMessageCount>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 "SELECT chatId AS chatId, COUNT(*) AS count FROM messages GROUP BY chatId",
-            )?;
-            let rows = statement.query_map([], |row| {
+                sqliteParams![],
+            )?
+            .into_iter()
+            .map(|row| {
                 Ok(ChatMessageCount {
                     chatId: row.get(0)?,
                     count: row.get(1)?,
                 })
-            })?;
-            rows.collect()
-        })
+            })
+            .collect()
     }
 
     pub fn updateSelectedVariantIndex(
@@ -460,7 +437,7 @@ impl MessageDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
-            params![chatId, timestamp, selectedVariantIndex],
+            sqliteParams![chatId, timestamp, selectedVariantIndex],
         )
     }
 
@@ -472,72 +449,61 @@ impl MessageDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE messages SET isFavorite = ?3 WHERE chatId = ?1 AND timestamp = ?2",
-            params![chatId, timestamp, isFavorite],
+            sqliteParams![chatId, timestamp, isFavorite],
         )
     }
 
     pub fn searchChatIdsByContent(&self, query: &str) -> Result<Vec<String>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 "SELECT DISTINCT chatId FROM messages WHERE content LIKE '%' || ?1 || '%' ESCAPE '\\' COLLATE NOCASE",
-            )?;
-            let rows = statement.query_map(params![query], |row| row.get(0))?;
-            rows.collect()
-        })
+                sqliteParams![query],
+            )?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect()
     }
 
     pub fn renameRoleName(&self, oldName: &str, newName: &str) -> Result<i32, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            Ok(connection.execute(
-                "UPDATE messages SET roleName = ?2 WHERE roleName = ?1",
-                params![oldName, newName],
-            )? as i32)
-        })
+        let count = self.store.execute(
+            "UPDATE messages SET roleName = ?2 WHERE roleName = ?1",
+            sqliteParams![oldName, newName],
+        )? as i32;
+        Ok(count)
     }
 
-    fn selectMessages<P: rusqlite::Params>(
+    fn selectMessages(
         &self,
         sql: &str,
-        params: P,
+        params: Vec<SqliteValue>,
     ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(sql)?;
-            let rows = statement.query_map(params, mapMessageEntity)?;
-            rows.collect()
-        })
+        self.store
+            .queryRows(sql, params)?
+            .into_iter()
+            .map(|row| mapMessageEntity(&row))
+            .collect()
     }
 
-    fn exists<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<bool, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let value: i32 = connection.query_row(sql, params, |row| row.get(0))?;
-            Ok(value != 0)
-        })
+    fn exists(&self, sql: &str, params: Vec<SqliteValue>) -> Result<bool, SqliteStoreError> {
+        let value: i32 = self.store.queryScalar(sql, params)?;
+        Ok(value != 0)
     }
 
-    fn optionalTimestamp<P: rusqlite::Params>(
+    fn optionalTimestamp(
         &self,
         sql: &str,
-        params: P,
+        params: Vec<SqliteValue>,
     ) -> Result<Option<i64>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let result = connection.query_row(sql, params, |row| row.get(0));
-            match result {
-                Ok(timestamp) => Ok(Some(timestamp)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(error) => Err(error),
-            }
-        })
+        self.store.queryOne(sql, params)?.map(|row| row.get(0)).transpose()
     }
 
-    fn execute<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(sql, params)?;
-            Ok(())
-        })
+    fn execute(&self, sql: &str, params: Vec<SqliteValue>) -> Result<(), SqliteStoreError> {
+        self.store.execute(sql, params)?;
+        Ok(())
     }
 }
 
-fn mapMessageEntity(row: &Row<'_>) -> Result<MessageEntity, rusqlite::Error> {
+fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> {
     Ok(MessageEntity {
         messageId: row.get("messageId")?,
         chatId: row.get("chatId")?,
@@ -585,52 +551,49 @@ fn insertMessageSql(withMessageId: bool) -> &'static str {
     }
 }
 
-fn insertMessageParams<'a>(
-    message: &'a MessageEntity,
-    withMessageId: bool,
-) -> Vec<&'a dyn rusqlite::ToSql> {
+fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<SqliteValue> {
     if withMessageId {
-        vec![
-            &message.messageId,
-            &message.chatId,
-            &message.sender,
-            &message.content,
-            &message.timestamp,
-            &message.orderIndex,
-            &message.roleName,
-            &message.selectedVariantIndex,
-            &message.provider,
-            &message.modelName,
-            &message.inputTokens,
-            &message.outputTokens,
-            &message.cachedInputTokens,
-            &message.sentAt,
-            &message.outputDurationMs,
-            &message.waitDurationMs,
-            &message.completedAt,
-            &message.displayMode,
-            &message.isFavorite,
+        sqliteParams![
+            message.messageId,
+            message.chatId,
+            message.sender,
+            message.content,
+            message.timestamp,
+            message.orderIndex,
+            message.roleName,
+            message.selectedVariantIndex,
+            message.provider,
+            message.modelName,
+            message.inputTokens,
+            message.outputTokens,
+            message.cachedInputTokens,
+            message.sentAt,
+            message.outputDurationMs,
+            message.waitDurationMs,
+            message.completedAt,
+            message.displayMode,
+            message.isFavorite,
         ]
     } else {
-        vec![
-            &message.chatId,
-            &message.sender,
-            &message.content,
-            &message.timestamp,
-            &message.orderIndex,
-            &message.roleName,
-            &message.selectedVariantIndex,
-            &message.provider,
-            &message.modelName,
-            &message.inputTokens,
-            &message.outputTokens,
-            &message.cachedInputTokens,
-            &message.sentAt,
-            &message.outputDurationMs,
-            &message.waitDurationMs,
-            &message.completedAt,
-            &message.displayMode,
-            &message.isFavorite,
+        sqliteParams![
+            message.chatId,
+            message.sender,
+            message.content,
+            message.timestamp,
+            message.orderIndex,
+            message.roleName,
+            message.selectedVariantIndex,
+            message.provider,
+            message.modelName,
+            message.inputTokens,
+            message.outputTokens,
+            message.cachedInputTokens,
+            message.sentAt,
+            message.outputDurationMs,
+            message.waitDurationMs,
+            message.completedAt,
+            message.displayMode,
+            message.isFavorite,
         ]
     }
 }

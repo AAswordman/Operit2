@@ -1641,6 +1641,7 @@ dependencies = [
  "operit-host-windows-native",
  "operit-link",
  "operit-runtime",
+ "operit-store",
  "ratatui",
  "serde",
  "serde_json",
@@ -1671,6 +1672,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "regex",
+ "rusqlite",
  "serde_json",
  "tungstenite",
  "zip",
@@ -1682,6 +1684,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "regex",
+ "rusqlite",
  "serde_json",
  "tungstenite",
  "zip",
@@ -1720,7 +1723,6 @@ dependencies = [
  "operit-store",
  "regex",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -1734,7 +1736,7 @@ dependencies = [
 name = "operit-store"
 version = "0.1.0"
 dependencies = [
- "rusqlite",
+ "operit-host-api",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

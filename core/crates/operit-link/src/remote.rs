@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::body::Body;
@@ -31,10 +32,11 @@ use crate::protocol::{
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RemoteLinkServerConfig {
     pub bindAddress: String,
     pub token: String,
+    pub hostInteractionBroker: Option<RemoteHostInteractionBroker>,
 }
 
 impl Default for RemoteLinkServerConfig {
@@ -42,6 +44,7 @@ impl Default for RemoteLinkServerConfig {
         Self {
             bindAddress: "0.0.0.0:37192".to_string(),
             token: "operit-link-dev".to_string(),
+            hostInteractionBroker: None,
         }
     }
 }
@@ -57,6 +60,7 @@ struct RemoteLinkState {
     deviceId: String,
     pairings: Arc<Mutex<BTreeMap<String, PendingPairing>>>,
     sessions: Arc<Mutex<BTreeMap<String, RemoteSession>>>,
+    hostInteractionBroker: Option<RemoteHostInteractionBroker>,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +128,29 @@ pub struct RemoteWatchEnvelope {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteHostInteractionPollEnvelope {
+    pub timeoutMs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteHostInteractionPollResponse {
+    pub request: Option<RemoteHostInteractionRequest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteHostInteractionRequest {
+    pub requestId: String,
+    pub kind: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteHostInteractionRespondEnvelope {
+    pub requestId: String,
+    pub response: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteSessionInfoEnvelope {
     pub nonce: String,
 }
@@ -186,6 +213,122 @@ pub struct RemoteLinkClient {
     http: reqwest::Client,
 }
 
+#[derive(Clone, Debug)]
+pub struct RemoteHostInteractionBroker {
+    inner: Arc<RemoteHostInteractionBrokerInner>,
+}
+
+#[derive(Debug)]
+struct RemoteHostInteractionBrokerInner {
+    state: StdMutex<RemoteHostInteractionBrokerState>,
+    changed: Condvar,
+}
+
+#[derive(Debug)]
+struct RemoteHostInteractionBrokerState {
+    pending: BTreeMap<String, RemoteHostInteractionRequest>,
+    responses: BTreeMap<String, serde_json::Value>,
+}
+
+impl RemoteHostInteractionBroker {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(RemoteHostInteractionBrokerInner {
+                state: StdMutex::new(RemoteHostInteractionBrokerState {
+                    pending: BTreeMap::new(),
+                    responses: BTreeMap::new(),
+                }),
+                changed: Condvar::new(),
+            }),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn requestInteraction(
+        &self,
+        kind: impl Into<String>,
+        payload: serde_json::Value,
+        timeout: Duration,
+    ) -> Option<serde_json::Value> {
+        let requestId = Uuid::new_v4().to_string();
+        let request = RemoteHostInteractionRequest {
+            requestId: requestId.clone(),
+            kind: kind.into(),
+            payload,
+        };
+        let startedAt = Instant::now();
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("remote host interaction mutex poisoned");
+        state.pending.insert(requestId.clone(), request);
+        self.inner.changed.notify_all();
+        loop {
+            if let Some(result) = state.responses.remove(&requestId) {
+                state.pending.remove(&requestId);
+                self.inner.changed.notify_all();
+                return Some(result);
+            }
+            let elapsed = startedAt.elapsed();
+            if elapsed >= timeout {
+                state.pending.remove(&requestId);
+                self.inner.changed.notify_all();
+                return None;
+            }
+            let wait = timeout.saturating_sub(elapsed);
+            let (nextState, _) = self
+                .inner
+                .changed
+                .wait_timeout(state, wait)
+                .expect("remote host interaction mutex poisoned");
+            state = nextState;
+        }
+    }
+
+    pub fn poll(&self, timeout: Duration) -> Option<RemoteHostInteractionRequest> {
+        let startedAt = Instant::now();
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("remote host interaction mutex poisoned");
+        loop {
+            if let Some(request) = state.pending.values().next().cloned() {
+                return Some(request);
+            }
+            let elapsed = startedAt.elapsed();
+            if elapsed >= timeout {
+                return None;
+            }
+            let wait = timeout.saturating_sub(elapsed);
+            let (nextState, result) = self
+                .inner
+                .changed
+                .wait_timeout(state, wait)
+                .expect("remote host interaction mutex poisoned");
+            state = nextState;
+            if result.timed_out() && state.pending.is_empty() {
+                return None;
+            }
+        }
+    }
+
+    pub fn respond(&self, requestId: &str, response: serde_json::Value) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("remote host interaction mutex poisoned");
+        if !state.pending.contains_key(requestId) {
+            return false;
+        }
+        state.responses.insert(requestId.to_string(), response);
+        self.inner.changed.notify_all();
+        true
+    }
+}
+
 impl RemoteLinkServer {
     pub async fn serve(
         core: impl CoreLinkClient + Send + 'static,
@@ -201,6 +344,7 @@ impl RemoteLinkServer {
             deviceId: format!("core-{}", Uuid::new_v4()),
             pairings: Arc::new(Mutex::new(BTreeMap::new())),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            hostInteractionBroker: config.hostInteractionBroker.clone(),
         };
         let app = Router::new()
             .route("/link/hello", get(hello))
@@ -210,6 +354,8 @@ impl RemoteLinkServer {
             .route("/link/call", post(call))
             .route("/link/watch/snapshot", post(watch_snapshot))
             .route("/link/watch/stream", post(watch_stream))
+            .route("/host/interaction/poll", post(host_interaction_poll))
+            .route("/host/interaction/respond", post(host_interaction_respond))
             .route("/link/ws", get(ws))
             .with_state(state);
         let address: SocketAddr = config
@@ -470,6 +616,58 @@ impl PairedRemoteSession {
         });
         Ok(receiver)
     }
+
+    #[allow(non_snake_case)]
+    pub async fn pollHostInteraction(
+        &self,
+        timeoutMs: u64,
+    ) -> Result<Option<RemoteHostInteractionRequest>, String> {
+        let body = serde_json::to_vec(&RemoteHostInteractionPollEnvelope { timeoutMs })
+            .map_err(|error| error.to_string())?;
+        let signature = sign(&self.sessionSecret, &body);
+        let response = self
+            .http
+            .post(format!("{}/host/interaction/poll", self.baseUrl))
+            .header("x-operit-session", &self.sessionId)
+            .header("x-operit-device", &self.deviceId)
+            .header("x-operit-signature", signature)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json::<RemoteHostInteractionPollResponse>()
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(response.request)
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn respondHostInteraction(
+        &self,
+        requestId: &str,
+        response: serde_json::Value,
+    ) -> Result<(), String> {
+        let body = serde_json::to_vec(&RemoteHostInteractionRespondEnvelope {
+            requestId: requestId.to_string(),
+            response,
+        })
+        .map_err(|error| error.to_string())?;
+        let signature = sign(&self.sessionSecret, &body);
+        self.http
+            .post(format!("{}/host/interaction/respond", self.baseUrl))
+            .header("x-operit-session", &self.sessionId)
+            .header("x-operit-device", &self.deviceId)
+            .header("x-operit-signature", signature)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -683,6 +881,54 @@ async fn watch_stream(
         .header("content-type", "application/x-ndjson")
         .body(Body::from_stream(stream))
         .expect("watch stream response must build")
+}
+
+async fn host_interaction_poll(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = verify_session(&state, &headers, &body).await {
+        return response;
+    }
+    let envelope = match serde_json::from_slice::<RemoteHostInteractionPollEnvelope>(&body) {
+        Ok(value) => value,
+        Err(error) => return bad_request(error.to_string()),
+    };
+    let Some(broker) = state.hostInteractionBroker.clone() else {
+        return Json(RemoteHostInteractionPollResponse { request: None }).into_response();
+    };
+    let request = match tokio::task::spawn_blocking(move || {
+        broker.poll(Duration::from_millis(envelope.timeoutMs))
+    })
+    .await
+    {
+        Ok(request) => request,
+        Err(error) => return bad_request(error.to_string()),
+    };
+    Json(RemoteHostInteractionPollResponse { request }).into_response()
+}
+
+async fn host_interaction_respond(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = verify_session(&state, &headers, &body).await {
+        return response;
+    }
+    let envelope = match serde_json::from_slice::<RemoteHostInteractionRespondEnvelope>(&body) {
+        Ok(value) => value,
+        Err(error) => return bad_request(error.to_string()),
+    };
+    let Some(broker) = state.hostInteractionBroker.clone() else {
+        return bad_request("host interaction broker is not registered");
+    };
+    if broker.respond(&envelope.requestId, envelope.response) {
+        Json(serde_json::json!({"ok": true})).into_response()
+    } else {
+        bad_request("host interaction request not found")
+    }
 }
 
 async fn ws(

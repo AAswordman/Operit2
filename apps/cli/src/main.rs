@@ -19,6 +19,7 @@ use operit_runtime::data::model::ModelParameter::ModelParameter;
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::model::PromptTag::TagType;
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
+use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
@@ -30,10 +31,11 @@ use operit_runtime::data::mcp::MCPLocalServer::MCPLocalServer;
 use operit_runtime::data::mcp::plugins::MCPStarter::{MCPStarter, StartStatus};
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
+use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::core::tools::ToolPermissionSystem::PermissionLevel;
+use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
@@ -83,11 +85,18 @@ async fn run_cli_root(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    if args[0].as_str() == "link" {
+        return tui::run_link_command(&args[1..]).await;
+    }
+
     let mut application = create_cli_application();
     application.onCreate()?;
 
     let result = match args[0].as_str() {
         "model" => run_model_command(&args[1..]),
+        "version" => run_version_command(&application),
+        "prefs" => run_prefs_command(&args[1..]),
+        "host" => run_host_command(&application, &args[1..]),
         "chat" => run_chat_command(&args[1..]).await,
         "shell" => run_shell_command(&args[1..]).await,
         "tag" => run_tag_command(&args[1..]),
@@ -95,6 +104,7 @@ async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "group" => run_group_command(&args[1..]),
         "active-prompt" => run_active_prompt_command(&args[1..]),
         "approval" => run_approval_command(&application, &args[1..]),
+        "tool" => run_tool_command(&application, &args[1..]),
         "skill" => run_skill_command(&application, &args[1..]),
         "package" => run_package_command(&application, &args[1..]),
         "mcp" => run_mcp_command(&application, &args[1..]),
@@ -108,6 +118,157 @@ async fn run_cli_root(args: &[String]) -> Result<(), String> {
 
 fn rewrite_cli_usage_message(message: String) -> String {
     message.replace("usage: operit2 ", "usage: operit2 cli ")
+}
+
+fn run_version_command(application: &OperitApplication) -> Result<(), String> {
+    println!("cliVersion={}", env!("CARGO_PKG_VERSION"));
+    println!("coreVersion={}", application.coreVersion());
+    println!("linkVersion={}", operit_link::LINK_VERSION);
+    println!("targetOs={}", std::env::consts::OS);
+    println!("targetArch={}", std::env::consts::ARCH);
+    Ok(())
+}
+
+fn run_prefs_command(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_prefs_usage();
+        return Ok(());
+    }
+
+    let preferences = ApiPreferences::getInstance();
+    match args[0].as_str() {
+        "show" => print_api_preferences(&preferences),
+        "thinking" => {
+            let enabled = parse_on_off_arg(args.get(1), "usage: operit2 prefs thinking <on|off>")?;
+            preferences
+                .saveEnableThinkingMode(enabled)
+                .map_err(|error| error.to_string())?;
+            println!("enableThinkingMode={enabled}");
+            Ok(())
+        }
+        "thinking-quality" => {
+            let level = parse_i32_arg(
+                args.get(1),
+                "usage: operit2 prefs thinking-quality <1-4>",
+            )?;
+            preferences
+                .saveThinkingQualityLevel(level)
+                .map_err(|error| error.to_string())?;
+            println!("thinkingQualityLevel={}", level.clamp(1, 4));
+            Ok(())
+        }
+        "stream" => {
+            let enabled = parse_on_off_arg(args.get(1), "usage: operit2 prefs stream <on|off>")?;
+            preferences
+                .saveDisableStreamOutput(!enabled)
+                .map_err(|error| error.to_string())?;
+            println!("streamOutput={}", if enabled { "on" } else { "off" });
+            Ok(())
+        }
+        "media-history" => {
+            let maxImageHistoryUserTurns = parse_i32_arg(
+                args.get(1),
+                "usage: operit2 prefs media-history <image-user-turns> <media-user-turns>",
+            )?;
+            let maxMediaHistoryUserTurns = parse_i32_arg(
+                args.get(2),
+                "usage: operit2 prefs media-history <image-user-turns> <media-user-turns>",
+            )?;
+            preferences
+                .updateMediaHistorySettings(maxImageHistoryUserTurns, maxMediaHistoryUserTurns)
+                .map_err(|error| error.to_string())?;
+            println!("maxImageHistoryUserTurns={maxImageHistoryUserTurns}");
+            println!("maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}");
+            Ok(())
+        }
+        _ => {
+            print_prefs_usage();
+            Ok(())
+        }
+    }
+}
+
+fn print_api_preferences(preferences: &ApiPreferences) -> Result<(), String> {
+    let enableThinkingMode = preferences
+        .enableThinkingModeFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
+    let thinkingQualityLevel = preferences
+        .thinkingQualityLevelFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
+    let disableStreamOutput = preferences
+        .disableStreamOutputFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
+    let maxImageHistoryUserTurns = preferences
+        .maxImageHistoryUserTurnsFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
+    let maxMediaHistoryUserTurns = preferences
+        .maxMediaHistoryUserTurnsFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
+    println!("enableThinkingMode={enableThinkingMode}");
+    println!("thinkingQualityLevel={thinkingQualityLevel}");
+    println!("streamOutput={}", if disableStreamOutput { "off" } else { "on" });
+    println!("maxImageHistoryUserTurns={maxImageHistoryUserTurns}");
+    println!("maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}");
+    Ok(())
+}
+
+fn run_host_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_host_usage();
+        return Ok(());
+    }
+
+    match args[0].as_str() {
+        "show" => {
+            let host = &application.applicationContext.hostEnvironment;
+            println!("id={}", host.id);
+            println!("displayName={}", host.displayName);
+            println!("usesEnvironmentParameter={}", host.usesEnvironmentParameter);
+            println!("fileSystemHost={}", application.applicationContext.fileSystemHost.is_some());
+            println!("webVisitHost={}", application.applicationContext.webVisitHost.is_some());
+            println!(
+                "systemOperationHost={}",
+                application.applicationContext.systemOperationHost.is_some()
+            );
+            println!(
+                "managedRuntimeHost={}",
+                application.applicationContext.managedRuntimeHost.is_some()
+            );
+            println!(
+                "runtimeStorageHost={}",
+                application.applicationContext.runtimeStorageHost.is_some()
+            );
+            println!(
+                "runtimeSqliteHost={}",
+                application.applicationContext.runtimeSqliteHost.is_some()
+            );
+            Ok(())
+        }
+        "capabilities" => {
+            for capability in &application.applicationContext.hostEnvironment.capabilities {
+                println!("{capability}");
+            }
+            Ok(())
+        }
+        "paths" => {
+            let host = &application.applicationContext.hostEnvironment;
+            println!("pathStyleEn={}", host.pathStyleDescriptionEn);
+            println!("pathStyleCn={}", host.pathStyleDescriptionCn);
+            for path in &host.examplePaths {
+                println!("example={path}");
+            }
+            Ok(())
+        }
+        _ => {
+            print_host_usage();
+            Ok(())
+        }
+    }
 }
 
 fn run_model_command(args: &[String]) -> Result<(), String> {
@@ -802,6 +963,133 @@ fn run_approval_command(application: &OperitApplication, args: &[String]) -> Res
         _ => print_approval_usage(),
     }
     Ok(())
+}
+
+fn run_tool_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        print_tool_usage();
+        return Ok(());
+    }
+
+    let handler = AIToolHandler::getInstance(application.applicationContext.clone());
+    match args[0].as_str() {
+        "list" => {
+            let scope = args.get(1).map(String::as_str).unwrap_or("public");
+            let names = match scope {
+                "public" => handler.getPublicToolNames(),
+                "internal" => handler.getInternalToolNames(),
+                "all" => handler.getAllToolNames(),
+                _ => return Err("usage: operit2 tool list [public|internal|all]".to_string()),
+            };
+            for name in names {
+                let visibility = match handler.getToolVisibility(&name) {
+                    Some(value) => format!("{value:?}"),
+                    None => "none".to_string(),
+                };
+                println!("{name}\tvisibility={visibility}");
+            }
+        }
+        "show" => {
+            let toolName = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 tool show <tool-name>".to_string())?;
+            println!("name={toolName}");
+            println!("registered={}", handler.hasToolExecutor(toolName));
+            match handler.getToolVisibility(toolName) {
+                Some(visibility) => println!("visibility={visibility:?}"),
+                None => println!("visibility=none"),
+            }
+            let permissionSystem = handler.getToolPermissionSystem();
+            let permission = permissionSystem
+                .getToolPermission(toolName)
+                .map_err(|error| error.to_string())?;
+            let overridePermission = permissionSystem
+                .getToolPermissionOverride(toolName)
+                .map_err(|error| error.to_string())?;
+            println!("permission={}", permission.name());
+            match overridePermission {
+                Some(level) => println!("permissionOverride={}", level.name()),
+                None => println!("permissionOverride=none"),
+            }
+        }
+        "exec" => {
+            let toolName = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 tool exec <tool-name> <params-json>".to_string())?;
+            let paramsJson = args
+                .get(2)
+                .ok_or_else(|| "usage: operit2 tool exec <tool-name> <params-json>".to_string())?;
+            install_cli_permission_requester(&handler);
+            let tool = AITool {
+                name: toolName.clone(),
+                parameters: parse_tool_parameters_json(paramsJson)?,
+            };
+            let mut clonedHandler = handler.clone();
+            let result = clonedHandler.executeTool(tool);
+            print_tool_execution_result(&result)?;
+        }
+        _ => print_tool_usage(),
+    }
+    Ok(())
+}
+
+fn install_cli_permission_requester(handler: &AIToolHandler) {
+    handler
+        .getToolPermissionSystem()
+        .setPermissionRequester(|tool, description| loop {
+            println!("tool: {}", tool.name);
+            println!("operation: {description}");
+            print!("approve? 1 yes / 2 no / 3 always yes > ");
+            io::stdout()
+                .flush()
+                .expect("stdout must be writable for CLI tool approval");
+            let mut line = String::new();
+            io::stdin()
+                .read_line(&mut line)
+                .expect("stdin must be readable for CLI tool approval");
+            match line.trim().to_ascii_lowercase().as_str() {
+                "1" | "y" | "yes" => return PermissionRequestResult::ALLOW,
+                "2" | "n" | "no" => return PermissionRequestResult::DENY,
+                "3" | "a" | "always" | "always_yes" | "always-yes" => {
+                    return PermissionRequestResult::ALWAYS_ALLOW;
+                }
+                _ => println!("please enter 1, 2, or 3"),
+            }
+        });
+}
+
+fn parse_tool_parameters_json(value: &str) -> Result<Vec<ToolParameter>, String> {
+    let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(value)
+        .map_err(|error| error.to_string())?;
+    Ok(object
+        .into_iter()
+        .map(|(name, value)| ToolParameter {
+            name,
+            value: match value {
+                serde_json::Value::String(value) => value,
+                other => other.to_string(),
+            },
+        })
+        .collect())
+}
+
+fn print_tool_execution_result(
+    result: &operit_runtime::api::chat::enhance::ConversationMarkupManager::ToolResult,
+) -> Result<(), String> {
+    println!("toolName={}", result.toolName);
+    println!("success={}", result.success);
+    if result.success {
+        println!("{}", result.result);
+        Ok(())
+    } else {
+        if !result.result.trim().is_empty() {
+            println!("{}", result.result);
+        }
+        match result.error.clone() {
+            Some(error) => Err(error),
+            None => Err("tool execution failed without error message".to_string()),
+        }
+    }
 }
 
 fn run_skill_command(application: &OperitApplication, args: &[String]) -> Result<(), String> {
@@ -2529,21 +2817,26 @@ fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <model|chat|tag|character|group|active-prompt|approval|skill|package|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|model|chat|tag|character|group|active-prompt|approval|tool|skill|package|mcp|link|shell>");
     println!();
     print_cli_usage();
 }
 
 fn print_cli_usage() {
+    println!("operit2 cli version");
+    println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history>");
+    println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     println!("operit2 cli tag <list|show|create|update|delete>");
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
     println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
     println!("operit2 cli active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
     println!("operit2 cli approval <status|list|allow|ask|forbid|tool>");
+    println!("operit2 cli tool <list|show|exec>");
     println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <dir|list|show|import|enable|disable|use|exec>");
     println!("operit2 cli mcp <dir|list|show|import|enable|disable|start|cached|export>");
+    println!("operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -2585,6 +2878,20 @@ fn print_model_usage() {
     println!("operit2 cli model function-show <function-type>");
     println!("operit2 cli model function-set <function-type> <config-id> [model-index]");
     println!("operit2 cli model function-reset [function-type]");
+}
+
+fn print_prefs_usage() {
+    println!("operit2 cli prefs show");
+    println!("operit2 cli prefs thinking <on|off>");
+    println!("operit2 cli prefs thinking-quality <1-4>");
+    println!("operit2 cli prefs stream <on|off>");
+    println!("operit2 cli prefs media-history <image-user-turns> <media-user-turns>");
+}
+
+fn print_host_usage() {
+    println!("operit2 cli host show");
+    println!("operit2 cli host capabilities");
+    println!("operit2 cli host paths");
 }
 
 fn print_chat_usage() {
@@ -2647,6 +2954,12 @@ fn print_approval_usage() {
     println!("operit2 cli approval ask");
     println!("operit2 cli approval forbid");
     println!("operit2 cli approval tool <tool-name> <allow|ask|forbid|clear>");
+}
+
+fn print_tool_usage() {
+    println!("operit2 cli tool list [public|internal|all]");
+    println!("operit2 cli tool show <tool-name>");
+    println!("operit2 cli tool exec <tool-name> <params-json>");
 }
 
 fn print_skill_usage() {
@@ -2857,6 +3170,14 @@ fn parse_bool_arg(value: Option<&String>, usage: &str) -> Result<bool, String> {
         "true" => Ok(true),
         "false" => Ok(false),
         other => Err(format!("invalid bool: {other}; expected true | false")),
+    }
+}
+
+fn parse_on_off_arg(value: Option<&String>, usage: &str) -> Result<bool, String> {
+    match value.ok_or_else(|| usage.to_string())?.as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        other => Err(format!("invalid switch: {other}; expected on | off")),
     }
 }
 

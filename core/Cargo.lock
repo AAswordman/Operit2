@@ -1563,7 +1563,7 @@ dependencies = [
 name = "operit-store"
 version = "0.1.0"
 dependencies = [
- "rusqlite",
+ "operit-host-api",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -2,14 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
-use rusqlite::Connection;
 use thiserror::Error;
 
 use crate::data::dao::ChatDao::ChatDao;
 use crate::data::dao::MessageDao::MessageDao;
 use crate::data::dao::MessageVariantDao::MessageVariantDao;
 
-pub const DATABASE_VERSION: i32 = 19;
+pub const DATABASE_VERSION: i32 = 20;
 
 #[derive(Debug, Error)]
 pub enum AppDatabaseError {
@@ -108,6 +107,7 @@ impl AppDatabase {
             16 => MIGRATION_16_17(self)?,
             17 => MIGRATION_17_18(self)?,
             18 => MIGRATION_18_19(self)?,
+            19 => MIGRATION_19_20(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -119,10 +119,7 @@ impl AppDatabase {
     }
 
     fn createAllTables(&self) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            createAllTables(connection)?;
-            Ok(())
-        })
+        createAllTables(&self.store)
     }
 
     pub fn dropAllTables(&self) -> Result<(), SqliteStoreError> {
@@ -131,6 +128,12 @@ impl AppDatabase {
             DROP TABLE IF EXISTS message_variants;
             DROP TABLE IF EXISTS messages;
             DROP TABLE IF EXISTS chats;
+            DROP TABLE IF EXISTS sync_sql_deletions;
+            DROP TABLE IF EXISTS sync_sql_message_variant_rows;
+            DROP TABLE IF EXISTS sync_sql_message_rows;
+            DROP TABLE IF EXISTS sync_sql_chat_rows;
+            DROP TABLE IF EXISTS sync_sql_operations;
+            DROP TABLE IF EXISTS sync_sql_clocks;
             "#,
         )
     }
@@ -335,8 +338,14 @@ fn MIGRATION_18_19(database: &AppDatabase) -> Result<(), SqliteStoreError> {
     )
 }
 
-pub fn createAllTables(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(
+#[allow(non_snake_case)]
+fn MIGRATION_19_20(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    createSyncTables(&database.store)?;
+    database.store.setUserVersion(20)
+}
+
+pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
+    store.executeBatch(
         r#"
         CREATE TABLE chats (
             id TEXT PRIMARY KEY NOT NULL,
@@ -406,6 +415,110 @@ pub fn createAllTables(connection: &Connection) -> Result<(), rusqlite::Error> {
             ON message_variants(chatId, messageTimestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS index_message_variants_chatId_messageTimestamp_variantIndex
             ON message_variants(chatId, messageTimestamp, variantIndex);
+        "#,
+    )?;
+    createSyncTables(store)
+}
+
+pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
+    store.executeBatch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_sql_clocks (
+            originDeviceId TEXT PRIMARY KEY NOT NULL,
+            sequence INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_sql_operations (
+            opId TEXT PRIMARY KEY NOT NULL,
+            originDeviceId TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            domain TEXT NOT NULL,
+            entityType TEXT NOT NULL,
+            entityId TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            createdAt INTEGER NOT NULL,
+            schemaVersion INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS index_sync_sql_operations_origin_sequence
+            ON sync_sql_operations(originDeviceId, sequence);
+        CREATE INDEX IF NOT EXISTS index_sync_sql_operations_createdAt
+            ON sync_sql_operations(createdAt);
+
+        CREATE TABLE IF NOT EXISTS sync_sql_chat_rows (
+            opId TEXT NOT NULL,
+            id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            createdAt INTEGER NOT NULL,
+            updatedAt INTEGER NOT NULL,
+            inputTokens INTEGER NOT NULL,
+            outputTokens INTEGER NOT NULL,
+            currentWindowSize INTEGER NOT NULL,
+            "group" TEXT,
+            displayOrder INTEGER NOT NULL,
+            workspace TEXT,
+            workspaceEnv TEXT,
+            parentChatId TEXT,
+            characterCardName TEXT,
+            characterGroupId TEXT,
+            locked INTEGER NOT NULL,
+            PRIMARY KEY(opId, id),
+            FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_sql_message_rows (
+            opId TEXT NOT NULL,
+            chatId TEXT NOT NULL,
+            sender TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            orderIndex INTEGER NOT NULL,
+            roleName TEXT NOT NULL,
+            selectedVariantIndex INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            modelName TEXT NOT NULL,
+            inputTokens INTEGER NOT NULL,
+            outputTokens INTEGER NOT NULL,
+            cachedInputTokens INTEGER NOT NULL,
+            sentAt INTEGER NOT NULL,
+            outputDurationMs INTEGER NOT NULL,
+            waitDurationMs INTEGER NOT NULL,
+            completedAt INTEGER NOT NULL,
+            displayMode TEXT NOT NULL,
+            isFavorite INTEGER NOT NULL,
+            PRIMARY KEY(opId, chatId, timestamp),
+            FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_sql_message_variant_rows (
+            opId TEXT NOT NULL,
+            chatId TEXT NOT NULL,
+            messageTimestamp INTEGER NOT NULL,
+            variantIndex INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            roleName TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            modelName TEXT NOT NULL,
+            inputTokens INTEGER NOT NULL,
+            outputTokens INTEGER NOT NULL,
+            cachedInputTokens INTEGER NOT NULL,
+            sentAt INTEGER NOT NULL,
+            outputDurationMs INTEGER NOT NULL,
+            waitDurationMs INTEGER NOT NULL,
+            completedAt INTEGER NOT NULL,
+            PRIMARY KEY(opId, chatId, messageTimestamp, variantIndex),
+            FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_sql_deletions (
+            opId TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            tableName TEXT NOT NULL,
+            chatId TEXT NOT NULL,
+            messageTimestamp INTEGER,
+            variantIndex INTEGER,
+            PRIMARY KEY(opId, ordinal),
+            FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
+        );
         "#,
     )
 }

@@ -7,3 +7,4 @@ pub mod preferences;
 pub mod repository;
 pub mod skill;
 pub mod mcp;
+pub mod sync;

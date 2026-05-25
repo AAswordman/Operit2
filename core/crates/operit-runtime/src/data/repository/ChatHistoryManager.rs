@@ -21,6 +21,7 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::model::MessageEntity::MessageEntity;
 use crate::data::model::MessageVariantEntity::MessageVariantEntity;
+use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
 
 const LOCATOR_PREVIEW_CHAR_COUNT: i32 = 48;
 
@@ -32,6 +33,8 @@ pub enum ChatHistoryManagerError {
     Store(#[from] operit_store::SqliteStore::SqliteStoreError),
     #[error(transparent)]
     Preferences(#[from] PreferencesDataStoreError),
+    #[error(transparent)]
+    Sync(#[from] SqlChatSyncStoreError),
     #[error("{0}")]
     IllegalArgument(String),
     #[error("{0}")]
@@ -45,6 +48,7 @@ pub struct ChatHistoryManager {
     chatDao: ChatDao,
     messageDao: MessageDao,
     messageVariantDao: MessageVariantDao,
+    syncStore: SqlChatSyncStore,
     currentChatIdDataStore: PreferencesDataStore,
     pub currentChatIdFlow: StateFlow<Option<String>>,
     _chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
@@ -79,10 +83,11 @@ impl ChatHistoryManager {
         let currentChatIdDataStore = PreferencesDataStore::new(
             paths.root_dir().join("current_chat_id.preferences.json"),
         );
-        let database = AppDatabase::getDatabase(paths)?;
+        let database = AppDatabase::getDatabase(paths.clone())?;
         let chatDao = database.chatDao();
         let messageDao = database.messageDao();
         let messageVariantDao = database.messageVariantDao();
+        let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
         let currentChatIdFlow = currentChatIdDataStore
             .dataFlow()
             .catch(|exception| match exception {
@@ -107,6 +112,7 @@ impl ChatHistoryManager {
             chatDao,
             messageDao,
             messageVariantDao,
+            syncStore,
             currentChatIdDataStore,
             currentChatIdFlow,
             _chatHistoriesFlow,
@@ -268,12 +274,16 @@ impl ChatHistoryManager {
     }
 
     pub fn saveChatHistory(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
-        self.saveChatHistoryInternal(history)
+        let chatId = history.id.clone();
+        self.saveChatHistoryInternal(history)?;
+        self.recordChatSnapshot(&chatId)?;
+        Ok(())
     }
 
     pub fn updateChatLocked(&self, chatId: String, locked: bool) -> ChatHistoryManagerResult<()> {
         self.chatDao
             .updateChatLocked(&chatId, locked, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -290,6 +300,7 @@ impl ChatHistoryManager {
         );
         self.messageDao.insertMessage(messageEntity)?;
         self.touchChatMetadata(chatId)?;
+        self.recordMessageSnapshot(chatId, messageToPersist.timestamp)?;
         Ok(messageToPersist)
     }
 
@@ -451,7 +462,14 @@ impl ChatHistoryManager {
                 }
             })
             .collect::<Result<Vec<_>, ChatHistoryManagerError>>()?;
+        let updatedIds = entitiesToUpdate
+            .iter()
+            .map(|entity| entity.id.clone())
+            .collect::<Vec<_>>();
         self.chatDao.updateChats(entitiesToUpdate)?;
+        for chatId in updatedIds {
+            self.recordChatMetadata(&chatId)?;
+        }
         Ok(())
     }
 
@@ -503,6 +521,7 @@ impl ChatHistoryManager {
             .deleteVariantsForMessage(&chatId, timestamp)?;
         self.messageDao.deleteMessageByTimestamp(&chatId, timestamp)?;
         self.touchChatMetadata(&chatId)?;
+        self.recordMessageDeletion(&chatId, timestamp)?;
         Ok(())
     }
 
@@ -537,6 +556,7 @@ impl ChatHistoryManager {
                 .updateSelectedVariantIndex(&chatId, messageTimestamp, 0)?;
         }
         self.touchChatMetadata(&chatId)?;
+        self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         Ok(())
     }
 
@@ -551,6 +571,7 @@ impl ChatHistoryManager {
 
         if let Some(existingMessage) = existingMessage {
             if message.selectedVariantIndex > 0 {
+                let messageTimestamp = message.timestamp;
                 let existingVariant = self
                     .messageVariantDao
                     .getVariantForMessage(&chatId, message.timestamp, message.selectedVariantIndex)?
@@ -576,9 +597,13 @@ impl ChatHistoryManager {
                     selectedVariantIndex,
                 )?;
                 self.touchChatMetadata(&chatId)?;
+                self.recordMessageSnapshot(&chatId, messageTimestamp)?;
                 return Ok(());
             }
 
+            let messageTimestamp = message.timestamp;
+            let shouldUpdateChatMetadata = message.contentStream.is_none()
+                || (existingMessage.content.is_empty() && !message.content.is_empty());
             let updatedMessageEntity = MessageEntity::fromChatMessage(
                 chatId.clone(),
                 message,
@@ -586,11 +611,16 @@ impl ChatHistoryManager {
                 existingMessage.messageId,
             );
             self.messageDao.updateMessage(updatedMessageEntity)?;
-            self.touchChatMetadata(&chatId)?;
+            if shouldUpdateChatMetadata {
+                self.touchChatMetadata(&chatId)?;
+            }
+            self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         } else {
+            let messageTimestamp = message.timestamp;
             let messageEntity = MessageEntity::fromChatMessage(chatId.clone(), message, 0, 0);
             self.messageDao.insertMessage(messageEntity)?;
             self.touchChatMetadata(&chatId)?;
+            self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         }
         Ok(())
     }
@@ -606,6 +636,7 @@ impl ChatHistoryManager {
             if existingMessage.isFavorite != isFavorite {
                 self.messageDao
                     .updateMessageFavorite(&chatId, timestamp, isFavorite)?;
+                self.recordMessageSnapshot(&chatId, timestamp)?;
             }
         }
         Ok(())
@@ -651,6 +682,7 @@ impl ChatHistoryManager {
         self.messageDao
             .updateSelectedVariantIndex(&chatId, messageTimestamp, nextVariantIndex)?;
         self.touchChatMetadata(&chatId)?;
+        self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         Ok(nextVariantIndex)
     }
 
@@ -678,6 +710,7 @@ impl ChatHistoryManager {
         }
         self.messageDao
             .updateSelectedVariantIndex(&chatId, messageTimestamp, selectedVariantIndex)?;
+        self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         Ok(())
     }
 
@@ -689,6 +722,7 @@ impl ChatHistoryManager {
         self.messageVariantDao.deleteVariantsFrom(&chatId, timestamp)?;
         self.messageDao.deleteMessagesFrom(&chatId, timestamp)?;
         self.touchChatMetadata(&chatId)?;
+        self.recordMessagesFromDeletion(&chatId, timestamp)?;
         Ok(())
     }
 
@@ -696,12 +730,14 @@ impl ChatHistoryManager {
         self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
         self.messageDao.deleteAllMessagesForChat(&chatId)?;
         self.touchChatMetadata(&chatId)?;
+        self.recordAllMessagesForChatDeletion(&chatId)?;
         Ok(())
     }
 
     pub fn updateChatTitle(&self, chatId: String, title: String) -> ChatHistoryManagerResult<()> {
         self.chatDao
             .updateChatTitle(&chatId, title, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -715,6 +751,7 @@ impl ChatHistoryManager {
             characterCardName,
             currentTimeMillis(),
         )?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -734,6 +771,7 @@ impl ChatHistoryManager {
                 outputTokens,
                 currentWindowSize,
             )?;
+            self.recordChatMetadata(&chatId)?;
         }
         Ok(())
     }
@@ -770,6 +808,9 @@ impl ChatHistoryManager {
             return Ok(false);
         }
         self.chatDao.deleteChat(&chatId)?;
+        if chat.is_some() {
+            self.recordChatDeletion(&chatId)?;
+        }
         if self.currentChatIdFlow()?.as_deref() == Some(chatId.as_str()) {
             self.clearCurrentChatId()?;
         }
@@ -805,6 +846,7 @@ impl ChatHistoryManager {
         self.chatDao.insertChat(chatEntity.clone())?;
         let history = chatEntity.toChatHistory(Vec::new());
         self.setCurrentChatId(history.id.clone())?;
+        self.recordChatMetadata(&history.id)?;
         Ok(history)
     }
 
@@ -816,6 +858,7 @@ impl ChatHistoryManager {
     ) -> ChatHistoryManagerResult<()> {
         self.chatDao
             .updateChatWorkspace(&chatId, workspace, workspaceEnv, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -826,6 +869,7 @@ impl ChatHistoryManager {
     ) -> ChatHistoryManagerResult<()> {
         self.chatDao
             .updateChatGroup(&chatId, group, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -935,6 +979,7 @@ impl ChatHistoryManager {
         }
         let branchHistory = branchEntity.toChatHistory(Vec::new());
         self.setCurrentChatId(branchHistory.id.clone())?;
+        self.recordChatSnapshot(&branchHistory.id)?;
         Ok(branchHistory)
     }
 
@@ -1178,6 +1223,7 @@ impl ChatHistoryManager {
             characterGroupId,
             currentTimeMillis(),
         )?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -1193,6 +1239,7 @@ impl ChatHistoryManager {
             characterGroupId,
             currentTimeMillis(),
         )?;
+        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -1321,6 +1368,41 @@ impl ChatHistoryManager {
                 chat.currentWindowSize,
             )?;
         }
+        Ok(())
+    }
+
+    fn recordChatMetadata(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordChatMetadata(chatId)?;
+        Ok(())
+    }
+
+    fn recordChatSnapshot(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordChatSnapshot(chatId)?;
+        Ok(())
+    }
+
+    fn recordMessageSnapshot(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordMessageSnapshot(chatId, timestamp)?;
+        Ok(())
+    }
+
+    fn recordChatDeletion(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordChatDeletion(chatId)?;
+        Ok(())
+    }
+
+    fn recordMessageDeletion(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordMessageDeletion(chatId, timestamp)?;
+        Ok(())
+    }
+
+    fn recordMessagesFromDeletion(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordMessagesFromDeletion(chatId, timestamp)?;
+        Ok(())
+    }
+
+    fn recordAllMessagesForChatDeletion(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.syncStore.recordAllMessagesForChatDeletion(chatId)?;
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use std::env;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -70,27 +71,30 @@ impl RuntimeStorePaths {
     }
 
     pub fn ensure_root(&self) -> std::io::Result<()> {
-        fs::create_dir_all(&self.root_dir)
+        ensureRuntimeDirectory(self.root_dir.clone())
     }
 
     pub fn ensure_chats_dir(&self) -> std::io::Result<()> {
-        fs::create_dir_all(self.chats_dir())
+        ensureRuntimeDirectory(self.chats_dir())
     }
 
     pub fn ensure_skills_dir(&self) -> std::io::Result<()> {
-        fs::create_dir_all(self.skills_dir())
+        ensureRuntimeDirectory(self.skills_dir())
     }
 
     pub fn ensure_packages_dir(&self) -> std::io::Result<()> {
-        fs::create_dir_all(self.packages_dir())
+        ensureRuntimeDirectory(self.packages_dir())
     }
 
     pub fn ensure_mcp_plugins_dir(&self) -> std::io::Result<()> {
-        fs::create_dir_all(self.mcp_plugins_dir())
+        ensureRuntimeDirectory(self.mcp_plugins_dir())
     }
 }
 
 pub fn default_data_dir() -> PathBuf {
+    if cfg!(target_arch = "wasm32") {
+        return PathBuf::from("operit2");
+    }
     if cfg!(target_os = "windows") {
         let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
         return PathBuf::from(appdata).join("Operit2");
@@ -107,4 +111,16 @@ pub fn default_data_dir() -> PathBuf {
     }
     let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
     PathBuf::from(home).join(".local").join("share").join("operit2")
+}
+
+#[allow(non_snake_case)]
+#[cfg(not(target_arch = "wasm32"))]
+fn ensureRuntimeDirectory(path: PathBuf) -> std::io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+#[allow(non_snake_case)]
+#[cfg(target_arch = "wasm32")]
+fn ensureRuntimeDirectory(_path: PathBuf) -> std::io::Result<()> {
+    Ok(())
 }

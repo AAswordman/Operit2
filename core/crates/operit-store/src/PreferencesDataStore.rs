@@ -1,17 +1,27 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
+use operit_host_api::RuntimeStorageHost;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
+use crate::RuntimeStorePaths::RuntimeStorePaths;
+use crate::SyncOperationStore::{
+    NewSyncOperation, SyncOperationStore, SyncOperationStoreError,
+};
 
 #[derive(Debug, Error)]
 pub enum PreferencesDataStoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("host error: {0}")]
+    Host(#[from] operit_host_api::HostError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("sync operation store error: {0}")]
+    Sync(#[from] SyncOperationStoreError),
     #[error("{0}")]
     Message(String),
 }
@@ -538,10 +548,52 @@ where
     MutableStateFlow::new(initialValue)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreferencesDataStore {
     path: PathBuf,
+    storagePath: String,
+    storageHost: Arc<dyn RuntimeStorageHost>,
+    syncOperationStore: Option<SyncOperationStore>,
+    syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreferencesSyncDescriptor {
+    pub domain: String,
+    pub entityType: String,
+    pub entityId: String,
+    pub operation: String,
+}
+
+impl PreferencesSyncDescriptor {
+    pub fn new(
+        domain: impl Into<String>,
+        entityType: impl Into<String>,
+        entityId: impl Into<String>,
+        operation: impl Into<String>,
+    ) -> Self {
+        Self {
+            domain: domain.into(),
+            entityType: entityType.into(),
+            entityId: entityId.into(),
+            operation: operation.into(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn forPreferencesPath(path: &Path) -> Self {
+        let fileName = path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        let entityId = runtimeStoragePath(path);
+        let entityType = fileName
+            .trim_end_matches(".preferences.json")
+            .trim_end_matches(".json")
+            .to_string();
+        Self::new("preferences", entityType, entityId, "upsert")
+    }
 }
 
 #[derive(Debug)]
@@ -553,8 +605,34 @@ struct PreferencesDataStoreChangeSignal {
 impl PreferencesDataStore {
     pub fn new(path: PathBuf) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let rootDir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .expect("preferences path must include a parent directory");
+        Self {
+            storagePath: runtimeStoragePath(&path),
+            storageHost: defaultRuntimeStorageHost(),
+            syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::new(rootDir))),
+            syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
+            path,
+            changeSignal,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+    ) -> Self {
+        let storagePath = storagePath.into();
+        let path = PathBuf::from(&storagePath);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
         Self {
             path,
+            storagePath,
+            storageHost,
+            syncOperationStore: None,
+            syncDescriptor: None,
             changeSignal,
         }
     }
@@ -563,11 +641,31 @@ impl PreferencesDataStore {
         &self.path
     }
 
+    #[allow(non_snake_case)]
+    pub fn applySyncedPreferences(
+        entityId: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let preferences: Preferences = serde_json::from_value(payload)?;
+        let content = serde_json::to_string_pretty(&preferences)?;
+        defaultRuntimeStorageHost().writeBytes(entityId, content.as_bytes())?;
+        let path = RuntimeStorePaths::default().root_dir().join(entityId);
+        let signal = preferencesDataStoreChangeSignal(&path);
+        let mut version = signal
+            .version
+            .lock()
+            .expect("PreferencesDataStore version mutex must not be poisoned");
+        *version += 1;
+        signal.changed.notify_all();
+        Ok(())
+    }
+
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
-        if !self.path.exists() {
+        if !self.storageHost.exists(&self.storagePath)? {
             return Ok(emptyPreferences());
         }
-        let content = fs::read_to_string(&self.path)?;
+        let content = String::from_utf8(self.storageHost.readBytes(&self.storagePath)?)
+            .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
         if content.trim().is_empty() {
             return Ok(emptyPreferences());
         }
@@ -613,12 +711,36 @@ impl PreferencesDataStore {
     }
 
     fn write(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let content = serde_json::to_string_pretty(preferences)?;
-        fs::write(&self.path, content)?;
+        self.storageHost
+            .writeBytes(&self.storagePath, content.as_bytes())?;
+        self.recordSyncOperation(preferences)?;
         self.notifyChanged();
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    fn recordSyncOperation(
+        &self,
+        preferences: &Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let Some(syncOperationStore) = &self.syncOperationStore else {
+            return Ok(());
+        };
+        let Some(descriptor) = &self.syncDescriptor else {
+            return Ok(());
+        };
+        let deviceId = syncOperationStore.localDeviceId()?;
+        syncOperationStore.appendLocalOperation(
+            &deviceId,
+            NewSyncOperation {
+                domain: descriptor.domain.clone(),
+                entityType: descriptor.entityType.clone(),
+                entityId: descriptor.entityId.clone(),
+                operation: descriptor.operation.clone(),
+                payload: serde_json::to_value(preferences)?,
+            },
+        )?;
         Ok(())
     }
 
