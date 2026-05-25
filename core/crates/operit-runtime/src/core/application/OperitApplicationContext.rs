@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use operit_host_api::{
-    FileSystemHost, HostEnvironmentDescriptor, ManagedRuntimeHost, SystemOperationHost,
-    WebVisitHost,
+    FileSystemHost, HostEnvironmentDescriptor, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
+    SystemOperationHost, WebVisitHost,
 };
 
 #[derive(Clone, Default)]
@@ -11,6 +11,8 @@ pub struct OperitApplicationContext {
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
+    pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
+    pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
 }
 
@@ -21,6 +23,8 @@ impl OperitApplicationContext {
             webVisitHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
+            runtimeStorageHost: None,
+            runtimeSqliteHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
         }
     }
@@ -33,6 +37,8 @@ impl OperitApplicationContext {
             webVisitHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
+            runtimeStorageHost: None,
+            runtimeSqliteHost: None,
             hostEnvironment,
         }
     }
@@ -48,6 +54,8 @@ impl OperitApplicationContext {
             webVisitHost: Some(webVisitHost),
             systemOperationHost: None,
             managedRuntimeHost: None,
+            runtimeStorageHost: None,
+            runtimeSqliteHost: None,
             hostEnvironment,
         }
     }
@@ -64,6 +72,8 @@ impl OperitApplicationContext {
             webVisitHost: Some(webVisitHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: None,
+            runtimeStorageHost: None,
+            runtimeSqliteHost: None,
             hostEnvironment,
         }
     }
@@ -74,6 +84,8 @@ impl OperitApplicationContext {
         webVisitHost: Arc<dyn WebVisitHost>,
         systemOperationHost: Arc<dyn SystemOperationHost>,
         managedRuntimeHost: Arc<dyn ManagedRuntimeHost>,
+        runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
+        runtimeSqliteHost: Arc<dyn RuntimeSqliteHost>,
     ) -> Self {
         let hostEnvironment = fileSystemHost.environmentDescriptor();
         Self {
@@ -81,6 +93,8 @@ impl OperitApplicationContext {
             webVisitHost: Some(webVisitHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: Some(managedRuntimeHost),
+            runtimeStorageHost: Some(runtimeStorageHost),
+            runtimeSqliteHost: Some(runtimeSqliteHost),
             hostEnvironment,
         }
     }

@@ -15,6 +15,7 @@ crossterm = "0.28"
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
+operit-store = { path = "../../core/crates/operit-store" }
 ratatui = "0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

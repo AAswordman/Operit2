@@ -1,6 +1,8 @@
 use operit_store::PreferencesDataStore::StateFlow;
-use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
-use rusqlite::{params, params_from_iter, Row};
+use operit_store::sqliteParams;
+use operit_store::SqliteStore::{
+    toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue,
+};
 
 use crate::data::model::CharacterCardChatStats::CharacterCardChatStats;
 use crate::data::model::CharacterGroupChatStats::CharacterGroupChatStats;
@@ -21,31 +23,23 @@ impl ChatDao {
     }
 
     pub fn getTotalChatCount(&self) -> Result<i32, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.query_row("SELECT COUNT(*) FROM chats", [], |row| row.get(0))
-        })
+        self.store.queryScalar("SELECT COUNT(*) FROM chats", sqliteParams![])
     }
 
     pub fn getAllChatsDirectly(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.selectChats("SELECT * FROM chats ORDER BY displayOrder ASC", [])
+        self.selectChats("SELECT * FROM chats ORDER BY displayOrder ASC", sqliteParams![])
     }
 
     pub fn getChatById(&self, chatId: &str) -> Result<Option<ChatEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare("SELECT * FROM chats WHERE id = ?1")?;
-            let result = statement.query_row(params![chatId], mapChatEntity);
-            match result {
-                Ok(chat) => Ok(Some(chat)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(error) => Err(error),
-            }
-        })
+        self.store
+            .queryOne("SELECT * FROM chats WHERE id = ?1", sqliteParams![chatId])?
+            .map(|row| mapChatEntity(&row))
+            .transpose()
     }
 
     pub fn insertChat(&self, chat: ChatEntity) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                r#"
+        self.store.execute(
+            r#"
                 INSERT OR REPLACE INTO chats (
                     id, title, createdAt, updatedAt, inputTokens, outputTokens,
                     currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
@@ -53,31 +47,29 @@ impl ChatDao {
                 )
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                 "#,
-                params![
-                    chat.id,
-                    chat.title,
-                    chat.createdAt,
-                    chat.updatedAt,
-                    chat.inputTokens,
-                    chat.outputTokens,
-                    chat.currentWindowSize,
-                    chat.group,
-                    chat.displayOrder,
-                    chat.workspace,
-                    chat.workspaceEnv,
-                    chat.parentChatId,
-                    chat.characterCardName,
-                    chat.characterGroupId,
-                    chat.locked,
-                ],
-            )?;
-            Ok(())
-        })?;
+            sqliteParams![
+                chat.id,
+                chat.title,
+                chat.createdAt,
+                chat.updatedAt,
+                chat.inputTokens,
+                chat.outputTokens,
+                chat.currentWindowSize,
+                chat.group,
+                chat.displayOrder,
+                chat.workspace,
+                chat.workspaceEnv,
+                chat.parentChatId,
+                chat.characterCardName,
+                chat.characterGroupId,
+                chat.locked,
+            ],
+        )?;
         self.store.notifyInvalidated()
     }
 
     pub fn deleteChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
-        self.execute("DELETE FROM chats WHERE id = ?1", params![chatId])
+        self.execute("DELETE FROM chats WHERE id = ?1", sqliteParams![chatId])
     }
 
     pub fn updateChatMetadata(
@@ -91,7 +83,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET updatedAt = ?2, title = ?3, inputTokens = ?4, outputTokens = ?5, currentWindowSize = ?6 WHERE id = ?1",
-            params![chatId, timestamp, title, inputTokens, outputTokens, currentWindowSize],
+            sqliteParams![chatId, timestamp, title, inputTokens, outputTokens, currentWindowSize],
         )
     }
 
@@ -103,7 +95,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET title = ?2, updatedAt = ?3 WHERE id = ?1",
-            params![chatId, title, timestamp],
+            sqliteParams![chatId, title, timestamp],
         )
     }
 
@@ -116,7 +108,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET workspace = ?2, workspaceEnv = ?3, updatedAt = ?4 WHERE id = ?1",
-            params![chatId, workspace, workspaceEnv, timestamp],
+            sqliteParams![chatId, workspace, workspaceEnv, timestamp],
         )
     }
 
@@ -130,7 +122,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET title = ?2, workspace = ?3, workspaceEnv = ?4, updatedAt = ?5 WHERE id = ?1",
-            params![chatId, title, workspace, workspaceEnv, timestamp],
+            sqliteParams![chatId, title, workspace, workspaceEnv, timestamp],
         )
     }
 
@@ -142,7 +134,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = ?2, updatedAt = ?3 WHERE id = ?1",
-            params![chatId, group, timestamp],
+            sqliteParams![chatId, group, timestamp],
         )
     }
 
@@ -154,7 +146,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET characterCardName = ?2, characterGroupId = NULL, updatedAt = ?3 WHERE id = ?1",
-            params![chatId, characterCardName, timestamp],
+            sqliteParams![chatId, characterCardName, timestamp],
         )
     }
 
@@ -166,7 +158,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET characterCardName = NULL, characterGroupId = ?2, updatedAt = ?3 WHERE id = ?1",
-            params![chatId, characterGroupId, timestamp],
+            sqliteParams![chatId, characterGroupId, timestamp],
         )
     }
 
@@ -179,7 +171,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET characterCardName = ?2, characterGroupId = ?3, updatedAt = ?4 WHERE id = ?1",
-            params![chatId, characterCardName, characterGroupId, timestamp],
+            sqliteParams![chatId, characterCardName, characterGroupId, timestamp],
         )
     }
 
@@ -191,7 +183,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET locked = ?2, updatedAt = ?3 WHERE id = ?1",
-            params![chatId, locked, timestamp],
+            sqliteParams![chatId, locked, timestamp],
         )
     }
 
@@ -204,7 +196,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET displayOrder = ?2, \"group\" = ?3, updatedAt = ?4 WHERE id = ?1",
-            params![chatId, displayOrder, group, timestamp],
+            sqliteParams![chatId, displayOrder, group, timestamp],
         )
     }
 
@@ -218,7 +210,7 @@ impl ChatDao {
     pub fn updateGroupName(&self, oldName: &str, newName: &str) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = ?2 WHERE \"group\" = ?1",
-            params![oldName, newName],
+            sqliteParams![oldName, newName],
         )
     }
 
@@ -230,14 +222,14 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = ?2 WHERE \"group\" = ?1 AND characterCardName = ?3",
-            params![oldName, newName, characterCardName],
+            sqliteParams![oldName, newName, characterCardName],
         )
     }
 
     pub fn deleteChatsInGroup(&self, groupName: &str) -> Result<(), SqliteStoreError> {
         self.execute(
             "DELETE FROM chats WHERE \"group\" = ?1 AND locked = 0",
-            params![groupName],
+            sqliteParams![groupName],
         )
     }
 
@@ -248,21 +240,21 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "DELETE FROM chats WHERE \"group\" = ?1 AND characterCardName = ?2 AND locked = 0",
-            params![groupName, characterCardName],
+            sqliteParams![groupName, characterCardName],
         )
     }
 
     pub fn removeGroupFromChats(&self, groupName: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = NULL, updatedAt = ?2 WHERE \"group\" = ?1",
-            params![groupName, timestamp],
+            sqliteParams![groupName, timestamp],
         )
     }
 
     pub fn removeGroupFromLockedChats(&self, groupName: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = NULL, updatedAt = ?2 WHERE \"group\" = ?1 AND locked = 1",
-            params![groupName, timestamp],
+            sqliteParams![groupName, timestamp],
         )
     }
 
@@ -274,7 +266,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = NULL, updatedAt = ?3 WHERE \"group\" = ?1 AND characterCardName = ?2",
-            params![groupName, characterCardName, timestamp],
+            sqliteParams![groupName, characterCardName, timestamp],
         )
     }
 
@@ -286,7 +278,7 @@ impl ChatDao {
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET \"group\" = NULL, updatedAt = ?3 WHERE \"group\" = ?1 AND characterCardName = ?2 AND locked = 1",
-            params![groupName, characterCardName, timestamp],
+            sqliteParams![groupName, characterCardName, timestamp],
         )
     }
 
@@ -305,7 +297,7 @@ impl ChatDao {
     }
 
     pub fn getMainChats(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.selectChats("SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC", [])
+        self.selectChats("SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC", sqliteParams![])
     }
 
     pub fn getMainChatsFlow(&self) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
@@ -339,21 +331,21 @@ impl ChatDao {
     pub fn clearCharacterCardBinding(&self, characterCardName: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET characterCardName = NULL, updatedAt = ?2 WHERE characterCardName = ?1",
-            params![characterCardName, timestamp],
+            sqliteParams![characterCardName, timestamp],
         )
     }
 
     pub fn deleteUnlockedChatsByCharacterCardName(&self, characterCardName: &str) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "DELETE FROM chats WHERE characterCardName = ?1 AND locked = 0",
-            params![characterCardName],
+            sqliteParams![characterCardName],
         )
     }
 
     pub fn deleteUnlockedUnboundChats(&self) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "DELETE FROM chats WHERE characterCardName IS NULL AND characterGroupId IS NULL AND locked = 0",
-            [],
+            sqliteParams![],
         )
     }
 
@@ -365,7 +357,7 @@ impl ChatDao {
     ) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "UPDATE chats SET characterCardName = ?2, updatedAt = ?3 WHERE characterCardName = ?1",
-            params![oldName, newName, timestamp],
+            sqliteParams![oldName, newName, timestamp],
         )
     }
 
@@ -377,21 +369,21 @@ impl ChatDao {
     ) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "UPDATE chats SET characterCardName = NULL, characterGroupId = ?2, updatedAt = ?3 WHERE characterGroupId = ?1",
-            params![sourceGroupId, targetGroupId, timestamp],
+            sqliteParams![sourceGroupId, targetGroupId, timestamp],
         )
     }
 
     pub fn assignCharacterCardToUnbound(&self, newName: &str, timestamp: i64) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "UPDATE chats SET characterCardName = ?1, updatedAt = ?2 WHERE characterCardName IS NULL AND characterGroupId IS NULL",
-            params![newName, timestamp],
+            sqliteParams![newName, timestamp],
         )
     }
 
     pub fn assignCharacterGroupToUnbound(&self, targetGroupId: &str, timestamp: i64) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "UPDATE chats SET characterCardName = NULL, characterGroupId = ?1, updatedAt = ?2 WHERE characterGroupId IS NULL AND characterCardName IS NULL",
-            params![targetGroupId, timestamp],
+            sqliteParams![targetGroupId, timestamp],
         )
     }
 
@@ -404,7 +396,7 @@ impl ChatDao {
         self.execute_for_chat_ids(
             "UPDATE chats SET characterCardName = ?, characterGroupId = NULL, updatedAt = ? WHERE id IN",
             chatIds,
-            vec![&newName as &dyn rusqlite::ToSql, &timestamp],
+            sqliteParams![newName, timestamp],
         )
     }
 
@@ -417,7 +409,7 @@ impl ChatDao {
         self.execute_for_chat_ids(
             "UPDATE chats SET characterCardName = NULL, characterGroupId = ?, updatedAt = ? WHERE id IN",
             chatIds,
-            vec![&characterGroupId as &dyn rusqlite::ToSql, &timestamp],
+            sqliteParams![characterGroupId, timestamp],
         )
     }
 
@@ -425,14 +417,14 @@ impl ChatDao {
         self.execute_for_chat_ids(
             "UPDATE chats SET characterGroupId = NULL, updatedAt = ? WHERE id IN",
             chatIds,
-            vec![&timestamp as &dyn rusqlite::ToSql],
+            sqliteParams![timestamp],
         )
     }
 
     pub fn clearCharacterGroupBinding(&self, sourceGroupId: &str, timestamp: i64) -> Result<i32, SqliteStoreError> {
         self.execute_count(
             "UPDATE chats SET characterGroupId = NULL, updatedAt = ?2 WHERE characterGroupId = ?1",
-            params![sourceGroupId, timestamp],
+            sqliteParams![sourceGroupId, timestamp],
         )
     }
 
@@ -445,13 +437,13 @@ impl ChatDao {
         self.execute_for_chat_ids(
             "UPDATE chats SET \"group\" = ?, updatedAt = ? WHERE id IN",
             chatIds,
-            vec![&groupName as &dyn rusqlite::ToSql, &timestamp],
+            sqliteParams![groupName, timestamp],
         )
     }
 
     pub fn getCharacterCardChatStats(&self) -> Result<Vec<CharacterCardChatStats>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 r#"
                 SELECT c.characterCardName AS characterCardName,
                     COUNT(c.id) AS chatCount,
@@ -465,21 +457,22 @@ impl ChatDao {
                 WHERE c.characterGroupId IS NULL
                 GROUP BY c.characterCardName
                 "#,
-            )?;
-            let rows = statement.query_map([], |row| {
+                sqliteParams![],
+            )?
+            .into_iter()
+            .map(|row| {
                 Ok(CharacterCardChatStats {
                     characterCardName: row.get(0)?,
                     chatCount: row.get(1)?,
                     messageCount: row.get(2)?,
                 })
-            })?;
-            rows.collect()
-        })
+            })
+            .collect()
     }
 
     pub fn getCharacterGroupChatStats(&self) -> Result<Vec<CharacterGroupChatStats>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
+        self.store
+            .queryRows(
                 r#"
                 SELECT c.characterGroupId AS characterGroupId,
                     COUNT(c.id) AS chatCount,
@@ -493,58 +486,54 @@ impl ChatDao {
                 WHERE c.characterCardName IS NULL
                 GROUP BY c.characterGroupId
                 "#,
-            )?;
-            let rows = statement.query_map([], |row| {
+                sqliteParams![],
+            )?
+            .into_iter()
+            .map(|row| {
                 Ok(CharacterGroupChatStats {
                     characterGroupId: row.get(0)?,
                     chatCount: row.get(1)?,
                     messageCount: row.get(2)?,
                 })
-            })?;
-            rows.collect()
-        })
+            })
+            .collect()
     }
 
-    fn execute<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(sql, params)?;
-            Ok(())
-        })?;
+    fn execute(&self, sql: &str, params: Vec<SqliteValue>) -> Result<(), SqliteStoreError> {
+        self.store.execute(sql, params)?;
         self.store.notifyInvalidated()
     }
 
-    fn execute_count<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<i32, SqliteStoreError> {
-        let count = self.store.withConnection(|connection| Ok(connection.execute(sql, params)? as i32))?;
+    fn execute_count(&self, sql: &str, params: Vec<SqliteValue>) -> Result<i32, SqliteStoreError> {
+        let count = self.store.execute(sql, params)? as i32;
         self.store.notifyInvalidated()?;
         Ok(count)
     }
 
-    fn selectChats<P: rusqlite::Params>(&self, sql: &str, params: P) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(sql)?;
-            let rows = statement.query_map(params, mapChatEntity)?;
-            rows.collect()
-        })
+    fn selectChats(&self, sql: &str, params: Vec<SqliteValue>) -> Result<Vec<ChatEntity>, SqliteStoreError> {
+        self.store
+            .queryRows(sql, params)?
+            .into_iter()
+            .map(|row| mapChatEntity(&row))
+            .collect()
     }
 
     fn selectChatsWithOne(&self, sql: &str, value: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.selectChats(sql, params![value])
+        self.selectChats(sql, sqliteParams![value])
     }
 
     fn execute_for_chat_ids(
         &self,
         sqlPrefix: &str,
         chatIds: Vec<String>,
-        mut leadingParams: Vec<&dyn rusqlite::ToSql>,
+        mut leadingParams: Vec<SqliteValue>,
     ) -> Result<i32, SqliteStoreError> {
         let placeholders = chatIds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!("{sqlPrefix} ({placeholders})");
-        let count = self.store.withConnection(|connection| {
-            for chatId in &chatIds {
-                leadingParams.push(chatId);
-            }
-            Ok(connection.execute(&sql, params_from_iter(leadingParams))? as i32)
-        })?;
+        for chatId in &chatIds {
+            leadingParams.push(toSqliteValue(chatId));
+        }
+        let count = self.store.execute(&sql, leadingParams)? as i32;
         self.store.notifyInvalidated()?;
         Ok(count)
     }
@@ -569,15 +558,18 @@ impl ChatDao {
         sql: &str,
         values: &[String],
     ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(sql)?;
-            let rows = statement.query_map(params_from_iter(values.iter()), mapChatEntity)?;
-            rows.collect()
-        })
+        self.store
+            .queryRows(
+                sql,
+                values.iter().map(toSqliteValue).collect::<Vec<_>>(),
+            )?
+            .into_iter()
+            .map(|row| mapChatEntity(&row))
+            .collect()
     }
 }
 
-pub fn mapChatEntity(row: &Row<'_>) -> Result<ChatEntity, rusqlite::Error> {
+pub fn mapChatEntity(row: &SqliteRow) -> Result<ChatEntity, SqliteStoreError> {
     Ok(ChatEntity {
         id: row.get("id")?,
         title: row.get("title")?,

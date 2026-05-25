@@ -1,0 +1,14 @@
+[package]
+name = "operit-host-web"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+js-sys = "0.3"
+operit-host-api = { path = "../../core/crates/operit-host-api" }
+wasm-bindgen = "0.2"

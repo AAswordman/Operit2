@@ -1,7 +1,16 @@
-use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
-use rusqlite::{params, params_from_iter, Row};
+use operit_store::sqliteParams;
+use operit_store::SqliteStore::{
+    toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue,
+};
 
 use crate::data::model::MessageVariantEntity::MessageVariantEntity;
+
+const SELECT_VARIANT_COLUMNS: &str = r#"
+    SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
+        provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+        sentAt, outputDurationMs, waitDurationMs, completedAt
+    FROM message_variants
+"#;
 
 #[derive(Clone)]
 pub struct MessageVariantDao {
@@ -17,20 +26,14 @@ impl MessageVariantDao {
         &self,
         chatId: &str,
     ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
-                r#"
-                SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
-                    provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                    sentAt, outputDurationMs, waitDurationMs, completedAt
-                FROM message_variants
+        self.selectVariants(
+            &format!(
+                "{SELECT_VARIANT_COLUMNS}
                 WHERE chatId = ?1
-                ORDER BY messageTimestamp ASC, variantIndex ASC
-                "#,
-            )?;
-            let rows = statement.query_map(params![chatId], mapMessageVariantEntity)?;
-            rows.collect()
-        })
+                ORDER BY messageTimestamp ASC, variantIndex ASC"
+            ),
+            sqliteParams![chatId],
+        )
     }
 
     pub fn getVariantsForMessages(
@@ -38,31 +41,21 @@ impl MessageVariantDao {
         chatId: &str,
         messageTimestamps: Vec<i64>,
     ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let placeholders = messageTimestamps
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
-                r#"
-                SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
-                    provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                    sentAt, outputDurationMs, waitDurationMs, completedAt
-                FROM message_variants
-                WHERE chatId = ? AND messageTimestamp IN ({placeholders})
-                ORDER BY messageTimestamp ASC, variantIndex ASC
-                "#
-            );
-            let mut values: Vec<&dyn rusqlite::ToSql> = vec![&chatId];
-            for timestamp in &messageTimestamps {
-                values.push(timestamp);
-            }
-            let mut statement = connection.prepare(&sql)?;
-            let rows =
-                statement.query_map(params_from_iter(values), mapMessageVariantEntity)?;
-            rows.collect()
-        })
+        let placeholders = messageTimestamps
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "{SELECT_VARIANT_COLUMNS}
+            WHERE chatId = ? AND messageTimestamp IN ({placeholders})
+            ORDER BY messageTimestamp ASC, variantIndex ASC"
+        );
+        let mut params = sqliteParams![chatId];
+        for timestamp in &messageTimestamps {
+            params.push(toSqliteValue(timestamp));
+        }
+        self.selectVariants(&sql, params)
     }
 
     pub fn getVariantsForMessage(
@@ -70,21 +63,14 @@ impl MessageVariantDao {
         chatId: &str,
         messageTimestamp: i64,
     ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
-                r#"
-                SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
-                    provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                    sentAt, outputDurationMs, waitDurationMs, completedAt
-                FROM message_variants
+        self.selectVariants(
+            &format!(
+                "{SELECT_VARIANT_COLUMNS}
                 WHERE chatId = ?1 AND messageTimestamp = ?2
-                ORDER BY variantIndex ASC
-                "#,
-            )?;
-            let rows =
-                statement.query_map(params![chatId, messageTimestamp], mapMessageVariantEntity)?;
-            rows.collect()
-        })
+                ORDER BY variantIndex ASC"
+            ),
+            sqliteParams![chatId, messageTimestamp],
+        )
     }
 
     pub fn getVariantForMessage(
@@ -93,45 +79,29 @@ impl MessageVariantDao {
         messageTimestamp: i64,
         variantIndex: i32,
     ) -> Result<Option<MessageVariantEntity>, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            let mut statement = connection.prepare(
-                r#"
-                SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
-                    provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                    sentAt, outputDurationMs, waitDurationMs, completedAt
-                FROM message_variants
-                WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3
-                LIMIT 1
-                "#,
-            )?;
-            let result = statement.query_row(
-                params![chatId, messageTimestamp, variantIndex],
-                mapMessageVariantEntity,
-            );
-            match result {
-                Ok(variant) => Ok(Some(variant)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(error) => Err(error),
-            }
-        })
+        self.store
+            .queryOne(
+                &format!(
+                    "{SELECT_VARIANT_COLUMNS}
+                    WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3
+                    LIMIT 1"
+                ),
+                sqliteParams![chatId, messageTimestamp, variantIndex],
+            )?
+            .map(|row| mapMessageVariantEntity(&row))
+            .transpose()
     }
 
     pub fn insertVariant(&self, variant: MessageVariantEntity) -> Result<i64, SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            if variant.variantId == 0 {
-                connection.execute(
-                    insertVariantSql(false),
-                    params_from_iter(insertVariantParams(&variant, false)),
-                )?;
-                Ok(connection.last_insert_rowid())
-            } else {
-                connection.execute(
-                    insertVariantSql(true),
-                    params_from_iter(insertVariantParams(&variant, true)),
-                )?;
-                Ok(variant.variantId)
-            }
-        })
+        if variant.variantId == 0 {
+            self.store
+                .execute(insertVariantSql(false), insertVariantParams(&variant, false))?;
+            self.store.queryScalar("SELECT last_insert_rowid()", sqliteParams![])
+        } else {
+            self.store
+                .execute(insertVariantSql(true), insertVariantParams(&variant, true))?;
+            Ok(variant.variantId)
+        }
     }
 
     pub fn insertVariants(&self, variants: Vec<MessageVariantEntity>) -> Result<(), SqliteStoreError> {
@@ -140,12 +110,12 @@ impl MessageVariantDao {
                 if variant.variantId == 0 {
                     transaction.execute(
                         insertVariantSql(false),
-                        params_from_iter(insertVariantParams(&variant, false)),
+                        insertVariantParams(&variant, false),
                     )?;
                 } else {
                     transaction.execute(
                         insertVariantSql(true),
-                        params_from_iter(insertVariantParams(&variant, true)),
+                        insertVariantParams(&variant, true),
                     )?;
                 }
             }
@@ -159,9 +129,8 @@ impl MessageVariantDao {
         targetChatId: &str,
         upToTimestampInclusive: Option<i64>,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                r#"
+        self.store.execute(
+            r#"
                 INSERT INTO message_variants (
                     chatId, messageTimestamp, variantIndex, content, roleName, provider,
                     modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
@@ -174,16 +143,14 @@ impl MessageVariantDao {
                 FROM message_variants
                 WHERE chatId = ?1 AND (?3 IS NULL OR messageTimestamp <= ?3)
                 "#,
-                params![sourceChatId, targetChatId, upToTimestampInclusive],
-            )?;
-            Ok(())
-        })
+            sqliteParams![sourceChatId, targetChatId, upToTimestampInclusive],
+        )?;
+        Ok(())
     }
 
     pub fn updateVariant(&self, variant: MessageVariantEntity) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                r#"
+        self.store.execute(
+            r#"
                 UPDATE message_variants
                 SET chatId = ?2, messageTimestamp = ?3, variantIndex = ?4, content = ?5,
                     roleName = ?6, provider = ?7, modelName = ?8, inputTokens = ?9,
@@ -191,26 +158,25 @@ impl MessageVariantDao {
                     outputDurationMs = ?13, waitDurationMs = ?14, completedAt = ?15
                 WHERE variantId = ?1
                 "#,
-                params![
-                    variant.variantId,
-                    variant.chatId,
-                    variant.messageTimestamp,
-                    variant.variantIndex,
-                    variant.content,
-                    variant.roleName,
-                    variant.provider,
-                    variant.modelName,
-                    variant.inputTokens,
-                    variant.outputTokens,
-                    variant.cachedInputTokens,
-                    variant.sentAt,
-                    variant.outputDurationMs,
-                    variant.waitDurationMs,
-                    variant.completedAt,
-                ],
-            )?;
-            Ok(())
-        })
+            sqliteParams![
+                variant.variantId,
+                variant.chatId,
+                variant.messageTimestamp,
+                variant.variantIndex,
+                variant.content,
+                variant.roleName,
+                variant.provider,
+                variant.modelName,
+                variant.inputTokens,
+                variant.outputTokens,
+                variant.cachedInputTokens,
+                variant.sentAt,
+                variant.outputDurationMs,
+                variant.waitDurationMs,
+                variant.completedAt,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn deleteVariant(
@@ -219,13 +185,11 @@ impl MessageVariantDao {
         messageTimestamp: i64,
         variantIndex: i32,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
-                params![chatId, messageTimestamp, variantIndex],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+            sqliteParams![chatId, messageTimestamp, variantIndex],
+        )?;
+        Ok(())
     }
 
     pub fn deleteVariantsForMessage(
@@ -233,13 +197,11 @@ impl MessageVariantDao {
         chatId: &str,
         messageTimestamp: i64,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2",
-                params![chatId, messageTimestamp],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2",
+            sqliteParams![chatId, messageTimestamp],
+        )?;
+        Ok(())
     }
 
     pub fn deleteVariantsFrom(
@@ -247,24 +209,33 @@ impl MessageVariantDao {
         chatId: &str,
         messageTimestamp: i64,
     ) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute(
-                "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp >= ?2",
-                params![chatId, messageTimestamp],
-            )?;
-            Ok(())
-        })
+        self.store.execute(
+            "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp >= ?2",
+            sqliteParams![chatId, messageTimestamp],
+        )?;
+        Ok(())
     }
 
     pub fn deleteAllVariantsForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
-        self.store.withConnection(|connection| {
-            connection.execute("DELETE FROM message_variants WHERE chatId = ?1", params![chatId])?;
-            Ok(())
-        })
+        self.store
+            .execute("DELETE FROM message_variants WHERE chatId = ?1", sqliteParams![chatId])?;
+        Ok(())
+    }
+
+    fn selectVariants(
+        &self,
+        sql: &str,
+        params: Vec<SqliteValue>,
+    ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
+        self.store
+            .queryRows(sql, params)?
+            .into_iter()
+            .map(|row| mapMessageVariantEntity(&row))
+            .collect()
     }
 }
 
-fn mapMessageVariantEntity(row: &Row<'_>) -> Result<MessageVariantEntity, rusqlite::Error> {
+fn mapMessageVariantEntity(row: &SqliteRow) -> Result<MessageVariantEntity, SqliteStoreError> {
     Ok(MessageVariantEntity {
         variantId: row.get(0)?,
         chatId: row.get(1)?,
@@ -306,44 +277,44 @@ fn insertVariantSql(withVariantId: bool) -> &'static str {
     }
 }
 
-fn insertVariantParams<'a>(
-    variant: &'a MessageVariantEntity,
+fn insertVariantParams(
+    variant: &MessageVariantEntity,
     withVariantId: bool,
-) -> Vec<&'a dyn rusqlite::ToSql> {
+) -> Vec<SqliteValue> {
     if withVariantId {
-        vec![
-            &variant.variantId,
-            &variant.chatId,
-            &variant.messageTimestamp,
-            &variant.variantIndex,
-            &variant.content,
-            &variant.roleName,
-            &variant.provider,
-            &variant.modelName,
-            &variant.inputTokens,
-            &variant.outputTokens,
-            &variant.cachedInputTokens,
-            &variant.sentAt,
-            &variant.outputDurationMs,
-            &variant.waitDurationMs,
-            &variant.completedAt,
+        sqliteParams![
+            variant.variantId,
+            variant.chatId,
+            variant.messageTimestamp,
+            variant.variantIndex,
+            variant.content,
+            variant.roleName,
+            variant.provider,
+            variant.modelName,
+            variant.inputTokens,
+            variant.outputTokens,
+            variant.cachedInputTokens,
+            variant.sentAt,
+            variant.outputDurationMs,
+            variant.waitDurationMs,
+            variant.completedAt,
         ]
     } else {
-        vec![
-            &variant.chatId,
-            &variant.messageTimestamp,
-            &variant.variantIndex,
-            &variant.content,
-            &variant.roleName,
-            &variant.provider,
-            &variant.modelName,
-            &variant.inputTokens,
-            &variant.outputTokens,
-            &variant.cachedInputTokens,
-            &variant.sentAt,
-            &variant.outputDurationMs,
-            &variant.waitDurationMs,
-            &variant.completedAt,
+        sqliteParams![
+            variant.chatId,
+            variant.messageTimestamp,
+            variant.variantIndex,
+            variant.content,
+            variant.roleName,
+            variant.provider,
+            variant.modelName,
+            variant.inputTokens,
+            variant.outputTokens,
+            variant.cachedInputTokens,
+            variant.sentAt,
+            variant.outputDurationMs,
+            variant.waitDurationMs,
+            variant.completedAt,
         ]
     }
 }
