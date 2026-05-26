@@ -43,12 +43,14 @@ impl TypewriterState {
         let total_chars = full_content.chars().count();
         if total_chars == 0 {
             let now = Instant::now();
-            self.entries.entry(message_timestamp).or_insert(TypewriterEntry {
-                visible_chars: 0,
-                last_tick: now,
-                last_total_chars: 0,
-                char_interval: MAX_CHAR_INTERVAL,
-            });
+            self.entries
+                .entry(message_timestamp)
+                .or_insert(TypewriterEntry {
+                    visible_chars: 0,
+                    last_tick: now,
+                    last_total_chars: 0,
+                    char_interval: MAX_CHAR_INTERVAL,
+                });
             return TypewriterFrame {
                 content: String::new(),
                 pending_char: None,
@@ -56,12 +58,15 @@ impl TypewriterState {
         }
 
         let now = Instant::now();
-        let entry = self.entries.entry(message_timestamp).or_insert(TypewriterEntry {
-            visible_chars: 0,
-            last_tick: now,
-            last_total_chars: total_chars,
-            char_interval: interval_for_chunk(total_chars),
-        });
+        let entry = self
+            .entries
+            .entry(message_timestamp)
+            .or_insert(TypewriterEntry {
+                visible_chars: 0,
+                last_tick: now,
+                last_total_chars: total_chars,
+                char_interval: interval_for_chunk(total_chars),
+            });
 
         if total_chars < entry.visible_chars {
             entry.visible_chars = total_chars;

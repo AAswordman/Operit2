@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Stdout};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -10,13 +13,11 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use operit_runtime::core::tools::ToolPermissionSystem::{
-    PermissionLevel, PermissionRequestResult,
-};
+use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
-use operit_runtime::data::model::ChatHistory::ChatHistory;
 use operit_runtime::data::model::CharacterCard::CharacterCardChatModelBindingMode;
+use operit_runtime::data::model::ChatHistory::ChatHistory;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::FunctionType::FunctionType;
@@ -25,8 +26,8 @@ use operit_runtime::data::model::ModelConfigData::{
     getModelByIndex, getModelList, getValidModelIndex,
 };
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
-use operit_runtime::util::AppLogger::AppLogger;
 use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_runtime::util::AppLogger::AppLogger;
 use serde::Deserialize;
 
 use super::approval::TuiApprovalBridge;
@@ -54,6 +55,9 @@ pub(super) struct OperitTui {
     pub(super) input_cursor: usize,
     pub(super) autocomplete_index: usize,
     pub(super) queued_attachment_paths: Vec<String>,
+    pub(super) queued_inline_attachments: Vec<AttachmentInfo>,
+    pub(super) queued_attachment_tokens: Vec<QueuedAttachmentToken>,
+    pub(super) paste_attachment_counter: usize,
     pub(super) status_message: String,
     pub(super) context_usage_label: String,
     pub(super) transcript_scroll: u16,
@@ -67,9 +71,11 @@ pub(super) struct OperitTui {
     pub(super) typewriter_state: TypewriterState,
     pub(super) response_stream_subscription_chat_ids: HashSet<String>,
     pub(super) response_stream_text_by_chat_id: HashMap<String, String>,
-    pub(super) response_stream_revision_tracker_by_chat_id: HashMap<String, TextStreamRevisionTracker>,
+    pub(super) response_stream_revision_tracker_by_chat_id:
+        HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) show_help: bool,
+    pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
     pub(super) should_quit: bool,
 }
 
@@ -90,6 +96,24 @@ pub(super) struct ModelChoiceItem {
     pub(super) provider_name: &'static str,
     pub(super) model_name: String,
     pub(super) selected: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct StartupWorkspacePrompt {
+    pub(super) path: String,
+    pub(super) accept_selected: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum QueuedAttachmentTokenKind {
+    Path { path: String },
+    Inline { file_path: String },
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct QueuedAttachmentToken {
+    pub(super) token: String,
+    pub(super) kind: QueuedAttachmentTokenKind,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,6 +139,7 @@ impl OperitTui {
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
         approval_bridge: TuiApprovalBridge,
+        startup_workspace_prompt_path: Option<String>,
     ) -> Result<Self, String> {
         let chat_histories = core
             .chat_runtime_holder_main()
@@ -184,6 +209,9 @@ impl OperitTui {
             input_cursor: 0,
             autocomplete_index: 0,
             queued_attachment_paths: Vec::new(),
+            queued_inline_attachments: Vec::new(),
+            queued_attachment_tokens: Vec::new(),
+            paste_attachment_counter: 0,
             status_message,
             context_usage_label: String::new(),
             transcript_scroll: 0,
@@ -200,6 +228,12 @@ impl OperitTui {
             response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
             show_help: false,
+            startup_workspace_prompt: startup_workspace_prompt_path.map(|path| {
+                StartupWorkspacePrompt {
+                    path,
+                    accept_selected: true,
+                }
+            }),
             should_quit: false,
         })
     }
@@ -212,7 +246,9 @@ impl OperitTui {
             return Err(error);
         }
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen).map_err(|error| error.to_string()) {
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)
+            .map_err(|error| error.to_string())
+        {
             let _ = disable_raw_mode();
             AppLogger::set_enable_console_logging(previous_console_logging);
             return Err(error);
@@ -230,8 +266,12 @@ impl OperitTui {
         let cleanup_result = disable_raw_mode()
             .map_err(|error| error.to_string())
             .and_then(|_| {
-                execute!(terminal.backend_mut(), LeaveAlternateScreen)
-                    .map_err(|error| error.to_string())
+                execute!(
+                    terminal.backend_mut(),
+                    DisableBracketedPaste,
+                    LeaveAlternateScreen
+                )
+                .map_err(|error| error.to_string())
             })
             .and_then(|_| terminal.show_cursor().map_err(|error| error.to_string()));
         AppLogger::set_enable_console_logging(previous_console_logging);
@@ -251,8 +291,10 @@ impl OperitTui {
                 .map_err(|error| error.to_string())?;
 
             if event::poll(Duration::from_millis(16)).map_err(|error| error.to_string())? {
-                if let Event::Key(key) = event::read().map_err(|error| error.to_string())? {
-                    self.handle_key_event(key).await?;
+                match event::read().map_err(|error| error.to_string())? {
+                    Event::Key(key) => self.handle_key_event(key).await?,
+                    Event::Paste(text) => self.handle_paste(text).await?,
+                    _ => {}
                 }
             }
         }
@@ -276,6 +318,11 @@ impl OperitTui {
 
         self.ctrl_c_pending = false;
 
+        if self.startup_workspace_prompt.is_some() {
+            self.handle_startup_workspace_prompt_key(key).await?;
+            return Ok(());
+        }
+
         if self.approval_bridge.current().is_some() {
             self.handle_approval_key(key);
             return Ok(());
@@ -297,7 +344,8 @@ impl OperitTui {
                 return Ok(());
             }
             (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.create_new_chat(self.initial_shell_args.clone()).await?;
+                self.create_new_chat(self.initial_shell_args.clone())
+                    .await?;
                 return Ok(());
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
@@ -470,6 +518,62 @@ impl OperitTui {
         Ok(())
     }
 
+    async fn handle_startup_workspace_prompt_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        match key.code {
+            KeyCode::Left | KeyCode::Up => {
+                if let Some(prompt) = self.startup_workspace_prompt.as_mut() {
+                    prompt.accept_selected = true;
+                }
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                if let Some(prompt) = self.startup_workspace_prompt.as_mut() {
+                    prompt.accept_selected = false;
+                }
+            }
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.accept_startup_workspace_prompt().await?;
+            }
+            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.startup_workspace_prompt = None;
+                self.status_message = "workspace not bound".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(accept_selected) = self
+                    .startup_workspace_prompt
+                    .as_ref()
+                    .map(|prompt| prompt.accept_selected)
+                else {
+                    return Ok(());
+                };
+                if accept_selected {
+                    self.accept_startup_workspace_prompt().await?;
+                } else {
+                    self.startup_workspace_prompt = None;
+                    self.status_message = "workspace not bound".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn accept_startup_workspace_prompt(&mut self) -> Result<(), String> {
+        let Some(prompt) = self.startup_workspace_prompt.take() else {
+            return Ok(());
+        };
+        let chat_id = self.current_chat_id()?;
+        self.core
+            .chat_runtime_holder_main()
+            .bindChatToWorkspace(chat_id.clone(), prompt.path.clone(), None)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.refresh_core_snapshot().await?;
+        self.refresh_chats().await;
+        self.select_chat_by_id(&chat_id);
+        self.status_message = format!("workspace bound: {}", prompt.path);
+        Ok(())
+    }
+
     async fn cancel_current_request(&mut self) -> Result<(), String> {
         let chat_id = self.current_chat_id()?;
         self.core
@@ -491,7 +595,9 @@ impl OperitTui {
         }
 
         let input = self.input.trim_end().to_string();
-        if input.trim().is_empty() {
+        let has_queued_attachments =
+            !self.queued_attachment_paths.is_empty() || !self.queued_inline_attachments.is_empty();
+        if input.trim().is_empty() && !has_queued_attachments {
             return Ok(());
         }
         if input.starts_with('/') {
@@ -502,20 +608,24 @@ impl OperitTui {
         }
 
         let chat_id = self.current_chat_id()?;
-        let attachment_paths = self.queued_attachment_paths.clone();
+        let attachment_paths = std::mem::take(&mut self.queued_attachment_paths);
+        let inline_attachments = std::mem::take(&mut self.queued_inline_attachments);
+        let attachment_tokens = std::mem::take(&mut self.queued_attachment_tokens);
+        let message = strip_attachment_tokens(input, &attachment_tokens);
         self.follow_transcript = true;
         self.status_message = "connecting...".to_string();
-        self.queued_attachment_paths.clear();
         self.input.clear();
         self.input_cursor = 0;
 
         let send_args = ChatSendArgs {
             chatId: Some(chat_id),
-            message: input,
+            message,
             attachmentPaths: attachment_paths,
             replyToTimestamp: None,
         };
-        let active_chat_id = self.begin_chat_message(send_args).await?;
+        let active_chat_id = self
+            .begin_chat_message(send_args, inline_attachments)
+            .await?;
         self.refresh_chats().await;
         self.select_chat_by_id(&active_chat_id);
         self.last_current_chat_loading = true;
@@ -524,7 +634,11 @@ impl OperitTui {
         Ok(())
     }
 
-    async fn begin_chat_message(&mut self, send_args: ChatSendArgs) -> Result<String, String> {
+    async fn begin_chat_message(
+        &mut self,
+        send_args: ChatSendArgs,
+        inline_attachments: Vec<AttachmentInfo>,
+    ) -> Result<String, String> {
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -548,7 +662,8 @@ impl OperitTui {
                 .await
                 .map_err(|error| error.to_string())?;
         }
-        let attachments = build_attachments(&send_args.attachmentPaths)?;
+        let mut attachments = build_attachments(&send_args.attachmentPaths)?;
+        attachments.extend(inline_attachments);
         let reply_to_message = match send_args.replyToTimestamp {
             Some(timestamp) => Some(
                 self.current_messages_cache
@@ -628,14 +743,15 @@ impl OperitTui {
                 );
             }
             "attachments" => {
-                self.status_message = if self.queued_attachment_paths.is_empty() {
+                let queued = self.queued_attachment_labels();
+                self.status_message = if queued.is_empty() {
                     "attachments=none".to_string()
                 } else {
-                    format!("attachments={}", self.queued_attachment_paths.join(", "))
+                    format!("attachments={}", queued.join(", "))
                 };
             }
             "clear-attachments" => {
-                self.queued_attachment_paths.clear();
+                self.clear_queued_attachments();
                 self.status_message = "attachments cleared".to_string();
             }
             _ => {
@@ -695,9 +811,9 @@ impl OperitTui {
                 self.status_message = format!("approval master={}", level.name());
             }
             Some("tool") => {
-                let toolName = args
-                    .get(1)
-                    .ok_or_else(|| "usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string())?;
+                let toolName = args.get(1).ok_or_else(|| {
+                    "usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string()
+                })?;
                 match args.get(2).map(String::as_str) {
                     Some("clear") => {
                         self.core
@@ -717,7 +833,8 @@ impl OperitTui {
                         self.status_message = format!("approval {toolName}={}", level.name());
                     }
                     _ => {
-                        return Err("usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string());
+                        return Err("usage: /approval tool <tool-name> <allow|ask|forbid|clear>"
+                            .to_string());
                     }
                 }
             }
@@ -774,16 +891,15 @@ impl OperitTui {
             self.current_chat_model_status_parts().await?;
         self.status_message = format!(
             "CHAT -> {}[{}] {} / {}",
-            config_id,
-            actual_index,
-            provider_name,
-            selected_model_name
+            config_id, actual_index, provider_name, selected_model_name
         );
         self.refresh_context_usage_label().await;
         Ok(())
     }
 
-    async fn current_chat_model_status_parts(&mut self) -> Result<(String, i32, &'static str, String), String> {
+    async fn current_chat_model_status_parts(
+        &mut self,
+    ) -> Result<(String, i32, &'static str, String), String> {
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -795,12 +911,14 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = self.core
+        let mapping = self
+            .core
             .preferences_functional_config_manager()
             .getConfigMappingForFunction(FunctionType::CHAT)
             .await
             .map_err(|error| error.to_string())?;
-        let config = self.core
+        let config = self
+            .core
             .preferences_model_config_manager()
             .getModelConfig(&mapping.configId)
             .await
@@ -827,13 +945,15 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
         let mut entries = Vec::new();
-        for config_id in self.core
+        for config_id in self
+            .core
             .preferences_model_config_manager()
             .getConfigIds()
             .await
             .map_err(|error| error.to_string())?
         {
-            let config = self.core
+            let config = self
+                .core
                 .preferences_model_config_manager()
                 .getModelConfig(&config_id)
                 .await
@@ -888,19 +1008,22 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = self.core
+        let mapping = self
+            .core
             .preferences_functional_config_manager()
             .getConfigMappingForFunction(FunctionType::CHAT)
             .await
             .map_err(|error| error.to_string())?;
         let mut choices = Vec::new();
-        for config_id in self.core
+        for config_id in self
+            .core
             .preferences_model_config_manager()
             .getConfigIds()
             .await
             .map_err(|error| error.to_string())?
         {
-            let config = self.core
+            let config = self
+                .core
                 .preferences_model_config_manager()
                 .getModelConfig(&config_id)
                 .await
@@ -957,7 +1080,8 @@ impl OperitTui {
             .initializeIfNeeded()
             .await
             .map_err(|error| error.to_string())?;
-        let config = self.core
+        let config = self
+            .core
             .preferences_model_config_manager()
             .getModelConfig(&config_id)
             .await
@@ -1005,10 +1129,7 @@ impl OperitTui {
             .map_err(|error| error.to_string())?;
         self.status_message = format!(
             "CHAT -> {}[{}] {} / {}",
-            choice.config_id,
-            choice.model_index,
-            choice.provider_name,
-            choice.model_name
+            choice.config_id, choice.model_index, choice.provider_name, choice.model_name
         );
         self.refresh_context_usage_label().await;
         Ok(())
@@ -1021,13 +1142,15 @@ impl OperitTui {
             .initializeIfNeeded()
             .await
             .map_err(|error| error.to_string())?;
-        let current = self.core
+        let current = self
+            .core
             .preferences_model_config_manager()
             .getModelConfig(&config_id)
             .await
             .map_err(|error| error.to_string())?;
         let new_value = !current.enableMaxContextMode;
-        let updated = self.core
+        let updated = self
+            .core
             .preferences_model_config_manager()
             .updateContextSettings(
                 &config_id,
@@ -1052,19 +1175,22 @@ impl OperitTui {
     }
 
     async fn resolve_editable_chat_config_id(&mut self) -> Result<String, String> {
-        if let ActivePrompt::CharacterCard { id } = self.core
+        if let ActivePrompt::CharacterCard { id } = self
+            .core
             .preferences_active_prompt_manager()
             .getActivePrompt()
             .await
             .map_err(|error| error.to_string())?
         {
-            let card = self.core
+            let card = self
+                .core
                 .preferences_character_card_manager()
                 .getCharacterCard(&id)
                 .await
                 .map_err(|error| error.to_string())?;
-            let binding_mode =
-                CharacterCardChatModelBindingMode::normalize(Some(card.chatModelBindingMode.as_str()));
+            let binding_mode = CharacterCardChatModelBindingMode::normalize(Some(
+                card.chatModelBindingMode.as_str(),
+            ));
             if binding_mode == CharacterCardChatModelBindingMode::FIXED_CONFIG {
                 if let Some(config_id) = card
                     .chatModelConfigId
@@ -1122,7 +1248,8 @@ impl OperitTui {
             if let Ok(chat_id) = self.current_chat_id() {
                 self.select_chat_by_id(&chat_id);
             }
-            self.status_message = "chat list shown | Up/Down select | Enter switch | Esc close".to_string();
+            self.status_message =
+                "chat list shown | Up/Down select | Enter switch | Esc close".to_string();
         } else {
             self.focus = FocusArea::Input;
             self.status_message = "chat list hidden".to_string();
@@ -1282,7 +1409,9 @@ impl OperitTui {
                     self.apply_response_stream_event(event.value);
                 }
                 "inputProcessingStateByChatIdFlow" => {
-                    if let Ok(value) = serde_json::from_value::<HashMap<String, InputProcessingState>>(event.value) {
+                    if let Ok(value) =
+                        serde_json::from_value::<HashMap<String, InputProcessingState>>(event.value)
+                    {
                         self.current_chat_input_processing_state_cache =
                             current_input_processing_state_from_map(
                                 &value,
@@ -1304,13 +1433,24 @@ impl OperitTui {
         let Some(current_chat_id) = self.current_chat_id_cache.clone() else {
             return;
         };
-        if !self.active_streaming_chat_ids_cache.contains(&current_chat_id) {
+        if !self
+            .active_streaming_chat_ids_cache
+            .contains(&current_chat_id)
+        {
             return;
         }
-        if self.response_stream_subscription_chat_ids.contains(&current_chat_id) {
+        if self
+            .response_stream_subscription_chat_ids
+            .contains(&current_chat_id)
+        {
             return;
         }
-        if !self.current_messages_cache.iter().rev().any(|message| message.sender == "ai") {
+        if !self
+            .current_messages_cache
+            .iter()
+            .rev()
+            .any(|message| message.sender == "ai")
+        {
             return;
         }
         if self
@@ -1319,7 +1459,8 @@ impl OperitTui {
             .await
             .is_ok()
         {
-            self.response_stream_subscription_chat_ids.insert(current_chat_id);
+            self.response_stream_subscription_chat_ids
+                .insert(current_chat_id);
         }
     }
 
@@ -1404,7 +1545,11 @@ impl OperitTui {
         if content.is_empty() {
             return messages;
         }
-        if let Some(message) = messages.iter_mut().rev().find(|message| message.sender == "ai") {
+        if let Some(message) = messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.sender == "ai")
+        {
             message.content = content.clone();
         }
         messages
@@ -1464,7 +1609,10 @@ impl OperitTui {
                 Ok(label) => self.set_status_message(label),
                 Err(error) => self.set_status_message(error),
             }
-        } else if matches!(state, InputProcessingState::Idle | InputProcessingState::Completed) {
+        } else if matches!(
+            state,
+            InputProcessingState::Idle | InputProcessingState::Completed
+        ) {
             match self.current_chat_model_status_label().await {
                 Ok(label) => self.set_status_message(label),
                 Err(error) => self.set_status_message(error),
@@ -1504,7 +1652,8 @@ impl OperitTui {
             .initializeIfNeeded()
             .await
             .map_err(|error| error.to_string())?;
-        let config = self.core
+        let config = self
+            .core
             .preferences_model_config_manager()
             .getModelConfig(&config_id)
             .await
@@ -1517,7 +1666,11 @@ impl OperitTui {
         let max_tokens = (effective_context_length * 1024.0) as i32;
         let current_window_size = self.current_window_size_cache;
         if max_tokens <= 0 {
-            return Ok(format!("context {} / {}", current_window_size.max(0), max_tokens));
+            return Ok(format!(
+                "context {} / {}",
+                current_window_size.max(0),
+                max_tokens
+            ));
         }
         let usage_percent =
             ((current_window_size.max(0) as f64 / max_tokens as f64) * 100.0).round() as i32;
@@ -1612,6 +1765,16 @@ fn build_attachments(paths: &[String]) -> Result<Vec<AttachmentInfo>, String> {
         .iter()
         .map(|path| build_attachment_info(path))
         .collect()
+}
+
+fn strip_attachment_tokens(
+    mut message: String,
+    attachment_tokens: &[QueuedAttachmentToken],
+) -> String {
+    for attachment_token in attachment_tokens {
+        message = message.replace(&attachment_token.token, " ");
+    }
+    message.trim().to_string()
 }
 
 fn current_input_processing_state_from_map(

@@ -56,6 +56,10 @@ impl OperitTui {
             self.render_help_modal(frame);
         }
 
+        if self.startup_workspace_prompt.is_some() {
+            self.render_startup_workspace_prompt(frame);
+        }
+
         if self.approval_bridge.current().is_some() {
             self.render_approval_modal(frame);
         }
@@ -110,7 +114,12 @@ impl OperitTui {
             Style::default()
         };
         let list = List::new(items)
-            .block(Block::default().title("Chats").borders(Borders::ALL).border_style(border_style))
+            .block(
+                Block::default()
+                    .title("Chats")
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            )
             .highlight_style(
                 Style::default()
                     .bg(theme::ACCENT_BG)
@@ -120,7 +129,10 @@ impl OperitTui {
             .highlight_symbol(">> ");
         let mut state = ListState::default();
         if !self.chats.is_empty() {
-            state.select(Some(self.selected_chat_index.min(self.chats.len().saturating_sub(1))));
+            state.select(Some(
+                self.selected_chat_index
+                    .min(self.chats.len().saturating_sub(1)),
+            ));
         }
         frame.render_stateful_widget(list, area, &mut state);
     }
@@ -206,10 +218,7 @@ impl OperitTui {
             .saturating_sub(1)
             .max(1) as usize;
         let content_lines = wrap_approx_lines(&self.input, text_width).len() as u16;
-        let max_content_lines = area_height
-            .saturating_sub(6)
-            .min(8)
-            .max(1);
+        let max_content_lines = area_height.saturating_sub(6).min(8).max(1);
         content_lines.min(max_content_lines).max(1) + 2
     }
 
@@ -383,6 +392,65 @@ impl OperitTui {
         frame.render_widget(help, popup);
     }
 
+    fn render_startup_workspace_prompt(&self, frame: &mut Frame) {
+        let Some(prompt) = self.startup_workspace_prompt.as_ref() else {
+            return;
+        };
+        let popup = centered_rect(76, 34, frame.area());
+        frame.render_widget(Clear, popup);
+        let yes_style = if prompt.accept_selected {
+            Style::default()
+                .fg(theme::TEXT_INVERTED)
+                .bg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::ACCENT_STRONG)
+        };
+        let no_style = if prompt.accept_selected {
+            Style::default().fg(theme::TEXT_SUBTLE)
+        } else {
+            Style::default()
+                .fg(theme::TEXT_INVERTED)
+                .bg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        };
+        let lines = vec![
+            Line::from(Span::styled(
+                "Workspace",
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Use current launch folder as the workspace for this chat?"),
+            Line::from(""),
+            Line::from(Span::styled(
+                prompt.path.clone(),
+                Style::default().fg(theme::TEXT_MUTED),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" 1 Yes ", yes_style),
+                Span::raw("  "),
+                Span::styled(" 2 No ", no_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enter selects | Left/Right changes | y/n | Esc=no",
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+        ];
+        let modal = Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .title("Workspace")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(modal, popup);
+    }
+
     fn render_approval_modal(&self, frame: &mut Frame) {
         let Some(request) = self.approval_bridge.current() else {
             return;
@@ -404,12 +472,17 @@ impl OperitTui {
         let lines = vec![
             Line::from(Span::styled(
                 "Tool approval required",
-                Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(vec![
                 Span::styled("tool: ", Style::default().fg(theme::TEXT_SUBTLE)),
-                Span::styled(request.tool.name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    request.tool.name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("operation: ", Style::default().fg(theme::TEXT_SUBTLE)),
@@ -425,15 +498,30 @@ impl OperitTui {
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("1 ", Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "1 ",
+                    Style::default()
+                        .fg(theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("yes, allow once"),
             ]),
             Line::from(vec![
-                Span::styled("2 ", Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "2 ",
+                    Style::default()
+                        .fg(theme::ERROR)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("no, deny"),
             ]),
             Line::from(vec![
-                Span::styled("3 ", Style::default().fg(theme::ACCENT_DIM).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "3 ",
+                    Style::default()
+                        .fg(theme::ACCENT_DIM)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("yes, always allow this tool"),
             ]),
             Line::from(""),

@@ -28,6 +28,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -41,4 +44,55 @@ android {
 
 flutter {
     source = "../.."
+}
+
+val operitBridgeCrate = project.layout.projectDirectory
+    .dir("../../../native/operit-flutter-bridge")
+    .asFile
+val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
+val operitRustTargets = listOf(
+    Triple("arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
+    Triple("x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
+)
+
+val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarget, envTarget) ->
+    tasks.register<Exec>("cargoBuildOperitFlutterBridge${abi.replace("-", "").replace("_", "")}") {
+        val clangPrefix = rustTarget
+        val apiLevel = 23
+        val ndkToolchain = android.ndkDirectory
+            .resolve("toolchains")
+            .resolve("llvm")
+            .resolve("prebuilt")
+            .resolve("windows-x86_64")
+            .resolve("bin")
+        val linker = ndkToolchain.resolve("${clangPrefix}${apiLevel}-clang.cmd")
+        val ar = ndkToolchain.resolve("llvm-ar.exe")
+        val ccEnvTarget = rustTarget.replace("-", "_")
+        environment("CC_$ccEnvTarget", linker.absolutePath)
+        environment("AR_$ccEnvTarget", ar.absolutePath)
+        environment("CARGO_TARGET_${envTarget}_LINKER", linker.absolutePath)
+        environment("CARGO_TARGET_${envTarget}_AR", ar.absolutePath)
+        commandLine(
+            "cargo",
+            "build",
+            "--manifest-path",
+            operitBridgeCrate.resolve("Cargo.toml").absolutePath,
+            "--target",
+            rustTarget,
+        )
+        doLast {
+            copy {
+                from(operitBridgeCrate.resolve("target/$rustTarget/debug/liboperit_flutter_bridge.so"))
+                into(operitBridgeJniLibs.resolve(abi))
+            }
+        }
+    }
+}
+
+val cargoBuildOperitFlutterBridge = tasks.register("cargoBuildOperitFlutterBridge") {
+    dependsOn(cargoBuildOperitFlutterBridgeTasks)
+}
+
+tasks.named("preBuild") {
+    dependsOn(cargoBuildOperitFlutterBridge)
 }

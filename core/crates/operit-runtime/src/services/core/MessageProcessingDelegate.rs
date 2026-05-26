@@ -21,6 +21,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
+use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use crate::util::stream::HotStream::SharedStream;
 use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
@@ -655,6 +656,19 @@ impl MessageProcessingDelegate {
             },
             ..ChatMessage::new("user".to_string())
         };
+        let mut workspaceToolHookSession = None;
+        let mut workspaceToolHookHandler = request.enhancedAiService.tool_handler.clone();
+        if let Some(workspacePath) = request.workspacePath.clone().filter(|path| !path.trim().is_empty()) {
+            let session = WorkspaceBackupManager::getInstance(workspaceToolHookHandler.getContext())
+                .createWorkspaceToolHookSession(
+                    workspacePath,
+                    request.workspaceEnv.clone(),
+                    userMessage.timestamp,
+                    Some(chatId.clone()),
+                );
+            workspaceToolHookHandler.addToolHook(session.clone());
+            workspaceToolHookSession = Some(session);
+        }
         if shouldAddUserMessageToChat {
             request
                 .chatHistoryDelegate
@@ -805,6 +819,10 @@ impl MessageProcessingDelegate {
         .await {
             Ok(stream) => stream,
             Err(error) => {
+                if let Some(session) = workspaceToolHookSession.as_ref() {
+                    workspaceToolHookHandler.removeToolHook(session.hookId());
+                    session.close();
+                }
                 self.setInputProcessingStateForChat(
                     chatId.clone(),
                     InputProcessingState::Error {
@@ -853,6 +871,8 @@ impl MessageProcessingDelegate {
         let workerCalculateNextWindowSize = calculateNextWindowSize;
         let workerRequestSentAt = self.runtimeFor(Some(chatId.clone())).requestSentAt;
         let workerRequestStartElapsed = self.runtimeFor(Some(chatId.clone())).requestStartElapsed;
+        let workerWorkspaceToolHookSession = workspaceToolHookSession.clone();
+        let mut workerWorkspaceToolHookHandler = workspaceToolHookHandler.clone();
         if userMessageAdded {
             userMessage.sentAt = workerRequestSentAt;
             request
@@ -892,6 +912,10 @@ impl MessageProcessingDelegate {
                 };
                 workerAiMessage.content = content;
             });
+            if let Some(session) = workerWorkspaceToolHookSession.as_ref() {
+                workerWorkspaceToolHookHandler.removeToolHook(session.hookId());
+                session.close();
+            }
             let _ = eventWorker.join();
             let finalContent = workerRevisionTracker
                 .lock()

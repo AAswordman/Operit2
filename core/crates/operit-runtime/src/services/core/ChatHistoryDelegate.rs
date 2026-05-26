@@ -759,10 +759,14 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String, workspaceEnv: Option<String>) {
+        self.chatHistoryManager
+            .updateChatWorkspace(chatId.clone(), Some(workspace.clone()), workspaceEnv.clone())
+            .expect("ChatHistoryManager.updateChatWorkspace must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.workspace = Some(workspace);
             chat.workspaceEnv = workspaceEnv;
         }
+        self.emitChatHistoriesState();
     }
 
     #[allow(non_snake_case)]
@@ -790,10 +794,14 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
+        self.chatHistoryManager
+            .updateChatWorkspace(chatId.clone(), None, None)
+            .expect("ChatHistoryManager.updateChatWorkspace must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.workspace = None;
             chat.workspaceEnv = None;
         }
+        self.emitChatHistoriesState();
     }
 
     #[allow(non_snake_case)]

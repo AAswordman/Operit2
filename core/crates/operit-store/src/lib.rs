@@ -1,5 +1,7 @@
 #[path = "PreferencesDataStore.rs"]
 pub mod PreferencesDataStore;
+#[path = "ObjectBoxStore.rs"]
+pub mod ObjectBoxStore;
 #[path = "RuntimeStorePaths.rs"]
 pub mod RuntimeStorePaths;
 #[path = "RuntimeStorageHost.rs"]
@@ -10,6 +12,7 @@ pub mod SqliteStore;
 pub mod SyncOperationStore;
 
 pub use PreferencesDataStore::*;
+pub use ObjectBoxStore::*;
 pub use RuntimeStorePaths::*;
 pub use RuntimeStorageHost::*;
 pub use SqliteStore::*;

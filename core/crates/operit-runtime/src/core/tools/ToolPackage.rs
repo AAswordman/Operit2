@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
+
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::javascript::JsToolManager::JsToolManager;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocalizedText {
     pub values: HashMap<String, String>,
 }
@@ -24,7 +26,7 @@ impl LocalizedText {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EnvVar {
     pub name: String,
     pub description: LocalizedText,
@@ -32,7 +34,7 @@ pub struct EnvVar {
     pub default_value: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPackage {
     pub name: String,
     pub description: LocalizedText,
@@ -46,7 +48,7 @@ pub struct ToolPackage {
     pub author: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPackageState {
     pub id: String,
     pub condition: String,
@@ -55,7 +57,7 @@ pub struct ToolPackageState {
     pub tools: Vec<PackageTool>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PackageTool {
     pub name: String,
     pub description: LocalizedText,
@@ -64,7 +66,7 @@ pub struct PackageTool {
     pub advice: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PackageToolParameter {
     pub name: String,
     pub description: LocalizedText,

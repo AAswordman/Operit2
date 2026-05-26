@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use operit_core_proxy::LocalCoreProxy;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
-    LinuxSystemOperationHost as NativeSystemOperationHost,
-    LinuxWebVisitHost as NativeWebVisitHost,
+    LinuxSystemOperationHost as NativeSystemOperationHost, LinuxWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
@@ -18,7 +18,6 @@ use operit_host_windows_native::{
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_core_proxy::LocalCoreProxy;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[cfg(not(any(windows, target_os = "linux")))]

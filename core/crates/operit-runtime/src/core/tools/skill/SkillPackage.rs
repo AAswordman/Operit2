@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillPackage {
     pub name: String,
     pub description: String,

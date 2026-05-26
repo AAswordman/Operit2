@@ -1,9 +1,10 @@
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use serde::{Deserialize, Serialize};
 
 const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "\n[工具结果过长，已截断]";
 const MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS: usize = 64 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub toolName: String,
     pub success: bool,

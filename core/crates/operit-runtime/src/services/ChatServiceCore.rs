@@ -5,12 +5,15 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
+    WorkspaceBackupManager, WorkspaceFileChange,
+};
 use operit_store::PreferencesDataStore::StateFlow;
-
 pub trait ChatServiceUiBridge {}
 
 pub struct EmptyChatServiceUiBridge;
@@ -186,6 +189,116 @@ impl ChatServiceCore {
 
     pub fn updateChatTitle(&mut self, chatId: String, title: String) {
         self.chatHistoryDelegate.updateChatTitle(chatId, title);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String, workspaceEnv: Option<String>) {
+        self.chatHistoryDelegate
+            .bindChatToWorkspace(chatId, workspace, workspaceEnv);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
+        self.chatHistoryDelegate.unbindChatFromWorkspace(chatId);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn renameWorkspaceAndChat(&mut self, chatId: String, newWorkspace: String, newTitle: String) {
+        self.chatHistoryDelegate
+            .renameWorkspaceAndChat(chatId, newWorkspace, newTitle);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn previewWorkspaceChangesForMessage(&mut self, index: usize) -> Vec<WorkspaceFileChange> {
+        let Some((chatId, workspacePath, workspaceEnv, rewindTimestamp)) =
+            self.resolveWorkspaceRewindTarget(index)
+        else {
+            return Vec::new();
+        };
+        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext())
+            .previewChangesForRewind(workspacePath, workspaceEnv, rewindTimestamp, Some(chatId))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn rewindWorkspaceForMessage(&mut self, index: usize) -> bool {
+        let Some((chatId, workspacePath, workspaceEnv, rewindTimestamp)) =
+            self.resolveWorkspaceRewindTarget(index)
+        else {
+            return false;
+        };
+        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext())
+            .syncState(workspacePath, rewindTimestamp, workspaceEnv, Some(chatId));
+        true
+    }
+
+    #[allow(non_snake_case)]
+    pub fn rollbackToMessage(&mut self, index: usize) -> bool {
+        let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+            return false;
+        };
+        if targetMessage.sender != "user" {
+            return false;
+        }
+        self.rewindWorkspaceForMessage(index);
+        self.chatHistoryDelegate
+            .truncateChatHistory(Some(targetMessage.timestamp));
+        self.messageProcessingDelegate
+            .updateUserMessage(stripXmlLikeTags(&targetMessage.content));
+        true
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn rewindAndResendMessage(&mut self, index: usize, editedContent: String) -> bool {
+        let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+            return false;
+        };
+        if targetMessage.sender != "user" {
+            return false;
+        }
+        self.rewindWorkspaceForMessage(index);
+        self.chatHistoryDelegate
+            .truncateChatHistory(Some(targetMessage.timestamp));
+        self.messageProcessingDelegate.updateUserMessage(editedContent);
+        self.sendUserMessage(
+            PromptFunctionType::CHAT,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            ChatTurnOptions::default(),
+        )
+        .await;
+        true
+    }
+
+    #[allow(non_snake_case)]
+    fn resolveWorkspaceRewindTarget(
+        &self,
+        index: usize,
+    ) -> Option<(String, String, Option<String>, i64)> {
+        let chatId = self.chatHistoryDelegate.currentChatId.clone()?;
+        if index >= self.chatHistoryDelegate.chatHistory.len() {
+            return None;
+        }
+        let rewindTimestamp = if index > 0 {
+            self.chatHistoryDelegate.chatHistory[index - 1].timestamp
+        } else {
+            0
+        };
+        let currentChat = self
+            .chatHistoryDelegate
+            .chatHistories
+            .iter()
+            .find(|history| history.id == chatId)?;
+        let workspacePath = currentChat
+            .workspace
+            .clone()
+            .filter(|value| !value.trim().is_empty())?;
+        Some((chatId, workspacePath, currentChat.workspaceEnv.clone(), rewindTimestamp))
     }
 
     pub fn resetTokenStatistics(&mut self) {}
@@ -399,4 +512,164 @@ impl Default for ChatServiceCore {
     fn default() -> Self {
         Self::new(ChatSelectionMode::FOLLOW_GLOBAL)
     }
+}
+
+#[allow(non_snake_case)]
+fn stripXmlLikeTags(text: &str) -> String {
+    let mut value = text.to_string();
+    for _ in 0..5 {
+        let updated = removePairedXmlLikeTags(&value);
+        if updated == value {
+            break;
+        }
+        value = updated;
+    }
+    value = removeSelfClosingXmlLikeTags(&value);
+    removeRemainingXmlLikeTags(&value).trim().to_string()
+}
+
+#[allow(non_snake_case)]
+fn removePairedXmlLikeTags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(openRelativeStart) = text[cursor..].find('<') {
+        let openStart = cursor + openRelativeStart;
+        let Some(openEnd) = text[openStart..].find('>').map(|offset| openStart + offset) else {
+            break;
+        };
+
+        if let Some(tagName) = parseOpeningXmlLikeTag(text, openStart, openEnd) {
+            if let Some(closeEnd) = findClosingXmlLikeTagEnd(text, openEnd + 1, tagName) {
+                result.push_str(&text[cursor..openStart]);
+                cursor = closeEnd;
+                continue;
+            }
+        }
+
+        result.push_str(&text[cursor..openStart + 1]);
+        cursor = openStart + 1;
+    }
+
+    result.push_str(&text[cursor..]);
+    result
+}
+
+#[allow(non_snake_case)]
+fn removeSelfClosingXmlLikeTags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(openRelativeStart) = text[cursor..].find('<') {
+        let openStart = cursor + openRelativeStart;
+        let Some(openEnd) = text[openStart..].find('>').map(|offset| openStart + offset) else {
+            break;
+        };
+
+        if parseSelfClosingXmlLikeTag(text, openStart, openEnd) {
+            result.push_str(&text[cursor..openStart]);
+            cursor = openEnd + 1;
+            continue;
+        }
+
+        result.push_str(&text[cursor..openStart + 1]);
+        cursor = openStart + 1;
+    }
+
+    result.push_str(&text[cursor..]);
+    result
+}
+
+#[allow(non_snake_case)]
+fn removeRemainingXmlLikeTags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(openRelativeStart) = text[cursor..].find('<') {
+        let openStart = cursor + openRelativeStart;
+        let Some(openEnd) = text[openStart..].find('>').map(|offset| openStart + offset) else {
+            break;
+        };
+
+        result.push_str(&text[cursor..openStart]);
+        cursor = openEnd + 1;
+    }
+
+    result.push_str(&text[cursor..]);
+    result
+}
+
+#[allow(non_snake_case)]
+fn parseOpeningXmlLikeTag(text: &str, openStart: usize, openEnd: usize) -> Option<&str> {
+    let body = text.get(openStart + 1..openEnd)?;
+    if body.starts_with('/') || body.trim_end().ends_with('/') {
+        return None;
+    }
+    parseXmlLikeTagName(body)
+}
+
+#[allow(non_snake_case)]
+fn parseSelfClosingXmlLikeTag(text: &str, openStart: usize, openEnd: usize) -> bool {
+    let Some(body) = text.get(openStart + 1..openEnd) else {
+        return false;
+    };
+    if body.starts_with('/') || !body.trim_end().ends_with('/') {
+        return false;
+    }
+    parseXmlLikeTagName(body).is_some()
+}
+
+#[allow(non_snake_case)]
+fn parseXmlLikeTagName(body: &str) -> Option<&str> {
+    let bytes = body.as_bytes();
+    let first = *bytes.first()?;
+    if !isXmlLikeTagNameStart(first) {
+        return None;
+    }
+
+    let mut end = 1;
+    while end < bytes.len() && isXmlLikeTagNameChar(bytes[end]) {
+        end += 1;
+    }
+
+    if end < bytes.len() {
+        let rest = &body[end..];
+        if !rest
+            .chars()
+            .next()
+            .is_some_and(|value| value.is_whitespace())
+        {
+            return None;
+        }
+    }
+
+    Some(&body[..end])
+}
+
+#[allow(non_snake_case)]
+fn findClosingXmlLikeTagEnd(text: &str, from: usize, tagName: &str) -> Option<usize> {
+    let mut searchStart = 0;
+
+    while let Some(relativeStart) = text[from + searchStart..].find("</") {
+        let closeStart = from + searchStart + relativeStart;
+        if let Some(closeEnd) = text[closeStart..].find('>').map(|offset| closeStart + offset) {
+            let body = &text[closeStart + 2..closeEnd];
+            if body.eq_ignore_ascii_case(tagName) {
+                return Some(closeEnd + 1);
+            }
+        }
+        searchStart += relativeStart + 2;
+    }
+
+    None
+}
+
+#[allow(non_snake_case)]
+fn isXmlLikeTagNameStart(value: u8) -> bool {
+    value.is_ascii_alphabetic()
+}
+
+#[allow(non_snake_case)]
+fn isXmlLikeTagNameChar(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, b':' | b'_' | b'-')
 }

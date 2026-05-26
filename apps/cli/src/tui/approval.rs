@@ -42,11 +42,7 @@ impl TuiApprovalBridge {
         }
     }
 
-    pub(super) fn request(
-        &self,
-        tool: &AITool,
-        description: &str,
-    ) -> PermissionRequestResult {
+    pub(super) fn request(&self, tool: &AITool, description: &str) -> PermissionRequestResult {
         let mut state = self
             .inner
             .state

@@ -9,6 +9,7 @@ publish.workspace = true
 async-trait.workspace = true
 operit-link = { path = "../operit-link" }
 operit-runtime = { path = "../operit-runtime" }
+operit-store = { path = "../operit-store" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }

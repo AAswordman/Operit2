@@ -15,10 +15,11 @@ use crate::core::tools::ToolRegistration::registerAllTools;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_host_api::HostEnvironmentDescriptor;
+use serde::{Deserialize, Serialize};
 
 static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolRegistrationVisibility {
     PUBLIC,
     INTERNAL,

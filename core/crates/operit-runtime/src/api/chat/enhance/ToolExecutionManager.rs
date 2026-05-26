@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::api::chat::enhance::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult,
 };
@@ -25,31 +27,31 @@ thread_local! {
     static TOOL_RUNTIME_CONTEXT: RefCell<Option<ToolRuntimeContext>> = RefCell::new(None);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolExposureMode {
     FULL,
     CLI,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolRuntimeContext {
     pub callerCardId: Option<String>,
     pub toolExposureMode: ToolExposureMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolParameter {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AITool {
     pub name: String,
     pub parameters: Vec<ToolParameter>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvocation {
     pub tool: AITool,
     pub rawText: String,

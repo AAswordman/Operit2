@@ -1,8 +1,8 @@
-use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
 use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
 use operit_runtime::util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
+use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -51,8 +51,12 @@ enum RenderedBlockKind {
 fn rendered_block_kind(node: &MarkdownNodeStable) -> RenderedBlockKind {
     match node.r#type {
         MarkdownProcessorType::Header => RenderedBlockKind::Header,
-        MarkdownProcessorType::CodeBlock | MarkdownProcessorType::BlockLatex => RenderedBlockKind::Code,
-        MarkdownProcessorType::OrderedList | MarkdownProcessorType::UnorderedList => RenderedBlockKind::List,
+        MarkdownProcessorType::CodeBlock | MarkdownProcessorType::BlockLatex => {
+            RenderedBlockKind::Code
+        }
+        MarkdownProcessorType::OrderedList | MarkdownProcessorType::UnorderedList => {
+            RenderedBlockKind::List
+        }
         MarkdownProcessorType::HorizontalRule => RenderedBlockKind::HorizontalRule,
         MarkdownProcessorType::Table => RenderedBlockKind::Table,
         MarkdownProcessorType::XmlBlock => {
@@ -62,7 +66,9 @@ fn rendered_block_kind(node: &MarkdownNodeStable) -> RenderedBlockKind {
                 _ => RenderedBlockKind::Other,
             }
         }
-        MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => RenderedBlockKind::Text,
+        MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => {
+            RenderedBlockKind::Text
+        }
         _ => RenderedBlockKind::Other,
     }
 }
@@ -113,7 +119,11 @@ fn is_blank_text_block(node: &MarkdownNodeStable) -> bool {
         && node.children.iter().all(is_blank_text_block)
 }
 
-fn render_block_node(node: &MarkdownNodeStable, content_width: usize, lines: &mut Vec<Line<'static>>) {
+fn render_block_node(
+    node: &MarkdownNodeStable,
+    content_width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
     match node.r#type {
         MarkdownProcessorType::Header => render_header(node, lines),
         MarkdownProcessorType::BlockQuote => render_block_quote(node, lines),
@@ -127,7 +137,9 @@ fn render_block_node(node: &MarkdownNodeStable, content_width: usize, lines: &mu
         MarkdownProcessorType::BlockLatex => render_latex_block(&node.content, lines),
         MarkdownProcessorType::Table => render_table_block(&node.content, lines),
         MarkdownProcessorType::XmlBlock => render_xml_block(&node.content, content_width, lines),
-        MarkdownProcessorType::Image => lines.extend(render_inline_nodes(&[node.clone()], Style::default())),
+        MarkdownProcessorType::Image => {
+            lines.extend(render_inline_nodes(&[node.clone()], Style::default()))
+        }
         MarkdownProcessorType::PlainText | MarkdownProcessorType::HtmlBreak => {
             render_plain_text_node(node, lines);
         }
@@ -146,7 +158,11 @@ fn render_plain_text_node(node: &MarkdownNodeStable, lines: &mut Vec<Line<'stati
 
 fn render_header(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>) {
     let trimmed = node.content.trim_start();
-    let level = trimmed.chars().take_while(|ch| *ch == '#').count().clamp(1, 6);
+    let level = trimmed
+        .chars()
+        .take_while(|ch| *ch == '#')
+        .count()
+        .clamp(1, 6);
     let text = trimmed.get(level..).unwrap_or("").trim_start();
     let prefix = "#".repeat(level.min(4));
     let mut spans = vec![Span::styled(
@@ -185,7 +201,9 @@ fn render_block_quote(node: &MarkdownNodeStable, lines: &mut Vec<Line<'static>>)
         &content,
         "> ",
         Style::default().fg(theme::TEXT_SUBTLE),
-        Style::default().fg(theme::TEXT_MUTED).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(theme::TEXT_MUTED)
+            .add_modifier(Modifier::ITALIC),
         lines,
     );
 }
@@ -205,7 +223,9 @@ fn render_code_block(content: &str, lines: &mut Vec<Line<'static>>) {
     };
     lines.push(Line::from(Span::styled(
         title,
-        Style::default().fg(theme::TEXT_SUBTLE).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme::TEXT_SUBTLE)
+            .add_modifier(Modifier::BOLD),
     )));
     for raw in iter {
         if raw.trim_start().starts_with("```") {
@@ -213,7 +233,9 @@ fn render_code_block(content: &str, lines: &mut Vec<Line<'static>>) {
         }
         lines.push(Line::from(Span::styled(
             format!("  {raw}"),
-            Style::default().fg(theme::ACCENT_STRONG).bg(theme::ACCENT_BG),
+            Style::default()
+                .fg(theme::ACCENT_STRONG)
+                .bg(theme::ACCENT_BG),
         )));
     }
     lines.push(Line::from(Span::styled(
@@ -237,7 +259,9 @@ fn render_list_block(node: &MarkdownNodeStable, ordered: bool, lines: &mut Vec<L
 fn render_latex_block(content: &str, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(Span::styled(
         "$$",
-        Style::default().fg(theme::TEXT_SUBTLE).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme::TEXT_SUBTLE)
+            .add_modifier(Modifier::BOLD),
     )));
     for raw in strip_latex_block_delimiters(content).lines() {
         lines.push(Line::from(Span::styled(
@@ -245,7 +269,10 @@ fn render_latex_block(content: &str, lines: &mut Vec<Line<'static>>) {
             Style::default().fg(theme::ACCENT_STRONG),
         )));
     }
-    lines.push(Line::from(Span::styled("$$", Style::default().fg(theme::TEXT_SUBTLE))));
+    lines.push(Line::from(Span::styled(
+        "$$",
+        Style::default().fg(theme::TEXT_SUBTLE),
+    )));
 }
 
 fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
@@ -269,7 +296,10 @@ fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
         let mut spans = Vec::new();
         for (index, cell) in cells.iter().enumerate() {
             if index > 0 {
-                spans.push(Span::styled(" | ".to_string(), Style::default().fg(theme::TEXT_SUBTLE)));
+                spans.push(Span::styled(
+                    " | ".to_string(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ));
             }
             let inline_nodes = cell.nativeMarkdownSplitByInline();
             spans.extend(render_inline_spans(
@@ -287,16 +317,28 @@ fn render_xml_block(content: &str, content_width: usize, lines: &mut Vec<Line<'s
     match tag.as_deref() {
         Some("tool") => render_tool_xml(content, false, content_width, lines),
         Some("tool_result") => render_tool_xml(content, true, content_width, lines),
+        Some("attachment") => render_attachment_xml(content, lines),
+        Some("image_link") | Some("audio_link") | Some("video_link") | Some("media_link") => {
+            render_media_link_xml(content, lines)
+        }
         Some("error") => render_error_xml(content, lines),
         Some("think") | Some("thinking") => render_named_xml_body("thinking", content, lines),
         Some("status") => render_status_xml(content, lines),
         Some("meta") => {}
         Some(name) => render_named_xml_body(name, content, lines),
-        None => lines.extend(render_plain_lines(content, Style::default().fg(theme::TEXT_SUBTLE))),
+        None => lines.extend(render_plain_lines(
+            content,
+            Style::default().fg(theme::TEXT_SUBTLE),
+        )),
     }
 }
 
-fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: &mut Vec<Line<'static>>) {
+fn render_tool_xml(
+    content: &str,
+    is_result: bool,
+    content_width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
     let name = attr_value(content, "name").unwrap_or_else(|| "tool".to_string());
     let status = attr_value(content, "status");
     let tag_name = ChatMarkupRegex::extract_opening_tag_name(content).unwrap_or_else(|| {
@@ -315,7 +357,8 @@ fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: 
     let params = extract_param_pairs(body);
     let is_strict_proxy = name == "package_proxy" || name == "proxy";
     let (display_name, display_params) = normalize_tool_display_for_strict_proxy(&name, &params);
-    let summary = render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { body });
+    let summary =
+        render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { body });
     let leading_symbol = tool_leading_symbol(&display_name);
     let name_width = display_width(&display_name);
     let prefix_width = display_width(leading_symbol) + 1 + name_width;
@@ -324,9 +367,17 @@ fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: 
         .saturating_sub(1)
         .min(TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT);
     let mut header = vec![
-        Span::styled(leading_symbol.to_string(), Style::default().fg(theme::ACCENT)),
+        Span::styled(
+            leading_symbol.to_string(),
+            Style::default().fg(theme::ACCENT),
+        ),
         Span::raw(" "),
-        Span::styled(display_name, Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            display_name,
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     let summary = if summary_limit >= 4 {
         compact_tool_summary(&summary, summary_limit)
@@ -335,9 +386,60 @@ fn render_tool_xml(content: &str, is_result: bool, content_width: usize, lines: 
     };
     if !summary.is_empty() && summary_limit > 0 {
         header.push(Span::styled(" ".to_string(), Style::default()));
-        header.push(Span::styled(summary, Style::default().fg(theme::TEXT_SUBTLE)));
+        header.push(Span::styled(
+            summary,
+            Style::default().fg(theme::TEXT_SUBTLE),
+        ));
     }
     lines.push(Line::from(header));
+}
+
+fn render_attachment_xml(content: &str, lines: &mut Vec<Line<'static>>) {
+    let file_name = attr_value(content, "filename").unwrap_or_else(|| "attachment".to_string());
+    let mime_type = attr_value(content, "type").unwrap_or_default();
+    let size = attr_value(content, "size")
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(format_attachment_size);
+    let mut spans = vec![
+        Span::styled("@".to_string(), Style::default().fg(theme::ACCENT)),
+        Span::styled(
+            file_name,
+            Style::default()
+                .fg(theme::TEXT_MUTED)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if !mime_type.is_empty() {
+        spans.push(Span::styled(" ".to_string(), Style::default()));
+        spans.push(Span::styled(
+            mime_type,
+            Style::default().fg(theme::TEXT_SUBTLE),
+        ));
+    }
+    if let Some(size) = size {
+        spans.push(Span::styled(" ".to_string(), Style::default()));
+        spans.push(Span::styled(size, Style::default().fg(theme::TEXT_SUBTLE)));
+    }
+    lines.push(Line::from(spans));
+}
+
+fn render_media_link_xml(content: &str, lines: &mut Vec<Line<'static>>) {
+    let id = attr_value(content, "id").unwrap_or_else(|| "media".to_string());
+    let label = id
+        .rsplit(|ch| ch == '/' || ch == '\\' || ch == ':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(id.as_str())
+        .to_string();
+    lines.push(Line::from(vec![
+        Span::styled("@".to_string(), Style::default().fg(theme::ACCENT)),
+        Span::styled(
+            label,
+            Style::default()
+                .fg(theme::TEXT_MUTED)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
 }
 
 fn tool_leading_symbol(tool_name: &str) -> &'static str {
@@ -356,7 +458,8 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         ">"
     } else if tool_name.contains("code") || tool_name.contains("ffmpeg") {
         "{}"
-    } else if tool_name.contains("http") || tool_name.contains("web") || tool_name.contains("visit") {
+    } else if tool_name.contains("http") || tool_name.contains("web") || tool_name.contains("visit")
+    {
         "◎"
     } else {
         "→"
@@ -370,7 +473,9 @@ fn render_tool_result_xml(
     content_width: usize,
     lines: &mut Vec<Line<'static>>,
 ) {
-    let content = extract_first_tag_body(body, "content").unwrap_or(body).trim();
+    let content = extract_first_tag_body(body, "content")
+        .unwrap_or(body)
+        .trim();
     let error = extract_first_tag_body(content, "error").map(str::trim);
     let is_error = status
         .map(|value| value.eq_ignore_ascii_case("error"))
@@ -386,15 +491,22 @@ fn render_tool_result_xml(
     );
     let mut header = vec![
         Span::raw("    "),
-        Span::styled("↳".to_string(), Style::default().fg(if is_error {
-            theme::ERROR
-        } else {
-            theme::TOOL_RESULT
-        })),
+        Span::styled(
+            "↳".to_string(),
+            Style::default().fg(if is_error {
+                theme::ERROR
+            } else {
+                theme::TOOL_RESULT
+            }),
+        ),
         Span::raw(" "),
         Span::styled(
             if is_error { "×" } else { "✓" }.to_string(),
-            Style::default().fg(if is_error { theme::ERROR } else { theme::TOOL_RESULT }),
+            Style::default().fg(if is_error {
+                theme::ERROR
+            } else {
+                theme::TOOL_RESULT
+            }),
         ),
         Span::raw(" "),
     ];
@@ -464,8 +576,7 @@ fn normalize_escaped_text_for_display(input: &str) -> String {
     if (trimmed.starts_with("\"{") && trimmed.ends_with("}\""))
         || (trimmed.starts_with("\"[") && trimmed.ends_with("]\""))
     {
-        trimmed[1..trimmed.len().saturating_sub(1)]
-            .replace("\\\"", "\"")
+        trimmed[1..trimmed.len().saturating_sub(1)].replace("\\\"", "\"")
     } else {
         unescaped
     }
@@ -506,10 +617,7 @@ fn json_value_to_param_text(value: serde_json::Value) -> String {
 }
 
 fn compact_tool_summary(value: &str, char_limit: usize) -> String {
-    let normalized = value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if display_width(&normalized) <= char_limit {
         return normalized;
     }
@@ -526,6 +634,16 @@ fn compact_tool_summary(value: &str, char_limit: usize) -> String {
     }
     summary.push_str("...");
     summary
+}
+
+fn format_attachment_size(size: i64) -> String {
+    if size < 1024 {
+        format!("{size} B")
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", size as f64 / 1024.0 / 1024.0)
+    }
 }
 
 fn display_width(value: &str) -> usize {
@@ -644,7 +762,9 @@ fn xml_unescape(value: &str) -> String {
 fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     let title = attr_value(content, "title");
     let status_type = attr_value(content, "type");
-    let label = title.or(status_type).unwrap_or_else(|| "status".to_string());
+    let label = title
+        .or(status_type)
+        .unwrap_or_else(|| "status".to_string());
     lines.push(Line::from(vec![
         Span::styled("* ".to_string(), Style::default().fg(theme::TEXT_SUBTLE)),
         Span::styled(label, Style::default().fg(theme::TEXT_MUTED)),
@@ -652,26 +772,37 @@ fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
 }
 
 fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>) {
-    let body = xml_unescape(
-        tag_body(content, "error").expect("error xml block must contain an error body"),
-    )
+    let body = tag_body(content, "error")
+        .map(xml_unescape)
+        .or_else(|| attr_value(content, "message"))
+        .or_else(|| attr_value(content, "error"))
+        .unwrap_or_else(|| xml_unescape(content))
         .trim()
         .to_string();
     lines.push(Line::from(vec![
-        Span::styled("error: ".to_string(), Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "error: ".to_string(),
+            Style::default()
+                .fg(theme::ERROR)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(body, Style::default().fg(theme::ERROR_DIM)),
     ]));
 }
 
 fn render_named_xml_body(name: &str, content: &str, lines: &mut Vec<Line<'static>>) {
-    let tag_name = ChatMarkupRegex::extract_opening_tag_name(content).unwrap_or_else(|| name.to_string());
+    let tag_name =
+        ChatMarkupRegex::extract_opening_tag_name(content).unwrap_or_else(|| name.to_string());
     let body = tag_body(content, &tag_name).unwrap_or(content).trim();
     lines.push(Line::from(Span::styled(
         format!("<{name}>"),
         Style::default().fg(theme::TEXT_SUBTLE),
     )));
     if !body.is_empty() {
-        lines.extend(render_plain_lines(body, Style::default().fg(theme::TEXT_MUTED)));
+        lines.extend(render_plain_lines(
+            body,
+            Style::default().fg(theme::TEXT_MUTED),
+        ));
     }
 }
 
@@ -694,16 +825,16 @@ fn render_inline_spans(nodes: &[MarkdownNodeStable], base_style: Style) -> Vec<S
             )),
             MarkdownProcessorType::InlineCode => spans.push(Span::styled(
                 strip_pair(&node.content, "`").unwrap_or_else(|| node.content.clone()),
-                Style::default().fg(theme::ACCENT_STRONG).bg(theme::ACCENT_BG),
+                Style::default()
+                    .fg(theme::ACCENT_STRONG)
+                    .bg(theme::ACCENT_BG),
             )),
             MarkdownProcessorType::Link => spans.extend(render_link_spans(&node.content)),
             MarkdownProcessorType::Image => spans.extend(render_image_spans(&node.content)),
-            MarkdownProcessorType::Strikethrough => {
-                spans.push(Span::styled(
-                    strip_pair(&node.content, "~~").unwrap_or_else(|| node.content.clone()),
-                    base_style.fg(theme::TEXT_SUBTLE),
-                ))
-            }
+            MarkdownProcessorType::Strikethrough => spans.push(Span::styled(
+                strip_pair(&node.content, "~~").unwrap_or_else(|| node.content.clone()),
+                base_style.fg(theme::TEXT_SUBTLE),
+            )),
             MarkdownProcessorType::Underline => spans.push(Span::styled(
                 strip_pair(&node.content, "__").unwrap_or_else(|| node.content.clone()),
                 base_style.add_modifier(Modifier::UNDERLINED),
@@ -742,12 +873,17 @@ fn render_link_spans(content: &str) -> Vec<Span<'static>> {
 fn render_image_spans(content: &str) -> Vec<Span<'static>> {
     let text = content.strip_prefix('!').unwrap_or(content);
     let Some((label, url)) = parse_markdown_link(text) else {
-        return vec![Span::styled(content.to_string(), Style::default().fg(theme::ACCENT_STRONG))];
+        return vec![Span::styled(
+            content.to_string(),
+            Style::default().fg(theme::ACCENT_STRONG),
+        )];
     };
     vec![
         Span::styled(
             format!("[image: {label}]"),
-            Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!(" {url}"), Style::default().fg(theme::TEXT_SUBTLE)),
     ]
@@ -789,9 +925,7 @@ fn trim_empty_edge_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
 }
 
 fn line_is_blank(line: &Line<'static>) -> bool {
-    line.spans
-        .iter()
-        .all(|span| span.content.trim().is_empty())
+    line.spans.iter().all(|span| span.content.trim().is_empty())
 }
 
 fn split_spans_by_newline(spans: Vec<Span<'static>>) -> Vec<Line<'static>> {
@@ -820,7 +954,11 @@ fn split_ordered_marker(content: &str) -> (String, String) {
         return ("1. ".to_string(), trimmed.to_string());
     };
     if trimmed[..dot].chars().all(|ch| ch.is_ascii_digit()) {
-        let text = trimmed.get(dot + 1..).unwrap_or("").trim_start().to_string();
+        let text = trimmed
+            .get(dot + 1..)
+            .unwrap_or("")
+            .trim_start()
+            .to_string();
         (format!("{}. ", &trimmed[..dot]), text)
     } else {
         ("1. ".to_string(), trimmed.to_string())
@@ -860,7 +998,10 @@ fn is_table_separator(line: &str) -> bool {
 
 fn parse_markdown_link(content: &str) -> Option<(String, String)> {
     let close_label = content.find("](")?;
-    let label = content.strip_prefix('[')?.get(..close_label - 1)?.to_string();
+    let label = content
+        .strip_prefix('[')?
+        .get(..close_label - 1)?
+        .to_string();
     let url_start = close_label + 2;
     let url_end = content[url_start..].find(')')? + url_start;
     Some((label, content[url_start..url_end].to_string()))
@@ -879,7 +1020,9 @@ fn strip_latex_block_delimiters(content: &str) -> String {
         return value.trim().to_string();
     }
     if trimmed.starts_with("\\[") && trimmed.ends_with("\\]") {
-        return trimmed[2..trimmed.len().saturating_sub(2)].trim().to_string();
+        return trimmed[2..trimmed.len().saturating_sub(2)]
+            .trim()
+            .to_string();
     }
     trimmed.to_string()
 }

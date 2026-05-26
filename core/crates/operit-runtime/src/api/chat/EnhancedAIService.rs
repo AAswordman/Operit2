@@ -21,6 +21,7 @@ use crate::api::chat::llmprovider::AIService::{
     response_stream_from_chunks, AiServiceError, SendMessageRequest,
     SharedAiResponseStream, TokenCounts,
 };
+use crate::api::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
 use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::stream::Stream::{FnStream, Stream};
@@ -826,7 +827,7 @@ impl EnhancedAIService {
             FunctionType::CHAT,
             chatModelConfigIdOverride.clone(),
             chatModelIndexOverride,
-            preferenceProfileIdOverride,
+            preferenceProfileIdOverride.clone(),
             &runtime,
         );
         let availableTools = self.getAvailableToolsForFunction(
@@ -1378,7 +1379,7 @@ impl EnhancedAIService {
             notifyReplyOverride,
             chatModelConfigIdOverride,
             chatModelIndexOverride,
-            preferenceProfileIdOverride,
+            preferenceProfileIdOverride.clone(),
             stream,
             enableGroupOrchestrationHint,
             disableWarning,
@@ -1386,6 +1387,18 @@ impl EnhancedAIService {
             &mut runtime,
         )
         .await?;
+
+        if enableMemoryAutoUpdate && !isSubTask {
+            let memoryContent = execContext.roundManager.getDisplayContent();
+            if !memoryContent.trim().is_empty() {
+                MemoryLibrary::saveMemoryAsync(
+                    promptTurnsToMemoryPairs(&requestHistory),
+                    memoryContent,
+                    runtime.aiService.clone(),
+                    preferenceProfileIdOverride.clone(),
+                );
+            }
+        }
 
         lifecycle.push(SendMessageLifecycleStage::UnregisterExecutionContext);
         self.unregisterExecutionContext(&execContext);

@@ -108,11 +108,21 @@ pub(super) fn render_message_lines(
                 message_layout,
             ));
         } else {
-            let mut rendered_lines = render_markdown_lines(&rendered_content, message_content_width);
+            let mut rendered_lines =
+                render_markdown_lines(&rendered_content, message_content_width);
             append_pending_char(&mut rendered_lines, typewriter_frame.pending_char);
-            lines.extend(wrap_message_lines(rendered_lines, message_content_width).into_iter().map(|line| {
-                style_message_line(line, message.sender.as_str(), block_style, message_layout)
-            }));
+            lines.extend(
+                wrap_message_lines(rendered_lines, message_content_width)
+                    .into_iter()
+                    .map(|line| {
+                        style_message_line(
+                            line,
+                            message.sender.as_str(),
+                            block_style,
+                            message_layout,
+                        )
+                    }),
+            );
             if rendered_content.is_empty() {
                 lines.push(style_message_line(
                     Line::from(""),
@@ -123,15 +133,15 @@ pub(super) fn render_message_lines(
             }
         }
     }
-    if is_loading
-        && matches!(messages.last(), Some(message) if message.sender == "user")
-    {
+    if is_loading && matches!(messages.last(), Some(message) if message.sender == "user") {
         let block_style = message_block_style("ai");
         append_message_gap(&mut lines);
         lines.push(style_message_line(
             Line::from(Span::styled(
                 "Operit",
-                Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
             )),
             "ai",
             block_style,
@@ -147,7 +157,12 @@ pub(super) fn render_message_lines(
     }
     if let InputProcessingState::Error { message } = input_state {
         lines.push(Line::from(vec![
-            Span::styled("error: ", Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "error: ",
+                Style::default()
+                    .fg(theme::ERROR)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(message.clone(), Style::default().fg(theme::ERROR_DIM)),
         ]));
     }
@@ -275,10 +290,7 @@ fn style_user_card_line(
         spans.push(Span::raw(" ".repeat(layout.outer_indent)));
     }
     if layout.inner_padding > 0 {
-        spans.push(Span::styled(
-            " ".repeat(layout.inner_padding),
-            block_style,
-        ));
+        spans.push(Span::styled(" ".repeat(layout.inner_padding), block_style));
     }
     spans.extend(
         line.spans
@@ -286,10 +298,7 @@ fn style_user_card_line(
             .map(|span| span.patch_style(block_style)),
     );
     if layout.inner_padding > 0 {
-        spans.push(Span::styled(
-            " ".repeat(layout.inner_padding),
-            block_style,
-        ));
+        spans.push(Span::styled(" ".repeat(layout.inner_padding), block_style));
     }
     let visible_width = spans
         .iter()
@@ -366,9 +375,7 @@ fn trim_blank_edge_lines(lines: &mut Vec<Line<'static>>) {
 }
 
 fn line_is_blank(line: &Line<'_>) -> bool {
-    line.spans
-        .iter()
-        .all(|span| span.content.trim().is_empty())
+    line.spans.iter().all(|span| span.content.trim().is_empty())
 }
 
 fn append_pending_char(lines: &mut Vec<Line<'static>>, pending_char: Option<char>) {
@@ -403,7 +410,7 @@ pub(super) fn transcript_max_scroll(lines: &[Line<'_>], area: Rect) -> u16 {
     content_lines.saturating_sub(viewport)
 }
 
-fn display_width(value: &str) -> usize {
+pub(super) fn display_width(value: &str) -> usize {
     value.chars().map(char_display_width).sum()
 }
 
@@ -467,24 +474,34 @@ pub(super) fn char_to_byte_index(value: &str, char_index: usize) -> usize {
 
 pub(super) fn wrap_approx_lines(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
-    for raw_line in text.split('\n') {
+    let raw_lines = text.split('\n').collect::<Vec<_>>();
+    for (raw_index, raw_line) in raw_lines.iter().enumerate() {
+        let is_last_raw_line = raw_index + 1 == raw_lines.len();
         if raw_line.is_empty() {
             lines.push(String::new());
             continue;
         }
         let mut current = String::new();
-        let mut count = 0usize;
+        let mut width_count = 0usize;
         for ch in raw_line.chars() {
-            current.push(ch);
-            count += 1;
-            if count >= width {
+            let char_width = char_display_width(ch);
+            if width_count > 0 && width_count + char_width > width {
                 lines.push(current);
                 current = String::new();
-                count = 0;
+                width_count = 0;
+            }
+            current.push(ch);
+            width_count += char_width;
+            if width_count >= width {
+                lines.push(current);
+                current = String::new();
+                width_count = 0;
             }
         }
         if !current.is_empty() {
             lines.push(current);
+        } else if is_last_raw_line && width_count == 0 {
+            lines.push(String::new());
         }
     }
     if lines.is_empty() {
@@ -552,11 +569,7 @@ mod tests {
     #[test]
     #[ignore = "debug-only TUI preview; run with --ignored --nocapture"]
     fn tui_user_card_preview() {
-        let mut user = ChatMessage::new_with_timestamp(
-            "user".to_string(),
-            "你好".to_string(),
-            1,
-        );
+        let mut user = ChatMessage::new_with_timestamp("user".to_string(), "你好".to_string(), 1);
         user.roleName = String::new();
 
         let mut ai = ChatMessage::new_with_timestamp(
@@ -596,7 +609,10 @@ mod tests {
         println!("screen:");
         println!("{}", dump_buffer_screen(terminal.backend_mut().buffer()));
         println!("user-card background mask (# means user card bg):");
-        println!("{}", dump_buffer_background_mask(terminal.backend_mut().buffer()));
+        println!(
+            "{}",
+            dump_buffer_background_mask(terminal.backend_mut().buffer())
+        );
     }
 
     fn dump_logical_lines(lines: &[Line<'static>]) -> String {
@@ -632,13 +648,16 @@ mod tests {
     }
 
     fn dump_buffer_background_mask(buffer: &Buffer) -> String {
-        dump_buffer(buffer, |cell| {
-            if cell.bg == USER_CARD_BG {
-                '#'
-            } else {
-                '.'
-            }
-        })
+        dump_buffer(
+            buffer,
+            |cell| {
+                if cell.bg == USER_CARD_BG {
+                    '#'
+                } else {
+                    '.'
+                }
+            },
+        )
     }
 
     fn dump_buffer<F>(buffer: &Buffer, render_cell: F) -> String

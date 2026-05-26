@@ -579,13 +579,14 @@ impl AIMessageManager {
         enableDirectAudioProcessing: bool,
         enableDirectVideoProcessing: bool,
     ) -> String {
-        if enableDirectImageProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("image/") {
+        let hasInlineContent = !attachment.content.trim().is_empty();
+        if !hasInlineContent && enableDirectImageProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("image/") {
             return format!("<image_link id=\"{}\"/>", attachment.filePath);
         }
-        if enableDirectAudioProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("audio/") {
+        if !hasInlineContent && enableDirectAudioProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("audio/") {
             return format!("<audio_link id=\"{}\"/>", attachment.filePath);
         }
-        if enableDirectVideoProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("video/") {
+        if !hasInlineContent && enableDirectVideoProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("video/") {
             return format!("<video_link id=\"{}\"/>", attachment.filePath);
         }
 

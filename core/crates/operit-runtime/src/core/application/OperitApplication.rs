@@ -7,8 +7,11 @@ use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
+use crate::data::model::Memory::{Memory, MemoryLink};
 use crate::data::mcp::plugins::MCPStarter::MCPStarter;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
+use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -83,6 +86,9 @@ impl OperitApplication {
             .map_err(|error| error.to_string())?;
         FunctionalConfigManager::default()
             .initializeIfNeeded()
+            .map_err(|error| error.to_string())?;
+        UserPreferencesManager::getInstance()
+            .initializeIfNeeded("Default")
             .map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -197,6 +203,22 @@ impl OperitApplication {
                 operation.payload.clone(),
             )
             .map_err(|error| error.to_string()),
+            (OBJECTBOX_SYNC_DOMAIN, "Memory", "upsert" | "delete") => {
+                ObjectBox::<Memory>::applySyncedEntity(
+                    &operation.entityId,
+                    &operation.operation,
+                    operation.payload.clone(),
+                )
+                .map_err(|error| error.to_string())
+            }
+            (OBJECTBOX_SYNC_DOMAIN, "MemoryLink", "upsert" | "delete") => {
+                ObjectBox::<MemoryLink>::applySyncedEntity(
+                    &operation.entityId,
+                    &operation.operation,
+                    operation.payload.clone(),
+                )
+                .map_err(|error| error.to_string())
+            }
             (domain, entityType, operationName) => Err(format!(
                 "unsupported sync operation: {domain}/{entityType}/{operationName}"
             )),

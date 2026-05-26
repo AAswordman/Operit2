@@ -23,6 +23,9 @@ use crate::core::tools::defaultTool::standard::StandardFileSystemTools::{
 use crate::core::tools::defaultTool::standard::StandardHttpTools::{
     HttpToolExecutor, HttpToolOperation, StandardHttpTools,
 };
+use crate::core::tools::defaultTool::standard::StandardMemoryTools::{
+    MemoryToolExecutor, MemoryToolOperation,
+};
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::{
     StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
 };
@@ -53,6 +56,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
         Box::new(ToolGetter::getWebVisitTool(context)),
     );
     registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
+    registerMemoryPublicTools(handler);
 
     let packageManager = handler.getOrCreatePackageManager();
     handler.registerTool(
@@ -181,6 +185,7 @@ fn registerSystemOperationTool(
 #[allow(non_snake_case)]
 fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicationContext) {
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
+    registerMemoryInternalTools(handler);
 
     if let Some(fileSystemHost) = context.fileSystemHost.clone() {
         handler.registerInternalTool(
@@ -198,6 +203,45 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
             handler: handler.clone(),
         }),
     );
+}
+
+#[allow(non_snake_case)]
+fn registerMemoryPublicTools(handler: &mut AIToolHandler) {
+    registerMemoryTool(handler, "query_memory", MemoryToolOperation::QueryMemory, false);
+    registerMemoryTool(handler, "get_memory_by_title", MemoryToolOperation::GetMemoryByTitle, false);
+}
+
+#[allow(non_snake_case)]
+fn registerMemoryInternalTools(handler: &mut AIToolHandler) {
+    registerMemoryTool(handler, "create_memory", MemoryToolOperation::CreateMemory, true);
+    registerMemoryTool(handler, "update_memory", MemoryToolOperation::UpdateMemory, true);
+    registerMemoryTool(handler, "delete_memory", MemoryToolOperation::DeleteMemory, true);
+    registerMemoryTool(handler, "move_memory", MemoryToolOperation::MoveMemory, true);
+    registerMemoryTool(
+        handler,
+        "update_user_preferences",
+        MemoryToolOperation::UpdateUserPreferences,
+        true,
+    );
+    registerMemoryTool(handler, "link_memories", MemoryToolOperation::LinkMemories, true);
+    registerMemoryTool(handler, "query_memory_links", MemoryToolOperation::QueryMemoryLinks, true);
+    registerMemoryTool(handler, "update_memory_link", MemoryToolOperation::UpdateMemoryLink, true);
+    registerMemoryTool(handler, "delete_memory_link", MemoryToolOperation::DeleteMemoryLink, true);
+}
+
+#[allow(non_snake_case)]
+fn registerMemoryTool(
+    handler: &mut AIToolHandler,
+    name: &str,
+    operation: MemoryToolOperation,
+    internal: bool,
+) {
+    let executor = Box::new(MemoryToolExecutor { operation });
+    if internal {
+        handler.registerInternalTool(name.to_string(), executor);
+    } else {
+        handler.registerTool(name.to_string(), executor);
+    }
 }
 
 #[allow(non_snake_case)]
