@@ -6,10 +6,10 @@ use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, FileEntry,
     FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult,
     HostEnvironmentDescriptor, HostError, HostResult, LocationData, ManagedRuntimeHost,
-    ManagedRuntimeProgram, ManagedRuntimeProcess, NotificationData, RuntimeCommandOutput,
-    RuntimeProcessRequest, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry,
-    RuntimeStorageHost, SystemOperationHost, SystemSettingData, WebVisitHost, WebVisitRequest,
-    WebVisitResult,
+    ManagedRuntimeProgram, ManagedRuntimeProcess, NotificationData, HttpHost, HttpRequestData,
+    HttpResponseData, RuntimeCommandOutput, RuntimeProcessRequest, RuntimeSqliteConnection,
+    RuntimeSqliteHost, RuntimeStorageEntry, RuntimeStorageHost, SystemOperationHost,
+    SystemSettingData, WebVisitHost, WebVisitRequest, WebVisitResult,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -125,18 +125,24 @@ impl FileSystemHost for AndroidFileSystemHost {
 
 #[derive(Clone, Debug)]
 pub struct AndroidRuntimeStorageHost {
+    root: PathBuf,
     inner: operit_host_linux_native::LinuxRuntimeStorageHost,
 }
 
 impl AndroidRuntimeStorageHost {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            root: root.clone(),
             inner: operit_host_linux_native::LinuxRuntimeStorageHost::new(root),
         }
     }
 }
 
 impl RuntimeStorageHost for AndroidRuntimeStorageHost {
+    fn rootDir(&self) -> Option<PathBuf> {
+        Some(self.root.clone())
+    }
+
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         self.inner.readBytes(path)
     }
@@ -161,6 +167,25 @@ impl RuntimeStorageHost for AndroidRuntimeStorageHost {
 impl RuntimeSqliteHost for AndroidRuntimeStorageHost {
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
         self.inner.openSqliteDatabase(path)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AndroidHttpHost {
+    inner: operit_host_linux_native::LinuxHttpHost,
+}
+
+impl AndroidHttpHost {
+    pub fn new() -> Self {
+        Self {
+            inner: operit_host_linux_native::LinuxHttpHost::new(),
+        }
+    }
+}
+
+impl HttpHost for AndroidHttpHost {
+    fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
+        self.inner.executeHttpRequest(request)
     }
 }
 

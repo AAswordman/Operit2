@@ -39,6 +39,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_math_fork: ^0.7.4
   http: ^1.2.2
+  dynamic_color: ^1.8.1
+  hooks: ^2.0.0
 
 dev_dependencies:
   flutter_test:
@@ -64,7 +66,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
+  assets:
+    - android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

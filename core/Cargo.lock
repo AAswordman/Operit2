@@ -1404,6 +1404,8 @@ dependencies = [
  "boa_engine",
  "chrono",
  "futures-util",
+ "getrandom 0.2.17",
+ "js-sys",
  "json5",
  "operit-host-api",
  "operit-store",
@@ -1415,7 +1417,10 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "url",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
  "zip",
 ]
 

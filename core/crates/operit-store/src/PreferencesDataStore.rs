@@ -8,9 +8,7 @@ use thiserror::Error;
 
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
 use crate::RuntimeStorePaths::RuntimeStorePaths;
-use crate::SyncOperationStore::{
-    NewSyncOperation, SyncOperationStore, SyncOperationStoreError,
-};
+use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
 
 #[derive(Debug, Error)]
 pub enum PreferencesDataStoreError {
@@ -156,7 +154,12 @@ impl<T> Flow<T> {
         }
     }
 
-    pub fn stateIn(&self, _scope: CoroutineScope, _started: SharingStarted, initialValue: T) -> StateFlow<T>
+    pub fn stateIn(
+        &self,
+        _scope: CoroutineScope,
+        _started: SharingStarted,
+        initialValue: T,
+    ) -> StateFlow<T>
     where
         T: Clone + PartialEq + Send + 'static,
     {
@@ -164,6 +167,7 @@ impl<T> Flow<T> {
         if let Ok(value) = self.first() {
             stateFlow.set_value(value);
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if self.waitChanged.is_some() {
             let flow = self.clone();
             let stateFlowForThread = stateFlow.clone();
@@ -210,6 +214,12 @@ struct StateFlowInner<T> {
     value: Mutex<T>,
     version: Mutex<u64>,
     changed: Condvar,
+    subscribers: Mutex<StateFlowSubscribers<T>>,
+}
+
+struct StateFlowSubscribers<T> {
+    nextId: usize,
+    callbacks: HashMap<usize, Arc<Mutex<dyn FnMut(T) + Send>>>,
 }
 
 impl<T> StateFlow<T>
@@ -222,6 +232,10 @@ where
                 value: Mutex::new(initialValue),
                 version: Mutex::new(0),
                 changed: Condvar::new(),
+                subscribers: Mutex::new(StateFlowSubscribers {
+                    nextId: 0,
+                    callbacks: HashMap::new(),
+                }),
             }),
         }
     }
@@ -323,7 +337,7 @@ where
         if *guard == value {
             return;
         }
-        *guard = value;
+        *guard = value.clone();
         drop(guard);
         let mut version = self
             .inner
@@ -332,6 +346,21 @@ where
             .expect("StateFlow version mutex must not be poisoned");
         *version += 1;
         self.inner.changed.notify_all();
+        drop(version);
+        let subscribers = self
+            .inner
+            .subscribers
+            .lock()
+            .expect("StateFlow subscribers mutex must not be poisoned")
+            .callbacks
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for subscriber in subscribers {
+            if let Ok(mut subscriber) = subscriber.lock() {
+                subscriber(value.clone());
+            }
+        }
     }
 
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
@@ -341,7 +370,7 @@ where
             .lock()
             .expect("StateFlow value mutex must not be poisoned");
         if *guard == expect {
-            *guard = update;
+            *guard = update.clone();
             drop(guard);
             let mut version = self
                 .inner
@@ -350,10 +379,53 @@ where
                 .expect("StateFlow version mutex must not be poisoned");
             *version += 1;
             self.inner.changed.notify_all();
+            drop(version);
+            let subscribers = self
+                .inner
+                .subscribers
+                .lock()
+                .expect("StateFlow subscribers mutex must not be poisoned")
+                .callbacks
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            for subscriber in subscribers {
+                if let Ok(mut subscriber) = subscriber.lock() {
+                    subscriber(update.clone());
+                }
+            }
             true
         } else {
             false
         }
+    }
+
+    pub fn subscribe<F>(&self, subscriber: F) -> usize
+    where
+        F: FnMut(T) + Send + 'static,
+    {
+        let callback = Arc::new(Mutex::new(subscriber));
+        if let Ok(mut subscriber) = callback.lock() {
+            subscriber(self.value());
+        }
+        let mut subscribers = self
+            .inner
+            .subscribers
+            .lock()
+            .expect("StateFlow subscribers mutex must not be poisoned");
+        let id = subscribers.nextId;
+        subscribers.nextId += 1;
+        subscribers.callbacks.insert(id, callback);
+        id
+    }
+
+    pub fn unsubscribe(&self, subscriptionId: usize) {
+        let mut subscribers = self
+            .inner
+            .subscribers
+            .lock()
+            .expect("StateFlow subscribers mutex must not be poisoned");
+        subscribers.callbacks.remove(&subscriptionId);
     }
 
     pub fn map<U, F>(&self, transform: F) -> StateFlow<U>
@@ -364,13 +436,10 @@ where
     {
         let transform = Arc::new(transform);
         let stateFlow = StateFlow::new(transform(self.value()));
-        let sourceFlow = self.clone();
-        let stateFlowForThread = stateFlow.clone();
-        let transformForThread = Arc::clone(&transform);
-        std::thread::spawn(move || {
-            let _ = sourceFlow.collect(|value| {
-                stateFlowForThread.set_value(transformForThread(value));
-            });
+        let stateFlowForSubscriber = stateFlow.clone();
+        let transformForSubscriber = Arc::clone(&transform);
+        self.subscribe(move |value| {
+            stateFlowForSubscriber.set_value(transformForSubscriber(value));
         });
         stateFlow
     }
@@ -447,6 +516,17 @@ where
 
     pub fn set_value(&self, value: T) {
         self.state.set_value(value);
+    }
+
+    pub fn subscribe<F>(&self, subscriber: F) -> usize
+    where
+        F: FnMut(T) + Send + 'static,
+    {
+        self.state.subscribe(subscriber)
+    }
+
+    pub fn unsubscribe(&self, subscriptionId: usize) {
+        self.state.unsubscribe(subscriptionId);
     }
 
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
@@ -758,8 +838,9 @@ impl PreferencesDataStore {
 
 #[allow(non_snake_case)]
 fn preferencesDataStoreChangeSignal(path: &Path) -> Arc<PreferencesDataStoreChangeSignal> {
-    static CHANGE_SIGNALS: OnceLock<Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreChangeSignal>>>> =
-        OnceLock::new();
+    static CHANGE_SIGNALS: OnceLock<
+        Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreChangeSignal>>>,
+    > = OnceLock::new();
     let signals = CHANGE_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut signals = signals
         .lock()

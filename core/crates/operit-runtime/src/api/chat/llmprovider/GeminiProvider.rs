@@ -5,7 +5,8 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
+    AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -723,7 +724,8 @@ impl GeminiProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for GeminiProvider {
     fn input_token_count(&self) -> i32 {
         self.inputTokenCount
@@ -755,42 +757,97 @@ impl AIService for GeminiProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.cancelled = false;
         self.reset_token_counts();
-        let stream = request.stream;
-        let request_body = self.create_request_body(&request)?;
-        let response = reqwest::Client::new()
-            .post(self.request_url(stream))
-            .headers(self.headers()?)
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response
-                .text()
+        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+        let mut retryCount = 0;
+        loop {
+            let stream = request.stream;
+            let request_body = self.create_request_body(&request)?;
+            let response = match reqwest::Client::new()
+                .post(self.request_url(stream))
+                .headers(self.headers()?)
+                .json(&request_body)
+                .send()
                 .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!("{status}: {text}")));
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = AiServiceError::ConnectionFailed(error.to_string());
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
+                    }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    delay_retry_ms(newRetryCount).await;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
+                let errorText = retry_error_text(&error);
+                if !request.enable_retry {
+                    return Err(error);
+                }
+                let newRetryCount = retryCount + 1;
+                if newRetryCount > maxRetries {
+                    return Err(error);
+                }
+                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                }
+                delay_retry_ms(newRetryCount).await;
+                retryCount = newRetryCount;
+                continue;
+            }
+            if stream {
+                match self.process_streaming_response(response).await {
+                    Ok(responseStream) => return Ok(responseStream),
+                    Err(error) => {
+                        let errorText = retry_error_text(&error);
+                        if !request.enable_retry {
+                            return Err(error);
+                        }
+                        let newRetryCount = retryCount + 1;
+                        if newRetryCount > maxRetries {
+                            return Err(error);
+                        }
+                        if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                            on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                        }
+                        delay_retry_ms(newRetryCount).await;
+                        retryCount = newRetryCount;
+                        continue;
+                    }
+                }
+            }
+            let json_response: Value = response
+                .json()
+                .await
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let mut chunks = Vec::new();
+            let content = self.extract_content_from_json(&json_response)?;
+            if content.is_empty() {
+                chunks.push(" ".to_string());
+            } else {
+                chunks.push(content);
+            }
+            if self.isInThinkingMode {
+                chunks.push("</think>".to_string());
+                self.isInThinkingMode = false;
+            }
+            return Ok(response_stream_from_chunks(chunks));
         }
-        if stream {
-            return self.process_streaming_response(response).await;
-        }
-        let json_response: Value = response
-            .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let mut chunks = Vec::new();
-        let content = self.extract_content_from_json(&json_response)?;
-        if content.is_empty() {
-            chunks.push(" ".to_string());
-        } else {
-            chunks.push(content);
-        }
-        if self.isInThinkingMode {
-            chunks.push("</think>".to_string());
-            self.isInThinkingMode = false;
-        }
-        Ok(response_stream_from_chunks(chunks))
     }
 
     async fn calculate_input_tokens(

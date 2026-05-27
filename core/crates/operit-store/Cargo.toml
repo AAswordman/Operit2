@@ -10,3 +10,6 @@ operit-host-api = { path = "../operit-host-api" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"

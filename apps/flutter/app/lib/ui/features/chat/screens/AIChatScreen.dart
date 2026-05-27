@@ -19,7 +19,8 @@ class AIChatScreen extends StatefulWidget {
   State<AIChatScreen> createState() => _AIChatScreenState();
 }
 
-class _AIChatScreenState extends State<AIChatScreen> {
+class _AIChatScreenState extends State<AIChatScreen>
+    with WidgetsBindingObserver {
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -38,16 +39,21 @@ class _AIChatScreenState extends State<AIChatScreen> {
   String? _currentChatId;
   ChatMarkdownStreamState? _activeMarkdownStreamState;
   StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
+  StreamSubscription<String?>? _toastEventSubscription;
   TopBarController? _topBarController;
   String _currentChatTitle = '';
   String? _currentCharacterCardName;
   String? _activeCharacterCardName;
+  String? _toastMessage;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadSnapshot();
+    _watchToastEvent();
     _messageController.addListener(_onInputChanged);
+    _inputFocusNode.addListener(_onInputFocusChanged);
   }
 
   @override
@@ -63,13 +69,55 @@ class _AIChatScreenState extends State<AIChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _topBarController?.clearTitleContent();
     _messageController.removeListener(_onInputChanged);
+    _inputFocusNode.removeListener(_onInputFocusChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
     _scrollController.dispose();
     _responseStreamSubscription?.cancel();
+    _toastEventSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (_inputFocusNode.hasFocus) {
+      _scheduleScrollToBottomAcrossKeyboardAnimation();
+    }
+  }
+
+  void _watchToastEvent() {
+    _toastEventSubscription?.cancel();
+    _toastEventSubscription = widget.runtime.watchToastEvent().listen(
+      (message) {
+        if (!mounted || message == null || message.trim().isEmpty) {
+          return;
+        }
+        setState(() {
+          _toastMessage = message;
+        });
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Failed to watch toast event: $error\n$stackTrace');
+      },
+    );
+  }
+
+  void _dismissToast() {
+    if (mounted) {
+      setState(() {
+        _toastMessage = null;
+      });
+    }
+    widget.runtime.clearToastEvent().catchError((
+      Object error,
+      StackTrace stackTrace,
+    ) {
+      debugPrint('Failed to clear toast event: $error\n$stackTrace');
+    });
   }
 
   Future<ChatRuntimeSnapshot?> _loadSnapshot({bool showLoading = true}) async {
@@ -292,6 +340,27 @@ class _AIChatScreenState extends State<AIChatScreen> {
     }
   }
 
+  void _onInputFocusChanged() {
+    if (_inputFocusNode.hasFocus) {
+      _scheduleScrollToBottomAcrossKeyboardAnimation();
+    }
+  }
+
+  void _scheduleScrollToBottomAcrossKeyboardAnimation() {
+    _scheduleScrollToBottom();
+    for (final delay in const <Duration>[
+      Duration(milliseconds: 80),
+      Duration(milliseconds: 180),
+      Duration(milliseconds: 320),
+    ]) {
+      Future<void>.delayed(delay, () {
+        if (mounted && _inputFocusNode.hasFocus) {
+          _scheduleScrollToBottom();
+        }
+      });
+    }
+  }
+
   void _scheduleScrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
@@ -336,7 +405,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
         return TopBarTitleText(
           primaryText: primaryText,
           secondaryText: secondaryText,
-          contentColor: Theme.of(context).colorScheme.onPrimary,
+          contentColor: Theme.of(context).colorScheme.onSurface,
         );
       }),
     );
@@ -355,6 +424,8 @@ class _AIChatScreenState extends State<AIChatScreen> {
       modelLabel: _modelLabel,
       onSendMessage: _sendMessage,
       onCancelMessage: _cancelMessage,
+      toastMessage: _toastMessage,
+      onDismissToast: _dismissToast,
     );
   }
 }

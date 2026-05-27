@@ -416,7 +416,7 @@ fn writeVisitResultToFile(resultData: &VisitWebResultData) -> PathBuf {
     let filePath = outputDir.join(format!(
         "visit_web_{}_{}_{}.txt",
         host,
-        chrono::Utc::now().timestamp_millis(),
+        operit_host_api::TimeUtils::currentTimeMillis(),
         &uuid::Uuid::new_v4().to_string()[..8]
     ));
     let text = StandardWebVisitTool::buildFullVisitResultText(resultData);

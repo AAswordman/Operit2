@@ -1,16 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Cursor};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use operit_host_api::{
-    ManagedRuntimeHost, ManagedRuntimeProcess, ManagedRuntimeProgram, RuntimeProcessRequest,
+    HttpHost, HttpRequestData, HttpResponseData, ManagedRuntimeHost, ManagedRuntimeProcess,
+    ManagedRuntimeProgram, RuntimeProcessRequest,
 };
-use reqwest::blocking::{Client, Response};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
-use reqwest::Url;
 use serde_json::{json, Value};
+use url::Url;
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 
@@ -54,13 +53,13 @@ struct ActiveService {
 }
 
 struct RemoteMcpSession {
-    client: Client,
+    httpHost: Arc<dyn HttpHost>,
     endpoint: String,
     connectionType: String,
     headers: BTreeMap<String, String>,
     sessionId: Option<String>,
     sseEndpoint: Option<String>,
-    sseReader: Option<BufReader<Response>>,
+    sseReader: Option<BufReader<Cursor<Vec<u8>>>>,
 }
 
 #[derive(Default)]
@@ -244,7 +243,14 @@ impl MCPBridge {
         };
 
         let startResult = if registered.serviceType == "remote" {
-            startRemoteServiceSession(&registered, timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS))
+            let Some(host) = context.httpHost.as_ref() else {
+                return errorResponse("spawn", -32603, "HTTP host is not configured");
+            };
+            startRemoteServiceSession(
+                host.clone(),
+                &registered,
+                timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS),
+            )
         } else {
             let Some(host) = context.managedRuntimeHost.as_ref() else {
                 return errorResponse("spawn", -32603, "Managed runtime host is not configured");
@@ -532,6 +538,7 @@ fn homeDir() -> Option<PathBuf> {
 
 #[allow(non_snake_case)]
 fn startRemoteServiceSession(
+    httpHost: Arc<dyn HttpHost>,
     service: &RegisteredService,
     timeoutMs: u64,
 ) -> Result<ActiveService, String> {
@@ -540,10 +547,6 @@ fn startRemoteServiceSession(
         .endpoint
         .clone()
         .ok_or_else(|| "Remote MCP service endpoint is empty".to_string())?;
-    let client = Client::builder()
-        .timeout(Duration::from_millis(timeoutMs))
-        .build()
-        .map_err(|error| error.to_string())?;
     let mut headers = service.headers.clone();
     if let Some(token) = &service.bearerToken {
         headers.insert("Authorization".to_string(), format!("Bearer {token}"));
@@ -551,7 +554,7 @@ fn startRemoteServiceSession(
     let mut active = ActiveService {
         process: None,
         remote: Some(RemoteMcpSession {
-            client,
+            httpHost,
             endpoint,
             connectionType: connectionType.to_string(),
             headers,
@@ -580,22 +583,22 @@ fn startRemoteServiceSession(
 
 #[allow(non_snake_case)]
 fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<(), String> {
-    let response = session
-        .client
-        .get(&session.endpoint)
-        .headers(buildRemoteHeaders(session, false)?)
-        .timeout(Duration::from_millis(timeoutMs))
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
+    let response = executeRemoteHttp(
+        session,
+        "GET",
+        &session.endpoint,
+        buildRemoteHeaders(session, false)?,
+        Vec::new(),
+        timeoutMs,
+    )?;
+    if !isSuccess(response.statusCode) {
         return Err(format!(
             "Remote MCP SSE connect failed with status {}",
-            response.status()
+            response.statusCode
         ));
     }
-    let responseHeaders = response.headers().clone();
-    rememberRemoteSessionId(session, &responseHeaders)?;
-    let mut reader = BufReader::new(response);
+    rememberRemoteSessionId(session, &response.headers)?;
+    let mut reader = BufReader::new(Cursor::new(response.body));
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     loop {
         if Instant::now() >= deadline {
@@ -851,26 +854,28 @@ fn sendRemoteJsonRpc(
     if session.connectionType.eq_ignore_ascii_case("sse") {
         return sendRemoteSseJsonRpc(session, payload, expectedId, _timeoutMs);
     }
-    let response = session
-        .client
-        .post(&session.endpoint)
-        .headers(buildRemoteHeaders(session, true)?)
-        .json(&payload)
-        .send()
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let responseHeaders = response.headers().clone();
-    rememberRemoteSessionId(session, &responseHeaders)?;
-    let contentType = responseHeaders
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
+    let body = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
+    let response = executeRemoteHttp(
+        session,
+        "POST",
+        &session.endpoint,
+        buildRemoteHeaders(session, true)?,
+        body,
+        _timeoutMs,
+    )?;
+    rememberRemoteSessionId(session, &response.headers)?;
+    let contentType = response
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.as_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let text = response.text().map_err(|error| error.to_string())?;
-    if !status.is_success() {
+    let text = String::from_utf8(response.body).map_err(|error| error.to_string())?;
+    if !isSuccess(response.statusCode) {
         return Err(format!(
             "Remote MCP HTTP request failed with status {}: {}",
-            status,
+            response.statusCode,
             text.trim()
         ));
     }
@@ -898,19 +903,20 @@ fn sendRemoteSseJsonRpc(
         .sseEndpoint
         .clone()
         .ok_or_else(|| "Remote MCP SSE endpoint is not connected".to_string())?;
-    let response = session
-        .client
-        .post(endpoint)
-        .headers(buildRemoteHeaders(session, true)?)
-        .json(&payload)
-        .send()
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let text = response.text().map_err(|error| error.to_string())?;
-    if !status.is_success() {
+    let body = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
+    let response = executeRemoteHttp(
+        session,
+        "POST",
+        &endpoint,
+        buildRemoteHeaders(session, true)?,
+        body,
+        timeoutMs,
+    )?;
+    let text = String::from_utf8(response.body).map_err(|error| error.to_string())?;
+    if !isSuccess(response.statusCode) {
         return Err(format!(
             "Remote MCP SSE POST failed with status {}: {}",
-            status,
+            response.statusCode,
             text.trim()
         ));
     }
@@ -941,33 +947,29 @@ fn sendRemoteSseJsonRpc(
 }
 
 #[allow(non_snake_case)]
-fn buildRemoteHeaders(session: &RemoteMcpSession, jsonBody: bool) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
+fn buildRemoteHeaders(
+    session: &RemoteMcpSession,
+    jsonBody: bool,
+) -> Result<Vec<(String, String)>, String> {
+    let mut headers = Vec::new();
     if jsonBody {
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_static("application/json, text/event-stream"),
-        );
+        headers.push(("Content-Type".to_string(), "application/json".to_string()));
+        headers.push((
+            "Accept".to_string(),
+            "application/json, text/event-stream".to_string(),
+        ));
     } else {
-        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        headers.push(("Accept".to_string(), "text/event-stream".to_string()));
     }
-    headers.insert(
-        HeaderName::from_static("mcp-protocol-version"),
-        HeaderValue::from_static("2024-11-05"),
-    );
+    headers.push(("mcp-protocol-version".to_string(), "2024-11-05".to_string()));
     if let Some(sessionId) = &session.sessionId {
-        headers.insert(
-            HeaderName::from_static("mcp-session-id"),
-            HeaderValue::from_str(sessionId).map_err(|error| error.to_string())?,
-        );
+        headers.push(("mcp-session-id".to_string(), sessionId.to_string()));
     }
     for (name, value) in &session.headers {
-        let headerName = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|error| format!("Invalid MCP remote header '{name}': {error}"))?;
-        let headerValue = HeaderValue::from_str(value)
-            .map_err(|error| format!("Invalid MCP remote header value for '{name}': {error}"))?;
-        headers.insert(headerName, headerValue);
+        if name.trim().is_empty() {
+            return Err("Invalid MCP remote header: empty name".to_string());
+        }
+        headers.push((name.clone(), value.clone()));
     }
     Ok(headers)
 }
@@ -975,11 +977,11 @@ fn buildRemoteHeaders(session: &RemoteMcpSession, jsonBody: bool) -> Result<Head
 #[allow(non_snake_case)]
 fn rememberRemoteSessionId(
     session: &mut RemoteMcpSession,
-    headers: &HeaderMap,
+    headers: &[(String, String)],
 ) -> Result<(), String> {
-    if let Some(sessionId) = headers
-        .get("mcp-session-id")
-        .and_then(|value| value.to_str().ok())
+    if let Some((_, sessionId)) = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("mcp-session-id"))
     {
         let trimmed = sessionId.trim();
         if !trimmed.is_empty() {
@@ -987,6 +989,40 @@ fn rememberRemoteSessionId(
         }
     }
     Ok(())
+}
+
+#[allow(non_snake_case)]
+fn executeRemoteHttp(
+    session: &RemoteMcpSession,
+    method: &str,
+    endpoint: &str,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    timeoutMs: u64,
+) -> Result<HttpResponseData, String> {
+    let timeoutSeconds = (timeoutMs / 1000).max(1);
+    session
+        .httpHost
+        .executeHttpRequest(HttpRequestData {
+            url: endpoint.to_string(),
+            method: method.to_string(),
+            headers,
+            body,
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: timeoutSeconds,
+            readTimeoutSeconds: timeoutSeconds,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[allow(non_snake_case)]
+fn isSuccess(statusCode: i32) -> bool {
+    (200..300).contains(&statusCode)
 }
 
 #[allow(non_snake_case)]

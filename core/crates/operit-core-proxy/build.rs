@@ -1935,9 +1935,11 @@ fn render_watch_stream_arm(method: &SourceMethod) -> String {
         return String::new();
     };
     match watch.stream {
-        WatchStreamProtocol::JsonFlow { fallible }
-        | WatchStreamProtocol::JsonState { fallible } => {
-            render_json_watch_stream_arm(method, fallible)
+        WatchStreamProtocol::JsonFlow { fallible } => {
+            render_json_flow_watch_stream_arm(method, fallible)
+        }
+        WatchStreamProtocol::JsonState { fallible } => {
+            render_json_state_watch_stream_arm(method, fallible)
         }
         WatchStreamProtocol::TextEvent { optional } => {
             render_text_event_watch_stream_arm(method, optional)
@@ -1945,7 +1947,7 @@ fn render_watch_stream_arm(method: &SourceMethod) -> String {
     }
 }
 
-fn render_json_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
+fn render_json_flow_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
     let flow_expr = if fallible {
@@ -1957,8 +1959,25 @@ fn render_json_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String
         format!("object.{}({})", method.name, call_args)
     };
     format!(
-        "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            std::thread::spawn(move || {{\n                let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n                let _ = flow.collect(|value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = serde_json::to_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }});\n            }});\n            Ok(receiver)\n        }}\n",
+        "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            spawn_core_task(move || {{\n                let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n                let _ = flow.collect(|value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = serde_json::to_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }});\n            }});\n            Ok(receiver)\n        }}\n",
         method.name, args, flow_expr
+    )
+}
+
+fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
+    let args = render_arg_decoders(method);
+    let call_args = render_arg_call_list(method);
+    let state_expr = if fallible {
+        format!(
+            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args
+        )
+    } else {
+        format!("object.{}({})", method.name, call_args)
+    };
+    format!(
+        "        {:?} => {{\n{}            let stateFlow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n            let isFirstEventForSubscriber = isFirstEvent.clone();\n            stateFlow.subscribe(move |value| {{\n                let kind = if isFirstEventForSubscriber.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                    operit_link::CoreEventKind::Snapshot\n                }} else {{\n                    operit_link::CoreEventKind::Changed\n                }};\n                if let Ok(value) = serde_json::to_value(value) {{\n                    let _ = sender.send(operit_link::CoreEvent {{\n                        requestId: Some(requestId.clone()),\n                        targetPath: targetPath.clone(),\n                        propertyName: propertyName.clone(),\n                        kind,\n                        value,\n                    }});\n                }}\n            }});\n            Ok(receiver)\n        }}\n",
+        method.name, args, state_expr
     )
 }
 

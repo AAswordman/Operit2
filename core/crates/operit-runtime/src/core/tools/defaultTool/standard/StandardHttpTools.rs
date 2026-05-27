@@ -1,19 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use reqwest::blocking::multipart::{Form, Part};
-use reqwest::blocking::{Client, RequestBuilder};
-use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
-};
-use reqwest::{Method, Proxy, Url};
+use operit_host_api::{FileSystemHost, HttpFilePart, HttpHost, HttpRequestData, HttpResponseData};
 use serde_json::{json, Map, Value};
+use url::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
@@ -30,7 +24,10 @@ struct CookieRecord {
 }
 
 #[derive(Clone)]
-pub struct StandardHttpTools;
+pub struct StandardHttpTools {
+    httpHost: Arc<dyn HttpHost>,
+    fileSystemHost: Option<Arc<dyn FileSystemHost>>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HttpToolOperation {
@@ -49,73 +46,20 @@ static COOKIE_STORE: OnceLock<Mutex<HashMap<String, Vec<CookieRecord>>>> = OnceL
 const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
 impl StandardHttpTools {
-    pub fn new() -> Self {
-        Self
+    pub fn new(
+        httpHost: Arc<dyn HttpHost>,
+        fileSystemHost: Option<Arc<dyn FileSystemHost>>,
+    ) -> Self {
+        Self {
+            httpHost,
+            fileSystemHost,
+        }
     }
 
     #[allow(non_snake_case)]
     pub fn httpRequest(&self, tool: &AITool) -> ToolResult {
-        let toolClone = tool.clone();
-        let toolName = tool.name.clone();
-        runBlockingHttpThread(move || StandardHttpTools::new().httpRequestBlocking(&toolClone))
-            .unwrap_or_else(|message| ToolResult {
-                toolName,
-                success: false,
-                result: String::new(),
-                error: Some(message),
-            })
-    }
-
-    #[allow(non_snake_case)]
-    fn httpRequestBlocking(&self, tool: &AITool) -> ToolResult {
         match self.prepareHttpRequest(tool) {
-            Ok(spec) => match spec.request.send() {
-                Ok(response) => {
-                    let url = spec.url.clone();
-                    let statusCode = response.status().as_u16() as i32;
-                    let statusMessage = response
-                        .status()
-                        .canonical_reason()
-                        .unwrap_or("")
-                        .to_string();
-                    let headers = responseHeadersMap(response.headers());
-                    let contentType = response
-                        .headers()
-                        .get(CONTENT_TYPE)
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or("")
-                        .to_string();
-                    saveResponseCookies(&url, response.headers());
-                    match response.bytes() {
-                        Ok(bodyBytes) => {
-                            let content =
-                                String::from_utf8(bodyBytes.to_vec()).unwrap_or_else(|_| {
-                                    "[Binary Content, decoding failed]".to_string()
-                                });
-                            let responseText = buildHttpResponseData(
-                                &url,
-                                statusCode,
-                                &statusMessage,
-                                &headers,
-                                &contentType,
-                                &content,
-                                Some(&STANDARD.encode(&bodyBytes)),
-                                bodyBytes.len(),
-                                &cookiesMapForUrl(&url),
-                            );
-                            success(tool, responseText)
-                        }
-                        Err(error) => errorResult(
-                            tool.name.as_str(),
-                            &format!("Error executing HTTP request: {error}"),
-                        ),
-                    }
-                }
-                Err(error) => errorResult(
-                    tool.name.as_str(),
-                    &format!("Error executing HTTP request: {error}"),
-                ),
-            },
+            Ok(request) => self.executeRequest(tool, request, "Error executing HTTP request"),
             Err(error) => errorResult(
                 tool.name.as_str(),
                 &format!("Error executing HTTP request: {error}"),
@@ -221,19 +165,112 @@ impl StandardHttpTools {
 
     #[allow(non_snake_case)]
     pub fn multipartRequest(&self, tool: &AITool) -> ToolResult {
-        let toolClone = tool.clone();
-        let toolName = tool.name.clone();
-        runBlockingHttpThread(move || StandardHttpTools::new().multipartRequestBlocking(&toolClone))
-            .unwrap_or_else(|message| ToolResult {
-                toolName,
-                success: false,
-                result: String::new(),
-                error: Some(message),
-            })
+        match self.prepareMultipartRequest(tool) {
+            Ok(request) => {
+                self.executeRequest(tool, request, "Error executing multipart form request")
+            }
+            Err(error) => toolError(tool, String::new(), error),
+        }
     }
 
     #[allow(non_snake_case)]
-    fn multipartRequestBlocking(&self, tool: &AITool) -> ToolResult {
+    fn executeRequest(
+        &self,
+        tool: &AITool,
+        request: HttpRequestData,
+        messagePrefix: &str,
+    ) -> ToolResult {
+        let url = request.url.clone();
+        match self.httpHost.executeHttpRequest(request) {
+            Ok(response) => success(tool, responseToText(&url, response)),
+            Err(error) => toolError(tool, String::new(), format!("{messagePrefix}: {error}")),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn prepareHttpRequest(&self, tool: &AITool) -> Result<HttpRequestData, String> {
+        let url = parameterValue(tool, "url");
+        let method = optionalParameterValue(tool, "method")
+            .map(|value| value.to_uppercase())
+            .unwrap_or_else(|| "GET".to_string());
+        let headersParam =
+            optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
+        let bodyParam = parameterValue(tool, "body");
+        let bodyType = optionalParameterValue(tool, "body_type")
+            .map(|value| value.to_lowercase())
+            .unwrap_or_else(|| "json".to_string());
+        let useCookies = optionalParameterValue(tool, "use_cookies")
+            .map(|value| value.to_lowercase() != "false")
+            .unwrap_or(true);
+
+        validateRequestBase(&url, &method)?;
+        applyCustomCookies(tool, useCookies, &url);
+
+        let mut headers = parseHeaders(&headersParam)?;
+        headers.push(("User-Agent".to_string(), USER_AGENT_VALUE.to_string()));
+        if useCookies {
+            pushCookieHeader(&mut headers, &url);
+        }
+
+        let mut body = Vec::new();
+        if method != "GET" && method != "HEAD" && !bodyParam.trim().is_empty() {
+            match bodyType.as_str() {
+                "json" => {
+                    headers.push((
+                        "Content-Type".to_string(),
+                        "application/json; charset=utf-8".to_string(),
+                    ));
+                    body = bodyParam.into_bytes();
+                }
+                "form" => {
+                    headers.push((
+                        "Content-Type".to_string(),
+                        "application/x-www-form-urlencoded; charset=utf-8".to_string(),
+                    ));
+                    let formObject = serde_json::from_str::<Value>(&bodyParam)
+                        .map_err(|error| error.to_string())?;
+                    let Some(object) = formObject.as_object() else {
+                        return Err("form body must be a JSON object".to_string());
+                    };
+                    body = formUrlEncoded(object).into_bytes();
+                }
+                "text" => {
+                    headers.push((
+                        "Content-Type".to_string(),
+                        "text/plain; charset=utf-8".to_string(),
+                    ));
+                    body = bodyParam.into_bytes();
+                }
+                "xml" => {
+                    headers.push((
+                        "Content-Type".to_string(),
+                        "application/xml; charset=utf-8".to_string(),
+                    ));
+                    body = bodyParam.into_bytes();
+                }
+                "multipart" => {
+                    return Err(
+                        "multipart request body type requires dedicated multipart_request tool"
+                            .to_string(),
+                    )
+                }
+                _ => return Err(format!("Unsupported request body type: {bodyType}")),
+            }
+        }
+
+        Ok(buildHostRequest(
+            tool,
+            url,
+            method,
+            headers,
+            body,
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    #[allow(non_snake_case)]
+    fn prepareMultipartRequest(&self, tool: &AITool) -> Result<HttpRequestData, String> {
         let url = parameterValue(tool, "url");
         let method = optionalParameterValue(tool, "method")
             .map(|value| value.to_uppercase())
@@ -245,99 +282,52 @@ impl StandardHttpTools {
         let filesParam = optionalParameterValue(tool, "files").unwrap_or_else(|| "[]".to_string());
 
         if url.trim().is_empty() {
-            return toolError(
-                tool,
-                String::new(),
-                "URL parameter cannot be empty".to_string(),
-            );
+            return Err("URL parameter cannot be empty".to_string());
         }
         if !isValidUrl(&url) {
-            return toolError(tool, String::new(), format!("Invalid URL format: {url}"));
+            return Err(format!("Invalid URL format: {url}"));
         }
         if method != "POST" && method != "PUT" {
-            return toolError(
-                tool,
-                String::new(),
-                format!("Multipart form requests only support POST and PUT methods, not supported: {method}"),
-            );
+            return Err(format!(
+                "Multipart form requests only support POST and PUT methods, not supported: {method}"
+            ));
         }
 
-        let headers = match parseHeaders(&headersParam) {
-            Ok(headers) => headers,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let mut headers = parseHeaders(&headersParam)?;
+        headers.push(("User-Agent".to_string(), USER_AGENT_VALUE.to_string()));
         let useCookies = optionalParameterValue(tool, "use_cookies")
             .map(|value| value.to_lowercase() != "false")
             .unwrap_or(true);
-        if let Some(customCookies) =
-            optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty())
-        {
-            if useCookies {
-                if let Some(cookies) = parseCookies(&customCookies, &url) {
-                    if let Some(host) = Url::parse(&url)
-                        .ok()
-                        .and_then(|parsed| parsed.host_str().map(str::to_string))
-                    {
-                        cookieStore()
-                            .lock()
-                            .expect("cookie store mutex poisoned")
-                            .insert(host, cookies);
-                    }
-                }
-            }
+        applyCustomCookies(tool, useCookies, &url);
+        if useCookies {
+            pushCookieHeader(&mut headers, &url);
         }
 
-        let client = match buildConfigurableClient(tool, useCookies) {
-            Ok(client) => client,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let formFields = parseFormFields(&formDataParam)?;
+        let fileParts = self.parseFileParts(&filesParam)?;
 
-        let mut form = Form::new();
-        let formData = match serde_json::from_str::<Value>(&formDataParam) {
-            Ok(Value::Object(object)) => object,
-            Ok(_) => {
-                return toolError(
-                    tool,
-                    String::new(),
-                    "Error parsing form data: form_data must be a JSON object".to_string(),
-                )
-            }
-            Err(error) => {
-                return toolError(
-                    tool,
-                    String::new(),
-                    format!("Error parsing form data: {error}"),
-                )
-            }
-        };
-        for (key, value) in formData {
-            form = form.text(key, jsonValueToString(&value));
-        }
+        Ok(buildHostRequest(
+            tool,
+            url,
+            method,
+            headers,
+            Vec::new(),
+            formFields,
+            fileParts,
+        ))
+    }
 
-        let files = match serde_json::from_str::<Value>(&filesParam) {
+    #[allow(non_snake_case)]
+    fn parseFileParts(&self, filesParam: &str) -> Result<Vec<HttpFilePart>, String> {
+        let files = match serde_json::from_str::<Value>(filesParam) {
             Ok(Value::Array(array)) => array,
-            Ok(_) => {
-                return toolError(
-                    tool,
-                    String::new(),
-                    "Error parsing file data: files must be a JSON array".to_string(),
-                )
-            }
-            Err(error) => {
-                return toolError(
-                    tool,
-                    String::new(),
-                    format!("Error parsing file data: {error}"),
-                )
-            }
+            Ok(_) => return Err("Error parsing file data: files must be a JSON array".to_string()),
+            Err(error) => return Err(format!("Error parsing file data: {error}")),
         };
+        let mut parts = Vec::new();
         for value in files {
             let Some(object) = value.as_object() else {
-                return toolError(
-                    tool,
-                    String::new(),
-                    "Error parsing file data: file entry must be a JSON object".to_string(),
-                );
+                return Err("Error parsing file data: file entry must be a JSON object".to_string());
             };
             let fieldName = object
                 .get("field_name")
@@ -363,191 +353,26 @@ impl StandardHttpTools {
                         .to_string()
                 });
             if fieldName.is_empty() || filePath.is_empty() {
-                return toolError(
-                    tool,
-                    String::new(),
+                return Err(
                     "Error parsing file data: field_name and file_path are required".to_string(),
                 );
             }
-            let bytes = match fs::read(filePath) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    return toolError(
-                        tool,
-                        String::new(),
-                        format!("File does not exist or cannot be read: {filePath}"),
-                    )
-                }
+            let content = match &self.fileSystemHost {
+                Some(host) => host.readFileBytes(filePath).map_err(|error| {
+                    format!("File does not exist or cannot be read: {filePath}: {error}")
+                })?,
+                None => fs::read(filePath)
+                    .map_err(|_| format!("File does not exist or cannot be read: {filePath}"))?,
             };
-            let part = match Part::bytes(bytes).file_name(fileName).mime_str(contentType) {
-                Ok(part) => part,
-                Err(error) => {
-                    return toolError(
-                        tool,
-                        String::new(),
-                        format!("Error parsing file data: {error}"),
-                    )
-                }
-            };
-            form = form.part(fieldName.to_string(), part);
+            parts.push(HttpFilePart {
+                fieldName: fieldName.to_string(),
+                fileName,
+                contentType: contentType.to_string(),
+                content,
+            });
         }
-
-        let methodValue = Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST);
-        let mut request = client.request(methodValue, url.trim()).multipart(form);
-        request = request.header(USER_AGENT, USER_AGENT_VALUE);
-        request = applyHeaders(request, &headers);
-        if useCookies {
-            request = applyCookieHeader(request, &url);
-        }
-
-        match request.send() {
-            Ok(response) => {
-                let statusCode = response.status().as_u16() as i32;
-                let statusMessage = response
-                    .status()
-                    .canonical_reason()
-                    .unwrap_or("")
-                    .to_string();
-                let responseHeaders = responseHeadersMap(response.headers());
-                let contentType = response
-                    .headers()
-                    .get(CONTENT_TYPE)
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
-                saveResponseCookies(&url, response.headers());
-                match response.bytes() {
-                    Ok(bodyBytes) => {
-                        let content = String::from_utf8(bodyBytes.to_vec())
-                            .unwrap_or_else(|_| "[Binary Content, decoding failed]".to_string());
-                        success(
-                            tool,
-                            buildHttpResponseData(
-                                &url,
-                                statusCode,
-                                &statusMessage,
-                                &responseHeaders,
-                                &contentType,
-                                &content,
-                                Some(&STANDARD.encode(&bodyBytes)),
-                                bodyBytes.len(),
-                                &cookiesMapForUrl(&url),
-                            ),
-                        )
-                    }
-                    Err(error) => toolError(
-                        tool,
-                        String::new(),
-                        format!("Error executing multipart form request: {error}"),
-                    ),
-                }
-            }
-            Err(error) => toolError(
-                tool,
-                String::new(),
-                format!("Error executing multipart form request: {error}"),
-            ),
-        }
+        Ok(parts)
     }
-
-    #[allow(non_snake_case)]
-    fn prepareHttpRequest(&self, tool: &AITool) -> Result<PreparedHttpRequest, String> {
-        let url = parameterValue(tool, "url");
-        let method = optionalParameterValue(tool, "method")
-            .map(|value| value.to_uppercase())
-            .unwrap_or_else(|| "GET".to_string());
-        let headersParam =
-            optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
-        let bodyParam = parameterValue(tool, "body");
-        let bodyType = optionalParameterValue(tool, "body_type")
-            .map(|value| value.to_lowercase())
-            .unwrap_or_else(|| "json".to_string());
-        let useCookies = optionalParameterValue(tool, "use_cookies")
-            .map(|value| value.to_lowercase() != "false")
-            .unwrap_or(true);
-
-        if url.trim().is_empty() {
-            return Err("URL parameter cannot be empty".to_string());
-        }
-        if !isValidUrl(&url) {
-            return Err(format!("Invalid URL format: {url}"));
-        }
-        if !matches!(
-            method.as_str(),
-            "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH" | "TRACE"
-        ) {
-            return Err(format!("Unsupported HTTP method: {method}"));
-        }
-
-        if let Some(customCookies) =
-            optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty())
-        {
-            if useCookies {
-                if let Some(cookies) = parseCookies(&customCookies, &url) {
-                    if let Some(host) = Url::parse(&url)
-                        .ok()
-                        .and_then(|parsed| parsed.host_str().map(str::to_string))
-                    {
-                        cookieStore()
-                            .lock()
-                            .expect("cookie store mutex poisoned")
-                            .insert(host, cookies);
-                    }
-                }
-            }
-        }
-
-        let client = buildConfigurableClient(tool, useCookies)?;
-        let headers = parseHeaders(&headersParam)?;
-        let methodValue =
-            Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-        let mut request = client.request(methodValue.clone(), url.trim());
-        request = request.header(USER_AGENT, USER_AGENT_VALUE);
-        request = applyHeaders(request, &headers);
-        if useCookies {
-            request = applyCookieHeader(request, &url);
-        }
-
-        if method != "GET" && method != "HEAD" && !bodyParam.trim().is_empty() {
-            request = match bodyType.as_str() {
-                "json" => request
-                    .header(CONTENT_TYPE, "application/json; charset=utf-8")
-                    .body(bodyParam),
-                "form" => {
-                    let formObject = serde_json::from_str::<Value>(&bodyParam)
-                        .map_err(|error| error.to_string())?;
-                    let Some(object) = formObject.as_object() else {
-                        return Err("form body must be a JSON object".to_string());
-                    };
-                    let mut formPairs = Vec::new();
-                    for (key, value) in object {
-                        formPairs.push((key.clone(), jsonValueToString(value)));
-                    }
-                    request.form(&formPairs)
-                }
-                "text" => request
-                    .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-                    .body(bodyParam),
-                "xml" => request
-                    .header(CONTENT_TYPE, "application/xml; charset=utf-8")
-                    .body(bodyParam),
-                "multipart" => {
-                    return Err(
-                        "multipart request body type requires dedicated multipart_request tool"
-                            .to_string(),
-                    )
-                }
-                _ => return Err(format!("Unsupported request body type: {bodyType}")),
-            };
-        }
-
-        Ok(PreparedHttpRequest { url, request })
-    }
-}
-
-struct PreparedHttpRequest {
-    url: String,
-    request: RequestBuilder,
 }
 
 impl ToolExecutor for HttpToolExecutor {
@@ -582,36 +407,56 @@ impl ToolExecutor for HttpToolExecutor {
 }
 
 #[allow(non_snake_case)]
-fn buildConfigurableClient(tool: &AITool, _useCookies: bool) -> Result<Client, String> {
-    let connectTimeout = optionalParameterValue(tool, "connect_timeout")
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(15);
-    let readTimeout = optionalParameterValue(tool, "read_timeout")
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(20);
-    let followRedirects = optionalParameterValue(tool, "follow_redirects")
-        .map(|value| value.to_lowercase() != "false")
-        .unwrap_or(true);
-    let ignoreSsl = optionalParameterValue(tool, "ignore_ssl")
-        .map(|value| value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let mut builder = Client::builder()
-        .connect_timeout(Duration::from_secs(connectTimeout))
-        .timeout(Duration::from_secs(readTimeout))
-        .danger_accept_invalid_certs(ignoreSsl);
-    if !followRedirects {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
+fn validateRequestBase(url: &str, method: &str) -> Result<(), String> {
+    if url.trim().is_empty() {
+        return Err("URL parameter cannot be empty".to_string());
     }
-    let proxyHost = parameterValue(tool, "proxy_host");
-    let proxyPort = optionalParameterValue(tool, "proxy_port")
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(0);
-    if !proxyHost.trim().is_empty() && proxyPort > 0 {
-        let proxyUrl = format!("http://{}:{proxyPort}", proxyHost.trim());
-        let proxy = Proxy::http(&proxyUrl).map_err(|error| error.to_string())?;
-        builder = builder.proxy(proxy);
+    if !isValidUrl(url) {
+        return Err(format!("Invalid URL format: {url}"));
     }
-    builder.build().map_err(|error| error.to_string())
+    if !matches!(
+        method,
+        "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH" | "TRACE"
+    ) {
+        return Err(format!("Unsupported HTTP method: {method}"));
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
+fn buildHostRequest(
+    tool: &AITool,
+    url: String,
+    method: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    formFields: Vec<(String, String)>,
+    fileParts: Vec<HttpFilePart>,
+) -> HttpRequestData {
+    HttpRequestData {
+        url,
+        method,
+        headers,
+        body,
+        formFields,
+        fileParts,
+        connectTimeoutSeconds: optionalParameterValue(tool, "connect_timeout")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(15),
+        readTimeoutSeconds: optionalParameterValue(tool, "read_timeout")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(20),
+        followRedirects: optionalParameterValue(tool, "follow_redirects")
+            .map(|value| value.to_lowercase() != "false")
+            .unwrap_or(true),
+        ignoreSsl: optionalParameterValue(tool, "ignore_ssl")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false),
+        proxyHost: parameterValue(tool, "proxy_host"),
+        proxyPort: optionalParameterValue(tool, "proxy_port")
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(0),
+    }
 }
 
 #[allow(non_snake_case)]
@@ -622,24 +467,45 @@ fn isValidUrl(urlString: &str) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn parseHeaders(headersJson: &str) -> Result<HeaderMap, String> {
+fn parseHeaders(headersJson: &str) -> Result<Vec<(String, String)>, String> {
     if headersJson.trim().is_empty() {
-        return Ok(HeaderMap::new());
+        return Ok(Vec::new());
     }
     let value = serde_json::from_str::<Value>(headersJson)
         .map_err(|error| format!("Invalid headers JSON: {error}"))?;
     let Some(object) = value.as_object() else {
         return Err("headers must be a JSON object string".to_string());
     };
-    let mut headers = HeaderMap::new();
+    let mut headers = Vec::new();
     for (key, value) in object {
-        let headerName = HeaderName::from_bytes(key.as_bytes())
-            .map_err(|error| format!("Invalid header name '{key}': {error}"))?;
-        let headerValue = HeaderValue::from_str(&jsonValueToString(value))
-            .map_err(|error| format!("Invalid header value for '{key}': {error}"))?;
-        headers.insert(headerName, headerValue);
+        if key.trim().is_empty() {
+            return Err("Invalid header name: empty".to_string());
+        }
+        headers.push((key.clone(), jsonValueToString(value)));
     }
     Ok(headers)
+}
+
+#[allow(non_snake_case)]
+fn parseFormFields(formDataParam: &str) -> Result<Vec<(String, String)>, String> {
+    let formData = match serde_json::from_str::<Value>(formDataParam) {
+        Ok(Value::Object(object)) => object,
+        Ok(_) => return Err("Error parsing form data: form_data must be a JSON object".to_string()),
+        Err(error) => return Err(format!("Error parsing form data: {error}")),
+    };
+    Ok(formData
+        .into_iter()
+        .map(|(key, value)| (key, jsonValueToString(&value)))
+        .collect())
+}
+
+#[allow(non_snake_case)]
+fn formUrlEncoded(object: &Map<String, Value>) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (key, value) in object {
+        serializer.append_pair(key, &jsonValueToString(value));
+    }
+    serializer.finish()
 }
 
 #[allow(non_snake_case)]
@@ -696,7 +562,28 @@ fn parseCookies(cookiesJson: &str, urlString: &str) -> Option<Vec<CookieRecord>>
 }
 
 #[allow(non_snake_case)]
-fn saveResponseCookies(url: &str, headers: &HeaderMap) {
+fn applyCustomCookies(tool: &AITool, useCookies: bool, url: &str) {
+    if let Some(customCookies) =
+        optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty())
+    {
+        if useCookies {
+            if let Some(cookies) = parseCookies(&customCookies, url) {
+                if let Some(host) = Url::parse(url)
+                    .ok()
+                    .and_then(|parsed| parsed.host_str().map(str::to_string))
+                {
+                    cookieStore()
+                        .lock()
+                        .expect("cookie store mutex poisoned")
+                        .insert(host, cookies);
+                }
+            }
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn saveResponseCookies(url: &str, headers: &[(String, String)]) {
     let Ok(parsedUrl) = Url::parse(url) else {
         return;
     };
@@ -704,12 +591,11 @@ fn saveResponseCookies(url: &str, headers: &HeaderMap) {
         return;
     };
     let mut cookies = Vec::new();
-    for headerValue in headers.get_all(SET_COOKIE).iter() {
-        let Ok(text) = headerValue.to_str() else {
-            continue;
-        };
-        if let Some(cookie) = parseSetCookie(text, host) {
-            cookies.push(cookie);
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("set-cookie") {
+            if let Some(cookie) = parseSetCookie(value, host) {
+                cookies.push(cookie);
+            }
         }
     }
     if !cookies.is_empty() {
@@ -752,24 +638,14 @@ fn parseSetCookie(raw: &str, host: &str) -> Option<CookieRecord> {
 }
 
 #[allow(non_snake_case)]
-fn applyHeaders(mut request: RequestBuilder, headers: &HeaderMap) -> RequestBuilder {
-    for (name, value) in headers.iter() {
-        request = request.header(name, value);
-    }
-    request
-}
-
-#[allow(non_snake_case)]
-fn applyCookieHeader(request: RequestBuilder, url: &str) -> RequestBuilder {
+fn pushCookieHeader(headers: &mut Vec<(String, String)>, url: &str) {
     let cookieHeader = cookiesForUrl(url)
         .into_iter()
         .map(|cookie| format!("{}={}", cookie.name, cookie.value))
         .collect::<Vec<_>>()
         .join("; ");
-    if cookieHeader.is_empty() {
-        request
-    } else {
-        request.header(COOKIE, cookieHeader)
+    if !cookieHeader.is_empty() {
+        headers.push(("Cookie".to_string(), cookieHeader));
     }
 }
 
@@ -798,12 +674,26 @@ fn cookiesMapForUrl(url: &str) -> HashMap<String, String> {
 }
 
 #[allow(non_snake_case)]
-fn responseHeadersMap(headers: &HeaderMap) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-    for (name, value) in headers.iter() {
-        result.insert(name.to_string(), value.to_str().unwrap_or("").to_string());
-    }
-    result
+fn responseToText(requestUrl: &str, response: HttpResponseData) -> String {
+    saveResponseCookies(requestUrl, &response.headers);
+    let contentType = response
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+    let content = String::from_utf8(response.body.clone())
+        .unwrap_or_else(|_| "[Binary Content, decoding failed]".to_string());
+    buildHttpResponseData(
+        &response.finalUrl,
+        response.statusCode,
+        &response.statusMessage,
+        &contentType,
+        &content,
+        Some(&STANDARD.encode(&response.body)),
+        response.body.len(),
+        &cookiesMapForUrl(requestUrl),
+    )
 }
 
 #[allow(non_snake_case)]
@@ -811,7 +701,6 @@ fn buildHttpResponseData(
     url: &str,
     statusCode: i32,
     statusMessage: &str,
-    _headers: &HashMap<String, String>,
     contentType: &str,
     content: &str,
     _contentBase64: Option<&str>,
@@ -900,15 +789,4 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .iter()
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.clone())
-}
-
-#[allow(non_snake_case)]
-fn runBlockingHttpThread<T, F>(operation: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    thread::spawn(operation)
-        .join()
-        .map_err(|_| "HTTP worker thread panicked".to_string())
 }

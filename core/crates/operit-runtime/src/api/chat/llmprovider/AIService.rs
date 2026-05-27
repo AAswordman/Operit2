@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::core::chat::hooks::PromptTurn::PromptTurn;
 use crate::data::model::ModelParameter::ModelParameter;
@@ -21,6 +22,7 @@ pub struct SendMessageRequest {
     pub available_tools: Vec<ToolPrompt>,
     pub preserve_think_in_history: bool,
     pub enable_retry: bool,
+    pub on_non_fatal_error: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub on_tool_invocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
@@ -63,7 +65,43 @@ pub fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Ve
     chunks
 }
 
-#[async_trait]
+pub fn retry_error_text(error: &AiServiceError) -> String {
+    let message = error.to_string();
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        "连接超时".to_string()
+    } else if lower.contains("dns")
+        || lower.contains("resolve")
+        || lower.contains("unknown host")
+        || lower.contains("failed to lookup address")
+    {
+        "无法解析主机".to_string()
+    } else {
+        match error {
+            AiServiceError::ConnectionFailed(value) if value.trim().is_empty() => {
+                "网络中断".to_string()
+            }
+            AiServiceError::ConnectionFailed(value) => value.clone(),
+            AiServiceError::RequestFailed(value) if value.trim().is_empty() => {
+                "网络中断".to_string()
+            }
+            AiServiceError::RequestFailed(value) => value.clone(),
+            _ => message,
+        }
+    }
+}
+
+pub fn retry_message(error_text: &str, retry_number: i32) -> String {
+    format!("{error_text}，正在进行第 {retry_number} 次重试...")
+}
+
+pub async fn delay_retry_ms(retry_attempt: i32) {
+    let delay_ms = super::LlmRetryPolicy::LlmRetryPolicy::nextDelayMs(retry_attempt);
+    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AIService: Send + Sync {
     fn input_token_count(&self) -> i32 {
         0

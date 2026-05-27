@@ -1,13 +1,11 @@
 use std::sync::Arc;
-use std::thread;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{
     FileEntry, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult,
+    HttpHost, HttpRequestData,
 };
-use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
@@ -19,11 +17,12 @@ use super::StandardWebVisitTool::StandardWebVisitTool;
 #[derive(Clone)]
 pub struct StandardFileSystemTools {
     pub host: Arc<dyn FileSystemHost>,
+    pub httpHost: Arc<dyn HttpHost>,
 }
 
 impl StandardFileSystemTools {
-    pub fn new(host: Arc<dyn FileSystemHost>) -> Self {
-        Self { host }
+    pub fn new(host: Arc<dyn FileSystemHost>, httpHost: Arc<dyn HttpHost>) -> Self {
+        Self { host, httpHost }
     }
 
     #[allow(non_snake_case)]
@@ -636,46 +635,23 @@ impl StandardFileSystemTools {
             }
         };
 
-        let resolvedUrlForThread = resolvedUrl.trim().to_string();
-        let headersForThread = headers.clone();
-        let downloadResult = thread::spawn(move || {
-            let client = Client::new();
-            let response = client
-                .get(&resolvedUrlForThread)
-                .headers(headersForThread)
-                .send();
-            match response {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        Err(format!(
-                            "Error downloading file: HTTP {}",
-                            response.status()
-                        ))
-                    } else {
-                        response
-                            .bytes()
-                            .map(|bytes| bytes.to_vec())
-                            .map_err(|error| format!("Error downloading file: {error}"))
-                    }
-                }
-                Err(error) => Err(format!("Error downloading file: {error}")),
-            }
-        })
-        .join()
-        .map_err(|_| "Error downloading file: HTTP worker thread panicked".to_string());
-
-        let bytes = match downloadResult {
-            Ok(result) => match result {
-                Ok(bytes) => bytes,
-                Err(message) => {
-                    return toolError(
-                        tool,
-                        fileOperationDataToString(self.envLabel(), &message),
-                        message,
-                    );
-                }
-            },
-            Err(message) => {
+        let response = match self.httpHost.executeHttpRequest(HttpRequestData {
+            url: resolvedUrl.trim().to_string(),
+            method: "GET".to_string(),
+            headers,
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: 15,
+            readTimeoutSeconds: 30,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        }) {
+            Ok(response) => response,
+            Err(error) => {
+                let message = format!("Error downloading file: {error}");
                 return toolError(
                     tool,
                     fileOperationDataToString(self.envLabel(), &message),
@@ -683,6 +659,15 @@ impl StandardFileSystemTools {
                 );
             }
         };
+        if !(200..300).contains(&response.statusCode) {
+            let message = format!("Error downloading file: HTTP {}", response.statusCode);
+            return toolError(
+                tool,
+                fileOperationDataToString(self.envLabel(), &message),
+                message,
+            );
+        }
+        let bytes = response.body;
 
         match self.host.writeFileBytes(&destPath, bytes.as_ref()) {
             Ok(()) => success(
@@ -1056,25 +1041,24 @@ fn parameterBoolDefaultTrue(tool: &AITool, name: &str) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn parseHeaders(headersJson: Option<&str>) -> Result<HeaderMap, String> {
+fn parseHeaders(headersJson: Option<&str>) -> Result<Vec<(String, String)>, String> {
     let Some(raw) = headersJson.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(HeaderMap::new());
+        return Ok(Vec::new());
     };
     let value = serde_json::from_str::<serde_json::Value>(raw)
         .map_err(|error| format!("Invalid headers JSON: {error}"))?;
     let Some(object) = value.as_object() else {
         return Err("headers must be a JSON object string".to_string());
     };
-    let mut headers = HeaderMap::new();
+    let mut headers = Vec::new();
     for (key, value) in object {
         let Some(valueText) = value.as_str() else {
             return Err(format!("headers.{key} must be a string"));
         };
-        let headerName = HeaderName::from_bytes(key.as_bytes())
-            .map_err(|error| format!("Invalid header name '{key}': {error}"))?;
-        let headerValue = HeaderValue::from_str(valueText)
-            .map_err(|error| format!("Invalid header value for '{key}': {error}"))?;
-        headers.insert(headerName, headerValue);
+        if key.trim().is_empty() {
+            return Err("Invalid header name: empty".to_string());
+        }
+        headers.push((key.clone(), valueText.to_string()));
     }
     Ok(headers)
 }

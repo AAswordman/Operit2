@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+
 
 pub const VERBOSE: i32 = 2;
 pub const DEBUG: i32 = 3;
@@ -160,10 +160,7 @@ impl AppLogger {
 }
 
 fn write_entry(priority: i32, tag: &str, msg: &str, throwable: Option<String>) {
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
+    let timestamp_ms = operit_host_api::TimeUtils::currentTimeMillisU128();
     let entry = LogEntry {
         priority,
         tag: tag.to_string(),
@@ -304,3 +301,5 @@ fn error_chain(error: &(dyn std::error::Error)) -> String {
     }
     out
 }
+
+

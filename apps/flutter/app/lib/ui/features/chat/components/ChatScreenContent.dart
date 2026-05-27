@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/chat/OperitChatRuntime.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
+import 'ChatToastHost.dart';
 
 class ChatScreenContent extends StatelessWidget {
   const ChatScreenContent({
@@ -19,6 +20,8 @@ class ChatScreenContent extends StatelessWidget {
     required this.modelLabel,
     required this.onSendMessage,
     required this.onCancelMessage,
+    required this.toastMessage,
+    required this.onDismissToast,
   });
 
   final List<ChatRuntimeMessage> messages;
@@ -31,27 +34,44 @@ class ChatScreenContent extends StatelessWidget {
   final String modelLabel;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
+  final String? toastMessage;
+  final VoidCallback onDismissToast;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Stack(
+      alignment: Alignment.topCenter,
       children: <Widget>[
-        Expanded(
-          child: ChatArea(
-            messages: messages,
-            isLoading: loading,
-            errorMessage: errorMessage,
-            scrollController: scrollController,
-          ),
+        Column(
+          children: <Widget>[
+            Expanded(
+              child: ChatArea(
+                messages: messages,
+                isLoading: loading,
+                errorMessage: errorMessage,
+                scrollController: scrollController,
+              ),
+            ),
+            AgentChatInputSection(
+              controller: messageController,
+              focusNode: inputFocusNode,
+              isLoading: loading,
+              inputState: inputProcessingState,
+              modelLabel: modelLabel,
+              onSendMessage: onSendMessage,
+              onCancelMessage: onCancelMessage,
+            ),
+          ],
         ),
-        AgentChatInputSection(
-          controller: messageController,
-          focusNode: inputFocusNode,
-          isLoading: loading,
-          inputState: inputProcessingState,
-          modelLabel: modelLabel,
-          onSendMessage: onSendMessage,
-          onCancelMessage: onCancelMessage,
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: ChatToastHost(
+              message: toastMessage,
+              onDismiss: onDismissToast,
+              maxHeight: 280,
+            ),
+          ),
         ),
       ],
     );

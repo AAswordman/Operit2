@@ -20,6 +20,7 @@ class PhoneLayout extends StatefulWidget {
     required this.drawerWidth,
     required this.drawerOpen,
     required this.enableNavigationAnimation,
+    required this.onOpenDrawer,
     required this.onCloseDrawer,
     required this.onNavigationEntrySelected,
   });
@@ -32,6 +33,7 @@ class PhoneLayout extends StatefulWidget {
   final double drawerWidth;
   final bool drawerOpen;
   final bool enableNavigationAnimation;
+  final VoidCallback onOpenDrawer;
   final VoidCallback onCloseDrawer;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
 
@@ -45,8 +47,10 @@ class _PhoneLayoutState extends State<PhoneLayout>
   static const double _noBouncyDampingRatio = 1.0;
   static const double _springStiffness = 1000;
   static const double _composeCameraPerspective = -0.001;
+  static const double _dragThreshold = 40;
 
   late final AnimationController _drawerProgressController;
+  double _currentDrag = 0;
 
   @override
   void initState() {
@@ -87,6 +91,26 @@ class _PhoneLayoutState extends State<PhoneLayout>
       _drawerProgressController.velocity,
     );
     _drawerProgressController.animateWith(simulation);
+  }
+
+  void _handleHorizontalDragStart(DragStartDetails details) {
+    _currentDrag = 0;
+  }
+
+  void _handleHorizontalDragUpdate(DragUpdateDetails details) {
+    _currentDrag += details.primaryDelta ?? 0;
+    if (!widget.drawerOpen && _currentDrag > _dragThreshold) {
+      _currentDrag = 0;
+      widget.onOpenDrawer();
+    }
+    if (widget.drawerOpen && _currentDrag < -_dragThreshold) {
+      _currentDrag = 0;
+      widget.onCloseDrawer();
+    }
+  }
+
+  void _handleHorizontalDragEnd(DragEndDetails details) {
+    _currentDrag = 0;
   }
 
   @override
@@ -133,84 +157,93 @@ class _PhoneLayoutState extends State<PhoneLayout>
           math.min(drawerContentAlpha, 1.0),
         );
 
-        return Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: Transform.translate(
-                offset: Offset(contentTranslationX, contentTranslationY),
-                child: Transform(
-                  alignment: Alignment.centerLeft,
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, _composeCameraPerspective)
-                    ..rotateY(contentRotationY * math.pi / 180),
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: _handleHorizontalDragStart,
+          onHorizontalDragUpdate: _handleHorizontalDragUpdate,
+          onHorizontalDragEnd: _handleHorizontalDragEnd,
+          onHorizontalDragCancel: () {
+            _currentDrag = 0;
+          },
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: Transform.translate(
+                  offset: Offset(contentTranslationX, contentTranslationY),
+                  child: Transform(
+                    alignment: Alignment.centerLeft,
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, _composeCameraPerspective)
+                      ..rotateY(contentRotationY * math.pi / 180),
+                    child: Transform.scale(
+                      alignment: Alignment.centerLeft,
+                      scale: contentScale,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(
+                            clampedContentCornerRadius,
+                          ),
+                          boxShadow: <BoxShadow>[
+                            if (contentShadowElevation > 0)
+                              BoxShadow(
+                                blurRadius: contentShadowElevation,
+                                color: Colors.black.withValues(alpha: 0.16),
+                              ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            clampedContentCornerRadius,
+                          ),
+                          child: widget.content,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (widget.drawerOpen)
+                Positioned.fill(
+                  left: widget.drawerWidth,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onCloseDrawer,
+                    child: const ColoredBox(color: Colors.transparent),
+                  ),
+                ),
+              Positioned(
+                left: drawerOffset,
+                top: MediaQuery.paddingOf(context).top,
+                bottom: 0,
+                width: widget.drawerWidth,
+                child: Opacity(
+                  opacity: clampedDrawerContentAlpha,
                   child: Transform.scale(
                     alignment: Alignment.centerLeft,
-                    scale: contentScale,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(
-                          clampedContentCornerRadius,
-                        ),
-                        boxShadow: <BoxShadow>[
-                          if (contentShadowElevation > 0)
-                            BoxShadow(
-                              blurRadius: contentShadowElevation,
-                              color: Colors.black.withValues(alpha: 0.16),
-                            ),
-                        ],
+                    scale: drawerScale,
+                    child: Material(
+                      color: appearance.containerColor,
+                      elevation: math.max(0.0, sidebarElevation),
+                      borderRadius: const BorderRadiusDirectional.only(
+                        topEnd: Radius.circular(16),
+                        bottomEnd: Radius.circular(16),
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(
-                          clampedContentCornerRadius,
-                        ),
-                        child: widget.content,
+                      clipBehavior: Clip.antiAlias,
+                      child: DrawerContent(
+                        navigationEntries: widget.navigationEntries,
+                        selectedRouteId: widget.selectedRouteId,
+                        isNetworkAvailable: widget.isNetworkAvailable,
+                        networkType: widget.networkType,
+                        appearance: appearance,
+                        onNavigationEntrySelected:
+                            widget.onNavigationEntrySelected,
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-            if (widget.drawerOpen)
-              Positioned.fill(
-                left: widget.drawerWidth,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onCloseDrawer,
-                  child: const ColoredBox(color: Colors.transparent),
-                ),
-              ),
-            Positioned(
-              left: drawerOffset,
-              top: MediaQuery.paddingOf(context).top,
-              bottom: 0,
-              width: widget.drawerWidth,
-              child: Opacity(
-                opacity: clampedDrawerContentAlpha,
-                child: Transform.scale(
-                  alignment: Alignment.centerLeft,
-                  scale: drawerScale,
-                  child: Material(
-                    color: appearance.containerColor,
-                    elevation: math.max(0.0, sidebarElevation),
-                    borderRadius: const BorderRadiusDirectional.only(
-                      topEnd: Radius.circular(16),
-                      bottomEnd: Radius.circular(16),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: DrawerContent(
-                      navigationEntries: widget.navigationEntries,
-                      selectedRouteId: widget.selectedRouteId,
-                      isNetworkAvailable: widget.isNetworkAvailable,
-                      networkType: widget.networkType,
-                      appearance: appearance,
-                      onNavigationEntrySelected:
-                          widget.onNavigationEntrySelected,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::sync::Arc;
 
-use reqwest::blocking::Client;
-use reqwest::redirect::Policy;
+use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 const STATIC_BASE_URL: &str = "https://static.operit.app/market-stats";
 const TRACK_BASE_URL: &str = "https://api.operit.app/market-stats";
@@ -432,11 +432,9 @@ pub struct ArtifactMarketMetadata {
     pub forgeRepo: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone)]
 pub struct MarketStatsApiService {
-    staticClient: Client,
-    noRedirectTrackingClient: Client,
-    githubClient: Client,
+    httpHost: Arc<dyn HttpHost>,
     githubToken: Option<String>,
 }
 
@@ -447,27 +445,8 @@ impl MarketStatsApiService {
 
     #[allow(non_snake_case)]
     pub fn newWithGitHubToken(githubToken: Option<String>) -> Self {
-        let timeout = Duration::from_secs(TIMEOUT_SECONDS);
-        let staticClient = Client::builder()
-            .timeout(timeout)
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("market static client must build");
-        let noRedirectTrackingClient = Client::builder()
-            .timeout(timeout)
-            .redirect(Policy::none())
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("market tracking client must build");
-        let githubClient = Client::builder()
-            .timeout(timeout)
-            .user_agent("Operit-Market")
-            .build()
-            .expect("github client must build");
         Self {
-            staticClient,
-            noRedirectTrackingClient,
-            githubClient,
+            httpHost: crate::core::application::OperitApplicationContext::defaultHttpHost(),
             githubToken,
         }
     }
@@ -510,24 +489,19 @@ impl MarketStatsApiService {
 
     #[allow(non_snake_case)]
     pub fn trackDownload(&self, r#type: &str, id: &str, targetUrl: &str) -> Result<(), String> {
-        let url = reqwest::Url::parse_with_params(
+        let url = Url::parse_with_params(
             &format!("{TRACK_BASE_URL}/download"),
             &[("type", r#type), ("id", id), ("target", targetUrl)],
         )
         .map_err(|error| error.to_string())?;
-        let response = self
-            .noRedirectTrackingClient
-            .get(url)
-            .send()
-            .map_err(|error| error.to_string())?;
-        let status = response.status();
-        if status.is_success() || status.is_redirection() {
+        let response = self.request("GET", url.as_str(), Vec::new(), Vec::new(), false)?;
+        if isSuccess(response.statusCode) || isRedirection(response.statusCode) {
             Ok(())
         } else {
             Err(format!(
                 "HTTP {}: {}",
-                status.as_u16(),
-                response.text().unwrap_or_default()
+                response.statusCode,
+                summarizeBody(&bodyText(&response.body))
             ))
         }
     }
@@ -543,7 +517,7 @@ impl MarketStatsApiService {
         perPage: i32,
     ) -> Result<Vec<GitHubIssue>, String> {
         let query = buildQualifiedSearchQuery(owner, repo, label, rawQuery, true);
-        let url = reqwest::Url::parse_with_params(
+        let url = Url::parse_with_params(
             &format!("{GITHUB_API_BASE_URL}/search/issues"),
             &[
                 ("q", query.as_str()),
@@ -554,17 +528,21 @@ impl MarketStatsApiService {
             ],
         )
         .map_err(|error| error.to_string())?;
-        let request = self.githubClient.get(url).header(
-            "Accept",
-            "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json",
-        );
-        let response = self.sendGitHub(request)?;
-        let status = response.status();
-        let body = response.text().map_err(|error| error.to_string())?;
-        if !status.is_success() {
+        let response = self.sendGitHub(
+            "GET",
+            url.as_str(),
+            vec![(
+                "Accept".to_string(),
+                "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json"
+                    .to_string(),
+            )],
+            Vec::new(),
+        )?;
+        let body = bodyText(&response.body);
+        if !isSuccess(response.statusCode) {
             return Err(format!(
                 "HTTP {}: {}",
-                status.as_u16(),
+                response.statusCode,
                 summarizeBody(&body)
             ));
         }
@@ -581,11 +559,16 @@ impl MarketStatsApiService {
         issueNumber: i32,
     ) -> Result<GitHubIssue, String> {
         let url = format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}");
-        let request = self.githubClient.get(url).header(
-            "Accept",
-            "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json",
-        );
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "GET",
+            &url,
+            vec![(
+                "Accept".to_string(),
+                "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json"
+                    .to_string(),
+            )],
+            Vec::new(),
+        )
     }
 
     #[allow(non_snake_case)]
@@ -597,7 +580,7 @@ impl MarketStatsApiService {
         page: i32,
         perPage: i32,
     ) -> Result<Vec<GitHubComment>, String> {
-        let url = reqwest::Url::parse_with_params(
+        let url = Url::parse_with_params(
             &format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/comments"),
             &[
                 ("page", page.to_string()),
@@ -605,11 +588,15 @@ impl MarketStatsApiService {
             ],
         )
         .map_err(|error| error.to_string())?;
-        let request = self
-            .githubClient
-            .get(url)
-            .header("Accept", "application/vnd.github+json");
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "GET",
+            url.as_str(),
+            vec![(
+                "Accept".to_string(),
+                "application/vnd.github+json".to_string(),
+            )],
+            Vec::new(),
+        )
     }
 
     #[allow(non_snake_case)]
@@ -622,12 +609,19 @@ impl MarketStatsApiService {
     ) -> Result<GitHubComment, String> {
         let url =
             format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/comments");
-        let request = self
-            .githubClient
-            .post(url)
-            .header("Accept", "application/vnd.github+json")
-            .json(&serde_json::json!({ "body": body }));
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "POST",
+            &url,
+            vec![
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github+json".to_string(),
+                ),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+            serde_json::to_vec(&serde_json::json!({ "body": body }))
+                .map_err(|error| error.to_string())?,
+        )
     }
 
     #[allow(non_snake_case)]
@@ -639,11 +633,15 @@ impl MarketStatsApiService {
     ) -> Result<Vec<GitHubReaction>, String> {
         let url =
             format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
-        let request = self.githubClient.get(url).header(
-            "Accept",
-            "application/vnd.github.squirrel-girl-preview+json",
-        );
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "GET",
+            &url,
+            vec![(
+                "Accept".to_string(),
+                "application/vnd.github.squirrel-girl-preview+json".to_string(),
+            )],
+            Vec::new(),
+        )
     }
 
     #[allow(non_snake_case)]
@@ -656,24 +654,32 @@ impl MarketStatsApiService {
     ) -> Result<GitHubReaction, String> {
         let url =
             format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
-        let request = self
-            .githubClient
-            .post(url)
-            .header(
-                "Accept",
-                "application/vnd.github.squirrel-girl-preview+json",
-            )
-            .json(&serde_json::json!({ "content": content }));
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "POST",
+            &url,
+            vec![
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github.squirrel-girl-preview+json".to_string(),
+                ),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+            serde_json::to_vec(&serde_json::json!({ "content": content }))
+                .map_err(|error| error.to_string())?,
+        )
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentUser(&self) -> Result<GitHubUser, String> {
-        let request = self
-            .githubClient
-            .get(format!("{GITHUB_API_BASE_URL}/user"))
-            .header("Accept", "application/vnd.github+json");
-        self.decodeGitHub(request)
+        self.decodeGitHub(
+            "GET",
+            &format!("{GITHUB_API_BASE_URL}/user"),
+            vec![(
+                "Accept".to_string(),
+                "application/vnd.github+json".to_string(),
+            )],
+            Vec::new(),
+        )
     }
 
     #[allow(non_snake_case)]
@@ -681,7 +687,7 @@ impl MarketStatsApiService {
         &self,
         pathSegments: &[&str],
     ) -> Result<T, String> {
-        let mut url = reqwest::Url::parse(STATIC_BASE_URL).map_err(|error| error.to_string())?;
+        let mut url = Url::parse(STATIC_BASE_URL).map_err(|error| error.to_string())?;
         {
             let mut segments = url
                 .path_segments_mut()
@@ -690,17 +696,12 @@ impl MarketStatsApiService {
                 segments.push(segment);
             }
         }
-        let response = self
-            .staticClient
-            .get(url)
-            .send()
-            .map_err(|error| error.to_string())?;
-        let status = response.status();
-        let body = response.text().map_err(|error| error.to_string())?;
-        if !status.is_success() {
+        let response = self.request("GET", url.as_str(), Vec::new(), Vec::new(), true)?;
+        let body = bodyText(&response.body);
+        if !isSuccess(response.statusCode) {
             return Err(format!(
                 "HTTP {}: {}",
-                status.as_u16(),
+                response.statusCode,
                 summarizeBody(&body)
             ));
         }
@@ -710,36 +711,66 @@ impl MarketStatsApiService {
     #[allow(non_snake_case)]
     fn sendGitHub(
         &self,
-        request: reqwest::blocking::RequestBuilder,
-    ) -> Result<reqwest::blocking::Response, String> {
-        let request = if let Some(token) = self
+        method: &str,
+        url: &str,
+        mut headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Result<HttpResponseData, String> {
+        if let Some(token) = self
             .githubToken
             .as_ref()
             .filter(|token| !token.trim().is_empty())
         {
-            request.bearer_auth(token)
-        } else {
-            request
-        };
-        request.send().map_err(|error| error.to_string())
+            headers.push(("Authorization".to_string(), format!("Bearer {token}")));
+        }
+        self.request(method, url, headers, body, true)
     }
 
     #[allow(non_snake_case)]
     fn decodeGitHub<T: for<'de> Deserialize<'de>>(
         &self,
-        request: reqwest::blocking::RequestBuilder,
+        method: &str,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
     ) -> Result<T, String> {
-        let response = self.sendGitHub(request)?;
-        let status = response.status();
-        let body = response.text().map_err(|error| error.to_string())?;
-        if !status.is_success() {
+        let response = self.sendGitHub(method, url, headers, body)?;
+        let body = bodyText(&response.body);
+        if !isSuccess(response.statusCode) {
             return Err(format!(
                 "HTTP {}: {}",
-                status.as_u16(),
+                response.statusCode,
                 summarizeBody(&body)
             ));
         }
         serde_json::from_str::<T>(&body).map_err(|error| error.to_string())
+    }
+
+    fn request(
+        &self,
+        method: &str,
+        url: &str,
+        mut headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        followRedirects: bool,
+    ) -> Result<HttpResponseData, String> {
+        headers.push(("User-Agent".to_string(), USER_AGENT.to_string()));
+        self.httpHost
+            .executeHttpRequest(HttpRequestData {
+                url: url.to_string(),
+                method: method.to_string(),
+                headers,
+                body,
+                formFields: Vec::new(),
+                fileParts: Vec::new(),
+                connectTimeoutSeconds: TIMEOUT_SECONDS,
+                readTimeoutSeconds: TIMEOUT_SECONDS,
+                followRedirects,
+                ignoreSsl: false,
+                proxyHost: String::new(),
+                proxyPort: 0,
+            })
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -759,6 +790,21 @@ impl Default for MarketRankIssueEntryResponse {
             issue: GitHubIssue::default(),
         }
     }
+}
+
+#[allow(non_snake_case)]
+fn isSuccess(statusCode: i32) -> bool {
+    (200..300).contains(&statusCode)
+}
+
+#[allow(non_snake_case)]
+fn isRedirection(statusCode: i32) -> bool {
+    (300..400).contains(&statusCode)
+}
+
+#[allow(non_snake_case)]
+fn bodyText(body: &[u8]) -> String {
+    String::from_utf8(body.to_vec()).unwrap_or_else(|_| String::new())
 }
 
 impl Default for ArtifactProjectNodeResponse {
@@ -884,7 +930,7 @@ fn parseCommentJson<T: for<'de> Deserialize<'de>>(body: &str, prefix: &str) -> O
 
 #[allow(non_snake_case)]
 fn canonicalizeMarketSource(raw: &str) -> String {
-    if let Ok(url) = reqwest::Url::parse(raw.trim()) {
+    if let Ok(url) = Url::parse(raw.trim()) {
         let host = url
             .host_str()
             .unwrap_or_default()

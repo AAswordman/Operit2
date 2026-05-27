@@ -654,7 +654,7 @@ fn resolveSnapshot(profileId: &str, requestedSnapshotId: Option<String>) -> (Str
         .entry(id.clone())
         .or_insert(QuerySnapshotState {
             seenMemoryIds: HashSet::new(),
-            lastAccessAtMs: chrono::Utc::now().timestamp_millis(),
+            lastAccessAtMs: operit_host_api::TimeUtils::currentTimeMillis(),
         });
     (id, created)
 }
@@ -674,7 +674,7 @@ fn selectSnapshotResults(
         .entry(snapshotId.to_string())
         .or_insert(QuerySnapshotState {
             seenMemoryIds: HashSet::new(),
-            lastAccessAtMs: chrono::Utc::now().timestamp_millis(),
+            lastAccessAtMs: operit_host_api::TimeUtils::currentTimeMillis(),
         });
     let excluded = results
         .iter()
@@ -688,7 +688,7 @@ fn selectSnapshotResults(
     for memory in &selected {
         snapshot.seenMemoryIds.insert(memory.id);
     }
-    snapshot.lastAccessAtMs = chrono::Utc::now().timestamp_millis();
+    snapshot.lastAccessAtMs = operit_host_api::TimeUtils::currentTimeMillis();
     (excluded, selected)
 }
 
@@ -841,3 +841,4 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.clone())
 }
+

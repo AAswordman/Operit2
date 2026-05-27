@@ -3,6 +3,7 @@ use operit_host_api::{
     HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
     RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
 };
+use std::path::PathBuf;
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
@@ -17,12 +18,21 @@ unsafe impl Send for WebRuntimeStorageHost {}
 unsafe impl Sync for WebRuntimeStorageHost {}
 
 impl WebRuntimeStorageHost {
+    #[allow(non_snake_case)]
+    pub fn defaultRoot() -> PathBuf {
+        PathBuf::from("operit2")
+    }
+
     pub fn new() -> Self {
         Self
     }
 }
 
 impl RuntimeStorageHost for WebRuntimeStorageHost {
+    fn rootDir(&self) -> Option<PathBuf> {
+        Some(Self::defaultRoot())
+    }
+
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         let value = call_storage("readBytes", &[JsValue::from_str(path)])?;
         Ok(Uint8Array::new(&value).to_vec())

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use operit_host_api::{
     AppOperationData, FindFilesRequest, GrepCodeRequest, HostError, HostResult,
-    ManagedRuntimeProgram, RuntimeProcessRequest, SqliteRow, SqliteValue, SystemSettingData,
-    WebVisitLinkData, WebVisitRequest,
+    HttpFilePart, HttpRequestData, HttpResponseData, ManagedRuntimeProgram, RuntimeProcessRequest,
+    SqliteRow, SqliteValue, SystemSettingData, WebVisitLinkData, WebVisitRequest,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -16,6 +16,11 @@ pub(crate) fn call_file_system(method: &str, args: &[JsValue]) -> HostResult<JsV
 
 pub(crate) fn call_web_visit(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("webVisit")?;
+    call_function(&module, method, args)
+}
+
+pub(crate) fn call_http(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("http")?;
     call_function(&module, method, args)
 }
 
@@ -97,6 +102,47 @@ pub(crate) fn web_visit_request_to_js(request: &WebVisitRequest) -> JsValue {
     set_property(&object, "userAgent", JsValue::from_str(&request.userAgent));
     set_property(&object, "includeImageLinks", JsValue::from_bool(request.includeImageLinks));
     object.into()
+}
+
+pub(crate) fn http_request_to_js(request: HttpRequestData) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "url", JsValue::from_str(&request.url));
+    set_property(&object, "method", JsValue::from_str(&request.method));
+    set_property(&object, "headers", string_pairs_to_js(&request.headers));
+    set_property(&object, "body", bytes_to_js(&request.body));
+    set_property(&object, "formFields", string_pairs_to_js(&request.formFields));
+    set_property(&object, "fileParts", http_file_parts_to_js(&request.fileParts));
+    set_property(
+        &object,
+        "connectTimeoutSeconds",
+        JsValue::from_f64(request.connectTimeoutSeconds as f64),
+    );
+    set_property(
+        &object,
+        "readTimeoutSeconds",
+        JsValue::from_f64(request.readTimeoutSeconds as f64),
+    );
+    set_property(&object, "followRedirects", JsValue::from_bool(request.followRedirects));
+    set_property(&object, "ignoreSsl", JsValue::from_bool(request.ignoreSsl));
+    set_property(&object, "proxyHost", JsValue::from_str(&request.proxyHost));
+    set_property(&object, "proxyPort", JsValue::from_f64(request.proxyPort as f64));
+    object.into()
+}
+
+pub(crate) fn js_http_response(value: JsValue) -> HostResult<HttpResponseData> {
+    Ok(HttpResponseData {
+        finalUrl: read_string_property(&value, "finalUrl")?,
+        statusCode: read_i32_property(&value, "statusCode")?,
+        statusMessage: read_string_property(&value, "statusMessage")?,
+        headers: js_string_pairs(
+            Reflect::get(&value, &JsValue::from_str("headers")).map_err(js_error)?,
+            "http response headers",
+        )?,
+        body: Uint8Array::new(
+            &Reflect::get(&value, &JsValue::from_str("body")).map_err(js_error)?,
+        )
+        .to_vec(),
+    })
 }
 
 pub(crate) fn runtime_process_request_to_js(request: &RuntimeProcessRequest) -> JsValue {
@@ -270,6 +316,19 @@ fn string_pairs_to_js(values: &[(String, String)]) -> JsValue {
         pair.push(&JsValue::from_str(key));
         pair.push(&JsValue::from_str(value));
         array.push(&pair);
+    }
+    array.into()
+}
+
+fn http_file_parts_to_js(values: &[HttpFilePart]) -> JsValue {
+    let array = Array::new();
+    for value in values {
+        let object = Object::new();
+        set_property(&object, "fieldName", JsValue::from_str(&value.fieldName));
+        set_property(&object, "fileName", JsValue::from_str(&value.fileName));
+        set_property(&object, "contentType", JsValue::from_str(&value.contentType));
+        set_property(&object, "content", bytes_to_js(&value.content));
+        array.push(&object);
     }
     array.into()
 }

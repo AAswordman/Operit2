@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -13,6 +14,12 @@ pub struct WindowsRuntimeStorageHost {
 }
 
 impl WindowsRuntimeStorageHost {
+    #[allow(non_snake_case)]
+    pub fn defaultRoot() -> PathBuf {
+        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
+        PathBuf::from(appdata).join("Operit2")
+    }
+
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
@@ -43,6 +50,10 @@ impl WindowsRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for WindowsRuntimeStorageHost {
+    fn rootDir(&self) -> Option<PathBuf> {
+        Some(self.root.clone())
+    }
+
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
     }

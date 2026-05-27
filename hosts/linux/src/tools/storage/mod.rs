@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -13,6 +14,15 @@ pub struct LinuxRuntimeStorageHost {
 }
 
 impl LinuxRuntimeStorageHost {
+    #[allow(non_snake_case)]
+    pub fn defaultRoot() -> PathBuf {
+        if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(xdg_data_home).join("operit2");
+        }
+        let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
+        PathBuf::from(home).join(".local").join("share").join("operit2")
+    }
+
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
@@ -43,6 +53,10 @@ impl LinuxRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for LinuxRuntimeStorageHost {
+    fn rootDir(&self) -> Option<PathBuf> {
+        Some(self.root.clone())
+    }
+
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
     }

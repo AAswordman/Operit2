@@ -195,6 +195,11 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                       drawerWidth: mediaQuery.size.width * 0.75,
                       drawerOpen: _drawerOpen,
                       enableNavigationAnimation: true,
+                      onOpenDrawer: () {
+                        setState(() {
+                          _drawerOpen = true;
+                        });
+                      },
                       onCloseDrawer: () {
                         setState(() {
                           _drawerOpen = false;

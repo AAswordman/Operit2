@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 static LAST_ISSUED_TIMESTAMP: AtomicI64 = AtomicI64::new(0);
 
@@ -38,10 +37,6 @@ impl ChatMessageTimestampAllocator {
         }
     }
 
-    pub fn currentTimeMillis() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before UNIX_EPOCH")
-            .as_millis() as i64
-    }
+    pub fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
 }
+

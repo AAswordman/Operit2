@@ -86,6 +86,19 @@ DerivedData/
 # Rust
 target/
 
+# Flutter web generated runtime bridge artifacts
+apps/flutter/app/web/operit_flutter_bridge.js
+apps/flutter/app/web/operit_flutter_bridge.d.ts
+apps/flutter/app/web/operit_flutter_bridge_bg.wasm
+apps/flutter/app/web/operit_flutter_bridge_bg.wasm.d.ts
+apps/flutter/app/web/sql-wasm.js
+apps/flutter/app/web/sql-wasm.wasm
+apps/app/web/operit_flutter_bridge.d.ts
+apps/app/web/operit_flutter_bridge_bg.wasm.d.ts
+
+# Local dependency extraction/package scratch
+package/
+
 # Go
 go.work.sum
 *.test

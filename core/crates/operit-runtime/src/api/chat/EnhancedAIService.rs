@@ -1284,6 +1284,22 @@ impl EnhancedAIService {
             let service = serviceForFunction.lock().await;
             service.provider_model()
         };
+        let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> = {
+            let callbackFn = onNonFatalError;
+            let callbacks = callbacks.clone();
+            if callbackFn.is_some() || callbacks.is_some() {
+                Some(Arc::new(move |error: String| {
+                    if let Some(callbackFn) = callbackFn {
+                        callbackFn(error.clone());
+                    }
+                    if let Some(callbacks) = callbacks.as_ref() {
+                        callbacks.onNonFatalError(error);
+                    }
+                }))
+            } else {
+                None
+            }
+        };
         let mut provider_stream = {
             let mut service = serviceForFunction.lock().await;
             service
@@ -1295,6 +1311,7 @@ impl EnhancedAIService {
                     available_tools: availableTools.clone(),
                     preserve_think_in_history: false,
                     enable_retry: true,
+                    on_non_fatal_error: providerOnNonFatalError,
                     on_tool_invocation: onToolInvocation.clone(),
                 })
                 .await?
@@ -1557,6 +1574,12 @@ impl EnhancedAIService {
         }
 
         let mut response = {
+            let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> =
+                onNonFatalError.map(|callbackFn| {
+                    Arc::new(move |error: String| {
+                        callbackFn(error);
+                    }) as Arc<dyn Fn(String) + Send + Sync>
+                });
             let mut service = runtime.aiService.lock().await;
             service
                 .send_message(SendMessageRequest {
@@ -1567,6 +1590,7 @@ impl EnhancedAIService {
                     available_tools: availableTools,
                     preserve_think_in_history: false,
                     enable_retry: true,
+                    on_non_fatal_error: providerOnNonFatalError,
                     on_tool_invocation: onToolInvocation.clone(),
                 })
                 .await?

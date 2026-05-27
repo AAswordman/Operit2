@@ -314,9 +314,5 @@ fn tagTypeName(tagType: &TagType) -> &'static str {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock must be after unix epoch")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+

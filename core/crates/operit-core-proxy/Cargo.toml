@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+operit-host-api = { path = "../operit-host-api" }
 operit-link = { path = "../operit-link" }
 operit-runtime = { path = "../operit-runtime" }
 operit-store = { path = "../operit-store" }
@@ -17,3 +18,6 @@ tokio = { workspace = true, features = ["sync"] }
 [build-dependencies]
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"

@@ -164,7 +164,9 @@ class _AppContentState extends State<AppContent> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final appBarContentColor = theme.colorScheme.onPrimary;
+    final appBarColor = theme.colorScheme.surfaceContainerLow;
+    final contentColor = theme.colorScheme.surfaceContainerLow;
+    final appBarContentColor = theme.colorScheme.onSurface;
     final topPadding = MediaQuery.paddingOf(context).top;
     final currentScreenKey = _currentScreenKey;
     final effectivePreviousKey = !_transitionAllowsCrossfade
@@ -205,7 +207,7 @@ class _AppContentState extends State<AppContent> {
                   !widget.canGoBack &&
                   !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
               return Material(
-                color: theme.colorScheme.primary,
+                color: appBarColor,
                 child: SizedBox(
                   height: topPadding + _topBarHeight,
                   child: Padding(
@@ -224,12 +226,7 @@ class _AppContentState extends State<AppContent> {
                                 ? Transform(
                                     alignment: Alignment.center,
                                     transform: Matrix4.identity()
-                                      ..scaleByDouble(
-                                        -1.0,
-                                        1.0,
-                                        1.0,
-                                        1.0,
-                                      ),
+                                      ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
                                     child: navigationIconWidget,
                                   )
                                 : navigationIconWidget,
@@ -259,7 +256,7 @@ class _AppContentState extends State<AppContent> {
           ),
           Expanded(
             child: ColoredBox(
-              color: theme.colorScheme.surface,
+              color: contentColor,
               child: Stack(
                 children: <Widget>[
                   for (final screenKey in renderKeys)

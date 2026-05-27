@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json;
 
 use crate::data::model::PreferenceProfile::PreferenceProfile;
@@ -331,9 +329,5 @@ fn profileKey(profileId: &str) -> operit_store::PreferencesDataStore::Preference
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+

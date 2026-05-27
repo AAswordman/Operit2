@@ -107,6 +107,13 @@ impl MessageCoordinationDelegate {
         if self.nonFatalErrorCollectorJob.is_some() {
             return;
         }
+        let nonFatalErrorEventFlow = self.messageProcessingDelegate.nonFatalErrorEventFlow();
+        let toastEventFlow = self.messageProcessingDelegate.toastEventFlow.clone();
+        nonFatalErrorEventFlow.subscribe(move |errorMessage| {
+            if let Some(errorMessage) = errorMessage {
+                toastEventFlow.set_value(Some(errorMessage));
+            }
+        });
         self.nonFatalErrorCollectorJob = Some("nonFatalErrorCollectorJob".to_string());
     }
 

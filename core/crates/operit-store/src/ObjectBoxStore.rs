@@ -2,17 +2,15 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use operit_host_api::TimeUtils::currentTimeMillis;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 use crate::RuntimeStorageHost::runtimeStoragePath;
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError};
-use crate::SyncOperationStore::{
-    NewSyncOperation, SyncOperationStore, SyncOperationStoreError,
-};
+use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
 
 pub const OBJECTBOX_SYNC_DOMAIN: &str = "objectbox";
 
@@ -56,8 +54,8 @@ where
     pub fn new(path: PathBuf, entityType: impl Into<String>) -> Self {
         let databasePath = path.with_extension("sqlite");
         let databaseStoragePath = runtimeStoragePath(&databasePath);
-        let sqliteStore = SqliteStore::open(databasePath.clone())
-            .expect("ObjectBox sqlite store must open");
+        let sqliteStore =
+            SqliteStore::open(databasePath.clone()).expect("ObjectBox sqlite store must open");
         initializeSchema(&sqliteStore).expect("ObjectBox sqlite schema must initialize");
         let changeSignal = objectBoxChangeSignal(&databasePath);
         Self {
@@ -90,7 +88,10 @@ where
 
     #[allow(non_snake_case)]
     pub fn getMany(&self, ids: &[i64]) -> Result<Vec<T>, ObjectBoxStoreError> {
-        let selected = ids.iter().copied().collect::<std::collections::BTreeSet<_>>();
+        let selected = ids
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
         Ok(self
             .readEntities()?
             .into_iter()
@@ -211,20 +212,27 @@ where
         payload: serde_json::Value,
     ) -> Result<(), ObjectBoxStoreError> {
         let (databaseStoragePath, id) = parseSyncedEntityId(entityId)?;
-        let databasePath = RuntimeStorePaths::default().root_dir().join(databaseStoragePath);
+        let databasePath = RuntimeStorePaths::default()
+            .root_dir()
+            .join(databaseStoragePath);
         let sqliteStore = SqliteStore::open(databasePath.clone())?;
         initializeSchema(&sqliteStore)?;
         let entityType = payload
             .get("__entityType")
             .and_then(serde_json::Value::as_str)
             .map(ToString::to_string)
-            .ok_or_else(|| ObjectBoxStoreError::Message("ObjectBox sync payload missing __entityType".to_string()))?;
+            .ok_or_else(|| {
+                ObjectBoxStoreError::Message(
+                    "ObjectBox sync payload missing __entityType".to_string(),
+                )
+            })?;
         match operation {
             "upsert" => {
-                let entityPayload = payload
-                    .get("entity")
-                    .cloned()
-                    .ok_or_else(|| ObjectBoxStoreError::Message("ObjectBox sync payload missing entity".to_string()))?;
+                let entityPayload = payload.get("entity").cloned().ok_or_else(|| {
+                    ObjectBoxStoreError::Message(
+                        "ObjectBox sync payload missing entity".to_string(),
+                    )
+                })?;
                 let mut entity: T = serde_json::from_value(entityPayload)?;
                 entity.setObjectBoxId(id);
                 let encoded = serde_json::to_string(&entity)?;
@@ -452,7 +460,9 @@ fn nextObjectBoxId(
         "SELECT COALESCE(MAX(id), 0) + 1 FROM objectbox_entities WHERE entity_type = ?1",
         vec![toSqliteValue(entityType)],
     )?;
-    let row = row.ok_or_else(|| SqliteStoreError::Message("ObjectBox id query returned no row".to_string()))?;
+    let row = row.ok_or_else(|| {
+        SqliteStoreError::Message("ObjectBox id query returned no row".to_string())
+    })?;
     row.get(0)
 }
 
@@ -471,10 +481,7 @@ fn parseSyncedEntityId(entityId: &str) -> Result<(String, i64), ObjectBoxStoreEr
 
 #[allow(non_snake_case)]
 fn nowMillis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
+    currentTimeMillis()
 }
 
 #[allow(non_snake_case)]

@@ -32,7 +32,7 @@ NavigationDrawerAppearance navigationDrawerAppearanceOf(BuildContext context) {
   final colorScheme = Theme.of(context).colorScheme;
   final defaultTitleColor = colorScheme.primary;
   return NavigationDrawerAppearance(
-    containerColor: colorScheme.surface,
+    containerColor: colorScheme.surfaceContainerLow,
     titleColor: defaultTitleColor,
     statusAvailableColor: colorScheme.primary,
     itemColor: colorScheme.onSurfaceVariant,

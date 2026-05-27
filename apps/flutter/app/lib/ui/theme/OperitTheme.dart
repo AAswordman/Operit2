@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:dynamic_color/dynamic_color.dart';
 
 import 'Color.dart';
 import '../../l10n/generated/app_localizations.dart';
@@ -12,31 +13,34 @@ class OperitTheme extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Operit',
-      debugShowCheckedModeBanner: false,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      theme: ThemeData(
-        colorScheme: _lightColorScheme,
-        scaffoldBackgroundColor: _lightColorScheme.surface,
-        canvasColor: _lightColorScheme.surface,
-        fontFamily: _fontFamily,
-        fontFamilyFallback: _fontFamilyFallback,
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: _darkColorScheme,
-        scaffoldBackgroundColor: _darkColorScheme.surface,
-        canvasColor: _darkColorScheme.surface,
-        fontFamily: _fontFamily,
-        fontFamilyFallback: _fontFamilyFallback,
-        useMaterial3: true,
-      ),
-      themeMode: ThemeMode.light,
-      home: child,
+    return DynamicColorBuilder(
+      builder: (lightDynamic, darkDynamic) {
+        final lightColorScheme = lightDynamic ?? _lightColorScheme;
+        final darkColorScheme = darkDynamic ?? _darkColorScheme;
+        return MaterialApp(
+          title: 'Operit',
+          debugShowCheckedModeBanner: false,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          theme: _themeData(lightColorScheme),
+          darkTheme: _themeData(darkColorScheme),
+          themeMode: ThemeMode.system,
+          home: child,
+        );
+      },
     );
   }
+}
+
+ThemeData _themeData(ColorScheme colorScheme) {
+  return ThemeData(
+    colorScheme: colorScheme,
+    scaffoldBackgroundColor: colorScheme.surfaceContainerLow,
+    canvasColor: colorScheme.surfaceContainerLow,
+    fontFamily: _fontFamily,
+    fontFamilyFallback: _fontFamilyFallback,
+    useMaterial3: true,
+  );
 }
 
 const String _fontFamily = 'Microsoft YaHei UI';

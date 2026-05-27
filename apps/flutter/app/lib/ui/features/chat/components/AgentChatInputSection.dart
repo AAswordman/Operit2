@@ -74,7 +74,7 @@ class AgentChatInputSection extends StatelessWidget {
                 width: double.infinity,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: ShapeDecoration(
-                  color: colorScheme.surface,
+                  color: colorScheme.surfaceContainerLow,
                   shape: inputCardShape,
                   shadows: <BoxShadow>[
                     BoxShadow(
@@ -125,9 +125,11 @@ class AgentChatInputSection extends StatelessWidget {
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 0,
-                            vertical: 10,
+                          contentPadding: const EdgeInsets.fromLTRB(
+                            16,
+                            10,
+                            8,
+                            8,
                           ),
                         ),
                         onSubmitted: (_) {
@@ -187,10 +189,12 @@ class AgentChatInputSection extends StatelessWidget {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 6),
                           _IconTapTarget(
                             icon: Icons.tune_outlined,
                             color: colorScheme.onSurfaceVariant,
                             onTap: onSettings,
+                            targetSize: 34,
                             tooltip: l10n.settings,
                           ),
                           const SizedBox(width: 8),
@@ -306,6 +310,7 @@ class _IconTapTarget extends StatelessWidget {
     required this.onTap,
     required this.tooltip,
     this.size = 20,
+    this.targetSize = 36,
   });
 
   final IconData icon;
@@ -313,6 +318,7 @@ class _IconTapTarget extends StatelessWidget {
   final VoidCallback? onTap;
   final String tooltip;
   final double size;
+  final double targetSize;
 
   @override
   Widget build(BuildContext context) {
@@ -322,8 +328,8 @@ class _IconTapTarget extends StatelessWidget {
         onTap: onTap,
         radius: 20,
         child: SizedBox(
-          width: 36,
-          height: 36,
+          width: targetSize,
+          height: targetSize,
           child: Icon(icon, size: size, color: color),
         ),
       ),
@@ -353,8 +359,8 @@ class _ActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = SizedBox(
-      width: 44,
-      height: 44,
+      width: 40,
+      height: 40,
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[

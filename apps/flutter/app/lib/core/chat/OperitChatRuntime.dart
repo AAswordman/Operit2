@@ -211,6 +211,23 @@ class OperitChatRuntime {
         .map((event) => ChatResponseStreamEvent.fromJson(event.value));
   }
 
+  Stream<String?> watchToastEvent() {
+    return bridge
+        .watchChanges(mainTargetPath, 'toastEventFlow')
+        .map((event) => event.value as String?);
+  }
+
+  Future<void> clearToastEvent() {
+    return bridge.call(
+      CoreCallRequest(
+        requestId: _requestId(),
+        targetPath: CoreObjectPath.parse(mainTargetPath),
+        methodName: 'clearToastEvent',
+        args: const {},
+      ),
+    );
+  }
+
   Future<ChatMarkdownStreamState> splitMarkdownContent(String content) async {
     final value = await bridge.call(
       CoreCallRequest(

@@ -18,7 +18,7 @@ use operit_runtime::core::application::OperitApplicationContext::OperitApplicati
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
-    AndroidFileSystemHost as NativeFileSystemHost,
+    AndroidFileSystemHost as NativeFileSystemHost, AndroidHttpHost as NativeHttpHost,
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
@@ -26,31 +26,31 @@ use operit_host_android_native::{
 };
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxFileSystemHost as NativeFileSystemHost,
+    LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxWebVisitHost as NativeWebVisitHost,
 };
+#[cfg(target_arch = "wasm32")]
+use operit_host_web::{
+    WebFileSystemHost as NativeFileSystemHost, WebHttpHost as NativeHttpHost,
+    WebManagedRuntimeHost as NativeManagedRuntimeHost,
+    WebRuntimeStorageHost as NativeRuntimeStorageHost,
+    WebSystemOperationHost as NativeSystemOperationHost, WebWebVisitHost as NativeWebVisitHost,
+};
 #[cfg(windows)]
 use operit_host_windows_native::{
-    WindowsFileSystemHost as NativeFileSystemHost,
+    WindowsFileSystemHost as NativeFileSystemHost, WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_arch = "wasm32")]
-use operit_host_web::{
-    WebFileSystemHost as NativeFileSystemHost,
-    WebManagedRuntimeHost as NativeManagedRuntimeHost,
-    WebRuntimeStorageHost as NativeRuntimeStorageHost,
-    WebSystemOperationHost as NativeSystemOperationHost,
-    WebWebVisitHost as NativeWebVisitHost,
-};
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 pub struct OperitFlutterBridge {
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
     proxyCore: Mutex<LocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
@@ -63,13 +63,13 @@ impl OperitFlutterBridge {
 
     fn new_with_storage_root(storage_root: Option<PathBuf>) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
-        let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
-        #[cfg(target_arch = "wasm32")]
-        let mut runtimeBuilder = tokio::runtime::Builder::new_current_thread();
-        let runtime = runtimeBuilder
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())?;
+        let runtime = {
+            let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
+            runtimeBuilder
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?
+        };
         let mut core = create_local_core(storage_root)?;
         core.localApplicationMut().onCreate()?;
         let mainCore = core
@@ -78,12 +78,14 @@ impl OperitFlutterBridge {
             .getCore(ChatRuntimeSlot::MAIN);
         mainCore.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
         Ok(Self {
+            #[cfg(not(target_arch = "wasm32"))]
             runtime,
             proxyCore: Mutex::new(core),
             watchStreams: Mutex::new(HashMap::new()),
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let mut proxyCore = match self.proxyCore.lock() {
             Ok(core) => core,
@@ -97,6 +99,20 @@ impl OperitFlutterBridge {
         self.runtime.block_on(proxyCore.call(request))
     }
 
+    #[cfg(target_arch = "wasm32")]
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let mut proxyCore = match self.proxyCore.lock() {
+            Ok(core) => core,
+            Err(error) => {
+                return CoreCallResponse::err(
+                    request.requestId,
+                    CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}")),
+                );
+            }
+        };
+        proxyCore.call(request).await
+    }
+
     #[allow(non_snake_case)]
     fn watchSnapshot(
         &self,
@@ -105,6 +121,11 @@ impl OperitFlutterBridge {
         let mut proxyCore = self.proxyCore.lock().map_err(|error| {
             CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}"))
         })?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            return proxyCore.watchSnapshotSync(request);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.runtime.block_on(proxyCore.watchSnapshot(request))
     }
 
@@ -139,13 +160,13 @@ impl OperitFlutterBridge {
         let mut proxyCore = self.proxyCore.lock().map_err(|error| {
             CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}"))
         })?;
+        #[cfg(target_arch = "wasm32")]
+        let receiver = proxyCore.watchSync(request)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let receiver = self.runtime.block_on(proxyCore.watch(request))?;
         let subscriptionId = format!(
             "flutter-watch-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time must be after UNIX_EPOCH")
-                .as_nanos()
+            operit_host_api::TimeUtils::currentTimeMillisU128()
         );
         self.watchStreams
             .lock()
@@ -192,6 +213,7 @@ fn create_local_core(storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, St
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
+            Arc::new(NativeHttpHost::new()),
             Arc::new(NativeSystemOperationHost::new()),
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
@@ -219,6 +241,7 @@ fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, S
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
+            Arc::new(NativeHttpHost::new()),
             Arc::new(NativeSystemOperationHost::new()),
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
@@ -291,6 +314,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_destroy(handle: *mut OperitFlutte
 }
 
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn operit_flutter_bridge_call(
     handle: *mut OperitFlutterBridge,
     request_ptr: *const u8,
@@ -309,6 +333,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_call(
     string_to_ptr(bridge_call_json(&mut *handle, request_bytes))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bridge_call_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> String {
     let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
@@ -328,6 +353,40 @@ fn bridge_call_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> S
         arg_keys(&request.args)
     );
     let response = handle.call(request);
+    match &response.result {
+        Ok(value) => {
+            eprintln!(
+                "[OperitFlutterBridge] call <- ok {target}.{method} id={requestId} value={}",
+                value_kind(value)
+            );
+        }
+        Err(error) => {
+            eprintln!("[OperitFlutterBridge] call <- err {target}.{method} id={requestId} {error}");
+        }
+    }
+    json_string(&response)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn bridge_call_json_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
+    let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("[OperitFlutterBridge] call invalid request: {error}");
+            return error_response_string(
+                "flutter-bridge-invalid-request",
+                format!("invalid core request: {error}"),
+            );
+        }
+    };
+    let requestId = request.requestId.0.clone();
+    let target = request.targetPath.key();
+    let method = request.methodName.clone();
+    eprintln!(
+        "[OperitFlutterBridge] call -> {target}.{method} id={requestId} args={}",
+        arg_keys(&request.args)
+    );
+    let response = handle.call(request).await;
     match &response.result {
         Ok(value) => {
             eprintln!(
@@ -390,7 +449,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
     string_to_ptr(bridge_watch_stream_json(&mut *handle, request_bytes))
 }
 
-fn bridge_watch_stream_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> String {
+fn bridge_watch_stream_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
     let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
@@ -491,7 +550,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_close_watch_stream(
     string_to_ptr("{\"ok\":true}")
 }
 
-fn bridge_watch_snapshot_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> String {
+fn bridge_watch_snapshot_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
     let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
@@ -558,23 +617,24 @@ pub struct OperitFlutterBridgeWasm {
 impl OperitFlutterBridgeWasm {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<OperitFlutterBridgeWasm, JsValue> {
+        console_error_panic_hook::set_once();
         OperitFlutterBridge::new()
             .map(|inner| OperitFlutterBridgeWasm { inner })
             .map_err(|error| JsValue::from_str(&error))
     }
 
-    pub fn call(&mut self, request: &str) -> String {
-        bridge_call_json(&mut self.inner, request.as_bytes())
+    pub async fn call(&self, request: &str) -> String {
+        bridge_call_json_async(&self.inner, request.as_bytes()).await
     }
 
     #[allow(non_snake_case)]
-    pub fn watchSnapshot(&mut self, request: &str) -> String {
-        bridge_watch_snapshot_json(&mut self.inner, request.as_bytes())
+    pub fn watchSnapshot(&self, request: &str) -> String {
+        bridge_watch_snapshot_json(&self.inner, request.as_bytes())
     }
 
     #[allow(non_snake_case)]
-    pub fn watchStream(&mut self, request: &str) -> String {
-        bridge_watch_stream_json(&mut self.inner, request.as_bytes())
+    pub fn watchStream(&self, request: &str) -> String {
+        bridge_watch_stream_json(&self.inner, request.as_bytes())
     }
 
     #[allow(non_snake_case)]

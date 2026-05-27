@@ -456,13 +456,12 @@ impl ChatHistoryDelegate {
     pub fn initialize(&mut self) {
         self.chatHistories = self.chatHistoryManager.chatHistoriesFlow.value();
         self.chatHistoriesFlow.set_value(self.chatHistories.clone());
-        let chatHistoriesFlow = self.chatHistoryManager.chatHistoriesFlow.clone();
         let _chatHistories = self.chatHistoriesFlow.clone();
-        std::thread::spawn(move || {
-            let _ = chatHistoriesFlow.collect(|histories| {
+        self.chatHistoryManager
+            .chatHistoriesFlow
+            .subscribe(move |histories| {
                 _chatHistories.set_value(histories);
             });
-        });
         if let Some(chatId) = self
             .chatHistoryManager
             .currentChatIdFlow()

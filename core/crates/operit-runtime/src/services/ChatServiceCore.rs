@@ -379,6 +379,16 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
+    pub fn toastEventFlow(&self) -> StateFlow<Option<String>> {
+        self.messageProcessingDelegate.toastEventFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn clearToastEvent(&mut self) {
+        self.messageProcessingDelegate.clearToastEvent();
+    }
+
+    #[allow(non_snake_case)]
     pub fn currentChatInputProcessingState(&self) -> InputProcessingState {
         let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow().value() else {
             return InputProcessingState::Idle;

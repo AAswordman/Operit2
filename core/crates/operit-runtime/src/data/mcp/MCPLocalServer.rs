@@ -747,12 +747,7 @@ fn displayNameFromId(serverId: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
 
 #[allow(non_snake_case)]
 fn unknownAuthor() -> String {
@@ -773,3 +768,4 @@ fn httpStreamConnectionType() -> Option<String> {
 fn emptyJsonObjectString() -> String {
     "{}".to_string()
 }
+

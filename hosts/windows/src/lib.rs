@@ -4,6 +4,7 @@ pub mod tools;
 
 pub use tools::browser::WindowsWebVisitHost;
 pub use tools::fs::WindowsFileSystemHost;
+pub use tools::http::WindowsHttpHost;
 pub use tools::runtime::WindowsManagedRuntimeHost;
 pub use tools::storage::WindowsRuntimeStorageHost;
 pub use tools::system::WindowsSystemOperationHost;

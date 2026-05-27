@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
+operit-host-api = { path = "../../../../core/crates/operit-host-api" }
 operit-link = { path = "../../../../core/crates/operit-link" }
 operit-runtime = { path = "../../../../core/crates/operit-runtime" }
 operit-store = { path = "../../../../core/crates/operit-store" }
@@ -30,6 +31,7 @@ operit-host-windows-native = { path = "../../../../hosts/windows" }
 operit-host-linux-native = { path = "../../../../hosts/linux" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
 operit-host-web = { path = "../../../../hosts/web" }
-tokio = { version = "1", features = ["rt"] }
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"

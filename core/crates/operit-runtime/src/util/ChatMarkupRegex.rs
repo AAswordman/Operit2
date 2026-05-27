@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+
 
 pub const TOOL_TAG_SUFFIX_REGEX_SOURCE: &str = "[A-Za-z0-9_]+";
 pub const TOOL_TAG_NAME_REGEX_SOURCE: &str = "tool(?:_(?!result(?:_|$))[A-Za-z0-9_]+)?";
@@ -350,10 +350,7 @@ fn contains_start_tag(content: &str, predicate: fn(Option<&str>) -> bool) -> boo
 
 fn generate_random_tag_code(length: usize) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0);
+    let now = operit_host_api::TimeUtils::currentTimeMillisU128() as u64;
     let mut value = now ^ RANDOM_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut out = String::with_capacity(length);
     for _ in 0..length {
@@ -374,3 +371,5 @@ fn is_tag_boundary(byte: u8) -> bool {
 fn is_attr_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
+
+

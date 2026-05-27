@@ -463,6 +463,7 @@ impl ConversationService {
                     available_tools: Vec::new(),
                     preserve_think_in_history: false,
                     enable_retry: true,
+                    on_non_fatal_error: None,
                     on_tool_invocation: None,
                 })
                 .await?

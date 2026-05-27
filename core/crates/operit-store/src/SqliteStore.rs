@@ -93,9 +93,9 @@ impl SqliteStore {
         sql: &str,
         params: Vec<SqliteValue>,
     ) -> Result<T, SqliteStoreError> {
-        let row = self
-            .queryOne(sql, params)?
-            .ok_or_else(|| SqliteStoreError::Message("sqlite query returned no rows".to_string()))?;
+        let row = self.queryOne(sql, params)?.ok_or_else(|| {
+            SqliteStoreError::Message("sqlite query returned no rows".to_string())
+        })?;
         row.get(0)
     }
 

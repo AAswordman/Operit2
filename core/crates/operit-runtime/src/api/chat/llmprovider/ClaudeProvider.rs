@@ -4,7 +4,8 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
+    AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -316,7 +317,8 @@ impl ClaudeProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for ClaudeProvider {
     fn input_token_count(&self) -> i32 {
         self.inputTokenCount
@@ -345,50 +347,108 @@ impl AIService for ClaudeProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.cancelled = false;
         self.reset_token_counts();
-        let stream = request.stream;
-        let request_body = self.create_request_body(&request)?;
-        let response = reqwest::Client::new()
-            .post(&self.api_endpoint)
-            .headers(self.headers()?)
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response
-                .text()
+        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+        let mut retryCount = 0;
+        loop {
+            let stream = request.stream;
+            let request_body = self.create_request_body(&request)?;
+            let response = match reqwest::Client::new()
+                .post(&self.api_endpoint)
+                .headers(self.headers()?)
+                .json(&request_body)
+                .send()
                 .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!("{status}: {text}")));
-        }
-        if stream {
-            return self.process_streaming_response(response).await;
-        }
-        let json_response: Value = response
-            .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let token_counts = self.apply_usage(json_response.get("usage"));
-        let mut chunks = Vec::new();
-        if let Some(content) = json_response.get("content").and_then(Value::as_array) {
-            for part in content {
-                match part.get("type").and_then(Value::as_str).unwrap_or_default() {
-                    "text" => {
-                        if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            chunks
-                                .push(StructuredToolCallBridge::convertToolCallPayloadToXml(text));
-                        }
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = AiServiceError::ConnectionFailed(error.to_string());
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
                     }
-                    "tool_use" => chunks.push(
-                        StructuredToolCallBridge::convertToolCallPayloadToXml(&part.to_string()),
-                    ),
-                    _ => {}
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    delay_retry_ms(newRetryCount).await;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
+                let errorText = retry_error_text(&error);
+                if !request.enable_retry {
+                    return Err(error);
+                }
+                let newRetryCount = retryCount + 1;
+                if newRetryCount > maxRetries {
+                    return Err(error);
+                }
+                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                }
+                delay_retry_ms(newRetryCount).await;
+                retryCount = newRetryCount;
+                continue;
+            }
+            if stream {
+                match self.process_streaming_response(response).await {
+                    Ok(responseStream) => return Ok(responseStream),
+                    Err(error) => {
+                        let errorText = retry_error_text(&error);
+                        if !request.enable_retry {
+                            return Err(error);
+                        }
+                        let newRetryCount = retryCount + 1;
+                        if newRetryCount > maxRetries {
+                            return Err(error);
+                        }
+                        if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                            on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                        }
+                        delay_retry_ms(newRetryCount).await;
+                        retryCount = newRetryCount;
+                        continue;
+                    }
                 }
             }
+            let json_response: Value = response
+                .json()
+                .await
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let token_counts = self.apply_usage(json_response.get("usage"));
+            let mut chunks = Vec::new();
+            if let Some(content) = json_response.get("content").and_then(Value::as_array) {
+                for part in content {
+                    match part.get("type").and_then(Value::as_str).unwrap_or_default() {
+                        "text" => {
+                            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                                    text,
+                                ));
+                            }
+                        }
+                        "tool_use" => {
+                            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                                &part.to_string(),
+                            ))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let _ = token_counts;
+            return Ok(response_stream_from_chunks(chunks));
         }
-        let _ = token_counts;
-        Ok(response_stream_from_chunks(chunks))
     }
 
     async fn calculate_input_tokens(

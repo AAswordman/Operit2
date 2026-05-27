@@ -1,8 +1,11 @@
 #![allow(non_snake_case)]
 
+pub mod TimeUtils;
+
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub type HostResult<T> = Result<T, HostError>;
 
@@ -276,6 +279,43 @@ pub trait WebVisitHost: Send + Sync {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpFilePart {
+    pub fieldName: String,
+    pub fileName: String,
+    pub contentType: String,
+    pub content: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequestData {
+    pub url: String,
+    pub method: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub formFields: Vec<(String, String)>,
+    pub fileParts: Vec<HttpFilePart>,
+    pub connectTimeoutSeconds: u64,
+    pub readTimeoutSeconds: u64,
+    pub followRedirects: bool,
+    pub ignoreSsl: bool,
+    pub proxyHost: String,
+    pub proxyPort: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpResponseData {
+    pub finalUrl: String,
+    pub statusCode: i32,
+    pub statusMessage: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+pub trait HttpHost: Send + Sync {
+    fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ManagedRuntimeProgram {
     Node,
     Python,
@@ -329,6 +369,7 @@ pub struct RuntimeStorageEntry {
 }
 
 pub trait RuntimeStorageHost: Send + Sync {
+    fn rootDir(&self) -> Option<PathBuf>;
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>>;
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;

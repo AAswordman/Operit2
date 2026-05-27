@@ -1,4 +1,3 @@
-use std::env;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +14,7 @@ impl RuntimeStorePaths {
     }
 
     pub fn default() -> Self {
-        Self::new(default_runtime_store_root().unwrap_or_else(default_data_dir))
+        Self::new(default_data_dir())
     }
 
     pub fn root_dir(&self) -> &Path {
@@ -110,28 +109,7 @@ fn default_runtime_store_root() -> Option<PathBuf> {
 }
 
 pub fn default_data_dir() -> PathBuf {
-    if let Some(root_dir) = default_runtime_store_root() {
-        return root_dir;
-    }
-    if cfg!(target_arch = "wasm32") {
-        return PathBuf::from("operit2");
-    }
-    if cfg!(target_os = "windows") {
-        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
-        return PathBuf::from(appdata).join("Operit2");
-    }
-    if cfg!(target_os = "macos") {
-        let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
-        return PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Operit2");
-    }
-    if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(xdg_data_home).join("operit2");
-    }
-    let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
-    PathBuf::from(home).join(".local").join("share").join("operit2")
+    default_runtime_store_root().expect("default runtime store root is not registered")
 }
 
 static DEFAULT_RUNTIME_STORE_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();

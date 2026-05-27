@@ -1,12 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use zip::ZipArchive;
 
+use crate::core::application::OperitApplicationContext::defaultHttpHost;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::data::mcp::MCPLocalServer::{MCPConfig, MCPLocalServer, PluginMetadata};
+use operit_host_api::HttpRequestData;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use url::Url;
 
 const CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const READ_TIMEOUT_SECONDS: u64 = 30;
@@ -168,9 +170,9 @@ fn commandNeedsPhysicalInstallation(command: &str) -> bool {
 fn extractOwnerAndRepo(repoUrl: &str) -> Option<(String, String)> {
     let normalized = repoUrl.trim().trim_end_matches(".git");
     let url = if normalized.starts_with("http://") || normalized.starts_with("https://") {
-        reqwest::Url::parse(normalized).ok()?
+        Url::parse(normalized).ok()?
     } else {
-        reqwest::Url::parse(&format!("https://{normalized}")).ok()?
+        Url::parse(&format!("https://{normalized}")).ok()?
     };
     let host = url.host_str()?.to_ascii_lowercase();
     if host != "github.com" && !host.ends_with(".github.com") {
@@ -194,20 +196,32 @@ fn extractOwnerAndRepo(repoUrl: &str) -> Option<(String, String)> {
 #[allow(non_snake_case)]
 fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{owner}/{repoName}");
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECONDS))
-        .user_agent("Operit-Market")
-        .build()
+    let response = defaultHttpHost()
+        .executeHttpRequest(HttpRequestData {
+            url,
+            method: "GET".to_string(),
+            headers: vec![
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github.v3+json".to_string(),
+                ),
+                ("User-Agent".to_string(), "Operit-Market".to_string()),
+            ],
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: CONNECT_TIMEOUT_SECONDS,
+            readTimeoutSeconds: CONNECT_TIMEOUT_SECONDS,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
         .ok()?;
-    let response = client
-        .get(url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .ok()?;
-    if !response.status().is_success() {
+    if !(200..300).contains(&response.statusCode) {
         return None;
     }
-    let value = response.json::<serde_json::Value>().ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&response.body).ok()?;
     value
         .get("default_branch")
         .and_then(serde_json::Value::as_str)
@@ -225,37 +239,30 @@ fn downloadFromUrl(
         sanitizeTempPart(serverId),
         currentTimeMillis()
     ));
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(READ_TIMEOUT_SECONDS))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .build()
+    let response = defaultHttpHost()
+        .executeHttpRequest(HttpRequestData {
+            url: zipUrl.to_string(),
+            method: "GET".to_string(),
+            headers: vec![(
+                "User-Agent".to_string(),
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string(),
+            )],
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: READ_TIMEOUT_SECONDS,
+            readTimeoutSeconds: READ_TIMEOUT_SECONDS,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
         .map_err(|error| error.to_string())?;
-    let mut response = client
-        .get(zipUrl)
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status().as_u16()));
+    if !(200..300).contains(&response.statusCode) {
+        return Err(format!("HTTP {}", response.statusCode));
     }
-    let contentLength = response.content_length().unwrap_or(0);
-    let mut out = fs::File::create(&tempFile).map_err(|error| error.to_string())?;
-    let mut downloaded = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read =
-            std::io::Read::read(&mut response, &mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        std::io::Write::write_all(&mut out, &buffer[..read]).map_err(|error| error.to_string())?;
-        downloaded += read as u64;
-        let progress = if contentLength > 0 {
-            ((downloaded * 100) / contentLength) as i32
-        } else {
-            -1
-        };
-        progressCallback(InstallProgress::Downloading(progress));
-    }
+    fs::write(&tempFile, response.body).map_err(|error| error.to_string())?;
+    progressCallback(InstallProgress::Downloading(100));
     Ok(tempFile)
 }
 
@@ -317,9 +324,5 @@ fn sanitizeTempPart(value: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+

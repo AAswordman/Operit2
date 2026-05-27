@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+
 
 use serde::{Deserialize, Serialize};
 
@@ -218,9 +218,8 @@ fn delete_from_disk_locked(state: &PoolState, id: &str) {
 }
 
 fn new_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:x}")
+    let millis = operit_host_api::TimeUtils::currentTimeMillisU128();
+    format!("{millis:x}")
 }
+
+

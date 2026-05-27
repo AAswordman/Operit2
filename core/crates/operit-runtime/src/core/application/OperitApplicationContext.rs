@@ -1,14 +1,30 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    FileSystemHost, HostEnvironmentDescriptor, ManagedRuntimeHost, RuntimeSqliteHost,
+    FileSystemHost, HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost,
     RuntimeStorageHost, SystemOperationHost, WebVisitHost,
 };
+
+static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+
+#[allow(non_snake_case)]
+pub fn setDefaultHttpHost(host: Arc<dyn HttpHost>) {
+    let _ = DEFAULT_HTTP_HOST.set(host);
+}
+
+#[allow(non_snake_case)]
+pub fn defaultHttpHost() -> Arc<dyn HttpHost> {
+    DEFAULT_HTTP_HOST
+        .get()
+        .expect("HTTP host must be configured before using HTTP-backed runtime services")
+        .clone()
+}
 
 #[derive(Clone, Default)]
 pub struct OperitApplicationContext {
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
+    pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
@@ -21,6 +37,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: None,
             webVisitHost: None,
+            httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
             runtimeStorageHost: None,
@@ -35,6 +52,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(host),
             webVisitHost: None,
+            httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
             runtimeStorageHost: None,
@@ -52,6 +70,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
             runtimeStorageHost: None,
@@ -70,6 +89,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            httpHost: None,
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: None,
             runtimeStorageHost: None,
@@ -82,6 +102,7 @@ impl OperitApplicationContext {
     pub fn withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         fileSystemHost: Arc<dyn FileSystemHost>,
         webVisitHost: Arc<dyn WebVisitHost>,
+        httpHost: Arc<dyn HttpHost>,
         systemOperationHost: Arc<dyn SystemOperationHost>,
         managedRuntimeHost: Arc<dyn ManagedRuntimeHost>,
         runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
@@ -91,6 +112,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: Some(managedRuntimeHost),
             runtimeStorageHost: Some(runtimeStorageHost),

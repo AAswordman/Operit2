@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use crate::api::chat::EnhancedAIService::{
+    EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
+};
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
@@ -172,6 +174,8 @@ pub struct MessageProcessingDelegate {
     pub inputProcessingStateByChatIdFlow: MutableStateFlow<HashMap<String, InputProcessingState>>,
     pub scrollToBottomEvent: Vec<()>,
     pub nonFatalErrorEvent: Vec<String>,
+    pub nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
+    pub toastEventFlow: MutableStateFlow<Option<String>>,
     pub turnCompleteCounterByChatId: HashMap<String, i64>,
     pub turnCompleteCounterByChatIdFlow: MutableStateFlow<HashMap<String, i64>>,
     pub currentTurnToolInvocationCountByChatId: HashMap<String, i32>,
@@ -181,6 +185,17 @@ pub struct MessageProcessingDelegate {
     pub suppressIdleCompletedStateByChatId: HashMap<String, bool>,
     pub pendingAsyncSummaryUiByChatId: HashMap<String, bool>,
     pub speakMessageHandler: Option<fn(String, bool)>,
+}
+
+struct MessageProcessingCallbacks {
+    nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
+}
+
+impl SendMessageCallbacks for MessageProcessingCallbacks {
+    #[allow(non_snake_case)]
+    fn onNonFatalError(&self, error: String) {
+        self.nonFatalErrorEventFlow.set_value(Some(error));
+    }
 }
 
 impl MessageProcessingDelegate {
@@ -201,6 +216,8 @@ impl MessageProcessingDelegate {
             inputProcessingStateByChatIdFlow: mutableStateFlow(HashMap::new()),
             scrollToBottomEvent: Vec::new(),
             nonFatalErrorEvent: Vec::new(),
+            nonFatalErrorEventFlow: mutableStateFlow(None),
+            toastEventFlow: mutableStateFlow(None),
             turnCompleteCounterByChatId: HashMap::new(),
             turnCompleteCounterByChatIdFlow: mutableStateFlow(HashMap::new()),
             currentTurnToolInvocationCountByChatId: HashMap::new(),
@@ -229,6 +246,8 @@ impl MessageProcessingDelegate {
             inputProcessingStateByChatIdFlow: self.inputProcessingStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
+            nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
+            toastEventFlow: self.toastEventFlow.clone(),
             turnCompleteCounterByChatId: self.turnCompleteCounterByChatId.clone(),
             turnCompleteCounterByChatIdFlow: self.turnCompleteCounterByChatIdFlow.clone(),
             currentTurnToolInvocationCountByChatId: self
@@ -243,6 +262,32 @@ impl MessageProcessingDelegate {
             pendingAsyncSummaryUiByChatId: self.pendingAsyncSummaryUiByChatId.clone(),
             speakMessageHandler: self.speakMessageHandler,
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn showToast(&mut self, message: String) {
+        self.toastEventFlow.set_value(Some(message));
+    }
+
+    #[allow(non_snake_case)]
+    pub fn emitNonFatalError(&mut self, message: String) {
+        self.nonFatalErrorEvent.push(message.clone());
+        self.nonFatalErrorEventFlow.set_value(Some(message));
+    }
+
+    #[allow(non_snake_case)]
+    pub fn nonFatalErrorEventFlow(&self) -> StateFlow<Option<String>> {
+        self.nonFatalErrorEventFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn clearToastEvent(&mut self) {
+        self.toastEventFlow.set_value(None);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn toastEventFlow(&self) -> StateFlow<Option<String>> {
+        self.toastEventFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
@@ -761,20 +806,8 @@ impl MessageProcessingDelegate {
             let activeChatId = chatId.clone();
             let mut stateDelegate = self.clone_for_core();
             let stateFlow = request.enhancedAiService.inputProcessingState();
-            std::thread::spawn(move || {
-                let _ = stateFlow.collectUntil(
-                    |state| {
-                        stateDelegate.setInputProcessingStateForChat(activeChatId.clone(), state);
-                    },
-                    |state| {
-                        matches!(
-                            state,
-                            InputProcessingState::Idle
-                                | InputProcessingState::Completed
-                                | InputProcessingState::Error { .. }
-                        )
-                    },
-                );
+            stateFlow.subscribe(move |state| {
+                stateDelegate.setInputProcessingStateForChat(activeChatId.clone(), state);
             });
         }
 
@@ -875,7 +908,9 @@ impl MessageProcessingDelegate {
             chatModelIndexOverride: request.chatModelIndexOverride,
             preferenceProfileIdOverride: request.preferenceProfileIdOverride.clone(),
             disableWarning: request.turnOptions.disableWarning,
-            callbacks: None,
+            callbacks: Some(Arc::new(MessageProcessingCallbacks {
+                nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
+            })),
             onToolInvocation: None,
         })
         .await

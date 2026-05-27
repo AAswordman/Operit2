@@ -21,6 +21,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
+url = "2"
 uuid.workspace = true
 zip.workspace = true
 
@@ -29,4 +30,7 @@ rusqlite.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3"
 uuid = { workspace = true, features = ["js"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["XmlHttpRequest"] }

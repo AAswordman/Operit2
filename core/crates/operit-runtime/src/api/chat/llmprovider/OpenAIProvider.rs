@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
+    AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -1416,7 +1417,8 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OpenAIProvider {
     fn input_token_count(&self) -> i32 {
         self.state
@@ -1541,10 +1543,19 @@ impl OpenAIProvider {
                 self.api_endpoint.clone(),
                 self.headers()?,
                 request_body,
+                request.enable_retry,
+                request.on_non_fatal_error.clone(),
                 request.on_tool_invocation.clone(),
             ));
             let cold_stream = FnStream::new(move |emit| {
-                let (api_endpoint, headers, request_body, on_tool_invocation) = request_parts
+                let (
+                    api_endpoint,
+                    headers,
+                    request_body,
+                    enable_retry,
+                    on_non_fatal_error,
+                    on_tool_invocation,
+                ) = request_parts
                     .take()
                     .expect("OpenAIProvider stream must only be collected once");
                 let (tx, rx) = channel::<String>();
@@ -1559,43 +1570,99 @@ impl OpenAIProvider {
                         let request_savepoint_id = format!("attempt_{}", Uuid::new_v4().simple());
                         let mut emitter = StreamEmitter::new(worker_event_channel.clone());
                         emitter.emit_savepoint(&request_savepoint_id);
+                        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+                        let mut retryCount = 0;
 
-                        let result = async {
+                        loop {
                             let client = reqwest::Client::new();
-                            let response = client
+                            let response = match client
                                 .post(&api_endpoint)
-                                .headers(headers)
-                                .json(&request_body)
+                                .headers(headers.clone())
+                                .json(&request_body.clone())
                                 .send()
                                 .await
-                                .map_err(|error| {
-                                    AiServiceError::ConnectionFailed(error.to_string())
-                                })?;
+                            {
+                                Ok(response) => response,
+                                Err(error) => {
+                                    let error = AiServiceError::ConnectionFailed(error.to_string());
+                                    let errorText = retry_error_text(&error);
+                                    if !enable_retry {
+                                        break Err(error);
+                                    }
+                                    let newRetryCount = retryCount + 1;
+                                    if newRetryCount > maxRetries {
+                                        break Err(error);
+                                    }
+                                    let _ = emitter.emit_rollback(&request_savepoint_id);
+                                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
+                                        on_non_fatal_error(retry_message(
+                                            &errorText,
+                                            newRetryCount,
+                                        ));
+                                    }
+                                    delay_retry_ms(newRetryCount).await;
+                                    retryCount = newRetryCount;
+                                    continue;
+                                }
+                            };
 
                             let status = response.status();
                             if !status.is_success() {
                                 let message = response.text().await.map_err(|error| {
                                     AiServiceError::ConnectionFailed(error.to_string())
                                 })?;
-                                return Err(AiServiceError::RequestFailed(format!(
-                                    "{status}: {message}"
-                                )));
+                                let error =
+                                    AiServiceError::RequestFailed(format!("{status}: {message}"));
+                                let errorText = retry_error_text(&error);
+                                if !enable_retry {
+                                    break Err(error);
+                                }
+                                let newRetryCount = retryCount + 1;
+                                if newRetryCount > maxRetries {
+                                    break Err(error);
+                                }
+                                let _ = emitter.emit_rollback(&request_savepoint_id);
+                                if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
+                                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                                }
+                                delay_retry_ms(newRetryCount).await;
+                                retryCount = newRetryCount;
+                                continue;
                             }
 
-                            worker_provider
+                            let result = worker_provider
                                 .read_streaming_response(
                                     response,
                                     on_tool_invocation.as_ref(),
                                     &tx,
                                     &mut emitter,
                                 )
-                                .await
+                                .await;
+                            match result {
+                                Ok(()) => break Ok(()),
+                                Err(error) => {
+                                    let errorText = retry_error_text(&error);
+                                    if !enable_retry {
+                                        let _ = emitter.emit_rollback(&request_savepoint_id);
+                                        break Err(error);
+                                    }
+                                    let newRetryCount = retryCount + 1;
+                                    if newRetryCount > maxRetries {
+                                        let _ = emitter.emit_rollback(&request_savepoint_id);
+                                        break Err(error);
+                                    }
+                                    let _ = emitter.emit_rollback(&request_savepoint_id);
+                                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
+                                        on_non_fatal_error(retry_message(
+                                            &errorText,
+                                            newRetryCount,
+                                        ));
+                                    }
+                                    delay_retry_ms(newRetryCount).await;
+                                    retryCount = newRetryCount;
+                                }
+                            }
                         }
-                        .await;
-                        if result.is_err() {
-                            let _ = emitter.emit_rollback(&request_savepoint_id);
-                        }
-                        result
                     });
                     if let Err(error) = result {
                         let error_chunk =
@@ -1612,25 +1679,63 @@ impl OpenAIProvider {
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }
 
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.api_endpoint)
-            .headers(self.headers()?)
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        let response = {
+            let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+            let mut retryCount = 0;
+            loop {
+                let client = reqwest::Client::new();
+                let response = match client
+                    .post(&self.api_endpoint)
+                    .headers(self.headers()?)
+                    .json(&request_body)
+                    .send()
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let error = AiServiceError::ConnectionFailed(error.to_string());
+                        let errorText = retry_error_text(&error);
+                        if !request.enable_retry {
+                            return Err(error);
+                        }
+                        let newRetryCount = retryCount + 1;
+                        if newRetryCount > maxRetries {
+                            return Err(error);
+                        }
+                        if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                            on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                        }
+                        delay_retry_ms(newRetryCount).await;
+                        retryCount = newRetryCount;
+                        continue;
+                    }
+                };
 
-        let status = response.status();
-        if !status.is_success() {
-            let message = response
-                .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!(
-                "{status}: {message}"
-            )));
-        }
+                let status = response.status();
+                if !status.is_success() {
+                    let message = response
+                        .text()
+                        .await
+                        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                    let error = AiServiceError::RequestFailed(format!("{status}: {message}"));
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
+                    }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    delay_retry_ms(newRetryCount).await;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+                break response;
+            }
+        };
 
         let json_response: Value = response
             .json()

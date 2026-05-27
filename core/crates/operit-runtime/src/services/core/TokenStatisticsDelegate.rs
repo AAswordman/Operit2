@@ -97,13 +97,8 @@ impl TokenStatisticsDelegate {
         self.handleRequestWindowEstimate(key.clone(), service.getRequestWindowEstimate());
         let mut delegate = self.clone();
         let flow = service.requestWindowEstimateFlow();
-        thread::spawn(move || {
-            let _ = flow.collectUntil(
-                |windowSize| {
-                    delegate.handleRequestWindowEstimate(key.clone(), windowSize);
-                },
-                |_| false,
-            );
+        flow.subscribe(move |windowSize| {
+            delegate.handleRequestWindowEstimate(key.clone(), windowSize);
         });
     }
 

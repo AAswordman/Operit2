@@ -1037,12 +1037,7 @@ fn requiredVariantIndex(deletion: &ChatSyncDeletion) -> Result<i32, SqliteStoreE
     })
 }
 
-fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| SqlChatSyncStoreError::Message(error.to_string()))?;
-    Ok(duration.as_millis() as i64)
-}
+fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> { operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(SqlChatSyncStoreError::Message) }
 
 #[cfg(test)]
 mod tests {
@@ -1771,3 +1766,4 @@ mod tests {
         AppDatabase::closeDatabase();
     }
 }
+

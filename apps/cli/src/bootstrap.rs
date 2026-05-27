@@ -4,6 +4,7 @@ use operit_core_proxy::LocalCoreProxy;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost,
+    LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxWebVisitHost as NativeWebVisitHost,
@@ -11,6 +12,7 @@ use operit_host_linux_native::{
 #[cfg(windows)]
 use operit_host_windows_native::{
     WindowsFileSystemHost as NativeFileSystemHost,
+    WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -31,6 +33,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
+            Arc::new(NativeHttpHost::new()),
             Arc::new(NativeSystemOperationHost::new()),
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,

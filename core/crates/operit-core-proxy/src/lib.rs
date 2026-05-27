@@ -1,8 +1,7 @@
 #![allow(non_snake_case)]
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use async_trait::async_trait;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreObjectPath, CoreRequestId, CoreWatchRequest,
@@ -34,7 +33,8 @@ impl LocalCoreProxy {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CoreLinkClient for LocalCoreProxy {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
@@ -61,6 +61,22 @@ impl LocalCoreProxy {
     #[allow(non_snake_case)]
     async fn dispatchCall(&mut self, request: CoreCallRequest) -> Result<Value, CoreLinkError> {
         generated_dispatch_core_proxy_call(self, request).await
+    }
+
+    #[allow(non_snake_case)]
+    pub fn watchSnapshotSync(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        self.dispatchWatchSnapshot(request)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn watchSync(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
+        self.dispatchWatch(request)
     }
 
     #[allow(non_snake_case)]
@@ -144,7 +160,7 @@ where
     let event_property_name = request.propertyName.clone();
     let event_chat_id = stream_chat_id.clone();
 
-    std::thread::spawn(move || {
+    spawn_core_task(move || {
         event_stream.collect(&mut |event| {
             let value = to_core_value(match event.event_type {
                 TextStreamEventType::Savepoint => {
@@ -166,7 +182,7 @@ where
         });
     });
 
-    std::thread::spawn(move || {
+    spawn_core_task(move || {
         let mut markdown_stream = MarkdownRenderEventStream::new(stream_chat_id);
         text_stream.collect(&mut |chunk| {
             for event in markdown_stream.pushChunk(&chunk) {
@@ -210,10 +226,25 @@ fn send_text_event(
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_core_task<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::spawn(task);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn spawn_core_task<F>(task: F)
+where
+    F: FnOnce() + 'static,
+{
+    wasm_bindgen_futures::spawn_local(async move {
+        task();
+    });
+}
+
 fn generated_proxy_request_id() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis();
+    let millis = currentTimeMillis();
     format!("core-proxy-{millis}")
 }

@@ -11,15 +11,26 @@ impl ToolGetter {
     pub fn getFileSystemTools(
         context: &OperitApplicationContext,
     ) -> Option<StandardFileSystemTools> {
-        context
-            .fileSystemHost
-            .clone()
-            .map(StandardFileSystemTools::new)
+        context.fileSystemHost.clone().map(|fileSystemHost| {
+            StandardFileSystemTools::new(
+                fileSystemHost,
+                context
+                    .httpHost
+                    .clone()
+                    .expect("HTTP host must be configured before registering file download tool"),
+            )
+        })
     }
 
     #[allow(non_snake_case)]
-    pub fn getHttpTools(_context: &OperitApplicationContext) -> StandardHttpTools {
-        StandardHttpTools::new()
+    pub fn getHttpTools(context: &OperitApplicationContext) -> StandardHttpTools {
+        StandardHttpTools::new(
+            context
+                .httpHost
+                .clone()
+                .expect("HTTP host must be configured before registering HTTP tools"),
+            context.fileSystemHost.clone(),
+        )
     }
 
     #[allow(non_snake_case)]

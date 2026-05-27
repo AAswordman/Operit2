@@ -804,11 +804,7 @@ impl ModelConfigManager {
     }
 
     fn createConfigId(&self) -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before UNIX_EPOCH")
-            .as_millis();
+        let now = operit_host_api::TimeUtils::currentTimeMillis();
         format!("config_{now}")
     }
 
@@ -967,3 +963,4 @@ impl ModelConfigManager {
         }
     }
 }
+

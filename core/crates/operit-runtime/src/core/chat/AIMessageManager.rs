@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+
 
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -103,10 +103,7 @@ static ACTIVE_RESPONSE_STREAM_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, SharedA
     OnceLock::new();
 
 pub fn messageTimingNow() -> MessageTiming {
-    let startedAtMs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as u64;
+    let startedAtMs = operit_host_api::TimeUtils::currentTimeMillis() as u64;
     MessageTiming { startedAtMs }
 }
 
@@ -1081,3 +1078,5 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
     output.push_str(&text[cursor..]);
     output
 }
+
+

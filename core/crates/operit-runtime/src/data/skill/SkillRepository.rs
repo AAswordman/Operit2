@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::application::OperitApplicationContext::defaultHttpHost;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::skill::SkillPackage::SkillPackage;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
+use operit_host_api::HttpRequestData;
+use url::Url;
 
 pub struct SkillRepository {
     skillManager: SkillManager,
@@ -345,7 +348,7 @@ fn parseGitHubSkillTarget(inputUrlRaw: &str) -> Option<GitHubSkillTarget> {
         format!("https://{inputUrl}")
     };
     let urlNoFragment = urlWithScheme.split('#').next().unwrap_or_default();
-    let url = reqwest::Url::parse(urlNoFragment).ok()?;
+    let url = Url::parse(urlNoFragment).ok()?;
     let host = url.host_str()?.to_ascii_lowercase();
     let segments = url
         .path_segments()
@@ -428,20 +431,32 @@ fn cleanRepoName(repoRaw: &str) -> String {
 #[allow(non_snake_case)]
 fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{owner}/{repoName}");
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent("Operit-Market")
-        .build()
+    let response = defaultHttpHost()
+        .executeHttpRequest(HttpRequestData {
+            url,
+            method: "GET".to_string(),
+            headers: vec![
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github.v3+json".to_string(),
+                ),
+                ("User-Agent".to_string(), "Operit-Market".to_string()),
+            ],
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: 15,
+            readTimeoutSeconds: 15,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
         .ok()?;
-    let response = client
-        .get(url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .ok()?;
-    if !response.status().is_success() {
+    if !(200..300).contains(&response.statusCode) {
         return None;
     }
-    let value = response.json::<serde_json::Value>().ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&response.body).ok()?;
     value
         .get("default_branch")
         .and_then(serde_json::Value::as_str)
@@ -450,17 +465,29 @@ fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
 
 #[allow(non_snake_case)]
 fn downloadToFile(url: &str, outFile: &Path) -> Result<(), String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .build()
+    let response = defaultHttpHost()
+        .executeHttpRequest(HttpRequestData {
+            url: url.to_string(),
+            method: "GET".to_string(),
+            headers: vec![(
+                "User-Agent".to_string(),
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string(),
+            )],
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: 30,
+            readTimeoutSeconds: 30,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
         .map_err(|error| error.to_string())?;
-    let mut response = client.get(url).send().map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status().as_u16()));
+    if !(200..300).contains(&response.statusCode) {
+        return Err(format!("HTTP {}", response.statusCode));
     }
-    let mut file = fs::File::create(outFile).map_err(|error| error.to_string())?;
-    std::io::copy(&mut response, &mut file).map_err(|error| error.to_string())?;
+    fs::write(outFile, response.body).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -500,9 +527,5 @@ fn sanitizeTempPart(value: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+

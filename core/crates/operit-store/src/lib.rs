@@ -1,19 +1,19 @@
-#[path = "PreferencesDataStore.rs"]
-pub mod PreferencesDataStore;
 #[path = "ObjectBoxStore.rs"]
 pub mod ObjectBoxStore;
-#[path = "RuntimeStorePaths.rs"]
-pub mod RuntimeStorePaths;
+#[path = "PreferencesDataStore.rs"]
+pub mod PreferencesDataStore;
 #[path = "RuntimeStorageHost.rs"]
 pub mod RuntimeStorageHost;
+#[path = "RuntimeStorePaths.rs"]
+pub mod RuntimeStorePaths;
 #[path = "SqliteStore.rs"]
 pub mod SqliteStore;
 #[path = "SyncOperationStore.rs"]
 pub mod SyncOperationStore;
 
-pub use PreferencesDataStore::*;
 pub use ObjectBoxStore::*;
-pub use RuntimeStorePaths::*;
+pub use PreferencesDataStore::*;
 pub use RuntimeStorageHost::*;
+pub use RuntimeStorePaths::*;
 pub use SqliteStore::*;
 pub use SyncOperationStore::*;

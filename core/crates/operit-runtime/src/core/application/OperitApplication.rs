@@ -1,7 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::api::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::application::OperitApplicationContext::{
+    setDefaultHttpHost, OperitApplicationContext,
+};
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::backup::RawSnapshotBackupManager::{
@@ -15,12 +15,13 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
 };
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_store::RuntimeStorePaths::{setDefaultRuntimeStoreRoot, RuntimeStorePaths};
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
@@ -40,10 +41,16 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn newWithContext(applicationContext: OperitApplicationContext) -> Self {
         if let Some(runtimeStorageHost) = applicationContext.runtimeStorageHost.clone() {
+            if let Some(rootDir) = runtimeStorageHost.rootDir() {
+                setDefaultRuntimeStoreRoot(rootDir);
+            }
             setDefaultRuntimeStorageHost(runtimeStorageHost);
         }
         if let Some(runtimeSqliteHost) = applicationContext.runtimeSqliteHost.clone() {
             setDefaultRuntimeSqliteHost(runtimeSqliteHost);
+        }
+        if let Some(httpHost) = applicationContext.httpHost.clone() {
+            setDefaultHttpHost(httpHost);
         }
         Self {
             appStartupTimeMs: 0,
@@ -254,13 +261,6 @@ impl Default for OperitApplication {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn currentTimeMillis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
 }
 
 fn mergeSyncClock(target: &mut SyncClock, source: SyncClock) {

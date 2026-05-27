@@ -1,8 +1,10 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::RuntimeStorageHost;
+use operit_host_api::TimeUtils::tryCurrentTimeMillis;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -82,7 +84,10 @@ impl SyncOperationStore {
     }
 
     pub fn native(paths: RuntimeStorePaths) -> Self {
-        Self::new(defaultRuntimeStorageHost(), runtimeStoragePath(&paths.root_dir().join("sync")))
+        Self::new(
+            defaultRuntimeStorageHost(),
+            runtimeStoragePath(&paths.root_dir().join("sync")),
+        )
     }
 
     pub fn appendLocalOperation(
@@ -120,20 +125,24 @@ impl SyncOperationStore {
                 return Ok(value);
             }
         }
-        let deviceId = format!(
-            "core-{}-{}",
-            std::process::id(),
-            currentTimeMillis()?
-        );
-        self.storageHost
-            .writeBytes(&path, deviceId.as_bytes())?;
+        let now = currentTimeMillis()?;
+        let mut hasher = DefaultHasher::new();
+        self.rootPath.hash(&mut hasher);
+        now.hash(&mut hasher);
+        let deviceId = format!("core-{now}-{:016x}", hasher.finish());
+        self.storageHost.writeBytes(&path, deviceId.as_bytes())?;
         Ok(deviceId)
     }
 
-    pub fn appendOperation(&self, operation: &SyncOperation) -> Result<(), SyncOperationStoreError> {
+    pub fn appendOperation(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<(), SyncOperationStoreError> {
         let mut operations = self.operationsForDevice(&operation.originDeviceId)?;
         let clock = self.localClock()?;
-        let alreadyExists = operations.iter().any(|existing| existing.opId == operation.opId);
+        let alreadyExists = operations
+            .iter()
+            .any(|existing| existing.opId == operation.opId);
         if alreadyExists {
             self.observeOperation(operation)?;
             return Ok(());
@@ -281,7 +290,11 @@ impl SyncOperationStore {
     }
 
     fn operationsPath(&self, deviceId: &str) -> String {
-        format!("{}/operations/{}.jsonl", self.rootPath, storageSafeId(deviceId))
+        format!(
+            "{}/operations/{}.jsonl",
+            self.rootPath,
+            storageSafeId(deviceId)
+        )
     }
 }
 
@@ -292,10 +305,7 @@ impl Default for SyncClock {
 }
 
 fn currentTimeMillis() -> Result<i64, SyncOperationStoreError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
-    Ok(duration.as_millis() as i64)
+    tryCurrentTimeMillis().map_err(SyncOperationStoreError::Message)
 }
 
 fn storageSafeId(value: &str) -> String {
@@ -364,32 +374,49 @@ mod tests {
 
     impl RuntimeStorageHost for MemoryStorageHost {
         fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
-            let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
             match files.get(path) {
                 Some(content) => Ok(content.clone()),
-                None => Err(HostError::new(format!("missing runtime storage file: {path}"))),
+                None => Err(HostError::new(format!(
+                    "missing runtime storage file: {path}"
+                ))),
             }
         }
 
         fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
-            let mut files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+            let mut files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
             files.insert(path.to_string(), content.to_vec());
             Ok(())
         }
 
         fn delete(&self, path: &str, _recursive: bool) -> operit_host_api::HostResult<()> {
-            let mut files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+            let mut files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
             files.remove(path);
             Ok(())
         }
 
         fn exists(&self, path: &str) -> operit_host_api::HostResult<bool> {
-            let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
             Ok(files.contains_key(path))
         }
 
         fn list(&self, prefix: &str) -> operit_host_api::HostResult<Vec<RuntimeStorageEntry>> {
-            let files = self.files.lock().map_err(|error| HostError::new(error.to_string()))?;
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
             Ok(files
                 .iter()
                 .filter(|(path, _)| path.starts_with(prefix))
@@ -402,7 +429,13 @@ mod tests {
         }
     }
 
-    fn operation(sequence: i64, entityType: &str, entityId: &str, operationName: &str, payload: Value) -> SyncOperation {
+    fn operation(
+        sequence: i64,
+        entityType: &str,
+        entityId: &str,
+        operationName: &str,
+        payload: Value,
+    ) -> SyncOperation {
         SyncOperation {
             opId: format!("device-a:{sequence}"),
             originDeviceId: "device-a".to_string(),
@@ -440,7 +473,10 @@ mod tests {
     }
 
     fn sequences(operations: &[SyncOperation]) -> Vec<i64> {
-        operations.iter().map(|operation| operation.sequence).collect()
+        operations
+            .iter()
+            .map(|operation| operation.sequence)
+            .collect()
     }
 
     #[test]
@@ -448,7 +484,13 @@ mod tests {
         let compacted = compactSyncOperations(vec![
             operation(1, "message", "chat-1:1", "upsert", json!({"content": "a"})),
             operation(2, "message", "chat-1:1", "upsert", json!({"content": "ab"})),
-            operation(3, "message", "chat-1:2", "upsert", json!({"content": "other"})),
+            operation(
+                3,
+                "message",
+                "chat-1:2",
+                "upsert",
+                json!({"content": "other"}),
+            ),
             operation(4, "chat", "chat-1", "upsert", json!({"title": "New Chat"})),
         ]);
 
@@ -459,9 +501,21 @@ mod tests {
     #[test]
     fn compact_keeps_delete_transactions_between_upserts() {
         let compacted = compactSyncOperations(vec![
-            operation(1, "message", "chat-1:1", "upsert", json!({"content": "old"})),
+            operation(
+                1,
+                "message",
+                "chat-1:1",
+                "upsert",
+                json!({"content": "old"}),
+            ),
             operation(2, "message", "chat-1:1", "delete", json!({"deleted": true})),
-            operation(3, "message", "chat-1:1", "upsert", json!({"content": "new"})),
+            operation(
+                3,
+                "message",
+                "chat-1:1",
+                "upsert",
+                json!({"content": "new"}),
+            ),
         ]);
 
         assert_eq!(sequences(&compacted), vec![2, 3]);
@@ -475,13 +529,31 @@ mod tests {
         let store = SyncOperationStore::new(host, "sync-test");
 
         store
-            .appendOperation(&operation(1, "message", "chat-1:1", "upsert", json!({"content": "h"})))
+            .appendOperation(&operation(
+                1,
+                "message",
+                "chat-1:1",
+                "upsert",
+                json!({"content": "h"}),
+            ))
             .unwrap();
         store
-            .appendOperation(&operation(2, "message", "chat-1:1", "upsert", json!({"content": "he"})))
+            .appendOperation(&operation(
+                2,
+                "message",
+                "chat-1:1",
+                "upsert",
+                json!({"content": "he"}),
+            ))
             .unwrap();
         store
-            .appendOperation(&operation(3, "message", "chat-1:1", "upsert", json!({"content": "hello"})))
+            .appendOperation(&operation(
+                3,
+                "message",
+                "chat-1:1",
+                "upsert",
+                json!({"content": "hello"}),
+            ))
             .unwrap();
 
         let operations = store
@@ -612,7 +684,10 @@ mod tests {
             "sync operation ultra stress: raw_operations={rawCount}, compacted_operations={}",
             compacted.len()
         );
-        assert_eq!(rawCount, deviceCount * entityCount * updateRounds + deviceCount);
+        assert_eq!(
+            rawCount,
+            deviceCount * entityCount * updateRounds + deviceCount
+        );
         assert_eq!(compacted.len(), expectedUpserts + expectedDeletes);
         assert_eq!(
             compacted

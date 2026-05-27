@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub struct SlidingWindowRateLimiter {
     pub maxRequestsPerMinute: i32,
@@ -64,8 +64,7 @@ impl SlidingWindowRateLimiter {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
+    operit_host_api::TimeUtils::currentTimeMillis()
 }
+
+

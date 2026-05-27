@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{FileSystemHost, FindFilesRequest};
 use serde::{Deserialize, Serialize};
@@ -1093,12 +1092,7 @@ fn parseLastModifiedToMillis(lastModified: &str) -> Option<i64> {
     None
 }
 
-fn currentTimeMillis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after unix epoch")
-        .as_millis() as i64
-}
+fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
 
 fn normalizeTextLinesForDiff(text: &str) -> Vec<String> {
     if text.is_empty() {
@@ -1194,3 +1188,4 @@ fn isTextBasedFileName(fileName: &str) -> bool {
             | "lock"
     ) || !lower.contains('.')
 }
+
