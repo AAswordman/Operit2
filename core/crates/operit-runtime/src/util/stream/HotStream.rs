@@ -167,7 +167,8 @@ where
     type Item = T;
 
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        let (subscriber_id, receiver, replay_snapshot, closed_immediately) = match self.inner.lock() {
+        let (subscriber_id, receiver, replay_snapshot, closed_immediately) = match self.inner.lock()
+        {
             Ok(mut guard) => {
                 let replay_snapshot = guard.replay_buffer.iter().cloned().collect::<Vec<_>>();
                 if guard.closed {
@@ -316,7 +317,13 @@ where
         self.current
             .lock()
             .map(|current| current.clone())
-            .unwrap_or_else(|_| self.shared.replay_cache().last().cloned().expect("state stream must have value"))
+            .unwrap_or_else(|_| {
+                self.shared
+                    .replay_cache()
+                    .last()
+                    .cloned()
+                    .expect("state stream must have value")
+            })
     }
 }
 
@@ -356,7 +363,11 @@ where
     MutableStateStreamImpl::new(initial_value)
 }
 
-pub fn share<S>(mut stream: S, replay: usize, started: StreamStart) -> MutableSharedStreamImpl<S::Item>
+pub fn share<S>(
+    mut stream: S,
+    replay: usize,
+    started: StreamStart,
+) -> MutableSharedStreamImpl<S::Item>
 where
     S: Stream + Send + 'static,
     S::Item: Clone + Send + 'static,
@@ -375,7 +386,11 @@ where
     shared
 }
 
-pub fn state<S>(mut stream: S, initial_value: S::Item, started: StreamStart) -> MutableStateStreamImpl<S::Item>
+pub fn state<S>(
+    mut stream: S,
+    initial_value: S::Item,
+    started: StreamStart,
+) -> MutableStateStreamImpl<S::Item>
 where
     S: Stream + Send + 'static,
     S::Item: Clone + PartialEq + Send + 'static,

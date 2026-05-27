@@ -33,6 +33,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
   String _modelLabel = 'Model';
   String? _errorMessage;
   String? _currentChatId;
+  ChatMarkdownStreamState? _activeMarkdownStreamState;
   StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
 
   @override
@@ -52,7 +53,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
     super.dispose();
   }
 
-  Future<void> _loadSnapshot({bool showLoading = true}) async {
+  Future<ChatRuntimeSnapshot?> _loadSnapshot({bool showLoading = true}) async {
     setState(() {
       if (showLoading) {
         _loading = true;
@@ -63,7 +64,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
     try {
       final snapshot = await widget.runtime.loadMainSnapshot();
       if (!mounted) {
-        return;
+        return null;
       }
       setState(() {
         _messages
@@ -73,17 +74,22 @@ class _AIChatScreenState extends State<AIChatScreen> {
         _inputProcessingState = snapshot.inputProcessingState;
         _modelLabel = _resolveModelLabel(snapshot.messages);
         _currentChatId = snapshot.currentChatId;
+        if (!snapshot.isLoading) {
+          _activeMarkdownStreamState = null;
+        }
       });
       _scheduleScrollToBottom();
+      return snapshot;
     } catch (error, stackTrace) {
       debugPrint('Failed to load chat snapshot: $error\n$stackTrace');
       if (!mounted) {
-        return;
+        return null;
       }
       setState(() {
         _errorMessage = error.toString();
         _loading = false;
       });
+      return null;
     }
   }
 
@@ -111,6 +117,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
         ),
       );
       _loading = true;
+      _activeMarkdownStreamState = ChatMarkdownStreamState();
       _errorMessage = null;
     });
     _scheduleScrollToBottom();
@@ -119,13 +126,16 @@ class _AIChatScreenState extends State<AIChatScreen> {
     request
         .then((_) async {
           debugPrint('[AIChatScreen] send completed, refreshing snapshot');
-          await _loadSnapshot(showLoading: false);
-          final chatId = _currentChatId;
-          if (chatId != null) {
+          final snapshot = await _loadSnapshot(showLoading: false);
+          final chatId = snapshot?.currentChatId;
+          if (chatId != null && snapshot?.isLoading == true) {
             debugPrint('[AIChatScreen] start response stream chatId=$chatId');
             _watchResponseStream(chatId);
           } else {
-            debugPrint('[AIChatScreen] response stream skipped: currentChatId is null');
+            debugPrint(
+              '[AIChatScreen] response stream skipped: '
+              'chatId=$chatId isLoading=${snapshot?.isLoading}',
+            );
           }
         })
         .catchError((Object error, StackTrace stackTrace) {
@@ -163,6 +173,8 @@ class _AIChatScreenState extends State<AIChatScreen> {
                 return;
               }
               _appendAiStreamChunk(chunk);
+            } else if (event.isMarkdownEvent) {
+              _applyAiMarkdownStreamEvent(event);
             } else if (event.type == 'completed') {
               _loadSnapshotAfterStreamCompleted();
             }
@@ -203,8 +215,39 @@ class _AIChatScreenState extends State<AIChatScreen> {
             roleName: 'Operit',
             provider: '',
             modelName: '',
+            markdownStreamState: _activeMarkdownStreamState,
           ),
         );
+      }
+      _loading = true;
+    });
+    _scheduleScrollToBottom();
+  }
+
+  void _applyAiMarkdownStreamEvent(ChatResponseStreamEvent event) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final streamState = _activeMarkdownStreamState ??=
+          ChatMarkdownStreamState();
+      streamState.apply(event);
+      final lastAiIndex = _messages.lastIndexWhere(
+        (message) => message.sender == 'ai',
+      );
+      if (lastAiIndex >= 0) {
+        final message = _messages[lastAiIndex];
+        if (message.markdownStreamState == null) {
+          _messages[lastAiIndex] = ChatRuntimeMessage(
+            sender: message.sender,
+            content: message.content,
+            timestamp: message.timestamp,
+            roleName: message.roleName,
+            provider: message.provider,
+            modelName: message.modelName,
+            markdownStreamState: streamState,
+          );
+        }
       }
       _loading = true;
     });

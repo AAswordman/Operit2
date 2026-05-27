@@ -1066,12 +1066,7 @@ double_delimiter_plugin!(
     '~',
     include_delimiters
 );
-double_delimiter_plugin!(
-    StreamMarkdownUnderlinePlugin,
-    '_',
-    '_',
-    include_delimiters
-);
+double_delimiter_plugin!(StreamMarkdownUnderlinePlugin, '_', '_', include_delimiters);
 
 #[derive(Debug, Clone)]
 pub struct StreamMarkdownInlineLaTeXPlugin {

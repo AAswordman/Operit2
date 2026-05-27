@@ -20,6 +20,7 @@ pub mod IntRangeSerializer;
 pub mod LocalDateTimeSerializer;
 pub mod LocaleUtils;
 pub mod LocationUtils;
+pub mod MarkdownRenderStream;
 pub mod MediaBase64Limiter;
 pub mod MediaPoolManager;
 pub mod NetworkUtils;

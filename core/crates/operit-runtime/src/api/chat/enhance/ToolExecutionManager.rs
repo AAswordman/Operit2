@@ -3,14 +3,12 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::chat::enhance::ConversationMarkupManager::{
-    ConversationMarkupManager, ToolResult,
-};
-use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::api::chat::enhance::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::CharacterCardToolAccessResolver::{
     CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
 };
@@ -126,15 +124,17 @@ impl ToolExecutionManager {
         roleCardToolAccess: Option<&ResolvedCharacterCardToolAccess>,
     ) -> (bool, Option<ToolResult>) {
         let resolvedTarget = Self::resolveToolTarget(&invocation.tool);
-        let permissionTool =
-            if toolExposureMode == ToolExposureMode::CLI && invocation.tool.name == CLI_PROXY_TOOL_NAME {
-                invocation.tool.clone()
-            } else {
-                resolvedTarget.tool.clone()
-            };
+        let permissionTool = if toolExposureMode == ToolExposureMode::CLI
+            && invocation.tool.name == CLI_PROXY_TOOL_NAME
+        {
+            invocation.tool.clone()
+        } else {
+            resolvedTarget.tool.clone()
+        };
 
         if toolExposureMode == ToolExposureMode::CLI
-            && (invocation.tool.name == CLI_SEARCH_TOOL_NAME || invocation.tool.name == CLI_PROXY_TOOL_NAME)
+            && (invocation.tool.name == CLI_SEARCH_TOOL_NAME
+                || invocation.tool.name == CLI_PROXY_TOOL_NAME)
         {
             toolHandler.notifyToolPermissionChecked(&permissionTool, true, Some("CLI public tool"));
             return (true, None);
@@ -346,7 +346,9 @@ impl ToolExecutionManager {
                         } else {
                             format!(
                                 "Step error: {}",
-                                item.error.clone().unwrap_or_else(|| "Unknown error".to_string())
+                                item.error
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown error".to_string())
                             )
                         }
                     })
@@ -502,8 +504,10 @@ impl ToolExecutionManager {
             if !roleCardToolAccess.isBuiltinToolAllowed("use_package") {
                 return false;
             }
-            let sourceName = Self::getParameterValue(&invocation.tool, "package_name").unwrap_or_default();
-            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
+            let sourceName =
+                Self::getParameterValue(&invocation.tool, "package_name").unwrap_or_default();
+            return sourceName.is_empty()
+                || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
         }
 
         if toolName == PACKAGE_PROXY_TOOL_NAME {
@@ -534,8 +538,10 @@ impl ToolExecutionManager {
             return true;
         }
         if resolvedTargetName == "use_package" {
-            let sourceName = Self::getParameterValue(resolvedTarget, "package_name").unwrap_or_default();
-            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
+            let sourceName =
+                Self::getParameterValue(resolvedTarget, "package_name").unwrap_or_default();
+            return sourceName.is_empty()
+                || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
         }
         if resolvedTargetName.contains(':') {
             let sourceName = resolvedTargetName.split(':').next().unwrap_or("").trim();

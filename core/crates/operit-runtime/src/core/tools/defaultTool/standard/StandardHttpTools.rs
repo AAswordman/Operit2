@@ -9,14 +9,14 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use reqwest::blocking::multipart::{Form, Part};
 use reqwest::blocking::{Client, RequestBuilder};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
+};
 use reqwest::{Method, Proxy, Url};
 use serde_json::{json, Map, Value};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 
 #[derive(Clone, Debug)]
 struct CookieRecord {
@@ -73,7 +73,11 @@ impl StandardHttpTools {
                 Ok(response) => {
                     let url = spec.url.clone();
                     let statusCode = response.status().as_u16() as i32;
-                    let statusMessage = response.status().canonical_reason().unwrap_or("").to_string();
+                    let statusMessage = response
+                        .status()
+                        .canonical_reason()
+                        .unwrap_or("")
+                        .to_string();
                     let headers = responseHeadersMap(response.headers());
                     let contentType = response
                         .headers()
@@ -84,8 +88,10 @@ impl StandardHttpTools {
                     saveResponseCookies(&url, response.headers());
                     match response.bytes() {
                         Ok(bodyBytes) => {
-                            let content = String::from_utf8(bodyBytes.to_vec())
-                                .unwrap_or_else(|_| "[Binary Content, decoding failed]".to_string());
+                            let content =
+                                String::from_utf8(bodyBytes.to_vec()).unwrap_or_else(|_| {
+                                    "[Binary Content, decoding failed]".to_string()
+                                });
                             let responseText = buildHttpResponseData(
                                 &url,
                                 statusCode,
@@ -99,25 +105,35 @@ impl StandardHttpTools {
                             );
                             success(tool, responseText)
                         }
-                        Err(error) => {
-                            errorResult(tool.name.as_str(), &format!("Error executing HTTP request: {error}"))
-                        }
+                        Err(error) => errorResult(
+                            tool.name.as_str(),
+                            &format!("Error executing HTTP request: {error}"),
+                        ),
                     }
                 }
-                Err(error) => {
-                    errorResult(tool.name.as_str(), &format!("Error executing HTTP request: {error}"))
-                }
+                Err(error) => errorResult(
+                    tool.name.as_str(),
+                    &format!("Error executing HTTP request: {error}"),
+                ),
             },
-            Err(error) => errorResult(tool.name.as_str(), &format!("Error executing HTTP request: {error}")),
+            Err(error) => errorResult(
+                tool.name.as_str(),
+                &format!("Error executing HTTP request: {error}"),
+            ),
         }
     }
 
     #[allow(non_snake_case)]
     pub fn manageCookies(&self, tool: &AITool) -> ToolResult {
         let action = parameterValue(tool, "action").to_lowercase();
-        let action = if action.trim().is_empty() { "get".to_string() } else { action };
+        let action = if action.trim().is_empty() {
+            "get".to_string()
+        } else {
+            action
+        };
         let domain = parameterValue(tool, "domain");
-        let cookiesJson = optionalParameterValue(tool, "cookies").unwrap_or_else(|| "{}".to_string());
+        let cookiesJson =
+            optionalParameterValue(tool, "cookies").unwrap_or_else(|| "{}".to_string());
 
         match action.as_str() {
             "get" => {
@@ -143,12 +159,17 @@ impl StandardHttpTools {
                         }),
                     );
                 }
-                let jsonResult = serde_json::to_string_pretty(&Value::Object(object)).unwrap_or_else(|_| "{}".to_string());
+                let jsonResult = serde_json::to_string_pretty(&Value::Object(object))
+                    .unwrap_or_else(|_| "{}".to_string());
                 success(tool, format!("Current cookie status:\n{jsonResult}"))
             }
             "set" => {
                 if domain.trim().is_empty() {
-                    return toolError(tool, String::new(), "setCookie requires domain parameter".to_string());
+                    return toolError(
+                        tool,
+                        String::new(),
+                        "setCookie requires domain parameter".to_string(),
+                    );
                 }
                 match parseCookies(&cookiesJson, &format!("https://{}", domain.trim())) {
                     Some(cookies) => {
@@ -157,21 +178,37 @@ impl StandardHttpTools {
                             .lock()
                             .expect("cookie store mutex poisoned")
                             .insert(domain.trim().to_string(), cookies);
-                        success(tool, format!("Successfully set {count} cookies to domain {}", domain.trim()))
+                        success(
+                            tool,
+                            format!(
+                                "Successfully set {count} cookies to domain {}",
+                                domain.trim()
+                            ),
+                        )
                     }
-                    None => toolError(tool, String::new(), "Cookie format error, cannot parse".to_string()),
+                    None => toolError(
+                        tool,
+                        String::new(),
+                        "Cookie format error, cannot parse".to_string(),
+                    ),
                 }
             }
             "clear" => {
                 if domain.trim().is_empty() {
-                    cookieStore().lock().expect("cookie store mutex poisoned").clear();
+                    cookieStore()
+                        .lock()
+                        .expect("cookie store mutex poisoned")
+                        .clear();
                     success(tool, "Cleared all cookies".to_string())
                 } else {
                     cookieStore()
                         .lock()
                         .expect("cookie store mutex poisoned")
                         .remove(domain.trim());
-                    success(tool, format!("Cleared cookies for domain {}", domain.trim()))
+                    success(
+                        tool,
+                        format!("Cleared cookies for domain {}", domain.trim()),
+                    )
                 }
             }
             _ => toolError(
@@ -201,12 +238,18 @@ impl StandardHttpTools {
         let method = optionalParameterValue(tool, "method")
             .map(|value| value.to_uppercase())
             .unwrap_or_else(|| "POST".to_string());
-        let headersParam = optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
-        let formDataParam = optionalParameterValue(tool, "form_data").unwrap_or_else(|| "{}".to_string());
+        let headersParam =
+            optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
+        let formDataParam =
+            optionalParameterValue(tool, "form_data").unwrap_or_else(|| "{}".to_string());
         let filesParam = optionalParameterValue(tool, "files").unwrap_or_else(|| "[]".to_string());
 
         if url.trim().is_empty() {
-            return toolError(tool, String::new(), "URL parameter cannot be empty".to_string());
+            return toolError(
+                tool,
+                String::new(),
+                "URL parameter cannot be empty".to_string(),
+            );
         }
         if !isValidUrl(&url) {
             return toolError(tool, String::new(), format!("Invalid URL format: {url}"));
@@ -226,10 +269,15 @@ impl StandardHttpTools {
         let useCookies = optionalParameterValue(tool, "use_cookies")
             .map(|value| value.to_lowercase() != "false")
             .unwrap_or(true);
-        if let Some(customCookies) = optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty()) {
+        if let Some(customCookies) =
+            optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty())
+        {
             if useCookies {
                 if let Some(cookies) = parseCookies(&customCookies, &url) {
-                    if let Some(host) = Url::parse(&url).ok().and_then(|parsed| parsed.host_str().map(str::to_string)) {
+                    if let Some(host) = Url::parse(&url)
+                        .ok()
+                        .and_then(|parsed| parsed.host_str().map(str::to_string))
+                    {
                         cookieStore()
                             .lock()
                             .expect("cookie store mutex poisoned")
@@ -247,8 +295,20 @@ impl StandardHttpTools {
         let mut form = Form::new();
         let formData = match serde_json::from_str::<Value>(&formDataParam) {
             Ok(Value::Object(object)) => object,
-            Ok(_) => return toolError(tool, String::new(), "Error parsing form data: form_data must be a JSON object".to_string()),
-            Err(error) => return toolError(tool, String::new(), format!("Error parsing form data: {error}")),
+            Ok(_) => {
+                return toolError(
+                    tool,
+                    String::new(),
+                    "Error parsing form data: form_data must be a JSON object".to_string(),
+                )
+            }
+            Err(error) => {
+                return toolError(
+                    tool,
+                    String::new(),
+                    format!("Error parsing form data: {error}"),
+                )
+            }
         };
         for (key, value) in formData {
             form = form.text(key, jsonValueToString(&value));
@@ -256,15 +316,37 @@ impl StandardHttpTools {
 
         let files = match serde_json::from_str::<Value>(&filesParam) {
             Ok(Value::Array(array)) => array,
-            Ok(_) => return toolError(tool, String::new(), "Error parsing file data: files must be a JSON array".to_string()),
-            Err(error) => return toolError(tool, String::new(), format!("Error parsing file data: {error}")),
+            Ok(_) => {
+                return toolError(
+                    tool,
+                    String::new(),
+                    "Error parsing file data: files must be a JSON array".to_string(),
+                )
+            }
+            Err(error) => {
+                return toolError(
+                    tool,
+                    String::new(),
+                    format!("Error parsing file data: {error}"),
+                )
+            }
         };
         for value in files {
             let Some(object) = value.as_object() else {
-                return toolError(tool, String::new(), "Error parsing file data: file entry must be a JSON object".to_string());
+                return toolError(
+                    tool,
+                    String::new(),
+                    "Error parsing file data: file entry must be a JSON object".to_string(),
+                );
             };
-            let fieldName = object.get("field_name").and_then(Value::as_str).unwrap_or("");
-            let filePath = object.get("file_path").and_then(Value::as_str).unwrap_or("");
+            let fieldName = object
+                .get("field_name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let filePath = object
+                .get("file_path")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             let contentType = object
                 .get("content_type")
                 .and_then(Value::as_str)
@@ -273,9 +355,19 @@ impl StandardHttpTools {
                 .get("file_name")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .unwrap_or_else(|| Path::new(filePath).file_name().and_then(|name| name.to_str()).unwrap_or("").to_string());
+                .unwrap_or_else(|| {
+                    Path::new(filePath)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("")
+                        .to_string()
+                });
             if fieldName.is_empty() || filePath.is_empty() {
-                return toolError(tool, String::new(), "Error parsing file data: field_name and file_path are required".to_string());
+                return toolError(
+                    tool,
+                    String::new(),
+                    "Error parsing file data: field_name and file_path are required".to_string(),
+                );
             }
             let bytes = match fs::read(filePath) {
                 Ok(bytes) => bytes,
@@ -289,7 +381,13 @@ impl StandardHttpTools {
             };
             let part = match Part::bytes(bytes).file_name(fileName).mime_str(contentType) {
                 Ok(part) => part,
-                Err(error) => return toolError(tool, String::new(), format!("Error parsing file data: {error}")),
+                Err(error) => {
+                    return toolError(
+                        tool,
+                        String::new(),
+                        format!("Error parsing file data: {error}"),
+                    )
+                }
             };
             form = form.part(fieldName.to_string(), part);
         }
@@ -305,7 +403,11 @@ impl StandardHttpTools {
         match request.send() {
             Ok(response) => {
                 let statusCode = response.status().as_u16() as i32;
-                let statusMessage = response.status().canonical_reason().unwrap_or("").to_string();
+                let statusMessage = response
+                    .status()
+                    .canonical_reason()
+                    .unwrap_or("")
+                    .to_string();
                 let responseHeaders = responseHeadersMap(response.headers());
                 let contentType = response
                     .headers()
@@ -333,10 +435,18 @@ impl StandardHttpTools {
                             ),
                         )
                     }
-                    Err(error) => toolError(tool, String::new(), format!("Error executing multipart form request: {error}")),
+                    Err(error) => toolError(
+                        tool,
+                        String::new(),
+                        format!("Error executing multipart form request: {error}"),
+                    ),
                 }
             }
-            Err(error) => toolError(tool, String::new(), format!("Error executing multipart form request: {error}")),
+            Err(error) => toolError(
+                tool,
+                String::new(),
+                format!("Error executing multipart form request: {error}"),
+            ),
         }
     }
 
@@ -346,7 +456,8 @@ impl StandardHttpTools {
         let method = optionalParameterValue(tool, "method")
             .map(|value| value.to_uppercase())
             .unwrap_or_else(|| "GET".to_string());
-        let headersParam = optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
+        let headersParam =
+            optionalParameterValue(tool, "headers").unwrap_or_else(|| "{}".to_string());
         let bodyParam = parameterValue(tool, "body");
         let bodyType = optionalParameterValue(tool, "body_type")
             .map(|value| value.to_lowercase())
@@ -361,14 +472,22 @@ impl StandardHttpTools {
         if !isValidUrl(&url) {
             return Err(format!("Invalid URL format: {url}"));
         }
-        if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH" | "TRACE") {
+        if !matches!(
+            method.as_str(),
+            "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH" | "TRACE"
+        ) {
             return Err(format!("Unsupported HTTP method: {method}"));
         }
 
-        if let Some(customCookies) = optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty()) {
+        if let Some(customCookies) =
+            optionalParameterValue(tool, "custom_cookies").filter(|value| !value.trim().is_empty())
+        {
             if useCookies {
                 if let Some(cookies) = parseCookies(&customCookies, &url) {
-                    if let Some(host) = Url::parse(&url).ok().and_then(|parsed| parsed.host_str().map(str::to_string)) {
+                    if let Some(host) = Url::parse(&url)
+                        .ok()
+                        .and_then(|parsed| parsed.host_str().map(str::to_string))
+                    {
                         cookieStore()
                             .lock()
                             .expect("cookie store mutex poisoned")
@@ -380,7 +499,8 @@ impl StandardHttpTools {
 
         let client = buildConfigurableClient(tool, useCookies)?;
         let headers = parseHeaders(&headersParam)?;
-        let methodValue = Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
+        let methodValue =
+            Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
         let mut request = client.request(methodValue.clone(), url.trim());
         request = request.header(USER_AGENT, USER_AGENT_VALUE);
         request = applyHeaders(request, &headers);
@@ -405,10 +525,17 @@ impl StandardHttpTools {
                     }
                     request.form(&formPairs)
                 }
-                "text" => request.header(CONTENT_TYPE, "text/plain; charset=utf-8").body(bodyParam),
-                "xml" => request.header(CONTENT_TYPE, "application/xml; charset=utf-8").body(bodyParam),
+                "text" => request
+                    .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .body(bodyParam),
+                "xml" => request
+                    .header(CONTENT_TYPE, "application/xml; charset=utf-8")
+                    .body(bodyParam),
                 "multipart" => {
-                    return Err("multipart request body type requires dedicated multipart_request tool".to_string())
+                    return Err(
+                        "multipart request body type requires dedicated multipart_request tool"
+                            .to_string(),
+                    )
                 }
                 _ => return Err(format!("Unsupported request body type: {bodyType}")),
             };
@@ -554,8 +681,14 @@ fn parseCookies(cookiesJson: &str, urlString: &str) -> Option<Vec<CookieRecord>>
                     .unwrap_or("/")
                     .to_string(),
                 expiresAt: cookieObject.get("expiresAt").and_then(Value::as_i64),
-                secure: cookieObject.get("secure").and_then(Value::as_bool).unwrap_or(false),
-                httpOnly: cookieObject.get("httpOnly").and_then(Value::as_bool).unwrap_or(false),
+                secure: cookieObject
+                    .get("secure")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                httpOnly: cookieObject
+                    .get("httpOnly")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             });
         }
     }
@@ -642,7 +775,10 @@ fn applyCookieHeader(request: RequestBuilder, url: &str) -> RequestBuilder {
 
 #[allow(non_snake_case)]
 fn cookiesForUrl(url: &str) -> Vec<CookieRecord> {
-    let Some(host) = Url::parse(url).ok().and_then(|parsed| parsed.host_str().map(str::to_string)) else {
+    let Some(host) = Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+    else {
         return Vec::new();
     };
     cookieStore()
@@ -665,10 +801,7 @@ fn cookiesMapForUrl(url: &str) -> HashMap<String, String> {
 fn responseHeadersMap(headers: &HeaderMap) -> HashMap<String, String> {
     let mut result = HashMap::new();
     for (name, value) in headers.iter() {
-        result.insert(
-            name.to_string(),
-            value.to_str().unwrap_or("").to_string(),
-        );
+        result.insert(name.to_string(), value.to_str().unwrap_or("").to_string());
     }
     result
 }
@@ -696,7 +829,11 @@ fn buildHttpResponseData(
         let mut entries = cookies.iter().collect::<Vec<_>>();
         entries.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in entries.into_iter().take(5) {
-            let suffix = if value.chars().count() > 30 { "..." } else { "" };
+            let suffix = if value.chars().count() > 30 {
+                "..."
+            } else {
+                ""
+            };
             let preview = value.chars().take(30).collect::<String>();
             text.push_str(&format!("  {name}: {preview}{suffix}\n"));
         }

@@ -127,113 +127,203 @@ impl PromptHookRegistry {
     #[allow(non_snake_case)]
     pub fn registerPromptInputHook(hook: Arc<dyn PromptInputHook>) {
         Self::unregisterPromptInputHook(hook.id());
-        PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        PROMPT_INPUT_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterPromptInputHook(hook_id: &str) {
-        remove_by_id(PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerPromptHistoryHook(hook: Arc<dyn PromptHistoryHook>) {
         Self::unregisterPromptHistoryHook(hook.id());
-        PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        PROMPT_HISTORY_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterPromptHistoryHook(hook_id: &str) {
-        remove_by_id(PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerPromptEstimateHistoryHook(hook: Arc<dyn PromptEstimateHistoryHook>) {
         Self::unregisterPromptEstimateHistoryHook(hook.id());
-        PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        PROMPT_ESTIMATE_HISTORY_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterPromptEstimateHistoryHook(hook_id: &str) {
-        remove_by_id(PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerSystemPromptComposeHook(hook: Arc<dyn SystemPromptComposeHook>) {
         Self::unregisterSystemPromptComposeHook(hook.id());
-        SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        SYSTEM_PROMPT_COMPOSE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterSystemPromptComposeHook(hook_id: &str) {
-        remove_by_id(SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerToolPromptComposeHook(hook: Arc<dyn ToolPromptComposeHook>) {
         Self::unregisterToolPromptComposeHook(hook.id());
-        TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        TOOL_PROMPT_COMPOSE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterToolPromptComposeHook(hook_id: &str) {
-        remove_by_id(TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerPromptFinalizeHook(hook: Arc<dyn PromptFinalizeHook>) {
         Self::unregisterPromptFinalizeHook(hook.id());
-        PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        PROMPT_FINALIZE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterPromptFinalizeHook(hook_id: &str) {
-        remove_by_id(PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn registerPromptEstimateFinalizeHook(hook: Arc<dyn PromptEstimateFinalizeHook>) {
         Self::unregisterPromptEstimateFinalizeHook(hook.id());
-        PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().push(hook);
+        PROMPT_ESTIMATE_FINALIZE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .push(hook);
     }
 
     #[allow(non_snake_case)]
     pub fn unregisterPromptEstimateFinalizeHook(hook_id: &str) {
-        remove_by_id(PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), hook_id, |hook| hook.id());
+        remove_by_id(
+            PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            hook_id,
+            |hook| hook.id(),
+        );
     }
 
     #[allow(non_snake_case)]
     pub fn dispatchPromptInputHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+        dispatch(
+            initial_context,
+            PROMPT_INPUT_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
     pub fn dispatchPromptHistoryHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+        dispatch(
+            initial_context,
+            PROMPT_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
-    pub fn dispatchPromptEstimateHistoryHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+    pub fn dispatchPromptEstimateHistoryHooks(
+        initial_context: PromptHookContext,
+    ) -> PromptHookContext {
+        dispatch(
+            initial_context,
+            PROMPT_ESTIMATE_HISTORY_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
-    pub fn dispatchSystemPromptComposeHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+    pub fn dispatchSystemPromptComposeHooks(
+        initial_context: PromptHookContext,
+    ) -> PromptHookContext {
+        dispatch(
+            initial_context,
+            SYSTEM_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
     pub fn dispatchToolPromptComposeHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+        dispatch(
+            initial_context,
+            TOOL_PROMPT_COMPOSE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
     pub fn dispatchPromptFinalizeHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+        dispatch(
+            initial_context,
+            PROMPT_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 
     #[allow(non_snake_case)]
-    pub fn dispatchPromptEstimateFinalizeHooks(initial_context: PromptHookContext) -> PromptHookContext {
-        dispatch(initial_context, PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())), |hook, context| hook.on_event(context))
+    pub fn dispatchPromptEstimateFinalizeHooks(
+        initial_context: PromptHookContext,
+    ) -> PromptHookContext {
+        dispatch(
+            initial_context,
+            PROMPT_ESTIMATE_FINALIZE_HOOKS.get_or_init(|| Mutex::new(Vec::new())),
+            |hook, context| hook.on_event(context),
+        )
     }
 }
 
@@ -264,7 +354,10 @@ where
     current
 }
 
-fn apply_mutation(mut current: PromptHookContext, mutation: PromptHookMutation) -> PromptHookContext {
+fn apply_mutation(
+    mut current: PromptHookContext,
+    mutation: PromptHookMutation,
+) -> PromptHookContext {
     if let Some(raw_input) = mutation.raw_input {
         current.raw_input = Some(raw_input);
     }

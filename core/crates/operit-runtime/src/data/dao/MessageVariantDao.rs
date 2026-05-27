@@ -94,9 +94,12 @@ impl MessageVariantDao {
 
     pub fn insertVariant(&self, variant: MessageVariantEntity) -> Result<i64, SqliteStoreError> {
         if variant.variantId == 0 {
+            self.store.execute(
+                insertVariantSql(false),
+                insertVariantParams(&variant, false),
+            )?;
             self.store
-                .execute(insertVariantSql(false), insertVariantParams(&variant, false))?;
-            self.store.queryScalar("SELECT last_insert_rowid()", sqliteParams![])
+                .queryScalar("SELECT last_insert_rowid()", sqliteParams![])
         } else {
             self.store
                 .execute(insertVariantSql(true), insertVariantParams(&variant, true))?;
@@ -104,7 +107,10 @@ impl MessageVariantDao {
         }
     }
 
-    pub fn insertVariants(&self, variants: Vec<MessageVariantEntity>) -> Result<(), SqliteStoreError> {
+    pub fn insertVariants(
+        &self,
+        variants: Vec<MessageVariantEntity>,
+    ) -> Result<(), SqliteStoreError> {
         self.store.transaction(|transaction| {
             for variant in variants {
                 if variant.variantId == 0 {
@@ -113,10 +119,8 @@ impl MessageVariantDao {
                         insertVariantParams(&variant, false),
                     )?;
                 } else {
-                    transaction.execute(
-                        insertVariantSql(true),
-                        insertVariantParams(&variant, true),
-                    )?;
+                    transaction
+                        .execute(insertVariantSql(true), insertVariantParams(&variant, true))?;
                 }
             }
             Ok(())
@@ -217,8 +221,10 @@ impl MessageVariantDao {
     }
 
     pub fn deleteAllVariantsForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
-        self.store
-            .execute("DELETE FROM message_variants WHERE chatId = ?1", sqliteParams![chatId])?;
+        self.store.execute(
+            "DELETE FROM message_variants WHERE chatId = ?1",
+            sqliteParams![chatId],
+        )?;
         Ok(())
     }
 
@@ -277,10 +283,7 @@ fn insertVariantSql(withVariantId: bool) -> &'static str {
     }
 }
 
-fn insertVariantParams(
-    variant: &MessageVariantEntity,
-    withVariantId: bool,
-) -> Vec<SqliteValue> {
+fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> Vec<SqliteValue> {
     if withVariantId {
         sqliteParams![
             variant.variantId,

@@ -13,7 +13,8 @@ impl CharacterCardBilingualData {
     #[allow(non_snake_case)]
     pub fn getDefaultCharacterSetting(useEnglish: bool) -> String {
         if useEnglish {
-            "You are Operit, an all-purpose AI assistant designed to help users solve any task.".to_string()
+            "You are Operit, an all-purpose AI assistant designed to help users solve any task."
+                .to_string()
         } else {
             "你是Operit，一个全能AI助手，旨在解决用户提出的任何任务。".to_string()
         }

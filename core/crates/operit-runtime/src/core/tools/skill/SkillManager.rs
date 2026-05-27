@@ -167,7 +167,10 @@ impl SkillManager {
         if !skill.description.trim().is_empty() {
             prompt.push_str(&format!("Description: {}\n", skill.description));
         }
-        prompt.push_str(&format!("SKILL.md path: {}\n", skill.skillFile.to_string_lossy()));
+        prompt.push_str(&format!(
+            "SKILL.md path: {}\n",
+            skill.skillFile.to_string_lossy()
+        ));
         prompt.push_str(&format!(
             "Skill directory: {}\n",
             skill.directory.to_string_lossy()
@@ -408,15 +411,12 @@ fn walkDirectory(dir: &Path, indent: &str, output: &mut String) {
     children.sort_by(|left, right| {
         let leftPath = left.path();
         let rightPath = right.path();
-        leftPath
-            .is_file()
-            .cmp(&rightPath.is_file())
-            .then_with(|| {
-                left.file_name()
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .cmp(&right.file_name().to_string_lossy().to_ascii_lowercase())
-            })
+        leftPath.is_file().cmp(&rightPath.is_file()).then_with(|| {
+            left.file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .cmp(&right.file_name().to_string_lossy().to_ascii_lowercase())
+        })
     });
     for child in children {
         let childPath = child.path();
@@ -442,9 +442,7 @@ fn currentUseTime() -> String {
 
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> u128 {
-    match std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-    {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(duration) => duration.as_millis(),
         Err(_) => 0,
     }
@@ -489,7 +487,10 @@ fn unzipToDirectory(zipFile: &Path, destinationDir: &Path) -> Result<(), String>
 
 #[allow(non_snake_case)]
 fn singleChildDirectory(root: &Path) -> Option<PathBuf> {
-    let children = fs::read_dir(root).ok()?.filter_map(Result::ok).collect::<Vec<_>>();
+    let children = fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
     if children.len() == 1 && children[0].path().is_dir() {
         Some(children[0].path())
     } else {

@@ -38,13 +38,17 @@ impl QwenAIProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body(request)?;
-        let siliconFlowBudget = if self.inner.provider_type == "SILICONFLOW" && request.enable_thinking {
-            self.resolve_silicon_flow_thinking_budget(&body)?
-        } else {
-            None
-        };
+        let siliconFlowBudget =
+            if self.inner.provider_type == "SILICONFLOW" && request.enable_thinking {
+                self.resolve_silicon_flow_thinking_budget(&body)?
+            } else {
+                None
+            };
         if let Value::Object(object) = &mut body {
             if self.inner.provider_type == "SILICONFLOW" {
                 object
@@ -62,7 +66,10 @@ impl QwenAIProvider {
         Ok(body)
     }
 
-    fn resolve_silicon_flow_thinking_budget(&self, requestJson: &Value) -> Result<Option<i32>, AiServiceError> {
+    fn resolve_silicon_flow_thinking_budget(
+        &self,
+        requestJson: &Value,
+    ) -> Result<Option<i32>, AiServiceError> {
         let qualityLevel = ApiPreferences::getInstance()
             .thinkingQualityLevelFlow()
             .first()
@@ -93,25 +100,41 @@ impl QwenAIProvider {
 
 #[async_trait]
 impl AIService for QwenAIProvider {
-    fn input_token_count(&self) -> i32 { self.inner.input_token_count() }
-    fn cached_input_token_count(&self) -> i32 { self.inner.cached_input_token_count() }
-    fn output_token_count(&self) -> i32 { self.inner.output_token_count() }
-    fn provider_model(&self) -> String { self.inner.provider_model() }
-    fn reset_token_counts(&mut self) { self.inner.reset_token_counts(); }
-    fn cancel_streaming(&mut self) { self.inner.cancel_streaming(); }
+    fn input_token_count(&self) -> i32 {
+        self.inner.input_token_count()
+    }
+    fn cached_input_token_count(&self) -> i32 {
+        self.inner.cached_input_token_count()
+    }
+    fn output_token_count(&self) -> i32 {
+        self.inner.output_token_count()
+    }
+    fn provider_model(&self) -> String {
+        self.inner.provider_model()
+    }
+    fn reset_token_counts(&mut self) {
+        self.inner.reset_token_counts();
+    }
+    fn cancel_streaming(&mut self) {
+        self.inner.cancel_streaming();
+    }
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.inner.reset_token_counts();
         let request_body = self.create_request_body(&request)?;
-        self.inner.send_prepared_request(request, request_body).await
+        self.inner
+            .send_prepared_request(request, request_body)
+            .await
     }
     async fn calculate_input_tokens(
         &self,
         chat_history: &[crate::core::chat::hooks::PromptTurn::PromptTurn],
         available_tools: &[crate::data::model::ToolPrompt::ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        self.inner.calculate_input_tokens(chat_history, available_tools).await
+        self.inner
+            .calculate_input_tokens(chat_history, available_tools)
+            .await
     }
 }

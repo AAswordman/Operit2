@@ -144,7 +144,8 @@ impl ModelConfigDefaults {
     pub const DEFAULT_ENABLE_SUMMARY: bool = true;
     pub const DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT: bool = true;
     pub const DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD: i32 = 16;
-    pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str = "https://api.deepseek.com/v1/chat/completions";
+    pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str =
+        "https://api.deepseek.com/v1/chat/completions";
     pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-v4-flash";
 }
 
@@ -316,8 +317,10 @@ impl Default for ModelConfigData {
             enableMaxContextMode: ModelConfigDefaults::DEFAULT_ENABLE_MAX_CONTEXT_MODE,
             summaryTokenThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD,
             enableSummary: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY,
-            enableSummaryByMessageCount: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
-            summaryMessageCountThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
+            enableSummaryByMessageCount:
+                ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
+            summaryMessageCountThreshold:
+                ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
             mnnForwardType: 0,
             mnnThreadCount: 4,
             llamaThreadCount: 4,

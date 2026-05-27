@@ -51,10 +51,7 @@ impl<S> DelegatingRevisableTextStream<S>
 where
     S: Stream<Item = String>,
 {
-    pub fn new(
-        upstream: S,
-        event_channel: MutableSharedStreamImpl<TextStreamEvent>,
-    ) -> Self {
+    pub fn new(upstream: S, event_channel: MutableSharedStreamImpl<TextStreamEvent>) -> Self {
         Self {
             upstream,
             event_channel,
@@ -182,10 +179,7 @@ impl<S> DelegatingRevisableCharStream<S>
 where
     S: Stream<Item = char>,
 {
-    pub fn new(
-        upstream: S,
-        event_channel: MutableSharedStreamImpl<TextStreamEvent>,
-    ) -> Self {
+    pub fn new(upstream: S, event_channel: MutableSharedStreamImpl<TextStreamEvent>) -> Self {
         Self {
             upstream,
             event_channel,

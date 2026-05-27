@@ -1,11 +1,11 @@
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
@@ -13,6 +13,7 @@ use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
+use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_store::PreferencesDataStore::StateFlow;
 pub trait ChatServiceUiBridge {}
 
@@ -107,20 +108,21 @@ impl ChatServiceCore {
         ) {
             delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
             delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-            delegate.sendUserMessage(
-                service,
-                promptFunctionType,
-                roleCardIdOverride,
-                chatIdOverride,
-                messageTextOverride,
-                proxySenderNameOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
-                attachments,
-                replyToMessage,
-                turnOptions,
-            )
-            .await;
+            delegate
+                .sendUserMessage(
+                    service,
+                    promptFunctionType,
+                    roleCardIdOverride,
+                    chatIdOverride,
+                    messageTextOverride,
+                    proxySenderNameOverride,
+                    chatModelConfigIdOverride,
+                    chatModelIndexOverride,
+                    attachments,
+                    replyToMessage,
+                    turnOptions,
+                )
+                .await;
             self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
             self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
         }
@@ -142,6 +144,10 @@ impl ChatServiceCore {
 
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
         self.messageProcessingDelegate.getResponseStream(chatId)
+    }
+
+    pub fn splitMarkdownContent(&self, content: String) -> Vec<MarkdownStreamEvent> {
+        MarkdownRenderEventStream::fromContent(content)
     }
 
     pub fn createNewChat(
@@ -192,7 +198,12 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String, workspaceEnv: Option<String>) {
+    pub fn bindChatToWorkspace(
+        &mut self,
+        chatId: String,
+        workspace: String,
+        workspaceEnv: Option<String>,
+    ) {
         self.chatHistoryDelegate
             .bindChatToWorkspace(chatId, workspace, workspaceEnv);
     }
@@ -203,7 +214,12 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn renameWorkspaceAndChat(&mut self, chatId: String, newWorkspace: String, newTitle: String) {
+    pub fn renameWorkspaceAndChat(
+        &mut self,
+        chatId: String,
+        newWorkspace: String,
+        newTitle: String,
+    ) {
         self.chatHistoryDelegate
             .renameWorkspaceAndChat(chatId, newWorkspace, newTitle);
     }
@@ -226,8 +242,12 @@ impl ChatServiceCore {
         else {
             return false;
         };
-        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext())
-            .syncState(workspacePath, rewindTimestamp, workspaceEnv, Some(chatId));
+        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext()).syncState(
+            workspacePath,
+            rewindTimestamp,
+            workspaceEnv,
+            Some(chatId),
+        );
         true
     }
 
@@ -258,7 +278,8 @@ impl ChatServiceCore {
         self.rewindWorkspaceForMessage(index);
         self.chatHistoryDelegate
             .truncateChatHistory(Some(targetMessage.timestamp));
-        self.messageProcessingDelegate.updateUserMessage(editedContent);
+        self.messageProcessingDelegate
+            .updateUserMessage(editedContent);
         self.sendUserMessage(
             PromptFunctionType::CHAT,
             None,
@@ -298,7 +319,12 @@ impl ChatServiceCore {
             .workspace
             .clone()
             .filter(|value| !value.trim().is_empty())?;
-        Some((chatId, workspacePath, currentChat.workspaceEnv.clone(), rewindTimestamp))
+        Some((
+            chatId,
+            workspacePath,
+            currentChat.workspaceEnv.clone(),
+            rewindTimestamp,
+        ))
     }
 
     pub fn resetTokenStatistics(&mut self) {}
@@ -339,14 +365,17 @@ impl ChatServiceCore {
         self.messageProcessingDelegate.activeStreamingChatIdsFlow()
     }
 
-    pub fn inputProcessingStateByChatId(&self) -> &std::collections::HashMap<String, InputProcessingState> {
+    pub fn inputProcessingStateByChatId(
+        &self,
+    ) -> &std::collections::HashMap<String, InputProcessingState> {
         &self.messageProcessingDelegate.inputProcessingStateByChatId
     }
 
     pub fn inputProcessingStateByChatIdFlow(
         &self,
     ) -> StateFlow<std::collections::HashMap<String, InputProcessingState>> {
-        self.messageProcessingDelegate.inputProcessingStateByChatIdFlow()
+        self.messageProcessingDelegate
+            .inputProcessingStateByChatIdFlow()
     }
 
     #[allow(non_snake_case)]
@@ -377,7 +406,9 @@ impl ChatServiceCore {
             .contains(&chatId)
     }
 
-    pub fn currentTurnToolInvocationCountByChatId(&self) -> &std::collections::HashMap<String, i32> {
+    pub fn currentTurnToolInvocationCountByChatId(
+        &self,
+    ) -> &std::collections::HashMap<String, i32> {
         &self
             .messageProcessingDelegate
             .currentTurnToolInvocationCountByChatId
@@ -386,7 +417,8 @@ impl ChatServiceCore {
     pub fn currentTurnToolInvocationCountByChatIdFlow(
         &self,
     ) -> StateFlow<std::collections::HashMap<String, i32>> {
-        self.messageProcessingDelegate.currentTurnToolInvocationCountByChatIdFlow()
+        self.messageProcessingDelegate
+            .currentTurnToolInvocationCountByChatIdFlow()
     }
 
     pub fn chatHistory(&self) -> &Vec<ChatMessage> {
@@ -412,7 +444,9 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn chatHistoriesFlow(&self) -> StateFlow<Vec<crate::data::model::ChatHistory::ChatHistory>> {
+    pub fn chatHistoriesFlow(
+        &self,
+    ) -> StateFlow<Vec<crate::data::model::ChatHistory::ChatHistory>> {
         self.chatHistoryDelegate.chatHistoriesFlow()
     }
 
@@ -488,7 +522,8 @@ impl ChatServiceCore {
     }
 
     pub fn setSpeakMessageHandler(&mut self, handler: fn(String, bool)) {
-        self.messageProcessingDelegate.setSpeakMessageHandler(handler);
+        self.messageProcessingDelegate
+            .setSpeakMessageHandler(handler);
     }
 
     pub fn reloadChatMessagesSmart(&mut self, chatId: String) {
@@ -652,7 +687,10 @@ fn findClosingXmlLikeTagEnd(text: &str, from: usize, tagName: &str) -> Option<us
 
     while let Some(relativeStart) = text[from + searchStart..].find("</") {
         let closeStart = from + searchStart + relativeStart;
-        if let Some(closeEnd) = text[closeStart..].find('>').map(|offset| closeStart + offset) {
+        if let Some(closeEnd) = text[closeStart..]
+            .find('>')
+            .map(|offset| closeStart + offset)
+        {
             let body = &text[closeStart + 2..closeEnd];
             if body.eq_ignore_ascii_case(tagName) {
                 return Some(closeEnd + 1);

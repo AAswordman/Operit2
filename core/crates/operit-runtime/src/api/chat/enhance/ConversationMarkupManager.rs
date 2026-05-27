@@ -45,12 +45,9 @@ impl ConversationMarkupManager {
             } else {
                 detail
             };
-            Self::createBoundedToolResultXml(
-                &result.toolName,
-                "error",
-                &errorPayload,
-                |payload| format!("<content><error>{payload}</error></content>"),
-            )
+            Self::createBoundedToolResultXml(&result.toolName, "error", &errorPayload, |payload| {
+                format!("<content><error>{payload}</error></content>")
+            })
         }
     }
 
@@ -99,9 +96,7 @@ impl ConversationMarkupManager {
 
     fn createToolResultXml(toolName: &str, status: &str, content: &str) -> String {
         let tagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
-        format!(
-            r#"<{tagName} name="{toolName}" status="{status}">{content}</{tagName}>"#
-        )
+        format!(r#"<{tagName} name="{toolName}" status="{status}">{content}</{tagName}>"#)
     }
 
     fn createBoundedToolResultXml(
@@ -125,7 +120,10 @@ impl ConversationMarkupManager {
         }
         let suffix_len = TOOL_RESULT_TRUNCATION_SUFFIX.chars().count();
         if suffix_len >= maxChars {
-            return TOOL_RESULT_TRUNCATION_SUFFIX.chars().take(maxChars).collect();
+            return TOOL_RESULT_TRUNCATION_SUFFIX
+                .chars()
+                .take(maxChars)
+                .collect();
         }
         let keep = maxChars - suffix_len;
         let mut truncated = payload.chars().take(keep).collect::<String>();

@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -193,18 +193,19 @@ impl MessageCoordinationDelegate {
             chatModelIndexOverride.or(self.currentChatModelIndexOverride);
         let effectivePreferenceProfileIdOverride =
             preferenceProfileIdOverride.or_else(|| self.currentPreferenceProfileIdOverride.clone());
-        let newWindowSize = self.recalculateStableWindowSize(
-            service,
-            Some(targetChatId.clone()),
-            roleCardId,
-            effectivePromptFunctionType,
-            groupOrchestrationMode,
-            groupParticipantNamesText,
-            effectiveChatModelConfigIdOverride,
-            effectiveChatModelIndexOverride,
-            effectivePreferenceProfileIdOverride,
-        )
-        .await;
+        let newWindowSize = self
+            .recalculateStableWindowSize(
+                service,
+                Some(targetChatId.clone()),
+                roleCardId,
+                effectivePromptFunctionType,
+                groupOrchestrationMode,
+                groupParticipantNamesText,
+                effectiveChatModelConfigIdOverride,
+                effectiveChatModelIndexOverride,
+                effectivePreferenceProfileIdOverride,
+            )
+            .await;
         let (inputTokens, outputTokens) = self
             .tokenStatisticsDelegate
             .getCumulativeTokenCounts(Some(targetChatId.clone()));
@@ -214,8 +215,12 @@ impl MessageCoordinationDelegate {
             newWindowSize,
             Some(targetChatId.clone()),
         );
-        self.tokenStatisticsDelegate
-            .setTokenCounts(Some(targetChatId.clone()), inputTokens, outputTokens, newWindowSize);
+        self.tokenStatisticsDelegate.setTokenCounts(
+            Some(targetChatId.clone()),
+            inputTokens,
+            outputTokens,
+            newWindowSize,
+        );
         Some(newWindowSize)
     }
 
@@ -233,7 +238,10 @@ impl MessageCoordinationDelegate {
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) {
-        if chatIdOverride.as_ref().map(|id| id.trim().is_empty()).unwrap_or(true)
+        if chatIdOverride
+            .as_ref()
+            .map(|id| id.trim().is_empty())
+            .unwrap_or(true)
             && self.chatHistoryDelegate.currentChatId.is_none()
         {
             self.chatHistoryDelegate
@@ -256,7 +264,10 @@ impl MessageCoordinationDelegate {
                 .unwrap_or_else(|| {
                     self.chatHistoryDelegate
                         .createNewChat(None, None, None, true, true, None);
-                    self.chatHistoryDelegate.currentChatId.clone().unwrap_or_default()
+                    self.chatHistoryDelegate
+                        .currentChatId
+                        .clone()
+                        .unwrap_or_default()
                 });
             if self
                 .orchestrateGroupConversation(
@@ -398,9 +409,8 @@ impl MessageCoordinationDelegate {
             .setActiveChatId(Some(chatId.clone()));
         self.tokenStatisticsDelegate
             .bindChatService(Some(chatId.clone()), enhancedAiService);
-        let messageText = messageTextOverride.unwrap_or_else(|| {
-            self.messageProcessingDelegate.userMessage.text.clone()
-        });
+        let messageText = messageTextOverride
+            .unwrap_or_else(|| self.messageProcessingDelegate.userMessage.text.clone());
         let currentChat = self
             .chatHistoryDelegate
             .chatHistories
@@ -418,17 +428,20 @@ impl MessageCoordinationDelegate {
             None => match ActivePromptManager::getInstance().resolveActiveCardIdForSend() {
                 Ok(roleCardId) => roleCardId,
                 Err(error) => {
-                    self.messageProcessingDelegate.setInputProcessingStateForChat(
-                        chatId.clone(),
-                        InputProcessingState::Error {
-                            message: error.to_string(),
-                        },
-                    );
+                    self.messageProcessingDelegate
+                        .setInputProcessingStateForChat(
+                            chatId.clone(),
+                            InputProcessingState::Error {
+                                message: error.to_string(),
+                            },
+                        );
                     return;
                 }
             },
         };
-        let runtimeChatHistory = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
+        let runtimeChatHistory = self
+            .chatHistoryDelegate
+            .getRuntimeChatHistory(chatId.clone());
         let result = self
             .messageProcessingDelegate
             .sendUserMessage(SendUserMessageProcessingRequest {
@@ -464,12 +477,13 @@ impl MessageCoordinationDelegate {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                self.messageProcessingDelegate.setInputProcessingStateForChat(
-                    chatId.clone(),
-                    InputProcessingState::Error {
-                        message: error.to_string(),
-                    },
-                );
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(
+                        chatId.clone(),
+                        InputProcessingState::Error {
+                            message: error.to_string(),
+                        },
+                    );
                 return;
             }
         };
@@ -478,14 +492,23 @@ impl MessageCoordinationDelegate {
         let (inputTokens, outputTokens) = self
             .tokenStatisticsDelegate
             .getCumulativeTokenCounts(Some(chatId.clone()));
-        let windowSize = result
-            .nextWindowSize
-            .unwrap_or_else(|| self.tokenStatisticsDelegate.getLastCurrentWindowSize(Some(chatId.clone())));
-        self.tokenStatisticsDelegate
-            .setTokenCounts(Some(chatId.clone()), inputTokens, outputTokens, windowSize);
+        let windowSize = result.nextWindowSize.unwrap_or_else(|| {
+            self.tokenStatisticsDelegate
+                .getLastCurrentWindowSize(Some(chatId.clone()))
+        });
+        self.tokenStatisticsDelegate.setTokenCounts(
+            Some(chatId.clone()),
+            inputTokens,
+            outputTokens,
+            windowSize,
+        );
         if turnOptions.persistTurn {
-            self.chatHistoryDelegate
-                .saveCurrentChat(inputTokens, outputTokens, windowSize, Some(chatId.clone()));
+            self.chatHistoryDelegate.saveCurrentChat(
+                inputTokens,
+                outputTokens,
+                windowSize,
+                Some(chatId.clone()),
+            );
         }
         if isAutoContinuation {
             self.removePendingAutoContinuation(chatId);
@@ -576,21 +599,31 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .and_then(|history| history.characterGroupId.clone());
         if existingBinding.as_deref() != Some(group.id.as_str()) {
-            self.chatHistoryDelegate
-                .updateChatCharacterBinding(chatId.clone(), None, Some(group.id.clone()));
+            self.chatHistoryDelegate.updateChatCharacterBinding(
+                chatId.clone(),
+                None,
+                Some(group.id.clone()),
+            );
         }
 
-        let originalUserText = self.messageProcessingDelegate.userMessage.text.trim().to_string();
+        let originalUserText = self
+            .messageProcessingDelegate
+            .userMessage
+            .text
+            .trim()
+            .to_string();
         if originalUserText.is_empty() {
             return false;
         }
-        self.messageProcessingDelegate.updateUserMessage(String::new());
-        self.messageProcessingDelegate.setInputProcessingStateForChat(
-            chatId.clone(),
-            InputProcessingState::Processing {
-                message: "role response planner planning".to_string(),
-            },
-        );
+        self.messageProcessingDelegate
+            .updateUserMessage(String::new());
+        self.messageProcessingDelegate
+            .setInputProcessingStateForChat(
+                chatId.clone(),
+                InputProcessingState::Processing {
+                    message: "role response planner planning".to_string(),
+                },
+            );
 
         let currentChat = self
             .chatHistoryDelegate
@@ -620,12 +653,13 @@ impl MessageCoordinationDelegate {
             ) {
             Ok(content) => content,
             Err(error) => {
-                self.messageProcessingDelegate.setInputProcessingStateForChat(
-                    chatId,
-                    InputProcessingState::Error {
-                        message: error.to_string(),
-                    },
-                );
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(
+                        chatId,
+                        InputProcessingState::Error {
+                            message: error.to_string(),
+                        },
+                    );
                 return true;
             }
         };
@@ -661,15 +695,21 @@ impl MessageCoordinationDelegate {
         let groupParticipantNamesText =
             self.buildGroupParticipantNamesText(&orderedMembers, &memberCardsById);
         let Some(plannedRounds) = self
-            .planResponseOrder(enhancedAiService, &originalUserText, &orderedMembers, &memberCardsById)
+            .planResponseOrder(
+                enhancedAiService,
+                &originalUserText,
+                &orderedMembers,
+                &memberCardsById,
+            )
             .await
         else {
-            self.messageProcessingDelegate.setInputProcessingStateForChat(
-                chatId,
-                InputProcessingState::Error {
-                    message: "role response planner failed".to_string(),
-                },
-            );
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(
+                    chatId,
+                    InputProcessingState::Error {
+                        message: "role response planner failed".to_string(),
+                    },
+                );
             return true;
         };
         if plannedRounds.rounds.is_empty()
@@ -678,10 +718,8 @@ impl MessageCoordinationDelegate {
                 .iter()
                 .all(|round| round.iter().all(|member| !member.speak))
         {
-            self.messageProcessingDelegate.setInputProcessingStateForChat(
-                chatId,
-                InputProcessingState::Completed,
-            );
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(chatId, InputProcessingState::Completed);
             return true;
         }
 
@@ -700,12 +738,13 @@ impl MessageCoordinationDelegate {
                 let Some(memberCard) = memberCardsById.get(&member.characterCardId).cloned() else {
                     continue;
                 };
-                self.messageProcessingDelegate.setInputProcessingStateForChat(
-                    chatId.clone(),
-                    InputProcessingState::Processing {
-                        message: format!("{} replying", memberCard.name),
-                    },
-                );
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(
+                        chatId.clone(),
+                        InputProcessingState::Processing {
+                            message: format!("{} replying", memberCard.name),
+                        },
+                    );
                 let beforeLastAiTimestamp = self
                     .chatHistoryDelegate
                     .getRuntimeChatHistory(chatId.clone())
@@ -714,8 +753,10 @@ impl MessageCoordinationDelegate {
                     .map(|message| message.timestamp)
                     .max()
                     .unwrap_or(i64::MIN);
-                let targetTurnCounter =
-                    self.messageProcessingDelegate.getTurnCompleteCounter(chatId.clone()) + 1;
+                let targetTurnCounter = self
+                    .messageProcessingDelegate
+                    .getTurnCompleteCounter(chatId.clone())
+                    + 1;
                 let isFirstMemberOfFirstRound = roundIndex == 0 && memberIndex == 0;
                 let memberMessage = if isFirstMemberOfFirstRound {
                     originalUserText.clone()
@@ -742,7 +783,10 @@ impl MessageCoordinationDelegate {
                     turnOptions.clone(),
                 )
                 .await;
-                if !self.awaitTurnComplete(chatId.clone(), targetTurnCounter, 180_000).await {
+                if !self
+                    .awaitTurnComplete(chatId.clone(), targetTurnCounter, 180_000)
+                    .await
+                {
                     continue;
                 }
                 let newAiMessage = self
@@ -750,7 +794,9 @@ impl MessageCoordinationDelegate {
                     .getRuntimeChatHistory(chatId.clone())
                     .into_iter()
                     .rev()
-                    .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp);
+                    .find(|message| {
+                        message.sender == "ai" && message.timestamp > beforeLastAiTimestamp
+                    });
                 if let Some(newAiMessage) = newAiMessage {
                     if !newAiMessage.content.trim().is_empty() {
                         let effectiveSpeech = extractEffectiveSpeechContent(&newAiMessage.content);
@@ -764,12 +810,8 @@ impl MessageCoordinationDelegate {
                 }
             }
         }
-        self.maybeSummarizeAfterGroupRound(
-            enhancedAiService,
-            chatId,
-            promptFunctionType,
-        )
-        .await;
+        self.maybeSummarizeAfterGroupRound(enhancedAiService, chatId, promptFunctionType)
+            .await;
         true
     }
 
@@ -785,11 +827,15 @@ impl MessageCoordinationDelegate {
             .iter()
             .filter_map(|member| {
                 let card = memberCardsById.get(&member.characterCardId)?;
-                Some(format!("- id: {}, name: {}", member.characterCardId, card.name))
+                Some(format!(
+                    "- id: {}, name: {}",
+                    member.characterCardId, card.name
+                ))
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let prompt = FunctionalPrompts::buildGroupRoleResponsePlannerPrompt(&memberLines, userText, false);
+        let prompt =
+            FunctionalPrompts::buildGroupRoleResponsePlannerPrompt(&memberLines, userText, false);
         let mut options = SendMessageOptions::new();
         options.message = prompt;
         options.functionType = FunctionType::ROLE_RESPONSE_PLANNER;
@@ -797,8 +843,9 @@ impl MessageCoordinationDelegate {
         options.enableThinking = false;
         options.stream = false;
         let response = enhancedAiService.sendMessage(options).await.ok()?;
-        let rawContent =
-            removeThinkingContent(&collect_stream_chunks(response).join("")).trim().to_string();
+        let rawContent = removeThinkingContent(&collect_stream_chunks(response).join(""))
+            .trim()
+            .to_string();
         self.parsePlannedRounds(
             &rawContent,
             members
@@ -847,7 +894,9 @@ impl MessageCoordinationDelegate {
         };
         let parseMember = |item: &Value| -> Option<PlannedMember> {
             match item {
-                Value::String(value) => resolveId(Some(value)).map(|id| PlannedMember { id, speak: true }),
+                Value::String(value) => {
+                    resolveId(Some(value)).map(|id| PlannedMember { id, speak: true })
+                }
                 Value::Object(map) => {
                     let id = resolveId(
                         map.get("id")
@@ -900,7 +949,9 @@ impl MessageCoordinationDelegate {
                 members.push(member);
             }
         }
-        Some(PlannedRounds { rounds: vec![members] })
+        Some(PlannedRounds {
+            rounds: vec![members],
+        })
     }
 
     #[allow(non_snake_case)]
@@ -949,12 +1000,18 @@ impl MessageCoordinationDelegate {
     async fn awaitTurnComplete(&self, chatId: String, targetCounter: i64, timeoutMs: u64) -> bool {
         let started = Instant::now();
         while started.elapsed() < Duration::from_millis(timeoutMs) {
-            if self.messageProcessingDelegate.getTurnCompleteCounter(chatId.clone()) >= targetCounter {
+            if self
+                .messageProcessingDelegate
+                .getTurnCompleteCounter(chatId.clone())
+                >= targetCounter
+            {
                 return true;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        self.messageProcessingDelegate.getTurnCompleteCounter(chatId) >= targetCounter
+        self.messageProcessingDelegate
+            .getTurnCompleteCounter(chatId)
+            >= targetCounter
     }
 
     #[allow(non_snake_case)]
@@ -986,7 +1043,9 @@ impl MessageCoordinationDelegate {
         if !chatContextSettings.enableSummary {
             return;
         }
-        let currentMessages = self.chatHistoryDelegate.getRuntimeChatHistory(chatId.clone());
+        let currentMessages = self
+            .chatHistoryDelegate
+            .getRuntimeChatHistory(chatId.clone());
         let currentTokens = self
             .tokenStatisticsDelegate
             .getLastCurrentWindowSize(Some(chatId.clone()));
@@ -1023,7 +1082,10 @@ impl MessageCoordinationDelegate {
         }
     }
 
-    pub async fn manuallySummarizeConversation(&mut self, enhancedAiService: &mut EnhancedAIService) {
+    pub async fn manuallySummarizeConversation(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+    ) {
         if self.isSummarizing {
             return;
         }
@@ -1070,8 +1132,7 @@ impl MessageCoordinationDelegate {
         self.summaryJob = None;
     }
 
-    fn cancelSummaryStreamingInternal(&mut self, _enhancedAiService: &mut EnhancedAIService) {
-    }
+    fn cancelSummaryStreamingInternal(&mut self, _enhancedAiService: &mut EnhancedAIService) {}
 
     fn cancelSummaryInternal(
         &mut self,
@@ -1094,7 +1155,8 @@ impl MessageCoordinationDelegate {
                     .map(|chatId| self.pendingAutoContinuationByChatId.contains_key(chatId))
                     .unwrap_or(false)
             });
-        if !shouldCancelSummary && !shouldCancelAsyncSummary && !shouldCancelPendingAutoContinuation {
+        if !shouldCancelSummary && !shouldCancelAsyncSummary && !shouldCancelPendingAutoContinuation
+        {
             if targetChatId.is_none() {
                 self.cancelSummaryStreamingInternal(enhancedAiService);
             }
@@ -1161,10 +1223,13 @@ impl MessageCoordinationDelegate {
             .setPendingAsyncSummaryUiForChat(originalChatId.clone(), true);
         self.messageProcessingDelegate
             .setSuppressIdleCompletedStateForChat(originalChatId.clone(), true);
-        self.messageProcessingDelegate.setInputProcessingStateForChat(
-            originalChatId.clone(),
-            InputProcessingState::Summarizing { message: "compressing history".to_string() },
-        );
+        self.messageProcessingDelegate
+            .setInputProcessingStateForChat(
+                originalChatId.clone(),
+                InputProcessingState::Summarizing {
+                    message: "compressing history".to_string(),
+                },
+            );
         let isGroupChat = self
             .chatHistoryDelegate
             .chatHistories
@@ -1172,8 +1237,13 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == originalChatId)
             .and_then(|history| history.characterGroupId.clone())
             .is_some();
-        if let Ok(Some(summaryMessage)) =
-            AIMessageManager::summarizeMemory(enhancedAiService, snapshotMessages, false, isGroupChat).await
+        if let Ok(Some(summaryMessage)) = AIMessageManager::summarizeMemory(
+            enhancedAiService,
+            snapshotMessages,
+            false,
+            isGroupChat,
+        )
+        .await
         {
             self.chatHistoryDelegate.addSummaryMessage(
                 summaryMessage,
@@ -1200,10 +1270,8 @@ impl MessageCoordinationDelegate {
             .setPendingAsyncSummaryUiForChat(originalChatId.clone(), false);
         self.messageProcessingDelegate
             .setSuppressIdleCompletedStateForChat(originalChatId.clone(), false);
-        self.messageProcessingDelegate.setInputProcessingStateForChat(
-            originalChatId,
-            InputProcessingState::Idle,
-        );
+        self.messageProcessingDelegate
+            .setInputProcessingStateForChat(originalChatId, InputProcessingState::Idle);
     }
 
     async fn summarizeHistory(
@@ -1224,15 +1292,19 @@ impl MessageCoordinationDelegate {
             return false;
         }
         self.isSummarizing = true;
-        let currentChatId = chatIdOverride.or_else(|| self.chatHistoryDelegate.currentChatId.clone());
+        let currentChatId =
+            chatIdOverride.or_else(|| self.chatHistoryDelegate.currentChatId.clone());
         self.summarizingChatId = currentChatId.clone();
         if let Some(currentChatId) = currentChatId.clone() {
             self.messageProcessingDelegate
                 .setSuppressIdleCompletedStateForChat(currentChatId.clone(), true);
-            self.messageProcessingDelegate.setInputProcessingStateForChat(
-                currentChatId,
-                InputProcessingState::Summarizing { message: "compressing history".to_string() },
-            );
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(
+                    currentChatId,
+                    InputProcessingState::Summarizing {
+                        message: "compressing history".to_string(),
+                    },
+                );
         }
         let effectiveChatModelConfigIdOverride =
             chatModelConfigIdOverride.or_else(|| self.currentChatModelConfigIdOverride.clone());
@@ -1259,8 +1331,13 @@ impl MessageCoordinationDelegate {
             .get(insertPosition)
             .map(|message| message.timestamp);
         let mut summarySuccess = false;
-        if let Ok(Some(summaryMessage)) =
-            AIMessageManager::summarizeMemory(enhancedAiService, currentMessages, autoContinue, isGroupChat).await
+        if let Ok(Some(summaryMessage)) = AIMessageManager::summarizeMemory(
+            enhancedAiService,
+            currentMessages,
+            autoContinue,
+            isGroupChat,
+        )
+        .await
         {
             self.chatHistoryDelegate.addSummaryMessage(
                 summaryMessage,
@@ -1291,7 +1368,10 @@ impl MessageCoordinationDelegate {
             if let Some(currentChatId) = currentChatId {
                 let continuationPromptType =
                     promptFunctionType.unwrap_or_else(|| self.currentPromptFunctionType.clone());
-                if self.messageProcessingDelegate.isChatLoading(currentChatId.clone()) {
+                if self
+                    .messageProcessingDelegate
+                    .isChatLoading(currentChatId.clone())
+                {
                     self.queuePendingAutoContinuation(
                         currentChatId,
                         continuationPromptType,
@@ -1388,7 +1468,9 @@ fn removeThinkingContent(input: &str) -> String {
 fn extractEffectiveSpeechContent(content: &str) -> String {
     let withoutThinking = removeThinkingContent(content);
     let withoutStatus = removeTagBlocks(&withoutThinking, "status");
-    removeSelfClosingTags(&withoutStatus, "status").trim().to_string()
+    removeSelfClosingTags(&withoutStatus, "status")
+        .trim()
+        .to_string()
 }
 
 #[allow(non_snake_case)]

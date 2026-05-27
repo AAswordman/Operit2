@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
@@ -22,11 +22,11 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use crate::util::stream::HotStream::SharedStream;
 use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
 use crate::util::stream::Stream::Stream;
 use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -231,8 +231,12 @@ impl MessageProcessingDelegate {
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
             turnCompleteCounterByChatId: self.turnCompleteCounterByChatId.clone(),
             turnCompleteCounterByChatIdFlow: self.turnCompleteCounterByChatIdFlow.clone(),
-            currentTurnToolInvocationCountByChatId: self.currentTurnToolInvocationCountByChatId.clone(),
-            currentTurnToolInvocationCountByChatIdFlow: self.currentTurnToolInvocationCountByChatIdFlow.clone(),
+            currentTurnToolInvocationCountByChatId: self
+                .currentTurnToolInvocationCountByChatId
+                .clone(),
+            currentTurnToolInvocationCountByChatIdFlow: self
+                .currentTurnToolInvocationCountByChatIdFlow
+                .clone(),
             chatRuntimes: self.chatRuntimes.clone(),
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
@@ -243,7 +247,10 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn speechPreview(text: String) -> String {
-        text.replace('\n', "\\n").chars().take(AUTO_READ_PREVIEW_MAX).collect()
+        text.replace('\n', "\\n")
+            .chars()
+            .take(AUTO_READ_PREVIEW_MAX)
+            .collect()
     }
 
     #[allow(non_snake_case)]
@@ -254,21 +261,25 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub fn tryEmitScrollToBottomThrottled(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
-        self.lastScrollEmitMsByChatKey.insert(key, messageTimingNow().startedAtMs as i64);
+        self.lastScrollEmitMsByChatKey
+            .insert(key, messageTimingNow().startedAtMs as i64);
         self.scrollToBottomEvent.push(());
     }
 
     #[allow(non_snake_case)]
     pub fn forceEmitScrollToBottom(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
-        self.lastScrollEmitMsByChatKey.insert(key, messageTimingNow().startedAtMs as i64);
+        self.lastScrollEmitMsByChatKey
+            .insert(key, messageTimingNow().startedAtMs as i64);
         self.scrollToBottomEvent.push(());
     }
 
     #[allow(non_snake_case)]
     pub fn runtimeFor(&mut self, chatId: Option<String>) -> &mut ChatRuntime {
         let key = Self::chatKey(chatId);
-        self.chatRuntimes.entry(key).or_insert_with(ChatRuntime::new)
+        self.chatRuntimes
+            .entry(key)
+            .or_insert_with(ChatRuntime::new)
     }
 
     #[allow(non_snake_case)]
@@ -292,13 +303,21 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn isTerminalInputState(state: &InputProcessingState) -> bool {
-        matches!(state, InputProcessingState::Idle | InputProcessingState::Completed)
+        matches!(
+            state,
+            InputProcessingState::Idle | InputProcessingState::Completed
+        )
     }
 
     #[allow(non_snake_case)]
-    pub fn setChatInputProcessingState(&mut self, chatId: Option<String>, state: InputProcessingState) {
+    pub fn setChatInputProcessingState(
+        &mut self,
+        chatId: Option<String>,
+        state: InputProcessingState,
+    ) {
         if let Some(chatId) = chatId.as_ref() {
-            if self.runtimeFor(Some(chatId.clone())).isLoading && Self::isTerminalInputState(&state) {
+            if self.runtimeFor(Some(chatId.clone())).isLoading && Self::isTerminalInputState(&state)
+            {
                 return;
             }
             if self.suppressIdleCompletedStateByChatId.contains_key(chatId)
@@ -370,16 +389,28 @@ impl MessageProcessingDelegate {
             _ => self
                 .functionalConfigManager
                 .getConfigIdForFunction(FunctionType::CHAT)
-                .map_err(|error| crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(error.to_string()))?,
+                .map_err(|error| {
+                    crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                        error.to_string(),
+                    )
+                })?,
         };
 
         let loadModelConfigStartTime = messageTimingNow();
         let currentModelConfig = self
             .modelConfigManager
             .getModelConfigFlow(&configId)
-            .map_err(|error| crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(error.to_string()))?
+            .map_err(|error| {
+                crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    error.to_string(),
+                )
+            })?
             .first()
-            .map_err(|error| crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(error.to_string()))?;
+            .map_err(|error| {
+                crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    error.to_string(),
+                )
+            })?;
         let enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing;
         let enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing;
         let enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing;
@@ -390,8 +421,8 @@ impl MessageProcessingDelegate {
         );
 
         let buildUserMessageStartTime = messageTimingNow();
-        let finalMessageContent = AIMessageManager::buildUserMessageContent(
-            BuildUserMessageContentRequest {
+        let finalMessageContent =
+            AIMessageManager::buildUserMessageContent(BuildUserMessageContentRequest {
                 messageText: request.messageText,
                 proxySenderName: request.proxySenderNameOverride,
                 attachments: request.attachments,
@@ -403,8 +434,7 @@ impl MessageProcessingDelegate {
                 enableDirectVideoProcessing,
                 chatId: Some(request.chatId.clone()),
                 roleCardId: Some(request.roleCardId),
-            },
-        );
+            });
         logMessageTiming(
             "delegate.buildUserMessageContent",
             buildUserMessageStartTime,
@@ -460,16 +490,24 @@ impl MessageProcessingDelegate {
         completedElapsed: i64,
     ) -> ChatMessage {
         aiMessage.sentAt = requestSentAt;
-        aiMessage.waitDurationMs = firstResponseElapsed.map(|first| first - requestStartElapsed).unwrap_or(0);
-        aiMessage.outputDurationMs = firstResponseElapsed.map(|first| completedElapsed - first).unwrap_or(0);
+        aiMessage.waitDurationMs = firstResponseElapsed
+            .map(|first| first - requestStartElapsed)
+            .unwrap_or(0);
+        aiMessage.outputDurationMs = firstResponseElapsed
+            .map(|first| completedElapsed - first)
+            .unwrap_or(0);
         aiMessage.completedAt = completedElapsed;
         aiMessage
     }
 
     #[allow(non_snake_case)]
-    pub fn readCurrentTurnCancellationSnapshot(&self, chatId: String) -> Option<TurnCancellationSnapshot> {
-        self.chatRuntimes.get(&Self::chatKey(Some(chatId.clone()))).map(|runtime| {
-            TurnCancellationSnapshot {
+    pub fn readCurrentTurnCancellationSnapshot(
+        &self,
+        chatId: String,
+    ) -> Option<TurnCancellationSnapshot> {
+        self.chatRuntimes
+            .get(&Self::chatKey(Some(chatId.clone())))
+            .map(|runtime| TurnCancellationSnapshot {
                 chatId,
                 aiMessage: None,
                 partialContent: runtime
@@ -478,8 +516,7 @@ impl MessageProcessingDelegate {
                     .map(|stream| stream.replay_cache().join(""))
                     .unwrap_or_default(),
                 turnOptions: runtime.currentTurnOptions.clone(),
-            }
-        })
+            })
     }
 
     #[allow(non_snake_case)]
@@ -495,7 +532,10 @@ impl MessageProcessingDelegate {
         }
         self.clearCurrentTurnToolInvocationCount(chatId.clone());
         AIMessageManager::cancelOperation(chatId.clone());
-        if let Some(runtime) = self.chatRuntimes.get_mut(&Self::chatKey(Some(chatId.clone()))) {
+        if let Some(runtime) = self
+            .chatRuntimes
+            .get_mut(&Self::chatKey(Some(chatId.clone())))
+        {
             if let Some(responseStream) = runtime.responseStream.as_ref() {
                 responseStream.upstream.close();
                 responseStream.event_channel.close();
@@ -558,10 +598,9 @@ impl MessageProcessingDelegate {
         self.turnCompleteCounterByChatIdFlow.asStateFlow()
     }
 
-    pub fn currentTurnToolInvocationCountByChatIdFlow(
-        &self,
-    ) -> StateFlow<HashMap<String, i32>> {
-        self.currentTurnToolInvocationCountByChatIdFlow.asStateFlow()
+    pub fn currentTurnToolInvocationCountByChatIdFlow(&self) -> StateFlow<HashMap<String, i32>> {
+        self.currentTurnToolInvocationCountByChatIdFlow
+            .asStateFlow()
     }
 
     #[allow(non_snake_case)]
@@ -589,15 +628,22 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn resetCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        self.currentTurnToolInvocationCountByChatId.insert(chatId, 0);
+        self.currentTurnToolInvocationCountByChatId
+            .insert(chatId, 0);
         self.currentTurnToolInvocationCountByChatIdFlow
             .set_value(self.currentTurnToolInvocationCountByChatId.clone());
     }
 
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        let value = self.currentTurnToolInvocationCountByChatId.get(&chatId).copied().unwrap_or(0) + 1;
-        self.currentTurnToolInvocationCountByChatId.insert(chatId, value);
+        let value = self
+            .currentTurnToolInvocationCountByChatId
+            .get(&chatId)
+            .copied()
+            .unwrap_or(0)
+            + 1;
+        self.currentTurnToolInvocationCountByChatId
+            .insert(chatId, value);
         self.currentTurnToolInvocationCountByChatIdFlow
             .set_value(self.currentTurnToolInvocationCountByChatId.clone());
     }
@@ -613,24 +659,32 @@ impl MessageProcessingDelegate {
     pub async fn sendUserMessage(
         &mut self,
         mut request: SendUserMessageProcessingRequest<'_>,
-    ) -> Result<SendUserMessageProcessingResult, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<
+        SendUserMessageProcessingResult,
+        crate::api::chat::llmprovider::AIService::AiServiceError,
+    > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
-        let finalMessageContent = self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
-            messageText: originalMessageText.clone(),
-            proxySenderNameOverride: request.proxySenderNameOverride.clone(),
-            attachments: request.attachments.clone(),
-            workspacePath: request.workspacePath.clone(),
-            workspaceEnv: request.workspaceEnv.clone(),
-            replyToMessage: request.replyToMessage.clone(),
-            chatId: chatId.clone(),
-            roleCardId: request.roleCardId.clone(),
-            chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
-        })?;
+        let finalMessageContent =
+            self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
+                messageText: originalMessageText.clone(),
+                proxySenderNameOverride: request.proxySenderNameOverride.clone(),
+                attachments: request.attachments.clone(),
+                workspacePath: request.workspacePath.clone(),
+                workspaceEnv: request.workspaceEnv.clone(),
+                replyToMessage: request.replyToMessage.clone(),
+                chatId: chatId.clone(),
+                roleCardId: request.roleCardId.clone(),
+                chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
+            })?;
         let shouldAddUserMessageToChat = request.turnOptions.persistTurn
             && !request.suppressUserMessageInHistory
-            && !(request.isAutoContinuation && originalMessageText.is_empty() && request.attachments.is_empty())
-            && !(request.isGroupOrchestrationTurn && originalMessageText.is_empty() && request.attachments.is_empty());
+            && !(request.isAutoContinuation
+                && originalMessageText.is_empty()
+                && request.attachments.is_empty())
+            && !(request.isGroupOrchestrationTurn
+                && originalMessageText.is_empty()
+                && request.attachments.is_empty());
         let isFirstMessage = !request.chatHistoryDelegate.hasUserMessage(chatId.clone());
         if request.turnOptions.persistTurn && isFirstMessage {
             let newTitle = if !originalMessageText.trim().is_empty() {
@@ -658,14 +712,19 @@ impl MessageProcessingDelegate {
         };
         let mut workspaceToolHookSession = None;
         let mut workspaceToolHookHandler = request.enhancedAiService.tool_handler.clone();
-        if let Some(workspacePath) = request.workspacePath.clone().filter(|path| !path.trim().is_empty()) {
-            let session = WorkspaceBackupManager::getInstance(workspaceToolHookHandler.getContext())
-                .createWorkspaceToolHookSession(
-                    workspacePath,
-                    request.workspaceEnv.clone(),
-                    userMessage.timestamp,
-                    Some(chatId.clone()),
-                );
+        if let Some(workspacePath) = request
+            .workspacePath
+            .clone()
+            .filter(|path| !path.trim().is_empty())
+        {
+            let session =
+                WorkspaceBackupManager::getInstance(workspaceToolHookHandler.getContext())
+                    .createWorkspaceToolHookSession(
+                        workspacePath,
+                        request.workspaceEnv.clone(),
+                        userMessage.timestamp,
+                        Some(chatId.clone()),
+                    );
             workspaceToolHookHandler.addToolHook(session.clone());
             workspaceToolHookSession = Some(session);
         }
@@ -693,9 +752,11 @@ impl MessageProcessingDelegate {
         );
         self.updateGlobalLoadingState();
 
-        request.enhancedAiService.setInputProcessingState(InputProcessingState::Processing {
-            message: "message_processing".to_string(),
-        });
+        request
+            .enhancedAiService
+            .setInputProcessingState(InputProcessingState::Processing {
+                message: "message_processing".to_string(),
+            });
         {
             let activeChatId = chatId.clone();
             let mut stateDelegate = self.clone_for_core();
@@ -722,16 +783,17 @@ impl MessageProcessingDelegate {
             .ok()
             .map(|card| card.name)
             .filter(|name| !name.trim().is_empty());
-        let currentRoleName = characterName.clone().unwrap_or_else(|| "Operit".to_string());
-        let requestMessageContent =
-            if request.isGroupOrchestrationTurn
-                && !finalMessageContent.trim_start().is_empty()
-                && !finalMessageContent.trim_start().starts_with("[From user]")
-            {
-                format!("[From user]\n{}", finalMessageContent)
-            } else {
-                finalMessageContent
-            };
+        let currentRoleName = characterName
+            .clone()
+            .unwrap_or_else(|| "Operit".to_string());
+        let requestMessageContent = if request.isGroupOrchestrationTurn
+            && !finalMessageContent.trim_start().is_empty()
+            && !finalMessageContent.trim_start().starts_with("[From user]")
+        {
+            format!("[From user]\n{}", finalMessageContent)
+        } else {
+            finalMessageContent
+        };
         let calculateNextWindowSize = {
             let workspacePath = request.workspacePath.clone();
             let workspaceEnv = request.workspaceEnv.clone();
@@ -816,7 +878,8 @@ impl MessageProcessingDelegate {
             callbacks: None,
             onToolInvocation: None,
         })
-        .await {
+        .await
+        {
             Ok(stream) => stream,
             Err(error) => {
                 if let Some(session) = workspaceToolHookSession.as_ref() {
@@ -829,7 +892,10 @@ impl MessageProcessingDelegate {
                         message: error.to_string(),
                     },
                 );
-                if let Some(runtime) = self.chatRuntimes.get_mut(&Self::chatKey(Some(chatId.clone()))) {
+                if let Some(runtime) = self
+                    .chatRuntimes
+                    .get_mut(&Self::chatKey(Some(chatId.clone())))
+                {
                     runtime.isLoading = false;
                     runtime.responseStream = None;
                     runtime.sendJob = None;
@@ -842,7 +908,10 @@ impl MessageProcessingDelegate {
         };
         let sharedResponseStream = completionStream.clone();
         self.runtimeFor(Some(chatId.clone())).responseStream = Some(sharedResponseStream.clone());
-        let initialProviderModel = request.enhancedAiService.getLastProviderModel().unwrap_or_default();
+        let initialProviderModel = request
+            .enhancedAiService
+            .getLastProviderModel()
+            .unwrap_or_default();
         let (initialProvider, initialModelName) = split_provider_model(&initialProviderModel);
         let mut aiMessage = ChatMessage {
             sender: "ai".to_string(),
@@ -924,13 +993,13 @@ impl MessageProcessingDelegate {
             let streamErrorMessage = stream_error_message(&finalContent);
             let providerModel = workerService.getLastProviderModel().unwrap_or_default();
             let (provider, modelName) = split_provider_model(&providerModel);
-            let tokenSnapshot = workerService
-                .getLastTurnTokenSnapshot()
-                .unwrap_or(crate::api::chat::EnhancedAIService::TurnTokenSnapshot {
+            let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(
+                crate::api::chat::EnhancedAIService::TurnTokenSnapshot {
                     inputTokens: 0,
                     outputTokens: 0,
                     cachedInputTokens: 0,
-                });
+                },
+            );
             let completedElapsed = messageTimingNow().startedAtMs as i64;
             workerAiMessage.provider = provider;
             workerAiMessage.modelName = modelName;
@@ -950,14 +1019,16 @@ impl MessageProcessingDelegate {
                 completedElapsed,
             );
             if workerTurnOptions.persistTurn {
-                workerChatHistoryDelegate.addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
+                workerChatHistoryDelegate
+                    .addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
             }
             if let Some(message) = streamErrorMessage {
                 workerMessageProcessingDelegate.setInputProcessingStateForChat(
                     workerChatId.clone(),
                     InputProcessingState::Error { message },
                 );
-                workerMessageProcessingDelegate.cleanupRuntimeAfterSend(workerChatId, workerTurnOptions);
+                workerMessageProcessingDelegate
+                    .cleanupRuntimeAfterSend(workerChatId, workerTurnOptions);
             } else {
                 let nextWindowSize = workerCalculateNextWindowSize(
                     &mut workerService,
@@ -1051,7 +1122,12 @@ impl MessageProcessingDelegate {
         _turnOptions: ChatTurnOptions,
     ) {
         if let Some(chatId) = chatId {
-            let next = self.turnCompleteCounterByChatId.get(&chatId).copied().unwrap_or(0) + 1;
+            let next = self
+                .turnCompleteCounterByChatId
+                .get(&chatId)
+                .copied()
+                .unwrap_or(0)
+                + 1;
             self.turnCompleteCounterByChatId.insert(chatId, next);
             self.turnCompleteCounterByChatIdFlow
                 .set_value(self.turnCompleteCounterByChatId.clone());
@@ -1068,8 +1144,14 @@ impl MessageProcessingDelegate {
     ) {
         self.cleanupRuntimeAfterSend(chatId.clone(), turnOptions);
         self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
-        let next = self.turnCompleteCounterByChatId.get(&chatId).copied().unwrap_or(0) + 1;
-        self.turnCompleteCounterByChatId.insert(chatId.clone(), next);
+        let next = self
+            .turnCompleteCounterByChatId
+            .get(&chatId)
+            .copied()
+            .unwrap_or(0)
+            + 1;
+        self.turnCompleteCounterByChatId
+            .insert(chatId.clone(), next);
         self.turnCompleteCounterByChatIdFlow
             .set_value(self.turnCompleteCounterByChatId.clone());
         let _ = nextWindowSize;
@@ -1077,7 +1159,10 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn cleanupRuntimeAfterSend(&mut self, chatId: String, _turnOptions: ChatTurnOptions) {
-        if let Some(runtime) = self.chatRuntimes.get_mut(&Self::chatKey(Some(chatId.clone()))) {
+        if let Some(runtime) = self
+            .chatRuntimes
+            .get_mut(&Self::chatKey(Some(chatId.clone())))
+        {
             runtime.isLoading = false;
             runtime.sendJob = None;
             runtime.streamCollectionJob = None;

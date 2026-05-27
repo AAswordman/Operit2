@@ -13,7 +13,9 @@ impl MCPToolParameter {
     #[allow(non_snake_case)]
     pub fn convertParameterValue(&self, value: Value) -> Value {
         match value {
-            Value::String(text) => Self::smartConvert(Value::String(text), Some(&self.parameter_type)),
+            Value::String(text) => {
+                Self::smartConvert(Value::String(text), Some(&self.parameter_type))
+            }
             other => other,
         }
     }
@@ -21,12 +23,17 @@ impl MCPToolParameter {
     #[allow(non_snake_case)]
     pub fn smartConvert(value: Value, typeName: Option<&str>) -> Value {
         match value {
-            Value::Array(items) => {
-                Value::Array(items.into_iter().map(|item| Self::smartConvert(item, None)).collect())
-            }
+            Value::Array(items) => Value::Array(
+                items
+                    .into_iter()
+                    .map(|item| Self::smartConvert(item, None))
+                    .collect(),
+            ),
             Value::String(text) => match typeName.map(|value| value.to_ascii_lowercase()) {
                 Some(value) if value == "number" => parseNumberValue(&text),
-                Some(value) if value == "boolean" => Value::Bool(text.to_ascii_lowercase() == "true"),
+                Some(value) if value == "boolean" => {
+                    Value::Bool(text.to_ascii_lowercase() == "true")
+                }
                 Some(value) if value == "integer" => text
                     .parse::<i64>()
                     .map(|number| serde_json::json!(number))
@@ -62,7 +69,8 @@ fn parseArrayValue(text: &str) -> Value {
     let trimmed = text.trim();
     if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(trimmed) {
         return Value::Array(
-            items.into_iter()
+            items
+                .into_iter()
                 .map(|item| MCPToolParameter::smartConvert(item, None))
                 .collect(),
         );
@@ -78,7 +86,9 @@ fn parseArrayValue(text: &str) -> Value {
                     .split(',')
                     .map(str::trim)
                     .filter(|item| !item.is_empty())
-                    .map(|item| MCPToolParameter::smartConvert(Value::String(item.to_string()), None))
+                    .map(|item| {
+                        MCPToolParameter::smartConvert(Value::String(item.to_string()), None)
+                    })
                     .collect(),
             );
         }

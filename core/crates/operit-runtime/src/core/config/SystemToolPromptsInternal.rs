@@ -19,11 +19,7 @@ impl SystemToolPromptsInternal {
         internalToolCategoriesEnSource()
             .into_iter()
             .map(|category| {
-                SystemToolPrompts::applyHostEnvironmentToCategory(
-                    category,
-                    host_environment,
-                    true,
-                )
+                SystemToolPrompts::applyHostEnvironmentToCategory(category, host_environment, true)
             })
             .collect()
     }
@@ -40,11 +36,7 @@ impl SystemToolPromptsInternal {
         internalToolCategoriesCnSource()
             .into_iter()
             .map(|category| {
-                SystemToolPrompts::applyHostEnvironmentToCategory(
-                    category,
-                    host_environment,
-                    false,
-                )
+                SystemToolPrompts::applyHostEnvironmentToCategory(category, host_environment, false)
             })
             .collect()
     }

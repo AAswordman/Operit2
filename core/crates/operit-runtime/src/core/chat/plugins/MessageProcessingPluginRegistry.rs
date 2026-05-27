@@ -29,7 +29,8 @@ impl MessageProcessingPluginRegistry {
     #[allow(non_snake_case)]
     pub fn createExecutionIfMatched(
         _params: MessageProcessingHookParams,
-    ) -> Option<MessageProcessingExecution<Box<dyn MessageProcessingController + Send + Sync>>> {
+    ) -> Option<MessageProcessingExecution<Box<dyn MessageProcessingController + Send + Sync>>>
+    {
         None
     }
 }

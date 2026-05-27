@@ -5,9 +5,9 @@ use serde_json::Value;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
-use crate::data::mcp::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer};
 use crate::data::mcp::plugins::MCPBridge::MCPBridge;
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
+use crate::data::mcp::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginInitStatus {
@@ -79,15 +79,21 @@ impl MCPStarter {
     {
         let localServer = MCPLocalServer::getInstance(&self.context);
         let Some(pluginInfo) = localServer.getPluginMetadata(pluginId) else {
-            statusCallback(StartStatus::Error(format!("Plugin info not found: {pluginId}")));
+            statusCallback(StartStatus::Error(format!(
+                "Plugin info not found: {pluginId}"
+            )));
             return false;
         };
         if !localServer.isServerEnabled(pluginId) {
-            statusCallback(StartStatus::Error(format!("Plugin not enabled by user: {pluginId}")));
+            statusCallback(StartStatus::Error(format!(
+                "Plugin not enabled by user: {pluginId}"
+            )));
             return false;
         }
 
-        statusCallback(StartStatus::InProgress(format!("Starting plugin: {pluginId}")));
+        statusCallback(StartStatus::InProgress(format!(
+            "Starting plugin: {pluginId}"
+        )));
         let bridge = MCPBridge::getInstance(&self.context);
         let serverName = normalizedServerName(&pluginInfo.name, pluginId);
         let mut actualServiceName = serverName.clone();
@@ -118,7 +124,9 @@ impl MCPStarter {
                 .and_then(|config| config.mcpServers.get(&actualServiceName).cloned())
                 .or_else(|| localServer.getMCPServer(pluginId));
             let Some(serverConfig) = serverConfig else {
-                statusCallback(StartStatus::Error(format!("Invalid plugin config: {pluginId}")));
+                statusCallback(StartStatus::Error(format!(
+                    "Invalid plugin config: {pluginId}"
+                )));
                 return false;
             };
             let runtimeDir = localServer.getPluginRuntimeDirectory(pluginId);
@@ -131,7 +139,11 @@ impl MCPStarter {
                 Some(runtimeDir),
             )
         };
-        if !registerResult.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if !registerResult
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             let message = registerResult
                 .get("error")
                 .and_then(|error| error.get("message"))
@@ -157,7 +169,11 @@ impl MCPStarter {
             let cachedTools = tools
                 .iter()
                 .map(|tool| CachedToolInfo {
-                    name: tool.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    name: tool
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                     description: tool
                         .get("description")
                         .and_then(Value::as_str)
@@ -189,7 +205,9 @@ impl MCPStarter {
                 extraData: BTreeMap::new(),
             },
         );
-        statusCallback(StartStatus::Success(format!("Service {pluginId} started successfully")));
+        statusCallback(StartStatus::Success(format!(
+            "Service {pluginId} started successfully"
+        )));
         true
     }
 }

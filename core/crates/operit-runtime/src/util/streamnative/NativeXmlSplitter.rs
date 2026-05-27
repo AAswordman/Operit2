@@ -51,7 +51,10 @@ pub fn split_xml_tag(content: &str) -> Vec<Vec<String>> {
             results.push(vec![tag_name, content[start..end].to_string()]);
             cursor = end;
         } else {
-            results.push(vec!["text".to_string(), content[start..open_end].to_string()]);
+            results.push(vec![
+                "text".to_string(),
+                content[start..open_end].to_string(),
+            ]);
             cursor = open_end;
         }
     }

@@ -7,9 +7,7 @@ use operit_host_api::{WebVisitHost, WebVisitLinkData, WebVisitRequest, WebVisitR
 use reqwest::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VisitWebResultData {
@@ -194,7 +192,9 @@ impl ToolExecutor for StandardWebVisitTool {
         } else {
             ToolValidationResult {
                 valid: false,
-                errorMessage: "Either 'url' or both 'visit_key' and 'link_number' must be provided.".to_string(),
+                errorMessage:
+                    "Either 'url' or both 'visit_key' and 'link_number' must be provided."
+                        .to_string(),
             }
         }
     }
@@ -210,7 +210,8 @@ impl StandardWebVisitTool {
         let url = parameterValue(tool, "url");
         let visitKey = parameterValue(tool, "visit_key");
         let linkNumberStr = parameterValue(tool, "link_number");
-        let includeImageLinks = parseBoolean(optionalParameterValue(tool, "include_image_links").as_deref());
+        let includeImageLinks =
+            parseBoolean(optionalParameterValue(tool, "include_image_links").as_deref());
         let headersParam = optionalParameterValue(tool, "headers");
         let userAgentParam = optionalParameterValue(tool, "user_agent");
         let userAgentPresetParam = optionalParameterValue(tool, "user_agent_preset");
@@ -223,7 +224,11 @@ impl StandardWebVisitTool {
         };
 
         let Some(parsedUrl) = Url::parse(&targetUrl).ok() else {
-            return toolError(tool, String::new(), format!("Unsupported URL scheme: unknown"));
+            return toolError(
+                tool,
+                String::new(),
+                format!("Unsupported URL scheme: unknown"),
+            );
         };
         if parsedUrl.scheme() != "http" && parsedUrl.scheme() != "https" {
             return toolError(
@@ -237,7 +242,8 @@ impl StandardWebVisitTool {
             Ok(headers) => headers,
             Err(error) => return toolError(tool, String::new(), error),
         };
-        let userAgent = resolveUserAgent(userAgentPresetParam.as_deref(), userAgentParam.as_deref());
+        let userAgent =
+            resolveUserAgent(userAgentPresetParam.as_deref(), userAgentParam.as_deref());
 
         match self.visitWebPage(&targetUrl, &headers, &userAgent, includeImageLinks) {
             Ok(resultData) => {
@@ -248,7 +254,11 @@ impl StandardWebVisitTool {
                 Self::putCachedVisitResult(stored.clone());
                 toolResultFromVisitWebData(tool, stored)
             }
-            Err(error) => toolError(tool, String::new(), format!("Error visiting web page: {error}")),
+            Err(error) => toolError(
+                tool,
+                String::new(),
+                format!("Error visiting web page: {error}"),
+            ),
         }
     }
 }
@@ -256,7 +266,10 @@ impl StandardWebVisitTool {
 #[allow(non_snake_case)]
 fn resolveTargetUrl(url: &str, visitKey: &str, linkNumberStr: &str) -> Result<String, String> {
     if !visitKey.trim().is_empty() && !linkNumberStr.trim().is_empty() {
-        let linkNumber = linkNumberStr.trim().parse::<usize>().map_err(|_| "Invalid link number.".to_string())?;
+        let linkNumber = linkNumberStr
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| "Invalid link number.".to_string())?;
         let cached = StandardWebVisitTool::getCachedVisitResult(visitKey)
             .ok_or_else(|| "Invalid visit key.".to_string())?;
         let link = cached
@@ -293,7 +306,10 @@ fn visitWebResultToString(result: &VisitWebResultData) -> String {
             sb.push_str(&format!("[{}] {}\n", index + 1, link.text));
         }
         if result.links.len() > 120 {
-            sb.push_str(&format!("... ({} more links omitted from inline preview)\n", result.links.len() - 120));
+            sb.push_str(&format!(
+                "... ({} more links omitted from inline preview)\n",
+                result.links.len() - 120
+            ));
         }
         sb.push('\n');
     }
@@ -309,7 +325,10 @@ fn visitWebResultToString(result: &VisitWebResultData) -> String {
             sb.push_str(&format!("[{}] {}\n", index + 1, name));
         }
         if result.imageLinks.len() > 120 {
-            sb.push_str(&format!("... ({} more images omitted from inline preview)\n", result.imageLinks.len() - 120));
+            sb.push_str(&format!(
+                "... ({} more images omitted from inline preview)\n",
+                result.imageLinks.len() - 120
+            ));
         }
         sb.push('\n');
     }
@@ -354,7 +373,10 @@ fn parseHeaders(headersJson: Option<&str>) -> Result<HashMap<String, String>, St
 
 #[allow(non_snake_case)]
 fn resolveUserAgent(preset: Option<&str>, overrideValue: Option<&str>) -> String {
-    if let Some(value) = overrideValue.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = overrideValue
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return value.to_string();
     }
     match preset.map(|value| value.trim().to_lowercase()).as_deref() {
@@ -404,7 +426,10 @@ fn writeVisitResultToFile(resultData: &VisitWebResultData) -> PathBuf {
 
 #[allow(non_snake_case)]
 fn buildInlineContentPreview(fullContent: &str, savedPath: &PathBuf) -> String {
-    let preview = fullContent.chars().take(MAX_INLINE_VISIT_CONTENT_PREVIEW_CHARS).collect::<String>();
+    let preview = fullContent
+        .chars()
+        .take(MAX_INLINE_VISIT_CONTENT_PREVIEW_CHARS)
+        .collect::<String>();
     format!(
         "{preview}\n\n[Content truncated. Full content saved to file: {}]",
         savedPath.display()

@@ -5,22 +5,21 @@ use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
-    TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
-use crate::data::model::ModelParameter::ParameterValueType;
 use crate::data::model::ModelParameter::ModelParameter;
+use crate::data::model::ModelParameter::ParameterValueType;
 use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::util::ChatUtils::ChatUtils;
-use crate::util::TokenCacheManager::TokenCacheManager;
 use crate::util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
 use crate::util::stream::Stream::FnStream;
+use crate::util::ChatUtils::ChatUtils;
+use crate::util::TokenCacheManager::TokenCacheManager;
 
 #[derive(Clone)]
 pub struct DeepseekProvider {
@@ -77,7 +76,9 @@ impl DeepseekProvider {
                 );
             }
             if token_counts.output > 0 {
-                state.tokenCacheManager.set_output_tokens(token_counts.output.max(0) as usize);
+                state
+                    .tokenCacheManager
+                    .set_output_tokens(token_counts.output.max(0) as usize);
             }
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
@@ -85,7 +86,10 @@ impl DeepseekProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut json_object = Map::new();
         let effectiveEnableToolCall = self.enable_tool_call && !request.available_tools.is_empty();
         json_object.insert("model".to_string(), json!(self.model_name));
@@ -146,12 +150,13 @@ impl DeepseekProvider {
         effectiveHistory: &[PromptTurn],
         useToolCall: bool,
     ) -> Result<Value, AiServiceError> {
-        let structuredMessages: Value = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
-            effectiveHistory,
-            true,
-            useToolCall,
-        ))
-        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let structuredMessages: Value =
+            serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
+                effectiveHistory,
+                true,
+                useToolCall,
+            ))
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
 
         let mut messagesArray = Vec::new();
         let Some(messages) = structuredMessages.as_array() else {
@@ -162,7 +167,10 @@ impl DeepseekProvider {
             let Some(messageObject) = messageValue.as_object() else {
                 continue;
             };
-            let role = messageObject.get("role").and_then(Value::as_str).unwrap_or("");
+            let role = messageObject
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             if role == "assistant" {
                 let contentValue = messageObject.get("content");
                 let originalContent = match contentValue {
@@ -182,7 +190,11 @@ impl DeepseekProvider {
                 } else {
                     message.insert(
                         "content".to_string(),
-                        json!(if content.trim().is_empty() { "[Empty]".to_string() } else { content }),
+                        json!(if content.trim().is_empty() {
+                            "[Empty]".to_string()
+                        } else {
+                            content
+                        }),
                     );
                 }
                 messagesArray.push(Value::Object(message));
@@ -224,18 +236,21 @@ impl DeepseekProvider {
                     PromptTurnKind::SUMMARY => "summary",
                 }
                 .to_string();
-                let content = if !preserve_think_in_history && turn.kind == PromptTurnKind::ASSISTANT {
-                    ChatUtils::remove_thinking_content(&turn.content)
-                } else {
-                    turn.content.clone()
-                };
+                let content =
+                    if !preserve_think_in_history && turn.kind == PromptTurnKind::ASSISTANT {
+                        ChatUtils::remove_thinking_content(&turn.content)
+                    } else {
+                        turn.content.clone()
+                    };
                 (role, content)
             })
             .collect::<Vec<_>>();
         if let Ok(mut state) = self.state.lock() {
-            let tokenCount = state
-                .tokenCacheManager
-                .calculate_input_tokens(&comparableHistory, tools_json, true);
+            let tokenCount = state.tokenCacheManager.calculate_input_tokens(
+                &comparableHistory,
+                tools_json,
+                true,
+            );
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
             tokenCount as i32
@@ -244,7 +259,11 @@ impl DeepseekProvider {
         }
     }
 
-    fn apply_model_parameters(&self, json_object: &mut Map<String, Value>, parameters: &[ModelParameter<Value>]) {
+    fn apply_model_parameters(
+        &self,
+        json_object: &mut Map<String, Value>,
+        parameters: &[ModelParameter<Value>],
+    ) {
         for parameter in parameters {
             if parameter.isEnabled {
                 let value = match parameter.valueType {
@@ -322,13 +341,12 @@ impl DeepseekProvider {
         for (name, value) in &self.custom_headers {
             let header_name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let header_value =
-                HeaderValue::from_str(value).map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             headers.insert(header_name, header_value);
         }
         Ok(headers)
     }
-
 }
 
 #[async_trait]
@@ -395,9 +413,7 @@ impl AIService for DeepseekProvider {
                 self.supports_video,
                 self.enable_tool_call,
             );
-            let mut result = parent
-                .send_prepared_request(request, request_body)
-                .await?;
+            let mut result = parent.send_prepared_request(request, request_body).await?;
             let event_channel = result.event_channel().clone();
             let mut provider = self.clone();
             let cold_stream = FnStream::new(move |emit| {
@@ -428,7 +444,9 @@ impl AIService for DeepseekProvider {
                 .text()
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+            return Err(AiServiceError::RequestFailed(format!(
+                "{status}: {message}"
+            )));
         }
 
         let json_response: Value = response
@@ -453,7 +471,9 @@ impl AIService for DeepseekProvider {
         }
         if let Some(content) = extract_content_chunk(&json_response) {
             if !content.is_empty() {
-                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(&content));
+                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &content,
+                ));
             }
         }
         chunks.extend(extract_tool_calls_xml_chunks(&json_response));
@@ -484,7 +504,9 @@ impl AIService for DeepseekProvider {
                 .text()
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            Err(AiServiceError::ConnectionFailed(format!("{status}: {body}")))
+            Err(AiServiceError::ConnectionFailed(format!(
+                "{status}: {body}"
+            )))
         }
     }
 
@@ -501,11 +523,13 @@ impl AIService for DeepseekProvider {
         } else {
             Some(StructuredToolCallBridge::buildToolsArray(Some(available_tools)).to_string())
         };
-        Ok(self.calculate_and_store_input_tokens(
-            &providerReadyHistory,
-            toolsJson.as_deref(),
-            true,
-        ))
+        Ok(
+            self.calculate_and_store_input_tokens(
+                &providerReadyHistory,
+                toolsJson.as_deref(),
+                true,
+            ),
+        )
     }
 }
 
@@ -542,8 +566,8 @@ fn process_streaming_line(
         return Ok(());
     }
 
-    let json_response: Value =
-        serde_json::from_str(data).map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+    let json_response: Value = serde_json::from_str(data)
+        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
     if let Some(usage) = json_response.get("usage") {
         *token_counts = parse_usage_counts(usage);
     }
@@ -554,7 +578,9 @@ fn process_streaming_line(
     }
     if let Some(content) = extract_content_chunk(&json_response) {
         if !content.is_empty() {
-            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(&content));
+            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                &content,
+            ));
         }
     }
     chunks.extend(extract_tool_calls_xml_chunks(&json_response));
@@ -613,7 +639,9 @@ fn extract_tool_calls_xml_chunks(value: &Value) -> Vec<String> {
     };
     tool_calls
         .iter()
-        .map(|tool_call| StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string()))
+        .map(|tool_call| {
+            StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string())
+        })
         .filter(|content| crate::util::ChatMarkupRegex::ChatMarkupRegex::contains_tool_tag(content))
         .collect()
 }

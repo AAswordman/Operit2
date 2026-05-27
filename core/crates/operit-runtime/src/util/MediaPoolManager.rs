@@ -48,7 +48,10 @@ pub struct MediaPoolManager;
 impl MediaPoolManager {
     pub fn set_max_pool_size(value: usize) {
         if value > 0 {
-            state().lock().expect("MediaPool mutex poisoned").max_pool_size = value;
+            state()
+                .lock()
+                .expect("MediaPool mutex poisoned")
+                .max_pool_size = value;
             AppLogger::d(TAG, &format!("pool size limit updated: {value}"));
         }
     }
@@ -76,7 +79,9 @@ impl MediaPoolManager {
                 .filter_map(|entry| {
                     let path = entry.path();
                     if path.extension().and_then(|ext| ext.to_str()) == Some("meta") {
-                        path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+                        path.file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(str::to_string)
                     } else {
                         None
                     }
@@ -96,7 +101,10 @@ impl MediaPoolManager {
     pub fn add_media(file_path: &str, mime_type: &str) -> String {
         let path = Path::new(file_path);
         if !path.is_file() {
-            AppLogger::e(TAG, &format!("file does not exist or is not a file: {file_path}"));
+            AppLogger::e(
+                TAG,
+                &format!("file does not exist or is not a file: {file_path}"),
+            );
             return "error".to_string();
         }
         let Ok(bytes) = fs::read(path) else {
@@ -116,7 +124,10 @@ impl MediaPoolManager {
     pub fn add_media_from_base64(base64: &str, mime_type: &str) -> String {
         let bytes = decode_base64(base64);
         if bytes.len() > MAX_INPUT_BYTES {
-            AppLogger::e(TAG, &format!("media base64 decoded too large: bytes={}", bytes.len()));
+            AppLogger::e(
+                TAG,
+                &format!("media base64 decoded too large: bytes={}", bytes.len()),
+            );
             return "error".to_string();
         }
         Self::insert(MediaData {
@@ -185,8 +196,14 @@ fn load_one_from_disk(id: &str) -> Option<MediaData> {
     let guard = state().lock().expect("MediaPool mutex poisoned");
     let dir = guard.cache_dir.clone()?;
     drop(guard);
-    let mime_type = fs::read_to_string(dir.join(format!("{id}.meta"))).ok()?.trim().to_string();
-    let base64 = fs::read_to_string(dir.join(format!("{id}.b64"))).ok()?.trim().to_string();
+    let mime_type = fs::read_to_string(dir.join(format!("{id}.meta")))
+        .ok()?
+        .trim()
+        .to_string();
+    let base64 = fs::read_to_string(dir.join(format!("{id}.b64")))
+        .ok()?
+        .trim()
+        .to_string();
     if mime_type.is_empty() || base64.is_empty() {
         return None;
     }

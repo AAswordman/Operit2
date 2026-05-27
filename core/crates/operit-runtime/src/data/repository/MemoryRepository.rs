@@ -79,7 +79,9 @@ impl MemoryRepository {
         self.memoryBox
             .editEntities(|memories| {
                 for memory in memories.iter_mut() {
-                    if normalizedFolder.as_deref() != memory.folderPath.as_deref() && normalizedFolder.is_some() {
+                    if normalizedFolder.as_deref() != memory.folderPath.as_deref()
+                        && normalizedFolder.is_some()
+                    {
                         continue;
                     }
                     if let Some(start) = createdAtStartMs {
@@ -183,7 +185,9 @@ impl MemoryRepository {
             tags: buildTags(tags.unwrap_or_default()),
             properties: Vec::new(),
         };
-        self.memoryBox.put(memory).map_err(|error| error.to_string())
+        self.memoryBox
+            .put(memory)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
@@ -200,14 +204,19 @@ impl MemoryRepository {
             memory.lastAccessedAt = now;
         }
         memory.folderPath = Self::normalizeFolderPath(memory.folderPath.as_deref());
-        self.memoryBox.put(memory).map_err(|error| error.to_string())
+        self.memoryBox
+            .put(memory)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
     pub fn addTagToMemory(&self, memoryId: i64, tagName: &str) -> Result<Option<Memory>, String> {
         let tagName = tagName.trim();
         if tagName.is_empty() {
-            return Ok(self.memoryBox.get(memoryId).map_err(|error| error.to_string())?);
+            return Ok(self
+                .memoryBox
+                .get(memoryId)
+                .map_err(|error| error.to_string())?);
         }
         self.memoryBox
             .editEntities(|memories| {
@@ -244,7 +253,10 @@ impl MemoryRepository {
             return Ok(None);
         }
         let primaryId = sourceMemories[0].id;
-        let sourceIds = sourceMemories.iter().map(|memory| memory.id).collect::<HashSet<_>>();
+        let sourceIds = sourceMemories
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<HashSet<_>>();
         let merged = self.updateMemory(
             primaryId,
             newTitle,
@@ -320,18 +332,27 @@ impl MemoryRepository {
     }
 
     pub fn deleteMemory(&self, memoryId: i64) -> Result<bool, String> {
-        let deleted = self.memoryBox.remove(memoryId).map_err(|error| error.to_string())?;
+        let deleted = self
+            .memoryBox
+            .remove(memoryId)
+            .map_err(|error| error.to_string())?;
         if deleted {
             self.linkBox
                 .editEntities(|links| {
-                    links.retain(|link| link.sourceMemoryId != memoryId && link.targetMemoryId != memoryId);
+                    links.retain(|link| {
+                        link.sourceMemoryId != memoryId && link.targetMemoryId != memoryId
+                    });
                 })
                 .map_err(|error| error.to_string())?;
         }
         Ok(deleted)
     }
 
-    pub fn moveMemoriesToFolder(&self, memoryIds: &[i64], targetFolderPath: &str) -> Result<bool, String> {
+    pub fn moveMemoriesToFolder(
+        &self,
+        memoryIds: &[i64],
+        targetFolderPath: &str,
+    ) -> Result<bool, String> {
         let selected = memoryIds.iter().copied().collect::<HashSet<_>>();
         let normalizedFolder = Self::normalizeFolderPath(Some(targetFolderPath));
         let mut changed = false;
@@ -422,7 +443,10 @@ impl MemoryRepository {
     }
 
     pub fn findLinkById(&self, linkId: i64) -> Result<Option<MemoryLinkInfo>, String> {
-        Ok(self.queryMemoryLinks(Some(linkId), None, None, None, 1)?.into_iter().next())
+        Ok(self
+            .queryMemoryLinks(Some(linkId), None, None, None, 1)?
+            .into_iter()
+            .next())
     }
 
     pub fn updateLink(
@@ -449,7 +473,9 @@ impl MemoryRepository {
     }
 
     pub fn deleteLink(&self, linkId: i64) -> Result<bool, String> {
-        self.linkBox.remove(linkId).map_err(|error| error.to_string())
+        self.linkBox
+            .remove(linkId)
+            .map_err(|error| error.to_string())
     }
 
     pub fn getAllFolderPaths(&self) -> Result<Vec<String>, String> {

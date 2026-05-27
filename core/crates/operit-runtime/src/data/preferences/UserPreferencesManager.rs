@@ -23,14 +23,23 @@ impl UserPreferencesManager {
 
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(default_data_dir().join("user_preferences.preferences.json")),
+            dataStore: PreferencesDataStore::new(
+                default_data_dir().join("user_preferences.preferences.json"),
+            ),
         }
     }
 
     #[allow(non_snake_case)]
-    pub fn initializeIfNeeded(&self, defaultProfileName: &str) -> Result<(), PreferencesDataStoreError> {
+    pub fn initializeIfNeeded(
+        &self,
+        defaultProfileName: &str,
+    ) -> Result<(), PreferencesDataStoreError> {
         let profiles = self.profileListFlow().first()?;
-        if profiles.is_empty() || !profiles.iter().any(|profile| profile == Self::DEFAULT_PROFILE_ID) {
+        if profiles.is_empty()
+            || !profiles
+                .iter()
+                .any(|profile| profile == Self::DEFAULT_PROFILE_ID)
+        {
             self.createProfile(defaultProfileName.to_string(), true)?;
         }
         Ok(())
@@ -51,7 +60,10 @@ impl UserPreferencesManager {
                 .get(&stringPreferencesKey("profile_list"))
                 .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
                 .unwrap_or_default();
-            if !profiles.iter().any(|profile| profile == Self::DEFAULT_PROFILE_ID) {
+            if !profiles
+                .iter()
+                .any(|profile| profile == Self::DEFAULT_PROFILE_ID)
+            {
                 profiles.insert(0, Self::DEFAULT_PROFILE_ID.to_string());
             }
             profiles
@@ -89,8 +101,15 @@ impl UserPreferencesManager {
             if let Ok(encoded) = serde_json::to_string(&list) {
                 preferences.set(&stringPreferencesKey("profile_list"), encoded);
             }
-            if isDefault || preferences.get(&stringPreferencesKey("active_profile_id")).is_none() {
-                preferences.set(&stringPreferencesKey("active_profile_id"), profileId.clone());
+            if isDefault
+                || preferences
+                    .get(&stringPreferencesKey("active_profile_id"))
+                    .is_none()
+            {
+                preferences.set(
+                    &stringPreferencesKey("active_profile_id"),
+                    profileId.clone(),
+                );
             }
             preferences.set(&stringPreferencesKey("birth_date_locked"), true.to_string());
         })?;
@@ -156,7 +175,11 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn setCategoryLocked(&self, category: &str, locked: bool) -> Result<(), PreferencesDataStoreError> {
+    pub fn setCategoryLocked(
+        &self,
+        category: &str,
+        locked: bool,
+    ) -> Result<(), PreferencesDataStoreError> {
         let key = match category {
             "birthDate" => "birth_date_locked",
             "gender" => "gender_locked",
@@ -164,14 +187,21 @@ impl UserPreferencesManager {
             "identity" => "identity_locked",
             "occupation" => "occupation_locked",
             "aiStyle" => "ai_style_locked",
-            _ => return Err(PreferencesDataStoreError::Message(format!("Unknown preference category: {category}"))),
+            _ => {
+                return Err(PreferencesDataStoreError::Message(format!(
+                    "Unknown preference category: {category}"
+                )))
+            }
         };
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey(key), locked.to_string());
         })
     }
 
-    pub fn getProfile(&self, profileId: &str) -> Result<PreferenceProfile, PreferencesDataStoreError> {
+    pub fn getProfile(
+        &self,
+        profileId: &str,
+    ) -> Result<PreferenceProfile, PreferencesDataStoreError> {
         let preferences = self.dataStore.data()?;
         let key = profileKey(profileId);
         match preferences.get(&key) {
@@ -187,7 +217,10 @@ impl UserPreferencesManager {
         }
     }
 
-    pub fn saveProfile(&self, profile: &PreferenceProfile) -> Result<(), PreferencesDataStoreError> {
+    pub fn saveProfile(
+        &self,
+        profile: &PreferenceProfile,
+    ) -> Result<(), PreferencesDataStoreError> {
         let encoded = serde_json::to_string(profile)?;
         let key = profileKey(&profile.id);
         self.dataStore.edit(|preferences| {
@@ -264,7 +297,10 @@ impl PreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn initializeIfNeeded(&self, defaultProfileName: &str) -> Result<(), PreferencesDataStoreError> {
+    pub fn initializeIfNeeded(
+        &self,
+        defaultProfileName: &str,
+    ) -> Result<(), PreferencesDataStoreError> {
         self.inner.initializeIfNeeded(defaultProfileName)
     }
 

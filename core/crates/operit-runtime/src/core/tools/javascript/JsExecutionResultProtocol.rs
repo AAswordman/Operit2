@@ -23,7 +23,12 @@ pub fn extractJsExecutionFailure(raw: Option<&str>) -> Option<JsExecutionFailure
     }
     let parsed = serde_json::from_str::<Value>(text).ok()?;
     let object = parsed.as_object()?;
-    if !object.contains_key("success") || object.get("success").and_then(Value::as_bool).unwrap_or(true) {
+    if !object.contains_key("success")
+        || object
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    {
         return None;
     }
     let message = object

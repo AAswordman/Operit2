@@ -83,7 +83,10 @@ impl ImagePoolManager {
 
     pub fn set_max_pool_size(value: usize) {
         if value > 0 {
-            state().lock().expect("ImagePool mutex poisoned").max_pool_size = value;
+            state()
+                .lock()
+                .expect("ImagePool mutex poisoned")
+                .max_pool_size = value;
             AppLogger::d(TAG, &format!("pool size limit updated: {value}"));
         }
     }
@@ -105,7 +108,10 @@ impl ImagePoolManager {
     pub fn add_image(file_path: &str, _options: Option<ImageRegistrationOptions>) -> String {
         let path = Path::new(file_path);
         if !path.is_file() {
-            AppLogger::e(TAG, &format!("file does not exist or is not a file: {file_path}"));
+            AppLogger::e(
+                TAG,
+                &format!("file does not exist or is not a file: {file_path}"),
+            );
             return "error".to_string();
         }
         let Ok(bytes) = fs::read(path) else {
@@ -175,7 +181,11 @@ impl ImagePoolManager {
     }
 
     pub fn size() -> usize {
-        state().lock().expect("ImagePool mutex poisoned").image_pool.len()
+        state()
+            .lock()
+            .expect("ImagePool mutex poisoned")
+            .image_pool
+            .len()
     }
 
     pub fn preload_from_disk() {
@@ -192,7 +202,9 @@ impl ImagePoolManager {
                 .filter_map(|entry| {
                     let path = entry.path();
                     if path.extension().and_then(|ext| ext.to_str()) == Some("meta") {
-                        path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+                        path.file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(str::to_string)
                     } else {
                         None
                     }

@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::javascript::JsToolManager::JsToolManager;
 use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocalizedText {
@@ -106,7 +106,9 @@ impl PackageToolExecutor {
                 toolName: tool.name.clone(),
                 success: false,
                 result: String::new(),
-                error: Some("Invalid package tool format. Expected 'packageName:toolName'".to_string()),
+                error: Some(
+                    "Invalid package tool format. Expected 'packageName:toolName'".to_string(),
+                ),
             };
         }
 
@@ -124,7 +126,12 @@ impl PackageToolExecutor {
             };
         }
 
-        let Some(packageTool) = self.toolPackage.tools.iter().find(|item| item.name == toolName) else {
+        let Some(packageTool) = self
+            .toolPackage
+            .tools
+            .iter()
+            .find(|item| item.name == toolName)
+        else {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
@@ -157,7 +164,8 @@ impl ToolExecutor for PackageToolExecutor {
         if parts.len() != 2 {
             return ToolValidationResult {
                 valid: false,
-                errorMessage: "Invalid package tool format. Expected 'packageName:toolName'".to_string(),
+                errorMessage: "Invalid package tool format. Expected 'packageName:toolName'"
+                    .to_string(),
             };
         }
 
@@ -173,7 +181,12 @@ impl ToolExecutor for PackageToolExecutor {
             };
         }
 
-        let Some(packageTool) = self.toolPackage.tools.iter().find(|item| item.name == toolName) else {
+        let Some(packageTool) = self
+            .toolPackage
+            .tools
+            .iter()
+            .find(|item| item.name == toolName)
+        else {
             return ToolValidationResult {
                 valid: false,
                 errorMessage: format!(

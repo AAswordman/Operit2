@@ -87,7 +87,10 @@ impl<TAG> StreamGroup<TAG> {
         action(self);
     }
 
-    pub fn process_children_recursively(&mut self, action: &mut dyn FnMut(&mut StreamGroup<String>)) {
+    pub fn process_children_recursively(
+        &mut self,
+        action: &mut dyn FnMut(&mut StreamGroup<String>),
+    ) {
         for child in &mut self.children {
             child.process_recursively_string(action);
         }
@@ -208,7 +211,10 @@ impl<T, R> StreamInterceptor<T, R>
 where
     T: Clone,
 {
-    pub fn new(mut source_stream: impl Stream<Item = T>, on_each: impl FnMut(T) -> R + 'static) -> Self {
+    pub fn new(
+        mut source_stream: impl Stream<Item = T>,
+        on_each: impl FnMut(T) -> R + 'static,
+    ) -> Self {
         let mut values = Vec::new();
         source_stream.collect(&mut |value| values.push(value));
         Self {

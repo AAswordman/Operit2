@@ -38,7 +38,10 @@ impl KimiProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body_internal(request)?;
         let Some(object) = body.as_object_mut() else {
             return Ok(body);
@@ -51,8 +54,9 @@ impl KimiProvider {
         );
         if request.enable_thinking {
             let useToolCall = self.inner.enable_tool_call && !request.available_tools.is_empty();
-            let providerReadyHistory =
-                self.inner.prepare_history_for_provider(&request.chat_history, useToolCall);
+            let providerReadyHistory = self
+                .inner
+                .prepare_history_for_provider(&request.chat_history, useToolCall);
             object.insert(
                 "messages".to_string(),
                 build_messages_with_reasoning(
@@ -103,7 +107,9 @@ impl AIService for KimiProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.inner.reset_token_counts();
         let request_body = self.create_request_body(&request)?;
-        self.inner.send_prepared_request(request, request_body).await
+        self.inner
+            .send_prepared_request(request, request_body)
+            .await
     }
 
     async fn calculate_input_tokens(
@@ -111,7 +117,9 @@ impl AIService for KimiProvider {
         chat_history: &[crate::core::chat::hooks::PromptTurn::PromptTurn],
         available_tools: &[crate::data::model::ToolPrompt::ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        self.inner.calculate_input_tokens(chat_history, available_tools).await
+        self.inner
+            .calculate_input_tokens(chat_history, available_tools)
+            .await
     }
 }
 
@@ -120,14 +128,13 @@ fn build_messages_with_reasoning(
     preserve_think_in_history: bool,
     use_tool_call: bool,
 ) -> Result<Value, AiServiceError> {
-    let structuredMessages: Value = serde_json::from_str(
-        &StructuredToolCallBridge::buildMessagesJsonForProvider(
+    let structuredMessages: Value =
+        serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
             effective_history,
             preserve_think_in_history,
             use_tool_call,
-        ),
-    )
-    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        ))
+        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
     let mut messagesArray = Vec::new();
     let Some(messages) = structuredMessages.as_array() else {
         return Ok(Value::Array(messagesArray));
@@ -136,7 +143,10 @@ fn build_messages_with_reasoning(
         let Some(messageObject) = messageValue.as_object() else {
             continue;
         };
-        let role = messageObject.get("role").and_then(Value::as_str).unwrap_or("");
+        let role = messageObject
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if role == "assistant" {
             let contentValue = messageObject.get("content");
             let originalContent = match contentValue {
@@ -156,7 +166,11 @@ fn build_messages_with_reasoning(
             } else {
                 message.insert(
                     "content".to_string(),
-                    json!(if content.trim().is_empty() { "[Empty]".to_string() } else { content }),
+                    json!(if content.trim().is_empty() {
+                        "[Empty]".to_string()
+                    } else {
+                        content
+                    }),
                 );
             }
             messagesArray.push(Value::Object(message));

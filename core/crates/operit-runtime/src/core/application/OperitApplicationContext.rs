@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use operit_host_api::{
-    FileSystemHost, HostEnvironmentDescriptor, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
-    SystemOperationHost, WebVisitHost,
+    FileSystemHost, HostEnvironmentDescriptor, ManagedRuntimeHost, RuntimeSqliteHost,
+    RuntimeStorageHost, SystemOperationHost, WebVisitHost,
 };
 
 #[derive(Clone, Default)]

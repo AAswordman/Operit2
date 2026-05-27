@@ -62,7 +62,10 @@ impl GitHubAuthPreferences {
             .unwrap_or_default();
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("is_logged_in"), true.to_string());
-            preferences.set(&stringPreferencesKey("access_token"), accessToken.to_string());
+            preferences.set(
+                &stringPreferencesKey("access_token"),
+                accessToken.to_string(),
+            );
             preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
             preferences.set(&stringPreferencesKey("user_info"), userJson.clone());
             preferences.set(
@@ -89,7 +92,10 @@ impl GitHubAuthPreferences {
     ) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("is_logged_in"), true.to_string());
-            preferences.set(&stringPreferencesKey("access_token"), accessToken.to_string());
+            preferences.set(
+                &stringPreferencesKey("access_token"),
+                accessToken.to_string(),
+            );
             preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
             preferences.set(
                 &stringPreferencesKey("auth_version"),
@@ -112,7 +118,9 @@ impl GitHubAuthPreferences {
         if !self.isAuthSessionCurrent(&preferences) {
             return None;
         }
-        preferences.get(&stringPreferencesKey("access_token")).cloned()
+        preferences
+            .get(&stringPreferencesKey("access_token"))
+            .cloned()
     }
 
     #[allow(non_snake_case)]
@@ -168,7 +176,10 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
-    fn isAuthSessionCurrent(&self, preferences: &operit_store::PreferencesDataStore::Preferences) -> bool {
+    fn isAuthSessionCurrent(
+        &self,
+        preferences: &operit_store::PreferencesDataStore::Preferences,
+    ) -> bool {
         let authVersion = preferences
             .get(&stringPreferencesKey("auth_version"))
             .and_then(|value| value.parse::<i64>().ok())
@@ -179,7 +190,9 @@ impl GitHubAuthPreferences {
             .unwrap_or_default();
         let requiredScopes = parseScopeSet(Self::GITHUB_SCOPE);
         authVersion >= Self::REQUIRED_AUTH_VERSION
-            && requiredScopes.iter().all(|scope| grantedScopes.iter().any(|item| item == scope))
+            && requiredScopes
+                .iter()
+                .all(|scope| grantedScopes.iter().any(|item| item == scope))
     }
 }
 

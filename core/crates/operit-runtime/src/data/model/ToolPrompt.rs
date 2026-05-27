@@ -51,21 +51,19 @@ impl fmt::Display for ToolPrompt {
         write!(formatter, "- {}: {}", self.name, self.description)?;
 
         let paramsString = match &self.parametersStructured {
-            Some(parametersStructured) if !parametersStructured.is_empty() => {
-                parametersStructured
-                    .iter()
-                    .map(|param| {
-                        let fullDesc = match &param.default {
-                            Some(default) if !param.description.contains("default") => {
-                                format!("{}, default {}", param.description, default)
-                            }
-                            _ => param.description.clone(),
-                        };
-                        format!("{} ({})", param.name, fullDesc)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
+            Some(parametersStructured) if !parametersStructured.is_empty() => parametersStructured
+                .iter()
+                .map(|param| {
+                    let fullDesc = match &param.default {
+                        Some(default) if !param.description.contains("default") => {
+                            format!("{}, default {}", param.description, default)
+                        }
+                        _ => param.description.clone(),
+                    };
+                    format!("{} ({})", param.name, fullDesc)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
             _ => self.parameters.clone(),
         };
 

@@ -96,7 +96,9 @@ impl MCPRepository {
         };
 
         progressCallback(InstallProgress::Downloading(0));
-        let Some(zipFile) = self.downloadRepositoryZip(&owner, &repoName, &server.id, progressCallback) else {
+        let Some(zipFile) =
+            self.downloadRepositoryZip(&owner, &repoName, &server.id, progressCallback)
+        else {
             return InstallResult::Error {
                 message: "Failed to download repository zip".to_string(),
             };
@@ -156,7 +158,10 @@ impl MCPRepository {
 
 #[allow(non_snake_case)]
 fn commandNeedsPhysicalInstallation(command: &str) -> bool {
-    !matches!(command.trim().to_ascii_lowercase().as_str(), "npx" | "uvx" | "uv")
+    !matches!(
+        command.trim().to_ascii_lowercase().as_str(),
+        "npx" | "uvx" | "uv"
+    )
 }
 
 #[allow(non_snake_case)]
@@ -225,7 +230,10 @@ fn downloadFromUrl(
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
         .map_err(|error| error.to_string())?;
-    let mut response = client.get(zipUrl).send().map_err(|error| error.to_string())?;
+    let mut response = client
+        .get(zipUrl)
+        .send()
+        .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!("HTTP {}", response.status().as_u16()));
     }
@@ -234,8 +242,8 @@ fn downloadFromUrl(
     let mut downloaded = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let read = std::io::Read::read(&mut response, &mut buffer)
-            .map_err(|error| error.to_string())?;
+        let read =
+            std::io::Read::read(&mut response, &mut buffer).map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }
@@ -279,7 +287,9 @@ fn extractZipFile(
             let mut out = fs::File::create(&outPath).map_err(|error| error.to_string())?;
             std::io::copy(&mut entry, &mut out).map_err(|error| error.to_string())?;
         }
-        progressCallback(InstallProgress::Extracting(((index + 1) * 100 / totalEntries) as i32));
+        progressCallback(InstallProgress::Extracting(
+            ((index + 1) * 100 / totalEntries) as i32,
+        ));
     }
     Ok(())
 }

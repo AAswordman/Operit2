@@ -6,9 +6,7 @@ use operit_host_api::{
 };
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 
 #[derive(Clone)]
 pub struct StandardSystemOperationTools {
@@ -40,7 +38,9 @@ pub struct SystemOperationToolExecutor {
 
 impl StandardSystemOperationTools {
     pub fn new(systemOperationHost: Option<Arc<dyn SystemOperationHost>>) -> Self {
-        Self { systemOperationHost }
+        Self {
+            systemOperationHost,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -80,12 +80,19 @@ impl StandardSystemOperationTools {
     pub fn modifySystemSetting(&self, tool: &AITool) -> ToolResult {
         let setting = parameterValue(tool, "setting");
         let value = parameterValue(tool, "value");
-        let namespace = optionalParameterValue(tool, "namespace").unwrap_or_else(|| "system".to_string());
+        let namespace =
+            optionalParameterValue(tool, "namespace").unwrap_or_else(|| "system".to_string());
         if setting.is_empty() || value.is_empty() {
-            return toolError(tool, "Must provide setting and value parameters".to_string());
+            return toolError(
+                tool,
+                "Must provide setting and value parameters".to_string(),
+            );
         }
         if !isValidNamespace(&namespace) {
-            return toolError(tool, "Namespace must be one of: system, secure, global".to_string());
+            return toolError(
+                tool,
+                "Namespace must be one of: system, secure, global".to_string(),
+            );
         }
         match self
             .host()
@@ -102,12 +109,16 @@ impl StandardSystemOperationTools {
     #[allow(non_snake_case)]
     pub fn getSystemSetting(&self, tool: &AITool) -> ToolResult {
         let setting = parameterValue(tool, "setting");
-        let namespace = optionalParameterValue(tool, "namespace").unwrap_or_else(|| "system".to_string());
+        let namespace =
+            optionalParameterValue(tool, "namespace").unwrap_or_else(|| "system".to_string());
         if setting.is_empty() {
             return toolError(tool, "Must provide setting parameter".to_string());
         }
         if !isValidNamespace(&namespace) {
-            return toolError(tool, "Namespace must be one of: system, secure, global".to_string());
+            return toolError(
+                tool,
+                "Namespace must be one of: system, secure, global".to_string(),
+            );
         }
         match self
             .host()
@@ -153,13 +164,17 @@ impl StandardSystemOperationTools {
 
     #[allow(non_snake_case)]
     pub fn listInstalledApps(&self, tool: &AITool) -> ToolResult {
-        let includeSystemApps = parseBoolean(optionalParameterValue(tool, "include_system_apps").as_deref());
+        let includeSystemApps =
+            parseBoolean(optionalParameterValue(tool, "include_system_apps").as_deref());
         match self
             .host()
             .and_then(|host| host.listInstalledApps(includeSystemApps))
         {
             Ok(data) => toolSuccess(tool, appListDataToString(&data)),
-            Err(error) => toolError(tool, format!("Error listing installed apps: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error listing installed apps: {}", error.message),
+            ),
         }
     }
 
@@ -192,13 +207,17 @@ impl StandardSystemOperationTools {
         let limit = optionalParameterValue(tool, "limit")
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(10);
-        let includeOngoing = parseBoolean(optionalParameterValue(tool, "include_ongoing").as_deref());
+        let includeOngoing =
+            parseBoolean(optionalParameterValue(tool, "include_ongoing").as_deref());
         match self
             .host()
             .and_then(|host| host.getNotifications(limit, includeOngoing))
         {
             Ok(data) => toolSuccess(tool, notificationDataToString(&data)),
-            Err(error) => toolError(tool, format!("Error getting notifications: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error getting notifications: {}", error.message),
+            ),
         }
     }
 
@@ -211,7 +230,8 @@ impl StandardSystemOperationTools {
         let limit = optionalParameterValue(tool, "limit")
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(20);
-        let includeSystemApps = parseBoolean(optionalParameterValue(tool, "include_system_apps").as_deref());
+        let includeSystemApps =
+            parseBoolean(optionalParameterValue(tool, "include_system_apps").as_deref());
         if sinceHours <= 0 {
             return toolError(tool, "since_hours must be greater than 0".to_string());
         }
@@ -222,7 +242,10 @@ impl StandardSystemOperationTools {
             host.getAppUsageTime(&packageName, sinceHours, limit, includeSystemApps)
         }) {
             Ok(data) => toolSuccess(tool, appUsageTimeResultDataToString(&data)),
-            Err(error) => toolError(tool, format!("Error getting app usage time: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error getting app usage time: {}", error.message),
+            ),
         }
     }
 
@@ -235,11 +258,15 @@ impl StandardSystemOperationTools {
         let includeAddress = optionalParameterValue(tool, "include_address")
             .map(|value| parseBoolean(Some(&value)))
             .unwrap_or(true);
-        match self.host().and_then(|host| {
-            host.getDeviceLocation(timeout, highAccuracy, includeAddress)
-        }) {
+        match self
+            .host()
+            .and_then(|host| host.getDeviceLocation(timeout, highAccuracy, includeAddress))
+        {
             Ok(data) => toolSuccess(tool, locationDataToString(&data)),
-            Err(error) => toolError(tool, format!("Error getting location information: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error getting location information: {}", error.message),
+            ),
         }
     }
 
@@ -247,14 +274,19 @@ impl StandardSystemOperationTools {
     pub fn getDeviceInfo(&self, tool: &AITool) -> ToolResult {
         match self.host().and_then(|host| host.getDeviceInfo()) {
             Ok(data) => toolSuccess(tool, deviceInfoDataToString(&data)),
-            Err(error) => toolError(tool, format!("Error retrieving device info: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error retrieving device info: {}", error.message),
+            ),
         }
     }
 
     fn host(&self) -> Result<&dyn SystemOperationHost, operit_host_api::HostError> {
-        self.systemOperationHost
-            .as_deref()
-            .ok_or_else(|| operit_host_api::HostError::new("SystemOperationHost is not registered for this runtime."))
+        self.systemOperationHost.as_deref().ok_or_else(|| {
+            operit_host_api::HostError::new(
+                "SystemOperationHost is not registered for this runtime.",
+            )
+        })
     }
 }
 
@@ -267,7 +299,9 @@ impl ToolExecutor for SystemOperationToolExecutor {
         let result = match self.operation {
             SystemOperationToolOperation::Toast => self.tools.toast(tool),
             SystemOperationToolOperation::SendNotification => self.tools.sendNotification(tool),
-            SystemOperationToolOperation::ModifySystemSetting => self.tools.modifySystemSetting(tool),
+            SystemOperationToolOperation::ModifySystemSetting => {
+                self.tools.modifySystemSetting(tool)
+            }
             SystemOperationToolOperation::GetSystemSetting => self.tools.getSystemSetting(tool),
             SystemOperationToolOperation::InstallApp => self.tools.installApp(tool),
             SystemOperationToolOperation::UninstallApp => self.tools.uninstallApp(tool),
@@ -304,7 +338,9 @@ fn validateSystemOperationTool(
             }
         }
         SystemOperationToolOperation::ModifySystemSetting => {
-            if parameterValue(tool, "setting").is_empty() || parameterValue(tool, "value").is_empty() {
+            if parameterValue(tool, "setting").is_empty()
+                || parameterValue(tool, "value").is_empty()
+            {
                 return invalid("setting and value are required.");
             }
         }
@@ -355,7 +391,8 @@ fn validateSystemOperationTool(
                 return invalid("timeout must be an integer.");
             }
         }
-        SystemOperationToolOperation::ListInstalledApps | SystemOperationToolOperation::GetDeviceInfo => {}
+        SystemOperationToolOperation::ListInstalledApps
+        | SystemOperationToolOperation::GetDeviceInfo => {}
     }
     ToolValidationResult {
         valid: true,
@@ -409,16 +446,31 @@ fn toolError(tool: &AITool, error: String) -> ToolResult {
 
 #[allow(non_snake_case)]
 fn systemSettingDataToString(data: &SystemSettingData) -> String {
-    format!("Current value of {}.{}: {}", data.namespace, data.setting, data.value)
+    format!(
+        "Current value of {}.{}: {}",
+        data.namespace, data.setting, data.value
+    )
 }
 
 #[allow(non_snake_case)]
 fn appOperationDataToString(data: &AppOperationData) -> String {
     match data.operationType.as_str() {
-        "install" => format!("Successfully installed app: {} {}", data.packageName, data.details),
-        "uninstall" => format!("Successfully uninstalled app: {} {}", data.packageName, data.details),
-        "start" => format!("Successfully started app: {} {}", data.packageName, data.details),
-        "stop" => format!("Successfully stopped app: {} {}", data.packageName, data.details),
+        "install" => format!(
+            "Successfully installed app: {} {}",
+            data.packageName, data.details
+        ),
+        "uninstall" => format!(
+            "Successfully uninstalled app: {} {}",
+            data.packageName, data.details
+        ),
+        "start" => format!(
+            "Successfully started app: {} {}",
+            data.packageName, data.details
+        ),
+        "stop" => format!(
+            "Successfully stopped app: {} {}",
+            data.packageName, data.details
+        ),
         _ => data.details.clone(),
     }
 }
@@ -435,9 +487,16 @@ fn appListDataToString(data: &AppListData) -> String {
 
 #[allow(non_snake_case)]
 fn notificationDataToString(data: &NotificationData) -> String {
-    let mut text = format!("Device Notifications ({} total):\n", data.notifications.len());
+    let mut text = format!(
+        "Device Notifications ({} total):\n",
+        data.notifications.len()
+    );
     for (index, notification) in data.notifications.iter().enumerate() {
-        text.push_str(&format!("{}. Package: {}\n", index + 1, notification.packageName));
+        text.push_str(&format!(
+            "{}. Package: {}\n",
+            index + 1,
+            notification.packageName
+        ));
         text.push_str(&format!("   Content: {}\n\n", notification.text));
     }
     if data.notifications.is_empty() {
@@ -449,7 +508,11 @@ fn notificationDataToString(data: &NotificationData) -> String {
 #[allow(non_snake_case)]
 fn appUsageTimeResultDataToString(data: &AppUsageTimeResultData) -> String {
     let mut header = format!("App usage time (last {}h)", data.sinceHours);
-    if let Some(packageName) = data.requestedPackageName.as_ref().filter(|value| !value.is_empty()) {
+    if let Some(packageName) = data
+        .requestedPackageName
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
         header.push_str(&format!(" for {packageName}"));
     }
     if data.entries.is_empty() {

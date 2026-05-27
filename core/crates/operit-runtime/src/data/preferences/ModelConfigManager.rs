@@ -21,7 +21,10 @@ pub enum ModelConfigError {
     #[error("store error: {0}")]
     Store(#[from] PreferencesDataStoreError),
     #[error("model index out of range: {modelIndex}, available model count: {modelCount}")]
-    ModelIndexOutOfRange { modelIndex: usize, modelCount: usize },
+    ModelIndexOutOfRange {
+        modelIndex: usize,
+        modelCount: usize,
+    },
     #[error("model name list is empty")]
     EmptyModelNameList,
     #[error("custom parameter value type error: {0}")]
@@ -122,7 +125,10 @@ impl ModelConfigManager {
         Ok(self.configListFlow()?.first()?)
     }
 
-    pub fn getModelConfigFlow(&self, configId: &str) -> Result<Flow<ModelConfigData>, ModelConfigError> {
+    pub fn getModelConfigFlow(
+        &self,
+        configId: &str,
+    ) -> Result<Flow<ModelConfigData>, ModelConfigError> {
         let configId = configId.to_string();
         let manager = self.clone();
         Ok(self.modelConfigDataStore.dataFlow().mapResult(move |_| {
@@ -189,7 +195,11 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    pub fn updateConfigBase(&self, configId: &str, name: String) -> Result<ModelConfigData, ModelConfigError> {
+    pub fn updateConfigBase(
+        &self,
+        configId: &str,
+        name: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
             config.name = name;
             config
@@ -420,7 +430,8 @@ impl ModelConfigManager {
         parametersJson: String,
     ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
-            config.hasCustomParameters = !parametersJson.trim().is_empty() && parametersJson != "[]";
+            config.hasCustomParameters =
+                !parametersJson.trim().is_empty() && parametersJson != "[]";
             config.customParameters = parametersJson;
             config
         })
@@ -443,11 +454,17 @@ impl ModelConfigManager {
         };
 
         self.updateConfigInternal(configId, |mut current| {
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "max_tokens") {
+            if let Some(parameter) = parameters
+                .iter()
+                .find(|parameter| parameter.id == "max_tokens")
+            {
                 current.maxTokens = parameter.currentValue.as_i64().unwrap() as i32;
                 current.maxTokensEnabled = parameter.isEnabled;
             }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "temperature") {
+            if let Some(parameter) = parameters
+                .iter()
+                .find(|parameter| parameter.id == "temperature")
+            {
                 current.temperature = parameter.currentValue.as_f64().unwrap() as f32;
                 current.temperatureEnabled = parameter.isEnabled;
             }
@@ -459,15 +476,24 @@ impl ModelConfigManager {
                 current.topK = parameter.currentValue.as_i64().unwrap() as i32;
                 current.topKEnabled = parameter.isEnabled;
             }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "presence_penalty") {
+            if let Some(parameter) = parameters
+                .iter()
+                .find(|parameter| parameter.id == "presence_penalty")
+            {
                 current.presencePenalty = parameter.currentValue.as_f64().unwrap() as f32;
                 current.presencePenaltyEnabled = parameter.isEnabled;
             }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "frequency_penalty") {
+            if let Some(parameter) = parameters
+                .iter()
+                .find(|parameter| parameter.id == "frequency_penalty")
+            {
                 current.frequencyPenalty = parameter.currentValue.as_f64().unwrap() as f32;
                 current.frequencyPenaltyEnabled = parameter.isEnabled;
             }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "repetition_penalty") {
+            if let Some(parameter) = parameters
+                .iter()
+                .find(|parameter| parameter.id == "repetition_penalty")
+            {
                 current.repetitionPenalty = parameter.currentValue.as_f64().unwrap() as f32;
                 current.repetitionPenaltyEnabled = parameter.isEnabled;
             }
@@ -479,14 +505,22 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    pub fn updateConfigKeyIndex(&self, configId: &str, newIndex: i32) -> Result<ModelConfigData, ModelConfigError> {
+    pub fn updateConfigKeyIndex(
+        &self,
+        configId: &str,
+        newIndex: i32,
+    ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
             config.currentKeyIndex = newIndex;
             config
         })
     }
 
-    pub fn updateApiKey(&self, configId: &str, apiKey: String) -> Result<ModelConfigData, ModelConfigError> {
+    pub fn updateApiKey(
+        &self,
+        configId: &str,
+        apiKey: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
             config.apiKey = apiKey;
             config
@@ -505,7 +539,11 @@ impl ModelConfigManager {
         })
     }
 
-    pub fn updateModelName(&self, configId: &str, modelName: String) -> Result<ModelConfigData, ModelConfigError> {
+    pub fn updateModelName(
+        &self,
+        configId: &str,
+        modelName: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
             config.modelName = modelName;
             config
@@ -580,13 +618,29 @@ impl ModelConfigManager {
         for def in StandardModelParameters::DEFINITIONS() {
             let (currentValue, isEnabled) = match def.id {
                 "max_tokens" => (serde_json::json!(config.maxTokens), config.maxTokensEnabled),
-                "temperature" => (serde_json::json!(config.temperature), config.temperatureEnabled),
+                "temperature" => (
+                    serde_json::json!(config.temperature),
+                    config.temperatureEnabled,
+                ),
                 "top_p" => (serde_json::json!(config.topP), config.topPEnabled),
                 "top_k" => (serde_json::json!(config.topK), config.topKEnabled),
-                "presence_penalty" => (serde_json::json!(config.presencePenalty), config.presencePenaltyEnabled),
-                "frequency_penalty" => (serde_json::json!(config.frequencyPenalty), config.frequencyPenaltyEnabled),
-                "repetition_penalty" => (serde_json::json!(config.repetitionPenalty), config.repetitionPenaltyEnabled),
-                other => return Err(ModelConfigError::CustomParameterConversion(other.to_string())),
+                "presence_penalty" => (
+                    serde_json::json!(config.presencePenalty),
+                    config.presencePenaltyEnabled,
+                ),
+                "frequency_penalty" => (
+                    serde_json::json!(config.frequencyPenalty),
+                    config.frequencyPenaltyEnabled,
+                ),
+                "repetition_penalty" => (
+                    serde_json::json!(config.repetitionPenalty),
+                    config.repetitionPenaltyEnabled,
+                ),
+                other => {
+                    return Err(ModelConfigError::CustomParameterConversion(
+                        other.to_string(),
+                    ))
+                }
             };
 
             parameters.push(ModelParameter {
@@ -619,7 +673,11 @@ impl ModelConfigManager {
         Ok(parameters)
     }
 
-    pub fn updateEndpoint(&self, configId: &str, apiEndpoint: String) -> Result<ModelConfigData, ModelConfigError> {
+    pub fn updateEndpoint(
+        &self,
+        configId: &str,
+        apiEndpoint: String,
+    ) -> Result<ModelConfigData, ModelConfigError> {
         self.updateConfigInternal(configId, |mut config| {
             config.apiEndpoint = apiEndpoint;
             config
@@ -676,7 +734,11 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    fn updateConfigInternal<F>(&self, configId: &str, transform: F) -> Result<ModelConfigData, ModelConfigError>
+    fn updateConfigInternal<F>(
+        &self,
+        configId: &str,
+        transform: F,
+    ) -> Result<ModelConfigData, ModelConfigError>
     where
         F: FnOnce(ModelConfigData) -> ModelConfigData,
     {
@@ -792,8 +854,14 @@ impl ModelConfigManager {
             name: parameter.name,
             apiName: parameter.apiName,
             description: parameter.description,
-            defaultValue: Self::customParameterValueToString(&parameter.defaultValue, &parameter.valueType)?,
-            currentValue: Self::customParameterValueToString(&parameter.currentValue, &parameter.valueType)?,
+            defaultValue: Self::customParameterValueToString(
+                &parameter.defaultValue,
+                &parameter.valueType,
+            )?,
+            currentValue: Self::customParameterValueToString(
+                &parameter.currentValue,
+                &parameter.valueType,
+            )?,
             isEnabled: parameter.isEnabled,
             valueType: Self::parameterValueTypeName(&parameter.valueType).to_string(),
             minValue: parameter
@@ -859,7 +927,9 @@ impl ModelConfigManager {
             "STRING" => Ok(ParameterValueType::STRING),
             "BOOLEAN" => Ok(ParameterValueType::BOOLEAN),
             "OBJECT" => Ok(ParameterValueType::OBJECT),
-            other => Err(ModelConfigError::CustomParameterValueType(other.to_string())),
+            other => Err(ModelConfigError::CustomParameterValueType(
+                other.to_string(),
+            )),
         }
     }
 
@@ -891,7 +961,9 @@ impl ModelConfigManager {
                 .parse::<bool>()
                 .map(serde_json::Value::from)
                 .map_err(|error| ModelConfigError::CustomParameterConversion(error.to_string())),
-            ParameterValueType::OBJECT => serde_json::from_str(value).map_err(ModelConfigError::Json),
+            ParameterValueType::OBJECT => {
+                serde_json::from_str(value).map_err(ModelConfigError::Json)
+            }
         }
     }
 }

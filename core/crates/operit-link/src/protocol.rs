@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+pub type CoreValue = Value;
+pub type CoreEventStream = mpsc::UnboundedReceiver<CoreEvent>;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CoreRequestId(pub String);
 
@@ -24,13 +27,14 @@ impl CoreObjectPath {
     }
 
     pub fn parse(path: &str) -> Self {
-        let segments = path
-            .split('.')
-            .map(str::trim)
-            .filter(|segment| !segment.is_empty())
-            .map(ToString::to_string)
-            .collect();
-        Self { segments }
+        Self {
+            segments: path
+                .split('.')
+                .map(str::trim)
+                .filter(|segment| !segment.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+        }
     }
 
     pub fn key(&self) -> String {
@@ -50,8 +54,56 @@ impl From<String> for CoreObjectPath {
     }
 }
 
-pub type CoreValue = Value;
-pub type CoreEventStream = mpsc::UnboundedReceiver<CoreEvent>;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoreMethodMode {
+    Call,
+    Watch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CorePayloadKind {
+    Json,
+    TextStreamEvent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoreWatchInitial {
+    None,
+    Snapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreMethodProtocol {
+    pub mode: CoreMethodMode,
+    pub payload: CorePayloadKind,
+    pub initial: CoreWatchInitial,
+}
+
+impl CoreMethodProtocol {
+    pub fn callJson() -> Self {
+        Self {
+            mode: CoreMethodMode::Call,
+            payload: CorePayloadKind::Json,
+            initial: CoreWatchInitial::None,
+        }
+    }
+
+    pub fn watchJson(initial: CoreWatchInitial) -> Self {
+        Self {
+            mode: CoreMethodMode::Watch,
+            payload: CorePayloadKind::Json,
+            initial,
+        }
+    }
+
+    pub fn watchTextStreamEvent() -> Self {
+        Self {
+            mode: CoreMethodMode::Watch,
+            payload: CorePayloadKind::TextStreamEvent,
+            initial: CoreWatchInitial::None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreCallRequest {

@@ -14,9 +14,9 @@ use crate::data::model::Memory::{Memory, MemoryTag};
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::UserPreferencesManager::PreferencesManager;
 use crate::data::repository::MemoryRepository::MemoryRepository;
+use crate::util::stream::Stream::Stream;
 use crate::util::ChatMarkupRegex::{tag_ranges, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
-use crate::util::stream::Stream::Stream;
 
 const TAG: &str = "MemoryLibrary";
 
@@ -134,7 +134,8 @@ impl MemoryLibrary {
                 .map_err(|error| error.to_string())?,
         };
         let memoryRepository = MemoryRepository::new(profileId.clone());
-        let prunedContent = ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(&content));
+        let prunedContent =
+            ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(&content));
 
         let processedHistory = conversationHistory
             .into_iter()
@@ -157,7 +158,11 @@ impl MemoryLibrary {
         if processedHistory.is_empty() {
             return Ok(());
         }
-        let Some((_, query)) = processedHistory.iter().rev().find(|(role, _)| role == "user") else {
+        let Some((_, query)) = processedHistory
+            .iter()
+            .rev()
+            .find(|(role, _)| role == "user")
+        else {
             return Ok(());
         };
         if query.is_empty() {
@@ -199,7 +204,9 @@ impl MemoryLibrary {
 
         for update in &analysis.updatedEntities {
             let _ = &update.reason;
-            if let Some(memoryToUpdate) = memoryRepository.findMemoryByTitle(&update.titleToUpdate)? {
+            if let Some(memoryToUpdate) =
+                memoryRepository.findMemoryByTitle(&update.titleToUpdate)?
+            {
                 let updatedMemory = memoryRepository.updateMemory(
                     memoryToUpdate.id,
                     memoryToUpdate.title,
@@ -209,7 +216,13 @@ impl MemoryLibrary {
                     update.newCredibility.unwrap_or(memoryToUpdate.credibility),
                     update.newImportance.unwrap_or(memoryToUpdate.importance),
                     memoryToUpdate.folderPath,
-                    Some(memoryToUpdate.tags.into_iter().map(|tag| tag.name).collect()),
+                    Some(
+                        memoryToUpdate
+                            .tags
+                            .into_iter()
+                            .map(|tag| tag.name)
+                            .collect(),
+                    ),
                 )?;
                 createdMemories.insert(updatedMemory.title.clone(), updatedMemory);
             }
@@ -244,7 +257,11 @@ impl MemoryLibrary {
 
         for entity in &analysis.extractedEntities {
             let mut memory = None;
-            if let Some(aliasFor) = entity.aliasFor.as_ref().filter(|value| !value.trim().is_empty()) {
+            if let Some(aliasFor) = entity
+                .aliasFor
+                .as_ref()
+                .filter(|value| !value.trim().is_empty())
+            {
                 memory = createdMemories
                     .get(aliasFor)
                     .cloned()
@@ -312,13 +329,7 @@ impl MemoryLibrary {
             .load()
             .map_err(|error| error.to_string())?;
         let candidateMemories = memoryRepository
-            .searchMemories(
-                &contextQuery,
-                None,
-                0.0,
-                None,
-                None,
-            )?
+            .searchMemories(&contextQuery, None, 0.0, None, None)?
             .into_iter()
             .take(15)
             .collect::<Vec<_>>();
@@ -336,7 +347,12 @@ impl MemoryLibrary {
                         format!(
                             "- \"{}\": {}...",
                             memory.title,
-                            memory.content.replace('\n', " ").chars().take(150).collect::<String>()
+                            memory
+                                .content
+                                .replace('\n', " ")
+                                .chars()
+                                .take(150)
+                                .collect::<String>()
                         )
                     })
                     .collect::<Vec<_>>()
@@ -354,7 +370,8 @@ impl MemoryLibrary {
             &currentPreferences,
             useEnglish,
         );
-        let analysisMessage = buildAnalysisMessage(query, solution, conversationHistory, useEnglish);
+        let analysisMessage =
+            buildAnalysisMessage(query, solution, conversationHistory, useEnglish);
         let messages = toPromptTurns(&[
             ("system".to_string(), systemPrompt),
             ("user".to_string(), analysisMessage),
@@ -386,12 +403,24 @@ impl MemoryLibrary {
 
 pub trait PreferencesManagerMemoryAccess {
     #[allow(non_snake_case)]
-    fn innerProfile(&self, profileId: &str) -> Result<crate::data::model::PreferenceProfile::PreferenceProfile, operit_store::PreferencesDataStore::PreferencesDataStoreError>;
+    fn innerProfile(
+        &self,
+        profileId: &str,
+    ) -> Result<
+        crate::data::model::PreferenceProfile::PreferenceProfile,
+        operit_store::PreferencesDataStore::PreferencesDataStoreError,
+    >;
 }
 
 impl PreferencesManagerMemoryAccess for PreferencesManager {
     #[allow(non_snake_case)]
-    fn innerProfile(&self, profileId: &str) -> Result<crate::data::model::PreferenceProfile::PreferenceProfile, operit_store::PreferencesDataStore::PreferencesDataStoreError> {
+    fn innerProfile(
+        &self,
+        profileId: &str,
+    ) -> Result<
+        crate::data::model::PreferenceProfile::PreferenceProfile,
+        operit_store::PreferencesDataStore::PreferencesDataStoreError,
+    > {
         crate::data::preferences::UserPreferencesManager::UserPreferencesManager::getInstance()
             .getProfile(profileId)
     }
@@ -435,11 +464,19 @@ fn extractCoreQuestionText(rawQuery: &str) -> String {
     let cn = Regex::new(r"(?s)问题\s*[：:]\s*(.+?)(?:\n\s*解决方案\s*[：:]|\z)")
         .expect("memory regex must compile")
         .captures(&compact)
-        .and_then(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()));
+        .and_then(|captures| {
+            captures
+                .get(1)
+                .map(|value| value.as_str().trim().to_string())
+        });
     let en = Regex::new(r"(?s)Question\s*:\s*(.+?)(?:\n\s*Solution\s*:|\z)")
         .expect("memory regex must compile")
         .captures(&compact)
-        .and_then(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()));
+        .and_then(|captures| {
+            captures
+                .get(1)
+                .map(|value| value.as_str().trim().to_string())
+        });
     let selected = cn.or(en).unwrap_or(compact);
     let filtered = selected
         .lines()
@@ -543,7 +580,11 @@ fn buildAnalysisMessage(
         .rev()
         .collect::<Vec<_>>();
     if !recentHistory.is_empty() {
-        message.push_str(if useEnglish { "History:\n" } else { "历史记录：\n" });
+        message.push_str(if useEnglish {
+            "History:\n"
+        } else {
+            "历史记录：\n"
+        });
         for (index, (role, content)) in recentHistory.iter().enumerate() {
             message.push_str(&format!(
                 "#{} {}: {}\n",
@@ -559,7 +600,10 @@ fn buildAnalysisMessage(
 #[allow(non_snake_case)]
 fn parseAnalysisResult(jsonString: &str, useEnglish: bool) -> Result<ParsedAnalysis, String> {
     let cleanJson = ChatUtils::extract_json(jsonString);
-    if cleanJson.trim().is_empty() || !cleanJson.trim_start().starts_with('{') || cleanJson.trim() == "{}" {
+    if cleanJson.trim().is_empty()
+        || !cleanJson.trim_start().starts_with('{')
+        || cleanJson.trim() == "{}"
+    {
         return Ok(ParsedAnalysis::empty());
     }
     let json: Value = serde_json::from_str(&cleanJson).map_err(|error| error.to_string())?;
@@ -567,7 +611,12 @@ fn parseAnalysisResult(jsonString: &str, useEnglish: bool) -> Result<ParsedAnaly
     let extractedEntities = json
         .get("new")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parseEntityArray).collect::<Vec<_>>())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parseEntityArray)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let links = json
         .get("links")
@@ -577,12 +626,22 @@ fn parseAnalysisResult(jsonString: &str, useEnglish: bool) -> Result<ParsedAnaly
     let updatedEntities = json
         .get("update")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parseUpdateArray).collect::<Vec<_>>())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parseUpdateArray)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let mergedEntities = json
         .get("merge")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parseMergeObject).collect::<Vec<_>>())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parseMergeObject)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let userPreferences = json
         .get("user")
@@ -606,8 +665,14 @@ fn parseEntityArray(value: &Value) -> Option<ParsedEntity> {
         title: array.first()?.as_str()?.to_string(),
         content: array.get(1)?.as_str()?.to_string(),
         tags: stringArray(array.get(2)),
-        folderPath: array.get(3).and_then(Value::as_str).map(ToString::to_string),
-        aliasFor: array.get(4).and_then(Value::as_str).map(ToString::to_string),
+        folderPath: array
+            .get(3)
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        aliasFor: array
+            .get(4)
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
     })
 }
 
@@ -618,7 +683,11 @@ fn parseLinkArray(value: &Value) -> Option<ParsedLink> {
         sourceTitle: array.first()?.as_str()?.to_string(),
         targetTitle: array.get(1)?.as_str()?.to_string(),
         type_: array.get(2)?.as_str()?.to_string(),
-        description: array.get(3).and_then(Value::as_str).unwrap_or("").to_string(),
+        description: array
+            .get(3)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         weight: array.get(4).and_then(Value::as_f64).unwrap_or(1.0) as f32,
     })
 }
@@ -629,9 +698,19 @@ fn parseUpdateArray(value: &Value) -> Option<ParsedUpdate> {
     Some(ParsedUpdate {
         titleToUpdate: array.first()?.as_str()?.to_string(),
         newContent: array.get(1)?.as_str()?.to_string(),
-        reason: array.get(2).and_then(Value::as_str).unwrap_or("").to_string(),
-        newCredibility: array.get(3).and_then(Value::as_f64).map(|value| value as f32),
-        newImportance: array.get(4).and_then(Value::as_f64).map(|value| value as f32),
+        reason: array
+            .get(2)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        newCredibility: array
+            .get(3)
+            .and_then(Value::as_f64)
+            .map(|value| value as f32),
+        newImportance: array
+            .get(4)
+            .and_then(Value::as_f64)
+            .map(|value| value as f32),
     })
 }
 
@@ -643,8 +722,16 @@ fn parseMergeObject(value: &Value) -> Option<ParsedMerge> {
         newTitle: object.get("new_title")?.as_str()?.to_string(),
         newContent: object.get("new_content")?.as_str()?.to_string(),
         newTags: stringArray(object.get("new_tags")),
-        folderPath: object.get("folder_path").and_then(Value::as_str).unwrap_or("").to_string(),
-        reason: object.get("reason").and_then(Value::as_str).unwrap_or("").to_string(),
+        folderPath: object
+            .get("folder_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        reason: object
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -690,7 +777,9 @@ fn parseUserPreferences(
 }
 
 #[allow(non_snake_case)]
-fn buildPreferencesText(profile: crate::data::model::PreferenceProfile::PreferenceProfile) -> String {
+fn buildPreferencesText(
+    profile: crate::data::model::PreferenceProfile::PreferenceProfile,
+) -> String {
     let mut parts = Vec::new();
     if !profile.gender.is_empty() {
         parts.push(format!("性别: {}", profile.gender));
@@ -731,7 +820,11 @@ fn updateUserPreferencesFromAnalysis(preferencesText: &str, profileId: &str) -> 
         Regex::new(pattern)
             .expect("preference regex must compile")
             .captures(preferencesText)
-            .and_then(|captures| captures.get(captures.len() - 1).map(|value| value.as_str().trim().to_string()))
+            .and_then(|captures| {
+                captures
+                    .get(captures.len() - 1)
+                    .map(|value| value.as_str().trim().to_string())
+            })
     };
     let birthDate = extract(r"(出生日期|出生年月日|Birth Date|Date of Birth)[:：\s]+([\d-]+)")
         .and_then(|value| {
@@ -753,7 +846,9 @@ fn updateUserPreferencesFromAnalysis(preferencesText: &str, profileId: &str) -> 
     let personality = extract(r"(性格(特点)?|Personality( traits)?)[:：\s]+([^;]+)");
     let identity = extract(r"(身份(认同)?|Identity( recognition)?)[:：\s]+([^;]+)");
     let occupation = extract(r"(职业|Occupation)[:：\s]+([^;]+)");
-    let aiStyle = extract(r"(AI风格|期待的AI风格|偏好的AI风格|AI Style|Expected AI Style|Preferred AI Style)[:：\s]+([^;]+)");
+    let aiStyle = extract(
+        r"(AI风格|期待的AI风格|偏好的AI风格|AI Style|Expected AI Style|Preferred AI Style)[:：\s]+([^;]+)",
+    );
     PreferencesManager::getInstance()
         .updateProfileCategory(
             profileId.to_string(),
@@ -778,7 +873,11 @@ fn pruneToolResultContent(message: &str) -> String {
     let mut cursor = 0;
     for block in blocks {
         output.push_str(&message[cursor..block.start]);
-        let openEnd = block.raw.find('>').map(|index| index + 1).unwrap_or(block.raw.len());
+        let openEnd = block
+            .raw
+            .find('>')
+            .map(|index| index + 1)
+            .unwrap_or(block.raw.len());
         output.push_str(&block.raw[..openEnd]);
         output.push_str("[工具结果已省略]");
         output.push_str(&format!("</{}>", block.tag_name));
@@ -836,7 +935,11 @@ fn buildTags(tags: Vec<String>) -> Vec<MemoryTag> {
     let mut result = Vec::new();
     for tag in tags {
         let name = tag.trim();
-        if name.is_empty() || result.iter().any(|existing: &MemoryTag| existing.name == name) {
+        if name.is_empty()
+            || result
+                .iter()
+                .any(|existing: &MemoryTag| existing.name == name)
+        {
             continue;
         }
         result.push(MemoryTag {

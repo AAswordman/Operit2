@@ -31,7 +31,10 @@ impl SlidingWindowRateLimiter {
             return 0;
         }
 
-        let mut timestamps = self.timestamps.lock().expect("SlidingWindowRateLimiter mutex poisoned");
+        let mut timestamps = self
+            .timestamps
+            .lock()
+            .expect("SlidingWindowRateLimiter mutex poisoned");
         while timestamps
             .front()
             .map(|oldest| nowMs - *oldest >= self.windowMs)

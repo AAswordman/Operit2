@@ -5,8 +5,7 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
-    TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -117,7 +116,11 @@ impl OpenAIResponsesProvider {
             .cloned()
             .unwrap_or_default();
         let toolsJson = requestObject.get("tools").map(Value::to_string);
-        self.customize_final_request_object(&mut requestObject, &messagesArray, toolsJson.as_deref());
+        self.customize_final_request_object(
+            &mut requestObject,
+            &messagesArray,
+            toolsJson.as_deref(),
+        );
         Ok(requestObject)
     }
 
@@ -142,11 +145,7 @@ impl OpenAIResponsesProvider {
         object.insert("prompt_cache_key".to_string(), json!(promptCacheKey));
     }
 
-    pub fn apply_responses_reasoning_effort(
-        &self,
-        requestJson: &mut Value,
-        enableThinking: bool,
-    ) {
+    pub fn apply_responses_reasoning_effort(&self, requestJson: &mut Value, enableThinking: bool) {
         if !enableThinking {
             return;
         }
@@ -154,7 +153,12 @@ impl OpenAIResponsesProvider {
             return;
         };
         match object.get("reasoning") {
-            Some(Value::Object(reasoning)) if reasoning.get("effort").and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty()) => {
+            Some(Value::Object(reasoning))
+                if reasoning
+                    .get("effort")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty()) =>
+            {
                 return;
             }
             Some(Value::Object(_)) | None => {}
@@ -223,7 +227,10 @@ impl OpenAIResponsesProvider {
                 anchorParts.push(format!(
                     "{}:{}",
                     role,
-                    messageObject.get("content").map(Value::to_string).unwrap_or_default()
+                    messageObject
+                        .get("content")
+                        .map(Value::to_string)
+                        .unwrap_or_default()
                 ));
                 continue;
             }
@@ -232,7 +239,10 @@ impl OpenAIResponsesProvider {
                 anchorParts.push(format!(
                     "{}:{}",
                     role,
-                    messageObject.get("content").map(Value::to_string).unwrap_or_default()
+                    messageObject
+                        .get("content")
+                        .map(Value::to_string)
+                        .unwrap_or_default()
                 ));
                 break;
             }
@@ -242,8 +252,14 @@ impl OpenAIResponsesProvider {
             if let Some(firstMessage) = messagesArray.first().and_then(Value::as_object) {
                 anchorParts.push(format!(
                     "{}:{}",
-                    firstMessage.get("role").and_then(Value::as_str).unwrap_or("unknown"),
-                    firstMessage.get("content").map(Value::to_string).unwrap_or_default()
+                    firstMessage
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    firstMessage
+                        .get("content")
+                        .map(Value::to_string)
+                        .unwrap_or_default()
                 ));
             }
         }
@@ -266,7 +282,10 @@ impl OpenAIResponsesProvider {
         }
 
         let digest = Sha256::digest(digestInput.as_bytes());
-        let hex = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let hex = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         Some(format!("operit_resp_{}", &hex[..48]))
     }
 
@@ -376,14 +395,16 @@ impl OpenAIResponsesPayloadAdapter {
                             for part in contentArray {
                                 match part.get("type").and_then(Value::as_str).unwrap_or_default() {
                                     "output_text" | "text" => {
-                                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                        if let Some(text) = part.get("text").and_then(Value::as_str)
+                                        {
                                             if !text.is_empty() {
                                                 textChunks.push(text.to_string());
                                             }
                                         }
                                     }
                                     "reasoning_text" => {
-                                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                        if let Some(text) = part.get("text").and_then(Value::as_str)
+                                        {
                                             if !text.is_empty() {
                                                 reasoningChunks.push(text.to_string());
                                             }
@@ -397,7 +418,8 @@ impl OpenAIResponsesPayloadAdapter {
                     "reasoning" => {
                         if let Some(summaryArray) = item.get("summary").and_then(Value::as_array) {
                             for summaryPart in summaryArray {
-                                if let Some(text) = summaryPart.get("text").and_then(Value::as_str) {
+                                if let Some(text) = summaryPart.get("text").and_then(Value::as_str)
+                                {
                                     if !text.is_empty() {
                                         reasoningChunks.push(text.to_string());
                                     }
@@ -406,7 +428,9 @@ impl OpenAIResponsesPayloadAdapter {
                         }
                     }
                     "function_call" => {
-                        if let Some(toolCall) = Self::convert_function_call_item_to_chat_tool_call(item) {
+                        if let Some(toolCall) =
+                            Self::convert_function_call_item_to_chat_tool_call(item)
+                        {
                             toolCalls.push(toolCall);
                         }
                     }
@@ -438,7 +462,10 @@ impl OpenAIResponsesPayloadAdapter {
             convertedFunction.insert("type".to_string(), json!("function"));
             convertedFunction.insert(
                 "name".to_string(),
-                json!(function.get("name").and_then(Value::as_str).unwrap_or_default()),
+                json!(function
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()),
             );
             for key in ["description", "parameters", "strict"] {
                 if let Some(value) = function.get(key) {
@@ -456,7 +483,10 @@ impl OpenAIResponsesPayloadAdapter {
             let Some(messageObject) = message.as_object() else {
                 continue;
             };
-            let role = messageObject.get("role").and_then(Value::as_str).unwrap_or_default();
+            let role = messageObject
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if role.is_empty() {
                 continue;
             }
@@ -482,7 +512,10 @@ impl OpenAIResponsesPayloadAdapter {
                         let Some(function) = call.get("function").and_then(Value::as_object) else {
                             continue;
                         };
-                        let name = function.get("name").and_then(Value::as_str).unwrap_or_default();
+                        let name = function
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
                         if name.is_empty() {
                             continue;
                         }
@@ -491,7 +524,10 @@ impl OpenAIResponsesPayloadAdapter {
                         callItem.insert("name".to_string(), json!(name));
                         callItem.insert(
                             "arguments".to_string(),
-                            json!(function.get("arguments").and_then(Value::as_str).unwrap_or("{}")),
+                            json!(function
+                                .get("arguments")
+                                .and_then(Value::as_str)
+                                .unwrap_or("{}")),
                         );
                         if let Some(callId) = call.get("id").and_then(Value::as_str) {
                             if !callId.is_empty() {
@@ -503,7 +539,8 @@ impl OpenAIResponsesPayloadAdapter {
                 }
             }
 
-            let convertedContent = Self::convert_message_content_for_responses(messageObject.get("content"));
+            let convertedContent =
+                Self::convert_message_content_for_responses(messageObject.get("content"));
             let hasContent = match &convertedContent {
                 Value::String(value) => !value.trim().is_empty(),
                 Value::Array(value) => !value.is_empty(),
@@ -532,13 +569,16 @@ impl OpenAIResponsesPayloadAdapter {
                         "text" | "output_text" | "input_text" => {
                             if let Some(text) = part.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
-                                    convertedParts.push(json!({"type": "input_text", "text": text}));
+                                    convertedParts
+                                        .push(json!({"type": "input_text", "text": text}));
                                 }
                             }
                         }
                         "image_url" | "input_image" => {
                             let imageUrl = if partType == "input_image" {
-                                part.get("image_url").and_then(Value::as_str).unwrap_or_default()
+                                part.get("image_url")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
                             } else {
                                 part.pointer("/image_url/url")
                                     .and_then(Value::as_str)
@@ -546,18 +586,22 @@ impl OpenAIResponsesPayloadAdapter {
                                     .unwrap_or_default()
                             };
                             if !imageUrl.is_empty() {
-                                convertedParts.push(json!({"type": "input_image", "image_url": imageUrl}));
+                                convertedParts
+                                    .push(json!({"type": "input_image", "image_url": imageUrl}));
                             }
                         }
                         "input_audio" => {
                             if let Some(audioObject) = part.get("input_audio") {
-                                convertedParts.push(json!({"type": "input_audio", "input_audio": audioObject}));
+                                convertedParts.push(
+                                    json!({"type": "input_audio", "input_audio": audioObject}),
+                                );
                             }
                         }
                         _ => {
                             if let Some(text) = part.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
-                                    convertedParts.push(json!({"type": "input_text", "text": text}));
+                                    convertedParts
+                                        .push(json!({"type": "input_text", "text": text}));
                                 }
                             }
                         }
@@ -615,10 +659,13 @@ impl OpenAIResponsesPayloadAdapter {
             root.insert("id".to_string(), json!(callId));
         }
         root.insert("type".to_string(), json!("function"));
-        root.insert("function".to_string(), json!({
-            "name": name,
-            "arguments": arguments,
-        }));
+        root.insert(
+            "function".to_string(),
+            json!({
+                "name": name,
+                "arguments": arguments,
+            }),
+        );
         Some(Value::Object(root))
     }
 }
@@ -685,9 +732,7 @@ impl AIService for OpenAIResponsesProvider {
                 self.supportsVideo,
                 self.enableToolCall,
             );
-            let mut parent_stream = parent
-                .send_prepared_request(request, requestBody)
-                .await?;
+            let mut parent_stream = parent.send_prepared_request(request, requestBody).await?;
             let event_channel = parent_stream.event_channel().clone();
             let mut provider = self.clone();
             let cold_stream = FnStream::new(move |emit| {
@@ -695,7 +740,8 @@ impl AIService for OpenAIResponsesProvider {
                     emit(content);
                 });
                 provider.apply_usage_counts(&UsageCounts {
-                    totalInputTokens: parent.input_token_count() + parent.cached_input_token_count(),
+                    totalInputTokens: parent.input_token_count()
+                        + parent.cached_input_token_count(),
                     actualInputTokens: parent.input_token_count(),
                     cachedInputTokens: parent.cached_input_token_count(),
                     outputTokens: parent.output_token_count(),
@@ -718,7 +764,9 @@ impl AIService for OpenAIResponsesProvider {
                 .text()
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+            return Err(AiServiceError::RequestFailed(format!(
+                "{status}: {message}"
+            )));
         }
 
         let jsonResponse: Value = response
@@ -737,7 +785,9 @@ impl AIService for OpenAIResponsesProvider {
         chunks.extend(parsed.textChunks);
         if let Value::Array(toolCalls) = parsed.toolCalls {
             for toolCall in toolCalls {
-                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(&toolCall.to_string()));
+                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &toolCall.to_string(),
+                ));
             }
         }
 

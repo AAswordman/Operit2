@@ -28,7 +28,10 @@ impl StructuredToolCallBridge {
             return None;
         }
         let tools = Self::buildToolDefinitions(toolPrompts);
-        tools.as_array().filter(|items| !items.is_empty()).map(|_| tools.to_string())
+        tools
+            .as_array()
+            .filter(|items| !items.is_empty())
+            .map(|_| tools.to_string())
     }
 
     pub fn buildToolsArray(toolPrompts: Option<&[ToolPrompt]>) -> Value {
@@ -54,7 +57,10 @@ impl StructuredToolCallBridge {
         }
     }
 
-    pub fn buildMnnChatHistory(history: &[PromptTurn], preserveThinkInHistory: bool) -> Vec<(String, String)> {
+    pub fn buildMnnChatHistory(
+        history: &[PromptTurn],
+        preserveThinkInHistory: bool,
+    ) -> Vec<(String, String)> {
         let messages = Self::buildStructuredMessages(history, preserveThinkInHistory);
         let mut compiledHistory = Vec::new();
         let Some(messages) = messages.as_array() else {
@@ -64,7 +70,12 @@ impl StructuredToolCallBridge {
             let Some(message) = message.as_object() else {
                 continue;
             };
-            let role = message.get("role").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let contentValue = message.get("content");
             let content = match contentValue {
                 None | Some(Value::Null) => String::new(),
@@ -75,11 +86,16 @@ impl StructuredToolCallBridge {
                 && message.len() == 2
                 && message.contains_key("role")
                 && message.contains_key("content")
-                && contentValue.map(|value| value.is_null() || value.is_string()).unwrap_or(true);
+                && contentValue
+                    .map(|value| value.is_null() || value.is_string())
+                    .unwrap_or(true);
             if isPlainRoleContentMessage {
                 compiledHistory.push((role, content));
             } else {
-                compiledHistory.push(("json".to_string(), Value::Object(message.clone()).to_string()));
+                compiledHistory.push((
+                    "json".to_string(),
+                    Value::Object(message.clone()).to_string(),
+                ));
             }
         }
         compiledHistory
@@ -133,7 +149,13 @@ impl StructuredToolCallBridge {
             useToolCall: bool,
         ) {
             if currentBlockType.as_ref() != Some(&blockType) {
-                flushCurrentBlock(compiled, currentBlockType, currentContent, currentMetadata, useToolCall);
+                flushCurrentBlock(
+                    compiled,
+                    currentBlockType,
+                    currentContent,
+                    currentMetadata,
+                    useToolCall,
+                );
                 *currentBlockType = Some(blockType);
             }
             let trimmedContent = turn.content.trim();
@@ -234,7 +256,10 @@ impl StructuredToolCallBridge {
         Self::buildMessagesJsonForProvider(history, preserve_think_in_history, use_tool_call)
     }
 
-    pub fn compile_history_for_provider(history: &[PromptTurn], use_tool_call: bool) -> Vec<PromptTurn> {
+    pub fn compile_history_for_provider(
+        history: &[PromptTurn],
+        use_tool_call: bool,
+    ) -> Vec<PromptTurn> {
         Self::compileHistoryForProvider(history, use_tool_call)
     }
 
@@ -345,7 +370,9 @@ impl StructuredToolCallBridge {
                         &mut queuedToolCallIds,
                         &mut openToolCallIds,
                     );
-                    messagesArray.push(json!({"role": "system", "content": Self::nonEmptyContent(&content)}));
+                    messagesArray.push(
+                        json!({"role": "system", "content": Self::nonEmptyContent(&content)}),
+                    );
                 }
                 PromptTurnKind::USER | PromptTurnKind::SUMMARY => {
                     flushOpenToolCallsAsCancelled(
@@ -355,11 +382,13 @@ impl StructuredToolCallBridge {
                         &mut queuedToolCallIds,
                         &mut openToolCallIds,
                     );
-                    messagesArray.push(json!({"role": "user", "content": Self::nonEmptyContent(&content)}));
+                    messagesArray
+                        .push(json!({"role": "user", "content": Self::nonEmptyContent(&content)}));
                 }
                 PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => {
                     let (textContent, parsedToolCalls) = Self::parseXmlToolCalls(&content);
-                    let toolCalls = parsedToolCalls.map(|calls| Self::wrapPackageToolCallsWithProxy(&calls));
+                    let toolCalls =
+                        parsedToolCalls.map(|calls| Self::wrapPackageToolCallsWithProxy(&calls));
                     if let Some(toolCalls) = toolCalls {
                         if !toolCalls.is_empty() {
                             flushOpenToolCallsAsCancelled(
@@ -413,13 +442,17 @@ impl StructuredToolCallBridge {
                             let result = &resultsList[index];
                             let mut toolMessage = Map::new();
                             toolMessage.insert("role".to_string(), json!("tool"));
-                            toolMessage.insert("tool_call_id".to_string(), json!(openToolCallIds[index]));
+                            toolMessage
+                                .insert("tool_call_id".to_string(), json!(openToolCallIds[index]));
                             if let Some(name) = &result.name {
                                 if !name.trim().is_empty() {
                                     toolMessage.insert("name".to_string(), json!(name));
                                 }
                             }
-                            toolMessage.insert("content".to_string(), json!(Self::nonEmptyContent(&result.content)));
+                            toolMessage.insert(
+                                "content".to_string(),
+                                json!(Self::nonEmptyContent(&result.content)),
+                            );
                             messagesArray.push(Value::Object(toolMessage));
                         }
                         openToolCallIds.drain(0..validCount);
@@ -465,7 +498,9 @@ impl StructuredToolCallBridge {
                 let kind = turn.kind.clone();
                 let role = match kind {
                     PromptTurnKind::SYSTEM => "system",
-                    PromptTurnKind::USER | PromptTurnKind::SUMMARY | PromptTurnKind::TOOL_RESULT => "user",
+                    PromptTurnKind::USER
+                    | PromptTurnKind::SUMMARY
+                    | PromptTurnKind::TOOL_RESULT => "user",
                     PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => "assistant",
                 };
                 let content = if !preserveThinkInHistory && turn.kind == PromptTurnKind::ASSISTANT {
@@ -473,12 +508,11 @@ impl StructuredToolCallBridge {
                 } else {
                     turn.content
                 };
-                let effectiveContent =
-                    if role == "assistant" && content.trim().is_empty() {
-                        "[Empty]".to_string()
-                    } else {
-                        content
-                    };
+                let effectiveContent = if role == "assistant" && content.trim().is_empty() {
+                    "[Empty]".to_string()
+                } else {
+                    content
+                };
                 json!({
                     "role": role,
                     "content": effectiveContent,
@@ -519,7 +553,9 @@ impl StructuredToolCallBridge {
         )
     }
 
-    fn buildSchemaFromStructured(params: &[crate::data::model::ToolPrompt::ToolParameterSchema]) -> Value {
+    fn buildSchemaFromStructured(
+        params: &[crate::data::model::ToolPrompt::ToolParameterSchema],
+    ) -> Value {
         let mut properties = Map::new();
         let mut required = Vec::new();
         for param in params {
@@ -553,7 +589,10 @@ impl StructuredToolCallBridge {
             if name.trim().is_empty() {
                 continue;
             }
-            let argumentsRaw = function.get("arguments").and_then(Value::as_str).unwrap_or("");
+            let argumentsRaw = function
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             let paramsObj = serde_json::from_str::<Value>(argumentsRaw)
                 .ok()
                 .and_then(|value| value.as_object().cloned());
@@ -648,7 +687,10 @@ impl StructuredToolCallBridge {
         source
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| item.as_object().and_then(|object| Self::normalizeSingleToolCall(object, index)))
+            .filter_map(|(index, item)| {
+                item.as_object()
+                    .and_then(|object| Self::normalizeSingleToolCall(object, index))
+            })
             .collect()
     }
 
@@ -657,8 +699,14 @@ impl StructuredToolCallBridge {
         let functionCallObject = raw.get("function_call").and_then(Value::as_object);
         let name = functionObject
             .and_then(|object| object.get("name").and_then(Value::as_str))
-            .or_else(|| raw.get("name").and_then(Value::as_str).filter(|value| !value.trim().is_empty()))
-            .or_else(|| functionCallObject.and_then(|object| object.get("name").and_then(Value::as_str)))
+            .or_else(|| {
+                raw.get("name")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .or_else(|| {
+                functionCallObject.and_then(|object| object.get("name").and_then(Value::as_str))
+            })
             .unwrap_or("");
         if name.trim().is_empty() {
             return None;
@@ -678,7 +726,11 @@ impl StructuredToolCallBridge {
             .get("id")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| raw.get("call_id").and_then(Value::as_str).filter(|value| !value.trim().is_empty()))
+            .or_else(|| {
+                raw.get("call_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("call_{}_{}", Self::sanitizeToolCallId(name), index));
         let callId = Self::sanitizeToolCallId(&rawId);
@@ -714,8 +766,15 @@ impl StructuredToolCallBridge {
                 params.insert(paramName, json!(paramValue));
             }
             let toolNamePart = Self::sanitizeToolCallId(&toolMatch.name);
-            let hashPart = Self::stableIdHashPart(&format!("{}:{}", toolMatch.name, Value::Object(params.clone())));
-            let callId = Self::sanitizeToolCallId(&format!("call_{}_{}_{}", toolNamePart, hashPart, callIndex));
+            let hashPart = Self::stableIdHashPart(&format!(
+                "{}:{}",
+                toolMatch.name,
+                Value::Object(params.clone())
+            ));
+            let callId = Self::sanitizeToolCallId(&format!(
+                "call_{}_{}_{}",
+                toolNamePart, hashPart, callIndex
+            ));
             toolCalls.push(json!({
                 "id": callId,
                 "type": "function",
@@ -741,13 +800,17 @@ impl StructuredToolCallBridge {
                 wrappedToolCalls.push(toolCall.clone());
                 continue;
             }
-            let rawArguments = function.get("arguments").and_then(Value::as_str).unwrap_or("{}");
-            let originalArguments = serde_json::from_str::<Value>(if rawArguments.trim().is_empty() {
-                "{}"
-            } else {
-                rawArguments
-            })
-            .unwrap_or_else(|_| json!({}));
+            let rawArguments = function
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}");
+            let originalArguments =
+                serde_json::from_str::<Value>(if rawArguments.trim().is_empty() {
+                    "{}"
+                } else {
+                    rawArguments
+                })
+                .unwrap_or_else(|_| json!({}));
             let mut wrapped = toolCall.clone();
             if let Some(object) = wrapped.as_object_mut() {
                 object.insert(

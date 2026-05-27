@@ -120,7 +120,8 @@ impl FileBindingService {
 
         let (success, resultString) = self.applyFuzzyOperations(originalContent, &internalOps);
         if success {
-            let diffString = self.generateDiff(&originalContent.replace("\r\n", "\n"), &resultString);
+            let diffString =
+                self.generateDiff(&originalContent.replace("\r\n", "\n"), &resultString);
             return (resultString, diffString);
         }
         (
@@ -192,7 +193,10 @@ impl FileBindingService {
     fn applyFuzzyPatch(&self, originalContent: &str, aiPatchCode: &str) -> (bool, String) {
         let operations = self.parseEditOperations(aiPatchCode);
         if operations.is_empty() {
-            return (false, "No valid edit operations found in the patch code.".to_string());
+            return (
+                false,
+                "No valid edit operations found in the patch code.".to_string(),
+            );
         }
         self.applyFuzzyOperations(originalContent, &operations)
     }
@@ -229,7 +233,8 @@ impl FileBindingService {
         enrichedOps.sort_by(|left, right| right.1.cmp(&left.1));
         for (op, start, end) in enrichedOps {
             let originalSegment = originalLines[start..=end].to_vec();
-            let boundaryPreservingLines = self.tryApplyBoundaryPreservingEdit(&originalSegment, &op);
+            let boundaryPreservingLines =
+                self.tryApplyBoundaryPreservingEdit(&originalSegment, &op);
             for index in (start..=end).rev() {
                 originalLines.remove(index);
             }
@@ -238,7 +243,11 @@ impl FileBindingService {
                     originalLines.insert(start + offset, line);
                 }
             } else if op.action == EditAction::REPLACE {
-                let newLines = op.newContent.lines().map(str::to_string).collect::<Vec<_>>();
+                let newLines = op
+                    .newContent
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
                 for (offset, line) in newLines.into_iter().enumerate() {
                     originalLines.insert(start + offset, line);
                 }
@@ -276,7 +285,11 @@ impl FileBindingService {
                 } else {
                     let mut output = Vec::new();
                     output.push(format!("{prefix}{}", newLines[0]));
-                    for line in newLines.iter().skip(1).take(newLines.len().saturating_sub(2)) {
+                    for line in newLines
+                        .iter()
+                        .skip(1)
+                        .take(newLines.len().saturating_sub(2))
+                    {
                         output.push((*line).to_string());
                     }
                     output.push(format!("{}{suffix}", newLines[newLines.len() - 1]));
@@ -329,24 +342,32 @@ impl FileBindingService {
                 let mut newContent = String::new();
                 let mut inBlock: Option<&str> = None;
                 i += 1;
-                while i < lines.len() && !lines[i].trim().starts_with(&format!("[END-{actionStr}]")) {
+                while i < lines.len() && !lines[i].trim().starts_with(&format!("[END-{actionStr}]"))
+                {
                     let currentLine = lines[i];
                     let trimmedLine = currentLine.trim();
                     if trimmedLine.starts_with("[OLD]") {
                         inBlock = Some("OLD");
-                        let inline = currentLine.split_once("[OLD]").map(|(_, v)| v).unwrap_or("");
+                        let inline = currentLine
+                            .split_once("[OLD]")
+                            .map(|(_, v)| v)
+                            .unwrap_or("");
                         if !inline.is_empty() {
                             oldContent.push_str(inline);
                             oldContent.push('\n');
                         }
                     } else if trimmedLine.starts_with("[NEW]") {
                         inBlock = Some("NEW");
-                        let inline = currentLine.split_once("[NEW]").map(|(_, v)| v).unwrap_or("");
+                        let inline = currentLine
+                            .split_once("[NEW]")
+                            .map(|(_, v)| v)
+                            .unwrap_or("");
                         if !inline.is_empty() {
                             newContent.push_str(inline);
                             newContent.push('\n');
                         }
-                    } else if trimmedLine.starts_with("[/OLD]") || trimmedLine.starts_with("[/NEW]") {
+                    } else if trimmedLine.starts_with("[/OLD]") || trimmedLine.starts_with("[/NEW]")
+                    {
                         inBlock = None;
                     } else {
                         match inBlock {
@@ -427,7 +448,8 @@ impl FileBindingService {
                             || (sizeDiff == best.sizeDiff
                                 && (lengthDiff < best.lengthDiff
                                     || (lengthDiff == best.lengthDiff
-                                        && (best.startLine == -1 || i as isize <= best.startLine))))));
+                                        && (best.startLine == -1
+                                            || i as isize <= best.startLine))))));
                 if isBetter {
                     best.bestScore = score;
                     best.startLine = i as isize;

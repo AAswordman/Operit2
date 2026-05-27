@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-use crate::util::stream::Stream::{Stream, VecStream};
-use crate::util::stream::StreamGroup::StreamGroup;
 use crate::util::stream::plugins::StreamMarkdownPlugin::{
     StreamMarkdownBlockBracketLaTeXPlugin, StreamMarkdownBlockLaTeXPlugin,
     StreamMarkdownBlockQuotePlugin, StreamMarkdownBoldPlugin, StreamMarkdownFencedCodeBlockPlugin,
@@ -13,6 +11,8 @@ use crate::util::stream::plugins::StreamMarkdownPlugin::{
 };
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::util::stream::plugins::StreamXmlPlugin::StreamXmlPlugin;
+use crate::util::stream::Stream::{Stream, VecStream};
+use crate::util::stream::StreamGroup::StreamGroup;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(i32)]
@@ -259,7 +259,12 @@ impl MarkdownSession {
 
         for pending in self.waitfor_pending.drain(..) {
             if pending.should_emit {
-                Self::emit_index(out, MarkdownProcessorType::PlainText, pending.global_index, run);
+                Self::emit_index(
+                    out,
+                    MarkdownProcessorType::PlainText,
+                    pending.global_index,
+                    run,
+                );
             }
         }
         self.waitfor_active = false;
@@ -271,10 +276,8 @@ impl MarkdownSession {
             entry.plugin.reset();
         }
 
-        self.pending_chars.push_front(PendingChar {
-            c,
-            global_index,
-        });
+        self.pending_chars
+            .push_front(PendingChar { c, global_index });
     }
 
     fn process_evaluation(

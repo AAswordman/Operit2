@@ -1,5 +1,5 @@
-use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
+use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 
 #[derive(Debug, Clone)]
 pub struct StreamXmlPlugin {

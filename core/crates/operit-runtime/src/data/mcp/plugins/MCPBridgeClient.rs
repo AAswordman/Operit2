@@ -20,7 +20,9 @@ impl Clone for MCPBridgeClient {
             context: self.context.clone(),
             serviceName: self.serviceName.clone(),
             isConnected: AtomicBool::new(self.isConnected.load(Ordering::SeqCst)),
-            lastConnectionFailureDetail: std::sync::Mutex::new(self.getLastConnectionFailureDetail()),
+            lastConnectionFailureDetail: std::sync::Mutex::new(
+                self.getLastConnectionFailureDetail(),
+            ),
         }
     }
 }
@@ -51,7 +53,10 @@ impl MCPBridgeClient {
         params.insert("name".to_string(), Value::String(name));
         params.insert("command".to_string(), Value::String(command));
         if !args.is_empty() {
-            params.insert("args".to_string(), Value::Array(args.into_iter().map(Value::String).collect()));
+            params.insert(
+                "args".to_string(),
+                Value::Array(args.into_iter().map(Value::String).collect()),
+            );
         }
         if let Some(description) = description {
             params.insert("description".to_string(), Value::String(description));
@@ -59,7 +64,11 @@ impl MCPBridgeClient {
         if !env.is_empty() {
             params.insert(
                 "env".to_string(),
-                Value::Object(env.into_iter().map(|(key, value)| (key, Value::String(value))).collect()),
+                Value::Object(
+                    env.into_iter()
+                        .map(|(key, value)| (key, Value::String(value)))
+                        .collect(),
+                ),
             );
         }
         if let Some(cwd) = cwd {
@@ -98,7 +107,12 @@ impl MCPBridgeClient {
         if !headers.is_empty() {
             params.insert(
                 "headers".to_string(),
-                Value::Object(headers.into_iter().map(|(key, value)| (key, Value::String(value))).collect()),
+                Value::Object(
+                    headers
+                        .into_iter()
+                        .map(|(key, value)| (key, Value::String(value)))
+                        .collect(),
+                ),
             );
         }
         json!({
@@ -135,7 +149,11 @@ impl MCPBridgeClient {
             &self.serviceName,
             Some(Self::DEFAULT_SPAWN_TIMEOUT_MS),
         );
-        if spawnResponse.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if spawnResponse
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             let ready = spawnResponse
                 .get("result")
                 .and_then(|result| result.get("ready"))
@@ -154,7 +172,9 @@ impl MCPBridgeClient {
             .unwrap_or("service not ready")
             .to_string();
         self.isConnected.store(false, Ordering::SeqCst);
-        self.setLastConnectionFailureDetail(Some(self.buildSpawnFailureDetail(&spawnResponse, &message)));
+        self.setLastConnectionFailureDetail(Some(
+            self.buildSpawnFailureDetail(&spawnResponse, &message),
+        ));
         false
     }
 
@@ -183,7 +203,11 @@ impl MCPBridgeClient {
     #[allow(non_snake_case)]
     pub fn unspawn(&self) -> bool {
         let result = MCPBridge::getInstance(&self.context).unspawnMcpService(&self.serviceName);
-        if result.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if result
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             self.disconnect();
             return true;
         }
@@ -192,7 +216,9 @@ impl MCPBridgeClient {
 
     #[allow(non_snake_case)]
     pub fn isActive(&self) -> bool {
-        self.getServiceInfo().map(|info| info.active).unwrap_or(false)
+        self.getServiceInfo()
+            .map(|info| info.active)
+            .unwrap_or(false)
     }
 
     #[allow(non_snake_case)]
@@ -207,8 +233,13 @@ impl MCPBridgeClient {
             });
         }
         let retryParams = params.clone();
-        let response = MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params);
-        if response.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        let response =
+            MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params);
+        if response
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             return response;
         }
         let errorMessage = response
@@ -220,8 +251,11 @@ impl MCPBridgeClient {
         if errorMessage.contains("not active") || errorMessage.contains("timeout") {
             self.isConnected.store(false, Ordering::SeqCst);
             if self.connect() {
-                return MCPBridge::getInstance(&self.context)
-                    .callTool(&self.serviceName, method, retryParams);
+                return MCPBridge::getInstance(&self.context).callTool(
+                    &self.serviceName,
+                    method,
+                    retryParams,
+                );
             }
         }
         response
@@ -241,7 +275,11 @@ impl MCPBridgeClient {
             return Vec::new();
         }
         let response = MCPBridge::getInstance(&self.context).listTools(&self.serviceName);
-        if !response.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if !response
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             self.isConnected.store(false, Ordering::SeqCst);
             return Vec::new();
         }
@@ -267,7 +305,10 @@ impl MCPBridgeClient {
                 if name.is_empty() {
                     return None;
                 }
-                let description = tool.get("description").and_then(Value::as_str).unwrap_or_default();
+                let description = tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if description.is_empty() {
                     Some(name.to_string())
                 } else {
@@ -295,11 +336,14 @@ impl MCPBridgeClient {
         *self
             .lastConnectionFailureDetail
             .lock()
-            .expect("mcp client failure mutex poisoned") =
-            detail.and_then(|text| {
-                let trimmed = text.trim().to_string();
-                if trimmed.is_empty() { None } else { Some(trimmed) }
-            });
+            .expect("mcp client failure mutex poisoned") = detail.and_then(|text| {
+            let trimmed = text.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
     }
 
     #[allow(non_snake_case)]

@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use operit_host_api::{ManagedRuntimeHost, ManagedRuntimeProcess, ManagedRuntimeProgram, RuntimeProcessRequest};
+use operit_host_api::{
+    ManagedRuntimeHost, ManagedRuntimeProcess, ManagedRuntimeProgram, RuntimeProcessRequest,
+};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::Url;
@@ -121,7 +123,11 @@ impl MCPBridge {
         headers: BTreeMap<String, String>,
     ) -> Value {
         if name.trim().is_empty() || endpoint.trim().is_empty() {
-            return errorResponse("register", -32602, "Invalid remote MCP service registration");
+            return errorResponse(
+                "register",
+                -32602,
+                "Invalid remote MCP service registration",
+            );
         }
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
         state.services.insert(
@@ -215,8 +221,17 @@ impl MCPBridge {
     ) -> Value {
         let registered = {
             let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-            if state.active.get(name).map(|service| service.ready).unwrap_or(false) {
-                let toolCount = state.active.get(name).map(|service| service.tools.len()).unwrap_or(0);
+            if state
+                .active
+                .get(name)
+                .map(|service| service.ready)
+                .unwrap_or(false)
+            {
+                let toolCount = state
+                    .active
+                    .get(name)
+                    .map(|service| service.tools.len())
+                    .unwrap_or(0);
                 return successResponse(
                     "spawn",
                     json!({ "status": "started", "name": name, "toolCount": toolCount, "ready": true }),
@@ -395,7 +410,10 @@ struct ResolvedRuntimeCommand {
 }
 
 #[allow(non_snake_case)]
-fn resolveMcpRuntimeCommand(command: &str, args: &[String]) -> Result<ResolvedRuntimeCommand, String> {
+fn resolveMcpRuntimeCommand(
+    command: &str,
+    args: &[String],
+) -> Result<ResolvedRuntimeCommand, String> {
     let commandName = command
         .trim()
         .rsplit(['/', '\\'])
@@ -456,7 +474,10 @@ fn resolveMcpRuntimeCommand(command: &str, args: &[String]) -> Result<ResolvedRu
 fn pathOverride(command: &str, wellKnownNames: &[&str]) -> Option<String> {
     let expanded = expandPath(command);
     let trimmed = expanded.trim();
-    if wellKnownNames.iter().any(|name| trimmed.eq_ignore_ascii_case(name)) {
+    if wellKnownNames
+        .iter()
+        .any(|name| trimmed.eq_ignore_ascii_case(name))
+    {
         None
     } else {
         Some(trimmed.to_string())
@@ -567,7 +588,10 @@ fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<()
         .send()
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Remote MCP SSE connect failed with status {}", response.status()));
+        return Err(format!(
+            "Remote MCP SSE connect failed with status {}",
+            response.status()
+        ));
     }
     let responseHeaders = response.headers().clone();
     rememberRemoteSessionId(session, &responseHeaders)?;
@@ -672,19 +696,21 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
         .process
         .as_ref()
         .ok_or_else(|| "Local MCP process is not attached".to_string())?;
-    process.writeLine(
-        &json!({
-            "jsonrpc": "2.0",
-            "id": initializeId,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": { "name": "operit2", "version": "1.0.0" }
-            }
-        })
-        .to_string(),
-    ).map_err(|error| error.to_string())?;
+    process
+        .writeLine(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": initializeId,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "operit2", "version": "1.0.0" }
+                }
+            })
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
     let initializeResponse = readJsonResponse(active, initializeId, timeoutMs)?;
     if initializeResponse.get("error").is_some() {
         return Err(format!("MCP initialize failed: {initializeResponse}"));
@@ -693,29 +719,33 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
         .process
         .as_ref()
         .ok_or_else(|| "Local MCP process is not attached".to_string())?;
-    process.writeLine(
-        &json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {}
-        })
-        .to_string(),
-    ).map_err(|error| error.to_string())?;
+    process
+        .writeLine(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {}
+            })
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
 
     let listId = nextRequestId(active);
     let process = active
         .process
         .as_ref()
         .ok_or_else(|| "Local MCP process is not attached".to_string())?;
-    process.writeLine(
-        &json!({
-            "jsonrpc": "2.0",
-            "id": listId,
-            "method": "tools/list",
-            "params": {}
-        })
-        .to_string(),
-    ).map_err(|error| error.to_string())?;
+    process
+        .writeLine(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": listId,
+                "method": "tools/list",
+                "params": {}
+            })
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
     let listResponse = readJsonResponse(active, listId, timeoutMs)?;
     if listResponse.get("error").is_some() {
         return Err(format!("MCP tools/list failed: {listResponse}"));
@@ -742,18 +772,20 @@ fn callMcpTool(
         .process
         .as_ref()
         .ok_or_else(|| "Local MCP process is not attached".to_string())?;
-    process.writeLine(
-        &json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": {
-                "name": method,
-                "arguments": params
-            }
-        })
-        .to_string(),
-    ).map_err(|error| error.to_string())?;
+    process
+        .writeLine(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": method,
+                    "arguments": params
+                }
+            })
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
     let response = readJsonResponse(active, id, timeoutMs)?;
     if let Some(error) = response.get("error") {
         return Err(format!("{error}"));
@@ -846,7 +878,9 @@ fn sendRemoteJsonRpc(
     if trimmed.is_empty() {
         return Ok(None);
     }
-    if contentType.contains("text/event-stream") || trimmed.lines().any(|line| line.starts_with("data:")) {
+    if contentType.contains("text/event-stream")
+        || trimmed.lines().any(|line| line.starts_with("data:"))
+    {
         return parseSseJsonResponse(trimmed, expectedId);
     }
     let parsed = serde_json::from_str::<Value>(trimmed).map_err(|error| error.to_string())?;
@@ -898,7 +932,8 @@ fn sendRemoteSseJsonRpc(
         if eventName != "message" && !eventName.is_empty() {
             continue;
         }
-        let parsed = serde_json::from_str::<Value>(data.trim()).map_err(|error| error.to_string())?;
+        let parsed =
+            serde_json::from_str::<Value>(data.trim()).map_err(|error| error.to_string())?;
         if parsed.get("id").and_then(Value::as_u64) == Some(expectedId) {
             return Ok(Some(parsed));
         }
@@ -960,7 +995,9 @@ fn readSseEvent<R: BufRead>(reader: &mut R) -> Result<Option<(String, String)>, 
     let mut dataLines = Vec::new();
     loop {
         let mut line = String::new();
-        let read = reader.read_line(&mut line).map_err(|error| error.to_string())?;
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|error| error.to_string())?;
         if read == 0 {
             return Ok(None);
         }
@@ -1025,7 +1062,11 @@ fn nextRequestId(active: &mut ActiveService) -> u64 {
 }
 
 #[allow(non_snake_case)]
-fn readJsonResponse(active: &mut ActiveService, targetId: u64, timeoutMs: u64) -> Result<Value, String> {
+fn readJsonResponse(
+    active: &mut ActiveService,
+    targetId: u64,
+    timeoutMs: u64,
+) -> Result<Value, String> {
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut seenIds = BTreeSet::new();
     loop {

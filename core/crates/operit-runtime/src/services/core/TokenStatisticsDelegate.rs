@@ -43,7 +43,9 @@ impl TokenStatisticsDelegate {
     }
 
     fn chatKey(chatId: Option<&String>) -> String {
-        chatId.cloned().unwrap_or_else(|| "__DEFAULT_CHAT__".to_string())
+        chatId
+            .cloned()
+            .unwrap_or_else(|| "__DEFAULT_CHAT__".to_string())
     }
 
     fn isActiveKey(&self, key: &str) -> bool {
@@ -63,7 +65,11 @@ impl TokenStatisticsDelegate {
             .copied()
             .unwrap_or(0);
         let window = self.lastWindowSizeByChatKey.get(&key).copied().unwrap_or(0);
-        let perRequest = self.perRequestTokenCountByChatKey.get(&key).cloned().flatten();
+        let perRequest = self
+            .perRequestTokenCountByChatKey
+            .get(&key)
+            .cloned()
+            .flatten();
         self.cumulativeInputTokens = input;
         self.cumulativeOutputTokens = output;
         self.currentWindowSize = window;
@@ -104,7 +110,8 @@ impl TokenStatisticsDelegate {
     #[allow(non_snake_case)]
     fn handlePerRequestCounts(&mut self, key: String, counts: Option<(i32, i32)>) {
         if counts.is_some() {
-            self.perRequestTokenCountByChatKey.insert(key.clone(), counts);
+            self.perRequestTokenCountByChatKey
+                .insert(key.clone(), counts);
         } else {
             self.perRequestTokenCountByChatKey.remove(&key);
         }
@@ -167,8 +174,10 @@ impl TokenStatisticsDelegate {
                 .copied()
                 .unwrap_or(0)
                 + currentOutputTokens;
-            self.cumulativeInputTokensByChatKey.insert(key.clone(), newInput);
-            self.cumulativeOutputTokensByChatKey.insert(key.clone(), newOutput);
+            self.cumulativeInputTokensByChatKey
+                .insert(key.clone(), newInput);
+            self.cumulativeOutputTokensByChatKey
+                .insert(key.clone(), newOutput);
             if self.isActiveKey(&key) {
                 self.cumulativeInputTokens = newInput;
                 self.cumulativeOutputTokens = newOutput;

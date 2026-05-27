@@ -1,9 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Display};
 
+use operit_host_api::HostEnvironmentDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use operit_host_api::HostEnvironmentDescriptor;
 
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::config::SystemToolPromptsInternal::SystemToolPromptsInternal;
@@ -58,7 +58,11 @@ impl Display for ToolParameterSchema {
                 "- {} ({}, {}, default={}): {}",
                 self.name,
                 self.value_type,
-                if self.required { "required" } else { "optional" },
+                if self.required {
+                    "required"
+                } else {
+                    "optional"
+                },
                 default,
                 self.description
             ),
@@ -67,7 +71,11 @@ impl Display for ToolParameterSchema {
                 "- {} ({}, {}): {}",
                 self.name,
                 self.value_type,
-                if self.required { "required" } else { "optional" },
+                if self.required {
+                    "required"
+                } else {
+                    "optional"
+                },
                 self.description
             ),
         }
@@ -162,7 +170,12 @@ impl SystemToolPrompts {
             "Read the content of a file. For media files, you can also provide an 'intent' parameter to use a backend recognition model for analysis.",
         );
         file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, true);
-        vec![basic_tools_en(), file_system, http_tools_en(), memory_tools_en()]
+        vec![
+            basic_tools_en(),
+            file_system,
+            http_tools_en(),
+            memory_tools_en(),
+        ]
     }
 
     #[allow(non_snake_case)]
@@ -208,7 +221,9 @@ impl SystemToolPrompts {
             saf_bookmark_names,
             host_environment,
         );
-        categories.extend(SystemToolPromptsInternal::internalToolCategoriesEnForHost(host_environment));
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesEnForHost(
+            host_environment,
+        ));
         categories
     }
 
@@ -259,7 +274,12 @@ impl SystemToolPrompts {
             "读取文件内容。对于媒体文件，你也可以提供 intent 参数，使用后端识别模型进行分析。",
         );
         file_system = Self::applyHostEnvironmentToCategory(file_system, host_environment, false);
-        vec![basic_tools_cn(), file_system, http_tools_cn(), memory_tools_cn()]
+        vec![
+            basic_tools_cn(),
+            file_system,
+            http_tools_cn(),
+            memory_tools_cn(),
+        ]
     }
 
     #[allow(non_snake_case)]
@@ -305,16 +325,28 @@ impl SystemToolPrompts {
             saf_bookmark_names,
             host_environment,
         );
-        categories.extend(SystemToolPromptsInternal::internalToolCategoriesCnForHost(host_environment));
+        categories.extend(SystemToolPromptsInternal::internalToolCategoriesCnForHost(
+            host_environment,
+        ));
         categories
     }
 
     #[allow(non_snake_case)]
     pub fn getManageableToolPrompts(use_english: bool) -> Vec<ManageableToolPrompt> {
         let base_categories = if use_english {
-            vec![basic_tools_en(), file_system_tools_en(), http_tools_en(), memory_tools_en()]
+            vec![
+                basic_tools_en(),
+                file_system_tools_en(),
+                http_tools_en(),
+                memory_tools_en(),
+            ]
         } else {
-            vec![basic_tools_cn(), file_system_tools_cn(), http_tools_cn(), memory_tools_cn()]
+            vec![
+                basic_tools_cn(),
+                file_system_tools_cn(),
+                http_tools_cn(),
+                memory_tools_cn(),
+            ]
         };
         let mut seen = BTreeSet::new();
         let mut result = Vec::new();
@@ -404,9 +436,17 @@ impl SystemToolPrompts {
             host_environment,
         );
         if !include_memory_tools {
-            categories.retain(|category| category.category_name != "Memory and Memory Library Tools");
+            categories
+                .retain(|category| category.category_name != "Memory and Memory Library Tools");
         }
-        compose_tool_prompt(chat_id, true, include_memory_tools, categories, tool_visibility, hook_metadata)
+        compose_tool_prompt(
+            chat_id,
+            true,
+            include_memory_tools,
+            categories,
+            tool_visibility,
+            hook_metadata,
+        )
     }
 
     #[allow(non_snake_case)]
@@ -467,7 +507,14 @@ impl SystemToolPrompts {
         if !include_memory_tools {
             categories.retain(|category| category.category_name != "记忆与记忆库工具");
         }
-        compose_tool_prompt(chat_id, false, include_memory_tools, categories, tool_visibility, hook_metadata)
+        compose_tool_prompt(
+            chat_id,
+            false,
+            include_memory_tools,
+            categories,
+            tool_visibility,
+            hook_metadata,
+        )
     }
 
     #[allow(non_snake_case)]
@@ -592,25 +639,31 @@ fn hostPathParameterDescription(
     if use_english {
         format!(
             "absolute {} path, e.g. {}",
-            host_environment.displayName,
-            examples
+            host_environment.displayName, examples
         )
     } else {
         format!(
             "{} 绝对路径，例如 {}",
-            host_environment.displayName,
-            examples
+            host_environment.displayName, examples
         )
     }
 }
 
 #[allow(non_snake_case)]
 fn buildSafBookmarksSectionEn(saf_bookmark_names: &[String]) -> String {
-    let names: BTreeSet<String> = saf_bookmark_names.iter().map(|name| name.trim().to_string()).filter(|name| !name.is_empty()).collect();
+    let names: BTreeSet<String> = saf_bookmark_names
+        .iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
     if names.is_empty() {
         return String::new();
     }
-    let listed = names.into_iter().map(|name| format!("repo:{name}")).collect::<Vec<_>>().join(", ");
+    let listed = names
+        .into_iter()
+        .map(|name| format!("repo:{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "\n\n**Attached Local Storage Repository:**\n- environment (optional): you can also use `environment=\"repo:<repositoryName>\"` to operate in an attached local storage repository.\n- Paths are absolute (e.g., `/`, `/work/index.html`).\n- Available repositories: {listed}"
     )
@@ -618,25 +671,38 @@ fn buildSafBookmarksSectionEn(saf_bookmark_names: &[String]) -> String {
 
 #[allow(non_snake_case)]
 fn buildSafBookmarksSectionCn(saf_bookmark_names: &[String]) -> String {
-    let names: BTreeSet<String> = saf_bookmark_names.iter().map(|name| name.trim().to_string()).filter(|name| !name.is_empty()).collect();
+    let names: BTreeSet<String> = saf_bookmark_names
+        .iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
     if names.is_empty() {
         return String::new();
     }
-    let listed = names.into_iter().map(|name| format!("repo:{name}")).collect::<Vec<_>>().join("、");
+    let listed = names
+        .into_iter()
+        .map(|name| format!("repo:{name}"))
+        .collect::<Vec<_>>()
+        .join("、");
     format!(
         "\n\n**附加本地储存仓库：**\n- environment（可选）：也可以使用 `environment=\"repo:<仓库名>\"` 在附加本地储存仓库中操作。\n- 路径使用绝对路径（例如 `/`、`/work/index.html`）。\n- 当前可用仓库：{listed}"
     )
 }
 
 #[allow(non_snake_case)]
-fn applyToolVisibility(categories: Vec<SystemToolPromptCategory>, tool_visibility: &HashMap<String, bool>) -> Vec<SystemToolPromptCategory> {
+fn applyToolVisibility(
+    categories: Vec<SystemToolPromptCategory>,
+    tool_visibility: &HashMap<String, bool>,
+) -> Vec<SystemToolPromptCategory> {
     if tool_visibility.is_empty() {
         return categories;
     }
     categories
         .into_iter()
         .filter_map(|mut category| {
-            category.tools.retain(|tool| tool_visibility.get(&tool.name).copied().unwrap_or(true));
+            category
+                .tools
+                .retain(|tool| tool_visibility.get(&tool.name).copied().unwrap_or(true));
             if category.tools.is_empty() {
                 None
             } else {
@@ -657,7 +723,10 @@ fn compose_tool_prompt(
     let visible_categories = applyToolVisibility(categories, tool_visibility);
     let available_tools = buildToolHookPayload(&visible_categories);
     let mut metadata = HashMap::from([
-        ("includeMemoryTools".to_string(), json!(include_memory_tools)),
+        (
+            "includeMemoryTools".to_string(),
+            json!(include_memory_tools),
+        ),
         ("toolVisibility".to_string(), json!(tool_visibility)),
     ]);
     metadata.extend(hook_metadata);
@@ -710,14 +779,23 @@ fn buildToolHookPayload(categories: &[SystemToolPromptCategory]) -> Vec<HashMap<
             category.tools.iter().map(move |tool| {
                 HashMap::from([
                     ("categoryName".to_string(), json!(category.category_name)),
-                    ("categoryHeader".to_string(), json!(category.category_header)),
-                    ("categoryFooter".to_string(), json!(category.category_footer)),
+                    (
+                        "categoryHeader".to_string(),
+                        json!(category.category_header),
+                    ),
+                    (
+                        "categoryFooter".to_string(),
+                        json!(category.category_footer),
+                    ),
                     ("name".to_string(), json!(tool.name)),
                     ("description".to_string(), json!(tool.description)),
                     ("parameters".to_string(), json!(tool.parameters)),
                     ("details".to_string(), json!(tool.details)),
                     ("notes".to_string(), json!(tool.notes)),
-                    ("parametersStructured".to_string(), json!(tool.parameters_structured)),
+                    (
+                        "parametersStructured".to_string(),
+                        json!(tool.parameters_structured),
+                    ),
                 ])
             })
         })
@@ -737,13 +815,17 @@ fn renderToolPromptFromAvailableTools(available_tools: &[HashMap<String, Value>]
 }
 
 #[allow(non_snake_case)]
-fn buildToolPromptCategories(available_tools: &[HashMap<String, Value>]) -> Vec<SystemToolPromptCategory> {
+fn buildToolPromptCategories(
+    available_tools: &[HashMap<String, Value>],
+) -> Vec<SystemToolPromptCategory> {
     let mut categories: Vec<SystemToolPromptCategory> = Vec::new();
     for item in available_tools {
         let category_name = string_field(item, "categoryName");
         let tool_name = string_field(item, "name");
         let description = string_field(item, "description");
-        let category_index = categories.iter().position(|category| category.category_name == category_name);
+        let category_index = categories
+            .iter()
+            .position(|category| category.category_name == category_name);
         let tool = ToolPrompt {
             name: tool_name,
             description,
@@ -777,7 +859,10 @@ fn parseToolParameterSchemas(value: Option<&Value>) -> Vec<ToolParameterSchema> 
 }
 
 fn string_field(item: &HashMap<String, Value>, key: &str) -> String {
-    item.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    item.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn category(name: &str, tools: Vec<ToolPrompt>) -> SystemToolPromptCategory {
@@ -800,7 +885,13 @@ fn tool(name: &str, description: &str, parameters: Vec<ToolParameterSchema>) -> 
     }
 }
 
-fn param(name: &str, value_type: &str, description: &str, required: bool, default: Option<&str>) -> ToolParameterSchema {
+fn param(
+    name: &str,
+    value_type: &str,
+    description: &str,
+    required: bool,
+    default: Option<&str>,
+) -> ToolParameterSchema {
     ToolParameterSchema {
         name: name.to_string(),
         value_type: value_type.to_string(),
@@ -811,17 +902,57 @@ fn param(name: &str, value_type: &str, description: &str, required: bool, defaul
 }
 
 fn basic_tools_en() -> SystemToolPromptCategory {
-    category("Available tools", vec![
-        tool("sleep", "Demonstration tool that pauses briefly.", vec![param("duration_ms", "integer", "milliseconds, default 1000, >= 0", false, Some("1000"))]),
-        tool("use_package", "Activate a package for use in the current session.", vec![param("package_name", "string", "name of the package to activate", true, None)]),
-    ])
+    category(
+        "Available tools",
+        vec![
+            tool(
+                "sleep",
+                "Demonstration tool that pauses briefly.",
+                vec![param(
+                    "duration_ms",
+                    "integer",
+                    "milliseconds, default 1000, >= 0",
+                    false,
+                    Some("1000"),
+                )],
+            ),
+            tool(
+                "use_package",
+                "Activate a package for use in the current session.",
+                vec![param(
+                    "package_name",
+                    "string",
+                    "name of the package to activate",
+                    true,
+                    None,
+                )],
+            ),
+        ],
+    )
 }
 
 fn basic_tools_cn() -> SystemToolPromptCategory {
-    category("可用工具", vec![
-        tool("sleep", "演示工具，短暂暂停。", vec![param("duration_ms", "integer", "毫秒，默认1000，>= 0", false, Some("1000"))]),
-        tool("use_package", "在当前会话中激活包。", vec![param("package_name", "string", "要激活的包名", true, None)]),
-    ])
+    category(
+        "可用工具",
+        vec![
+            tool(
+                "sleep",
+                "演示工具，短暂暂停。",
+                vec![param(
+                    "duration_ms",
+                    "integer",
+                    "毫秒，默认1000，>= 0",
+                    false,
+                    Some("1000"),
+                )],
+            ),
+            tool(
+                "use_package",
+                "在当前会话中激活包。",
+                vec![param("package_name", "string", "要激活的包名", true, None)],
+            ),
+        ],
+    )
 }
 
 fn file_system_tools_en() -> SystemToolPromptCategory {
@@ -879,19 +1010,171 @@ fn http_tools_cn() -> SystemToolPromptCategory {
 }
 
 fn memory_tools_en() -> SystemToolPromptCategory {
-    let mut category = category("Memory and Memory Library Tools", vec![
-        tool("query_memory", "Searches the memory library for relevant memories and document chunks.", vec![param("query", "string", "the search query", true, None), param("folder_path", "string", "optional, the specific folder path to search within", false, None), param("start_time", "string", "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format", false, None), param("end_time", "string", "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format", false, None), param("snapshot_id", "string", "optional, reusable snapshot id", false, None), param("threshold", "number", "optional, number >= 0", false, Some("0")), param("limit", "integer", "optional, maximum number of results", false, Some("20"))]),
-        tool("get_memory_by_title", "Retrieves a memory by exact title, including document content or selected chunks.", vec![param("title", "string", "required, the exact title of the memory", true, None), param("chunk_index", "integer", "optional, read a specific chunk by its number", false, None), param("chunk_range", "string", "optional, read a range of chunks in start-end format", false, None), param("query", "string", "optional, search inside the document", false, None), param("limit", "integer", "optional, maximum number of chunks", false, Some("20"))]),
-    ]);
+    let mut category = category(
+        "Memory and Memory Library Tools",
+        vec![
+            tool(
+                "query_memory",
+                "Searches the memory library for relevant memories and document chunks.",
+                vec![
+                    param("query", "string", "the search query", true, None),
+                    param(
+                        "folder_path",
+                        "string",
+                        "optional, the specific folder path to search within",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "start_time",
+                        "string",
+                        "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "end_time",
+                        "string",
+                        "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "snapshot_id",
+                        "string",
+                        "optional, reusable snapshot id",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "threshold",
+                        "number",
+                        "optional, number >= 0",
+                        false,
+                        Some("0"),
+                    ),
+                    param(
+                        "limit",
+                        "integer",
+                        "optional, maximum number of results",
+                        false,
+                        Some("20"),
+                    ),
+                ],
+            ),
+            tool(
+                "get_memory_by_title",
+                "Retrieves a memory by exact title, including document content or selected chunks.",
+                vec![
+                    param(
+                        "title",
+                        "string",
+                        "required, the exact title of the memory",
+                        true,
+                        None,
+                    ),
+                    param(
+                        "chunk_index",
+                        "integer",
+                        "optional, read a specific chunk by its number",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "chunk_range",
+                        "string",
+                        "optional, read a range of chunks in start-end format",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "query",
+                        "string",
+                        "optional, search inside the document",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "limit",
+                        "integer",
+                        "optional, maximum number of chunks",
+                        false,
+                        Some("20"),
+                    ),
+                ],
+            ),
+        ],
+    );
     category.category_footer = "\nNote: The memory library and user personality profile may be updated automatically after the current reply is finalized. If you need to manage memories immediately or update user preferences, use the appropriate tools directly.".to_string();
     category
 }
 
 fn memory_tools_cn() -> SystemToolPromptCategory {
-    let mut category = category("记忆与记忆库工具", vec![
-        tool("query_memory", "从记忆库中搜索相关记忆和文档分块。", vec![param("query", "string", "搜索查询", true, None), param("folder_path", "string", "可选, 要搜索的特定文件夹路径", false, None), param("start_time", "string", "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm", false, None), param("end_time", "string", "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm", false, None), param("snapshot_id", "string", "可选, 可复用快照 id", false, None), param("threshold", "number", "可选, number >= 0", false, Some("0")), param("limit", "integer", "可选, 返回结果的最大数量", false, Some("20"))]),
-        tool("get_memory_by_title", "通过精确标题检索记忆，可读取完整内容或文档分块。", vec![param("title", "string", "必需, 记忆的精确标题", true, None), param("chunk_index", "integer", "可选, 读取特定编号的分块", false, None), param("chunk_range", "string", "可选, 读取分块范围，格式为 起始-结束", false, None), param("query", "string", "可选, 在文档内搜索", false, None), param("limit", "integer", "可选, 最大分块数量", false, Some("20"))]),
-    ]);
+    let mut category = category(
+        "记忆与记忆库工具",
+        vec![
+            tool(
+                "query_memory",
+                "从记忆库中搜索相关记忆和文档分块。",
+                vec![
+                    param("query", "string", "搜索查询", true, None),
+                    param(
+                        "folder_path",
+                        "string",
+                        "可选, 要搜索的特定文件夹路径",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "start_time",
+                        "string",
+                        "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "end_time",
+                        "string",
+                        "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm",
+                        false,
+                        None,
+                    ),
+                    param("snapshot_id", "string", "可选, 可复用快照 id", false, None),
+                    param("threshold", "number", "可选, number >= 0", false, Some("0")),
+                    param(
+                        "limit",
+                        "integer",
+                        "可选, 返回结果的最大数量",
+                        false,
+                        Some("20"),
+                    ),
+                ],
+            ),
+            tool(
+                "get_memory_by_title",
+                "通过精确标题检索记忆，可读取完整内容或文档分块。",
+                vec![
+                    param("title", "string", "必需, 记忆的精确标题", true, None),
+                    param(
+                        "chunk_index",
+                        "integer",
+                        "可选, 读取特定编号的分块",
+                        false,
+                        None,
+                    ),
+                    param(
+                        "chunk_range",
+                        "string",
+                        "可选, 读取分块范围，格式为 起始-结束",
+                        false,
+                        None,
+                    ),
+                    param("query", "string", "可选, 在文档内搜索", false, None),
+                    param("limit", "integer", "可选, 最大分块数量", false, Some("20")),
+                ],
+            ),
+        ],
+    );
     category.category_footer = "\n注意：记忆库和用户人格画像可能会在当前回复完成后自动更新。若需要立即管理记忆或更新用户偏好，请直接使用对应工具。".to_string();
     category
 }
@@ -909,13 +1192,14 @@ fn adjust_read_file_tool(
         .into_iter()
         .map(|mut tool| {
             if tool.name == "read_file" {
-                tool.parameters_structured.retain(|parameter| match parameter.name.as_str() {
-                    "intent" => expose_intent,
-                    "direct_image" => expose_direct_image,
-                    "direct_audio" => expose_direct_audio,
-                    "direct_video" => expose_direct_video,
-                    _ => true,
-                });
+                tool.parameters_structured
+                    .retain(|parameter| match parameter.name.as_str() {
+                        "intent" => expose_intent,
+                        "direct_image" => expose_direct_image,
+                        "direct_audio" => expose_direct_audio,
+                        "direct_video" => expose_direct_video,
+                        _ => true,
+                    });
                 if expose_intent {
                     tool.description = format!("{adjusted_description}{saf_bookmarks_section}");
                 } else {

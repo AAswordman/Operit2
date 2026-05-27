@@ -106,7 +106,8 @@ impl StreamingJsonXmlConverter {
                             self.buffer.clear();
                             self.buffer.push(c);
                             self.reading_complex_value = c == '[' || c == '{';
-                            self.primitive_nesting_depth = if self.reading_complex_value { 1 } else { 0 };
+                            self.primitive_nesting_depth =
+                                if self.reading_complex_value { 1 } else { 0 };
                             self.primitive_in_string = false;
                             self.primitive_escape = false;
                         }

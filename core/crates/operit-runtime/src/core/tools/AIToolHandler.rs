@@ -1,20 +1,18 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
+use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
-use crate::core::tools::packTool::PackageManager::PackageManager;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_host_api::HostEnvironmentDescriptor;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
 static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
@@ -106,7 +104,11 @@ impl AIToolHandler {
     #[allow(non_snake_case)]
     pub fn addToolHook(&mut self, hook: Arc<dyn AIToolHook>) {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
-        if !guard.hooks.iter().any(|existing| existing.id() == hook.id()) {
+        if !guard
+            .hooks
+            .iter()
+            .any(|existing| existing.id() == hook.id())
+        {
             guard.hooks.push(hook);
         }
     }
@@ -332,7 +334,10 @@ impl AIToolHandler {
         }
 
         if toolName.contains(':') {
-            let packageName = toolName.split_once(':').map(|(name, _)| name.trim()).unwrap_or("");
+            let packageName = toolName
+                .split_once(':')
+                .map(|(name, _)| name.trim())
+                .unwrap_or("");
             if !packageName.is_empty() {
                 let packageManager = self.getOrCreatePackageManager();
                 let selectedPackage = {
@@ -340,7 +345,8 @@ impl AIToolHandler {
                         .lock()
                         .expect("package manager mutex poisoned");
                     let isPackageAvailable = guard.getAvailablePackages().contains_key(packageName);
-                    let isMcpAvailable = guard.getAvailableServerPackages().contains_key(packageName);
+                    let isMcpAvailable =
+                        guard.getAvailableServerPackages().contains_key(packageName);
                     if isPackageAvailable || isMcpAvailable {
                         let _ = guard.usePackage(packageName);
                         guard
@@ -395,7 +401,9 @@ impl AIToolHandler {
             if isMcpPackage {
                 self.registerTool(
                     toolName,
-                    Box::new(MCPToolExecutor::new(MCPManager::getInstance(context.clone()))),
+                    Box::new(MCPToolExecutor::new(MCPManager::getInstance(
+                        context.clone(),
+                    ))),
                 );
             } else {
                 self.registerTool(

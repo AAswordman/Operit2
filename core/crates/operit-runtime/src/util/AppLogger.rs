@@ -56,7 +56,10 @@ impl AppLogger {
     }
 
     pub fn enable_file_logging() -> bool {
-        state().lock().expect("AppLogger mutex poisoned").enable_file_logging
+        state()
+            .lock()
+            .expect("AppLogger mutex poisoned")
+            .enable_file_logging
     }
 
     pub fn set_enable_console_logging(enabled: bool) {
@@ -82,7 +85,11 @@ impl AppLogger {
     }
 
     pub fn get_log_file() -> Option<PathBuf> {
-        state().lock().expect("AppLogger mutex poisoned").log_file.clone()
+        state()
+            .lock()
+            .expect("AppLogger mutex poisoned")
+            .log_file
+            .clone()
     }
 
     pub fn reset_log_file() {
@@ -97,7 +104,11 @@ impl AppLogger {
     }
 
     pub fn entries() -> Vec<LogEntry> {
-        state().lock().expect("AppLogger mutex poisoned").entries.clone()
+        state()
+            .lock()
+            .expect("AppLogger mutex poisoned")
+            .entries
+            .clone()
     }
 
     pub fn v(tag: &str, msg: &str) -> i32 {
@@ -129,7 +140,12 @@ impl AppLogger {
         0
     }
 
-    pub fn println_with_error(priority: i32, tag: &str, msg: &str, tr: &(dyn std::error::Error)) -> i32 {
+    pub fn println_with_error(
+        priority: i32,
+        tag: &str,
+        msg: &str,
+        tr: &(dyn std::error::Error),
+    ) -> i32 {
         write_entry(priority, tag, msg, Some(error_chain(tr)));
         0
     }
@@ -222,13 +238,19 @@ fn format_package_log_line(entry: &LogEntry) -> String {
         priority_char(entry.priority),
         TOOLPKG_LOG_TAG
     );
-    if let Some(package_id) = extract_named_token(&entry.message, &["toolPkgId", "package", "subpackage", "container", "target"]) {
+    if let Some(package_id) = extract_named_token(
+        &entry.message,
+        &["toolPkgId", "package", "subpackage", "container", "target"],
+    ) {
         let _ = write!(out, "[PKG:{package_id}]");
     }
-    if let Some(script_id) = extract_named_token(&entry.message, &["script", "path", "screen", "function"]) {
+    if let Some(script_id) =
+        extract_named_token(&entry.message, &["script", "path", "screen", "function"])
+    {
         let _ = write!(out, "[SCRIPT:{script_id}]");
     }
-    if let Some(plugin_id) = extract_named_token(&entry.message, &["plugin", "pluginId", "hookId"]) {
+    if let Some(plugin_id) = extract_named_token(&entry.message, &["plugin", "pluginId", "hookId"])
+    {
         let _ = write!(out, "[PLUGIN:{plugin_id}]");
     }
     out.push(' ');

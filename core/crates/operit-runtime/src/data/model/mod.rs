@@ -4,12 +4,12 @@
 pub mod AITool;
 #[path = "ActivePrompt.rs"]
 pub mod ActivePrompt;
+#[path = "AiReference.rs"]
+pub mod AiReference;
 #[path = "ApiKeyInfo.rs"]
 pub mod ApiKeyInfo;
 #[path = "AttachmentInfo.rs"]
 pub mod AttachmentInfo;
-#[path = "AiReference.rs"]
-pub mod AiReference;
 #[path = "BillingMode.rs"]
 pub mod BillingMode;
 #[path = "CharacterCard.rs"]
@@ -99,9 +99,9 @@ pub mod WorkspaceRenameResult;
 
 pub use AITool::*;
 pub use ActivePrompt::*;
+pub use AiReference::*;
 pub use ApiKeyInfo::*;
 pub use AttachmentInfo::*;
-pub use AiReference::*;
 pub use BillingMode::*;
 pub use CharacterCard::*;
 pub use CharacterCardChatStats::*;

@@ -6,7 +6,10 @@ pub struct GitIgnoreFilter;
 
 impl GitIgnoreFilter {
     pub fn defaultRules() -> Vec<String> {
-        DEFAULT_EXCLUDES.iter().map(|rule| rule.to_string()).collect()
+        DEFAULT_EXCLUDES
+            .iter()
+            .map(|rule| rule.to_string())
+            .collect()
     }
 
     pub fn normalizePath(path: &str) -> String {
@@ -50,7 +53,12 @@ impl GitIgnoreFilter {
         Self::mergeWithDefaults(Self::parseRulesFromContent(content))
     }
 
-    pub fn shouldIgnore(relativePath: &str, fileName: &str, isDirectory: bool, rules: &[String]) -> bool {
+    pub fn shouldIgnore(
+        relativePath: &str,
+        fileName: &str,
+        isDirectory: bool,
+        rules: &[String],
+    ) -> bool {
         let rel = relativePath
             .trim_start_matches('/')
             .replace('\\', "/")
@@ -97,7 +105,9 @@ fn matchesRule(relativePath: &str, fileName: &str, isDirectory: bool, rule: &str
     } else {
         fileName == pattern
             || matchPattern(fileName, &pattern)
-            || relativePath.split('/').any(|part| matchPattern(part, &pattern))
+            || relativePath
+                .split('/')
+                .any(|part| matchPattern(part, &pattern))
     }
 }
 

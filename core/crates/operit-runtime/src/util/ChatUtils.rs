@@ -12,7 +12,12 @@ impl ChatUtils {
     ) -> Vec<(String, String)> {
         messages
             .iter()
-            .map(|(role, content)| (role.clone(), Self::strip_gemini_thought_signature_meta(content)))
+            .map(|(role, content)| {
+                (
+                    role.clone(),
+                    Self::strip_gemini_thought_signature_meta(content),
+                )
+            })
             .collect()
     }
 
@@ -91,7 +96,11 @@ fn strip_markdown_fence(text: &str) -> &str {
     let mut lines = text.lines();
     lines.next();
     let mut collected: Vec<&str> = lines.collect();
-    if collected.last().map(|line| line.trim() == "```").unwrap_or(false) {
+    if collected
+        .last()
+        .map(|line| line.trim() == "```")
+        .unwrap_or(false)
+    {
         collected.pop();
     }
     let start = text.find('\n').map(|index| index + 1).unwrap_or(text.len());

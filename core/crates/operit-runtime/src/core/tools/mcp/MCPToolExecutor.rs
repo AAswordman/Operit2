@@ -4,9 +4,9 @@ use serde_json::{Map, Value};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolParameter::MCPToolParameter;
+use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
 
 #[derive(Clone)]
 pub struct MCPToolExecutor {
@@ -112,7 +112,10 @@ impl MCPToolExecutor {
                         return text.to_string();
                     }
                 }
-                let uri = resource.get("uri").and_then(Value::as_str).unwrap_or_default();
+                let uri = resource
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 format!("[Resource: {uri}]")
             }
             other => format!("[Unknown content type '{other}': {contentItem}]"),
@@ -176,7 +179,9 @@ impl MCPToolExecutor {
                 toolName: tool.name.clone(),
                 success: false,
                 result: String::new(),
-                error: Some("Invalid MCP tool name format, should be 'server_name:tool_name'".to_string()),
+                error: Some(
+                    "Invalid MCP tool name format, should be 'server_name:tool_name'".to_string(),
+                ),
             };
         }
         let serverName = toolNameParts[0];
@@ -217,7 +222,11 @@ impl MCPToolExecutor {
         let toolInfo = self.getToolInfo(serverName, &actualToolName);
         let convertedParameters = self.convertParameterTypes(parameters, toolInfo.as_ref());
         let response = mcpClient.callToolSync(&actualToolName, convertedParameters);
-        if response.get("success").and_then(Value::as_bool).unwrap_or(false) {
+        if response
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             let extractedContent = self.extractContentFromResult(response.get("result"));
             return ToolResult {
                 toolName: tool.name.clone(),
@@ -252,7 +261,8 @@ impl ToolExecutor for MCPToolExecutor {
         if toolNameParts.len() < 2 {
             return ToolValidationResult {
                 valid: false,
-                errorMessage: "Invalid MCP tool name format, should be 'server_name:tool_name'".to_string(),
+                errorMessage: "Invalid MCP tool name format, should be 'server_name:tool_name'"
+                    .to_string(),
             };
         }
         ToolValidationResult {

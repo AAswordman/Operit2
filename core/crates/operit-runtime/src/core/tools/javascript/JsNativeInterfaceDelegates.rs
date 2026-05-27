@@ -20,14 +20,18 @@ fn buildToolErrorJson(message: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn parseToolCall(toolType: &str, toolName: &str, paramsJson: &str) -> Result<ParsedToolCall, String> {
+fn parseToolCall(
+    toolType: &str,
+    toolName: &str,
+    paramsJson: &str,
+) -> Result<ParsedToolCall, String> {
     let normalizedToolName = toolName.trim();
     if normalizedToolName.is_empty() {
         return Err("Tool name cannot be empty".to_string());
     }
 
-    let value = serde_json::from_str::<serde_json::Value>(paramsJson)
-        .map_err(|error| error.to_string())?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(paramsJson).map_err(|error| error.to_string())?;
     let object = value
         .as_object()
         .ok_or_else(|| "Tool params must be a JSON object".to_string())?;
@@ -66,9 +70,14 @@ fn parseToolCall(toolType: &str, toolName: &str, paramsJson: &str) -> Result<Par
 }
 
 #[allow(non_snake_case)]
-fn serializeToolExecutionResult(result: &crate::api::chat::enhance::ConversationMarkupManager::ToolResult) -> String {
+fn serializeToolExecutionResult(
+    result: &crate::api::chat::enhance::ConversationMarkupManager::ToolResult,
+) -> String {
     let mut object = serde_json::Map::new();
-    object.insert("success".to_string(), serde_json::Value::Bool(result.success));
+    object.insert(
+        "success".to_string(),
+        serde_json::Value::Bool(result.success),
+    );
     if !result.success {
         object.insert(
             "message".to_string(),

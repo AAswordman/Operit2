@@ -9,9 +9,7 @@ use crate::api::chat::enhance::ToolExecutionManager::{
 };
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::UserPreferencesManager::PreferencesManager;
-use crate::data::repository::MemoryRepository::{
-    MemoryLinkInfo, MemoryRepository,
-};
+use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 
 const MAX_QUERY_SNAPSHOTS_PER_PROFILE: usize = 32;
 const DEFAULT_RELEVANCE_THRESHOLD: f64 = 0.0;
@@ -87,7 +85,10 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
     }
     let folderPath = optionalParameterValue(tool, "folder_path");
     let limitParam = optionalParameterValue(tool, "limit");
-    let limit = match parseLimit(limitParam.as_deref(), if query.trim() == "*" { usize::MAX } else { 20 }) {
+    let limit = match parseLimit(
+        limitParam.as_deref(),
+        if query.trim() == "*" { usize::MAX } else { 20 },
+    ) {
         Ok(value) => value,
         Err(error) => return errorResult(tool, &error),
     };
@@ -99,11 +100,13 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
         Some(_) => return errorResult(tool, "Invalid threshold. Expected a non-negative number."),
         None => DEFAULT_RELEVANCE_THRESHOLD,
     };
-    let startTime = match parseTimeBoundary(optionalParameterValue(tool, "start_time").as_deref(), false) {
-        Ok(value) => value,
-        Err(error) => return errorResult(tool, &error),
-    };
-    let endTime = match parseTimeBoundary(optionalParameterValue(tool, "end_time").as_deref(), true) {
+    let startTime =
+        match parseTimeBoundary(optionalParameterValue(tool, "start_time").as_deref(), false) {
+            Ok(value) => value,
+            Err(error) => return errorResult(tool, &error),
+        };
+    let endTime = match parseTimeBoundary(optionalParameterValue(tool, "end_time").as_deref(), true)
+    {
         Ok(value) => value,
         Err(error) => return errorResult(tool, &error),
     };
@@ -119,7 +122,12 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
     let (snapshotId, snapshotCreated) = resolveSnapshot(&profileId, snapshotIdParam);
     let settings = match MemorySearchSettingsPreferences::new(&profileId).load() {
         Ok(settings) => settings,
-        Err(error) => return errorResult(tool, &format!("Failed to load memory search settings: {error}")),
+        Err(error) => {
+            return errorResult(
+                tool,
+                &format!("Failed to load memory search settings: {error}"),
+            )
+        }
     };
     let results = match repository.searchMemories(
         &query,
@@ -129,7 +137,9 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
         endTime,
     ) {
         Ok(results) => results,
-        Err(error) => return errorResult(tool, &format!("Failed to execute memory query: {error}")),
+        Err(error) => {
+            return errorResult(tool, &format!("Failed to execute memory query: {error}"))
+        }
     };
 
     let (excluded, returned) = selectSnapshotResults(&profileId, &snapshotId, results, limit);
@@ -160,7 +170,10 @@ fn executeGetMemoryByTitle(tool: &AITool) -> ToolResult {
     }
     let repository = MemoryRepository::new(resolveActiveProfileId());
     match repository.findMemoryByTitle(&title) {
-        Ok(Some(memory)) => success(tool, formatMemoryResults(&title, &[memory], None, false, 0, "")),
+        Ok(Some(memory)) => success(
+            tool,
+            formatMemoryResults(&title, &[memory], None, false, 0, ""),
+        ),
         Ok(None) => errorResult(tool, &format!("Memory not found with title: {title}")),
         Err(error) => errorResult(tool, &format!("Failed to get memory by title: {error}")),
     }
@@ -173,14 +186,25 @@ fn executeCreateMemory(tool: &AITool) -> ToolResult {
         return errorResult(tool, "Both title and content parameters are required");
     }
     let repository = MemoryRepository::new(resolveActiveProfileId());
-    let contentType = optionalParameterValue(tool, "content_type").unwrap_or_else(|| "text/plain".to_string());
+    let contentType =
+        optionalParameterValue(tool, "content_type").unwrap_or_else(|| "text/plain".to_string());
     let source = optionalParameterValue(tool, "source").unwrap_or_else(|| "ai_created".to_string());
     let folderPath = optionalParameterValue(tool, "folder_path").unwrap_or_default();
     let tags = optionalParameterValue(tool, "tags").map(parseTags);
-    match repository.createMemory(title.clone(), content, contentType, source, folderPath, tags) {
+    match repository.createMemory(
+        title.clone(),
+        content,
+        contentType,
+        source,
+        folderPath,
+        tags,
+    ) {
         Ok(memory) => success(
             tool,
-            format!("Successfully created memory: '{}' (UUID: {})", title, memory.uuid),
+            format!(
+                "Successfully created memory: '{}' (UUID: {})",
+                title, memory.uuid
+            ),
         ),
         Err(error) => errorResult(tool, &format!("Failed to create memory: {error}")),
     }
@@ -189,7 +213,10 @@ fn executeCreateMemory(tool: &AITool) -> ToolResult {
 fn executeUpdateMemory(tool: &AITool) -> ToolResult {
     let oldTitle = parameterValue(tool, "old_title");
     if oldTitle.trim().is_empty() {
-        return errorResult(tool, "old_title parameter is required to identify the memory");
+        return errorResult(
+            tool,
+            "old_title parameter is required to identify the memory",
+        );
     }
     let repository = MemoryRepository::new(resolveActiveProfileId());
     let memory = match repository.findMemoryByTitle(&oldTitle) {
@@ -197,8 +224,10 @@ fn executeUpdateMemory(tool: &AITool) -> ToolResult {
         Ok(None) => return errorResult(tool, &format!("Memory not found with title: {oldTitle}")),
         Err(error) => return errorResult(tool, &format!("Failed to update memory: {error}")),
     };
-    let newTitle = optionalParameterValue(tool, "new_title").unwrap_or_else(|| memory.title.clone());
-    let newContent = optionalParameterValue(tool, "content").unwrap_or_else(|| memory.content.clone());
+    let newTitle =
+        optionalParameterValue(tool, "new_title").unwrap_or_else(|| memory.title.clone());
+    let newContent =
+        optionalParameterValue(tool, "content").unwrap_or_else(|| memory.content.clone());
     let newContentType =
         optionalParameterValue(tool, "content_type").unwrap_or_else(|| memory.contentType.clone());
     let newSource = optionalParameterValue(tool, "source").unwrap_or_else(|| memory.source.clone());
@@ -253,10 +282,18 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
         None => return errorResult(tool, "target_folder_path parameter is required"),
     };
     let sourceFolderPath = optionalParameterValue(tool, "source_folder_path");
-    let hasSourceFolderParam = tool.parameters.iter().any(|parameter| parameter.name == "source_folder_path");
-    let titles = optionalParameterValue(tool, "titles").map(parseTitles).unwrap_or_default();
+    let hasSourceFolderParam = tool
+        .parameters
+        .iter()
+        .any(|parameter| parameter.name == "source_folder_path");
+    let titles = optionalParameterValue(tool, "titles")
+        .map(parseTitles)
+        .unwrap_or_default();
     if titles.is_empty() && !hasSourceFolderParam {
-        return errorResult(tool, "Provide titles and/or source_folder_path to select memories to move");
+        return errorResult(
+            tool,
+            "Provide titles and/or source_folder_path to select memories to move",
+        );
     }
 
     let repository = MemoryRepository::new(resolveActiveProfileId());
@@ -265,7 +302,9 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
         for title in titles {
             match repository.findMemoriesByTitle(&title) {
                 Ok(memories) => selected.extend(memories),
-                Err(error) => return errorResult(tool, &format!("Failed to move memories: {error}")),
+                Err(error) => {
+                    return errorResult(tool, &format!("Failed to move memories: {error}"))
+                }
             }
         }
     }
@@ -275,14 +314,20 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
                 if selected.is_empty() {
                     selected = memories;
                 } else {
-                    let folderIds = memories.into_iter().map(|memory| memory.id).collect::<HashSet<_>>();
+                    let folderIds = memories
+                        .into_iter()
+                        .map(|memory| memory.id)
+                        .collect::<HashSet<_>>();
                     selected.retain(|memory| folderIds.contains(&memory.id));
                 }
             }
             Err(error) => return errorResult(tool, &format!("Failed to move memories: {error}")),
         }
     }
-    let mut ids = selected.into_iter().map(|memory| memory.id).collect::<Vec<_>>();
+    let mut ids = selected
+        .into_iter()
+        .map(|memory| memory.id)
+        .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
     if ids.is_empty() {
@@ -291,7 +336,11 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
     match repository.moveMemoriesToFolder(&ids, &targetFolderPath) {
         Ok(true) => success(
             tool,
-            format!("Successfully moved {} memories to '{}'", ids.len(), targetFolderPath),
+            format!(
+                "Successfully moved {} memories to '{}'",
+                ids.len(),
+                targetFolderPath
+            ),
         ),
         Ok(false) => errorResult(tool, "Failed to move selected memories"),
         Err(error) => errorResult(tool, &format!("Failed to move memories: {error}")),
@@ -301,7 +350,8 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
 fn executeUpdateUserPreferences(tool: &AITool) -> ToolResult {
     let manager = PreferencesManager::getInstance();
     let profileId = resolveActiveProfileId();
-    let birthDate = optionalParameterValue(tool, "birth_date").and_then(|value| value.parse::<i64>().ok());
+    let birthDate =
+        optionalParameterValue(tool, "birth_date").and_then(|value| value.parse::<i64>().ok());
     let gender = optionalParameterValue(tool, "gender");
     let personality = optionalParameterValue(tool, "personality");
     let identity = optionalParameterValue(tool, "identity");
@@ -339,7 +389,10 @@ fn executeUpdateUserPreferences(tool: &AITool) -> ToolResult {
     ) {
         Ok(_) => success(
             tool,
-            format!("Successfully updated user preferences: {}", updatedFields.join(", ")),
+            format!(
+                "Successfully updated user preferences: {}",
+                updatedFields.join(", ")
+            ),
         ),
         Err(error) => errorResult(tool, &format!("Failed to update user preferences: {error}")),
     }
@@ -349,20 +402,34 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
     let sourceTitle = parameterValue(tool, "source_title");
     let targetTitle = parameterValue(tool, "target_title");
     if sourceTitle.trim().is_empty() || targetTitle.trim().is_empty() {
-        return errorResult(tool, "Both source_title and target_title parameters are required");
+        return errorResult(
+            tool,
+            "Both source_title and target_title parameters are required",
+        );
     }
     let repository = MemoryRepository::new(resolveActiveProfileId());
     let source = match repository.findMemoryByTitle(&sourceTitle) {
         Ok(Some(memory)) => memory,
-        Ok(None) => return errorResult(tool, &format!("Source memory not found with title: {sourceTitle}")),
+        Ok(None) => {
+            return errorResult(
+                tool,
+                &format!("Source memory not found with title: {sourceTitle}"),
+            )
+        }
         Err(error) => return errorResult(tool, &format!("Failed to link memories: {error}")),
     };
     let target = match repository.findMemoryByTitle(&targetTitle) {
         Ok(Some(memory)) => memory,
-        Ok(None) => return errorResult(tool, &format!("Target memory not found with title: {targetTitle}")),
+        Ok(None) => {
+            return errorResult(
+                tool,
+                &format!("Target memory not found with title: {targetTitle}"),
+            )
+        }
         Err(error) => return errorResult(tool, &format!("Failed to link memories: {error}")),
     };
-    let linkType = optionalParameterValue(tool, "link_type").unwrap_or_else(|| "related".to_string());
+    let linkType =
+        optionalParameterValue(tool, "link_type").unwrap_or_else(|| "related".to_string());
     let weight = optionalParameterValue(tool, "weight")
         .and_then(|value| value.parse::<f32>().ok())
         .unwrap_or(MemoryRepository::MEDIUM_LINK)
@@ -389,19 +456,37 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
         Some(Err(_)) => return errorResult(tool, "Invalid link_id. Expected integer."),
         None => None,
     };
-    let sourceMemoryId = match optionalParameterValue(tool, "source_title").filter(|value| !value.trim().is_empty()) {
+    let sourceMemoryId = match optionalParameterValue(tool, "source_title")
+        .filter(|value| !value.trim().is_empty())
+    {
         Some(title) => match repository.findMemoryByTitle(&title) {
             Ok(Some(memory)) => Some(memory.id),
-            Ok(None) => return errorResult(tool, &format!("Source memory not found with title: {title}")),
-            Err(error) => return errorResult(tool, &format!("Failed to query memory links: {error}")),
+            Ok(None) => {
+                return errorResult(
+                    tool,
+                    &format!("Source memory not found with title: {title}"),
+                )
+            }
+            Err(error) => {
+                return errorResult(tool, &format!("Failed to query memory links: {error}"))
+            }
         },
         None => None,
     };
-    let targetMemoryId = match optionalParameterValue(tool, "target_title").filter(|value| !value.trim().is_empty()) {
+    let targetMemoryId = match optionalParameterValue(tool, "target_title")
+        .filter(|value| !value.trim().is_empty())
+    {
         Some(title) => match repository.findMemoryByTitle(&title) {
             Ok(Some(memory)) => Some(memory.id),
-            Ok(None) => return errorResult(tool, &format!("Target memory not found with title: {title}")),
-            Err(error) => return errorResult(tool, &format!("Failed to query memory links: {error}")),
+            Ok(None) => {
+                return errorResult(
+                    tool,
+                    &format!("Target memory not found with title: {title}"),
+                )
+            }
+            Err(error) => {
+                return errorResult(tool, &format!("Failed to query memory links: {error}"))
+            }
         },
         None => None,
     };
@@ -410,7 +495,13 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
         Err(error) => return errorResult(tool, &error),
     };
     let linkType = optionalParameterValue(tool, "link_type");
-    match repository.queryMemoryLinks(linkId, sourceMemoryId, targetMemoryId, linkType.as_deref(), limit) {
+    match repository.queryMemoryLinks(
+        linkId,
+        sourceMemoryId,
+        targetMemoryId,
+        linkType.as_deref(),
+        limit,
+    ) {
         Ok(links) => success(tool, formatMemoryLinks(&links)),
         Err(error) => errorResult(tool, &format!("Failed to query memory links: {error}")),
     }
@@ -419,13 +510,20 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
 fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
     let repository = MemoryRepository::new(resolveActiveProfileId());
     let newLinkType = optionalParameterValue(tool, "new_link_type");
-    let newWeight = optionalParameterValue(tool, "weight").and_then(|value| value.parse::<f32>().ok());
+    let newWeight =
+        optionalParameterValue(tool, "weight").and_then(|value| value.parse::<f32>().ok());
     let newDescription = optionalParameterValue(tool, "description");
-    if newLinkType.as_ref().map(|value| value.trim().is_empty()).unwrap_or(true)
+    if newLinkType
+        .as_ref()
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
         && newWeight.is_none()
         && newDescription.is_none()
     {
-        return errorResult(tool, "At least one of new_link_type, weight, description must be provided");
+        return errorResult(
+            tool,
+            "At least one of new_link_type, weight, description must be provided",
+        );
     }
     let link = match resolveLink(tool, &repository) {
         Ok(link) => link,
@@ -447,14 +545,21 @@ fn executeDeleteMemoryLink(tool: &AITool) -> ToolResult {
         Err(error) => return errorResult(tool, &error),
     };
     match repository.deleteLink(link.link.id) {
-        Ok(true) => success(tool, format!("Successfully deleted memory link: {}", link.link.id)),
-        Ok(false) => errorResult(tool, &format!("Failed to delete memory link with id: {}", link.link.id)),
+        Ok(true) => success(
+            tool,
+            format!("Successfully deleted memory link: {}", link.link.id),
+        ),
+        Ok(false) => errorResult(
+            tool,
+            &format!("Failed to delete memory link with id: {}", link.link.id),
+        ),
         Err(error) => errorResult(tool, &format!("Failed to delete memory link: {error}")),
     }
 }
 
 fn resolveLink(tool: &AITool, repository: &MemoryRepository) -> Result<MemoryLinkInfo, String> {
-    let linkId = optionalParameterValue(tool, "link_id").and_then(|value| value.parse::<i64>().ok());
+    let linkId =
+        optionalParameterValue(tool, "link_id").and_then(|value| value.parse::<i64>().ok());
     if let Some(linkId) = linkId {
         return repository
             .findLinkById(linkId)?
@@ -472,11 +577,19 @@ fn resolveLink(tool: &AITool, repository: &MemoryRepository) -> Result<MemoryLin
         .findMemoryByTitle(&targetTitle)?
         .ok_or_else(|| format!("Target memory not found with title: {targetTitle}"))?;
     let linkType = optionalParameterValue(tool, "link_type");
-    let links = repository.queryMemoryLinks(None, Some(source.id), Some(target.id), linkType.as_deref(), 2)?;
+    let links = repository.queryMemoryLinks(
+        None,
+        Some(source.id),
+        Some(target.id),
+        linkType.as_deref(),
+        2,
+    )?;
     match links.len() {
         0 => Err("No matching link found".to_string()),
         1 => Ok(links[0].clone()),
-        _ => Err("Multiple links matched. Provide link_id or a more specific link_type.".to_string()),
+        _ => {
+            Err("Multiple links matched. Provide link_id or a more specific link_type.".to_string())
+        }
     }
 }
 
@@ -537,10 +650,12 @@ fn resolveSnapshot(profileId: &str, requestedSnapshotId: Option<String>) -> (Str
     trimOldSnapshots(profileSnapshots);
     let id = requestedSnapshotId.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let created = !profileSnapshots.contains_key(&id);
-    profileSnapshots.entry(id.clone()).or_insert(QuerySnapshotState {
-        seenMemoryIds: HashSet::new(),
-        lastAccessAtMs: chrono::Utc::now().timestamp_millis(),
-    });
+    profileSnapshots
+        .entry(id.clone())
+        .or_insert(QuerySnapshotState {
+            seenMemoryIds: HashSet::new(),
+            lastAccessAtMs: chrono::Utc::now().timestamp_millis(),
+        });
     (id, created)
 }
 
@@ -611,7 +726,9 @@ fn formatMemoryResults(
     if let Some(snapshotId) = snapshotId {
         lines.push(format!("snapshot_id: {snapshotId}"));
         lines.push(format!("snapshot_created: {snapshotCreated}"));
-        lines.push(format!("excluded_by_snapshot_count: {excludedBySnapshotCount}"));
+        lines.push(format!(
+            "excluded_by_snapshot_count: {excludedBySnapshotCount}"
+        ));
     }
     if !settingsText.is_empty() {
         lines.push(settingsText.to_string());

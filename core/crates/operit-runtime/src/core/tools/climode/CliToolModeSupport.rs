@@ -7,13 +7,11 @@ use crate::core::config::SystemToolPrompts::{
     SystemToolPromptCategory as ConfigSystemToolPromptCategory, SystemToolPrompts,
     ToolPrompt as ConfigToolPrompt,
 };
-use crate::core::tools::ToolPackage::{PackageTool, PackageToolParameter, ToolPackage};
 use crate::core::tools::packTool::PackageManager::{CachedMcpToolInfo, PackageManager};
+use crate::core::tools::ToolPackage::{PackageTool, PackageToolParameter, ToolPackage};
 use crate::data::mcp::MCPLocalServer::MCPLocalServer;
 use crate::data::model::ModelConfigData::ApiProviderType;
-use crate::data::model::ToolPrompt::{
-    SystemToolPromptCategory, ToolParameterSchema, ToolPrompt,
-};
+use crate::data::model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::CharacterCardToolAccessResolver::ResolvedCharacterCardToolAccess;
 use crate::data::skill::SkillRepository::SkillRepository;
 
@@ -46,12 +44,8 @@ impl HiddenToolSourceKind {
             HiddenToolSourceKind::INTERNAL => {
                 if useEnglish { "internal" } else { "内部" }.to_string()
             }
-            HiddenToolSourceKind::PACKAGE => {
-                if useEnglish { "package" } else { "包" }.to_string()
-            }
-            HiddenToolSourceKind::MCP => {
-                if useEnglish { "mcp" } else { "MCP" }.to_string()
-            }
+            HiddenToolSourceKind::PACKAGE => if useEnglish { "package" } else { "包" }.to_string(),
+            HiddenToolSourceKind::MCP => if useEnglish { "mcp" } else { "MCP" }.to_string(),
             HiddenToolSourceKind::ACTIVATION => {
                 if useEnglish { "activation" } else { "激活" }.to_string()
             }
@@ -182,13 +176,15 @@ impl CliToolModeSupport {
                 },
                 ToolPrompt {
                     name: PROXY_TOOL_NAME.to_string(),
-                    description: "在 search 发现目标工具名和参数形态后，代理执行隐藏工具。".to_string(),
+                    description: "在 search 发现目标工具名和参数形态后，代理执行隐藏工具。"
+                        .to_string(),
                     parameters: String::new(),
                     parametersStructured: Some(vec![
                         ToolParameterSchema {
                             name: "tool_name".to_string(),
                             r#type: "string".to_string(),
-                            description: "隐藏目标工具名，例如 read_file 或 packageName:toolName".to_string(),
+                            description: "隐藏目标工具名，例如 read_file 或 packageName:toolName"
+                                .to_string(),
                             required: true,
                             default: None,
                         },
@@ -223,7 +219,12 @@ impl CliToolModeSupport {
 - 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。"#
         };
         let category = SystemToolPromptCategory {
-            categoryName: if useEnglish { "Public tools" } else { "公开工具" }.to_string(),
+            categoryName: if useEnglish {
+                "Public tools"
+            } else {
+                "公开工具"
+            }
+            .to_string(),
             categoryHeader: String::new(),
             tools: Self::buildCliPublicToolPrompts(useEnglish),
             categoryFooter: String::new(),
@@ -425,7 +426,11 @@ impl CliToolModeSupport {
             ));
             output.push_str("   ");
             if entry.description.trim().is_empty() {
-                output.push_str(if useEnglish { "No description." } else { "无描述。" });
+                output.push_str(if useEnglish {
+                    "No description."
+                } else {
+                    "无描述。"
+                });
                 output.push('\n');
             } else {
                 output.push_str(&entry.description);
@@ -631,7 +636,12 @@ impl CliToolModeSupport {
     }
 
     #[allow(non_snake_case)]
-    fn buildParameterHint(name: &str, description: &str, valueType: &str, required: bool) -> String {
+    fn buildParameterHint(
+        name: &str,
+        description: &str,
+        valueType: &str,
+        required: bool,
+    ) -> String {
         let requiredText = if required { "required" } else { "optional" };
         format!("{name} [{valueType}, {requiredText}]: {description}")
     }
@@ -773,12 +783,7 @@ impl CliToolModeSupport {
                     .get("description")
                     .and_then(|value| value.as_str())
                     .unwrap_or_default();
-                Self::buildParameterHint(
-                    name,
-                    description,
-                    valueType,
-                    requiredNames.contains(name),
-                )
+                Self::buildParameterHint(name, description, valueType, requiredNames.contains(name))
             })
             .collect()
     }

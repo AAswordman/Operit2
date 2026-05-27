@@ -78,7 +78,10 @@ impl SummaryHookRegistry {
     }
 }
 
-fn apply_mutation(mut current: SummaryHookContext, mutation: SummaryHookMutation) -> SummaryHookContext {
+fn apply_mutation(
+    mut current: SummaryHookContext,
+    mutation: SummaryHookMutation,
+) -> SummaryHookContext {
     if let Some(chat_history) = mutation.chat_history {
         current.chat_history = chat_history;
     }

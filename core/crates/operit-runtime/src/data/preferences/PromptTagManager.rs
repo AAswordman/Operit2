@@ -19,7 +19,9 @@ impl PromptTagManager {
 
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.root_dir().join("prompt_tags.preferences.json")),
+            dataStore: PreferencesDataStore::new(
+                paths.root_dir().join("prompt_tags.preferences.json"),
+            ),
         }
     }
 
@@ -31,7 +33,9 @@ impl PromptTagManager {
     #[allow(non_snake_case)]
     pub fn tagListFlow(&self) -> Flow<Vec<String>> {
         let dataStore = self.dataStore.clone();
-        dataStore.dataFlow().map(|preferences| Self::readTagList(&preferences))
+        dataStore
+            .dataFlow()
+            .map(|preferences| Self::readTagList(&preferences))
     }
 
     #[allow(non_snake_case)]
@@ -69,20 +73,28 @@ impl PromptTagManager {
                 .cloned()
                 .unwrap_or_else(|| "Unnamed Tag".to_string()),
             description: preferences
-                .get(&stringPreferencesKey(&format!("prompt_tag_{id}_description")))
+                .get(&stringPreferencesKey(&format!(
+                    "prompt_tag_{id}_description"
+                )))
                 .cloned()
                 .unwrap_or_default(),
             promptContent: preferences
-                .get(&stringPreferencesKey(&format!("prompt_tag_{id}_prompt_content")))
+                .get(&stringPreferencesKey(&format!(
+                    "prompt_tag_{id}_prompt_content"
+                )))
                 .cloned()
                 .unwrap_or_default(),
             tagType,
             createdAt: preferences
-                .get(&stringPreferencesKey(&format!("prompt_tag_{id}_created_at")))
+                .get(&stringPreferencesKey(&format!(
+                    "prompt_tag_{id}_created_at"
+                )))
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or_else(currentTimeMillis),
             updatedAt: preferences
-                .get(&stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")))
+                .get(&stringPreferencesKey(&format!(
+                    "prompt_tag_{id}_updated_at"
+                )))
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or_else(currentTimeMillis),
         }
@@ -104,12 +116,30 @@ impl PromptTagManager {
             currentList.sort();
             currentList.dedup();
             Self::writeTagList(preferences, currentList);
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_name")), name);
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_description")), description);
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_prompt_content")), promptContent);
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")), tagTypeName(&tagType).to_string());
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_created_at")), now.to_string());
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")), now.to_string());
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_name")),
+                name,
+            );
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_description")),
+                description,
+            );
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_prompt_content")),
+                promptContent,
+            );
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")),
+                tagTypeName(&tagType).to_string(),
+            );
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_created_at")),
+                now.to_string(),
+            );
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")),
+                now.to_string(),
+            );
         })?;
         Ok(id)
     }
@@ -126,18 +156,33 @@ impl PromptTagManager {
         let now = currentTimeMillis();
         self.dataStore.edit(|preferences| {
             if let Some(name) = name {
-                preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_name")), name);
+                preferences.set(
+                    &stringPreferencesKey(&format!("prompt_tag_{id}_name")),
+                    name,
+                );
             }
             if let Some(description) = description {
-                preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_description")), description);
+                preferences.set(
+                    &stringPreferencesKey(&format!("prompt_tag_{id}_description")),
+                    description,
+                );
             }
             if let Some(promptContent) = promptContent {
-                preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_prompt_content")), promptContent);
+                preferences.set(
+                    &stringPreferencesKey(&format!("prompt_tag_{id}_prompt_content")),
+                    promptContent,
+                );
             }
             if let Some(tagType) = tagType {
-                preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")), tagTypeName(&tagType).to_string());
+                preferences.set(
+                    &stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")),
+                    tagTypeName(&tagType).to_string(),
+                );
             }
-            preferences.set(&stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")), now.to_string());
+            preferences.set(
+                &stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")),
+                now.to_string(),
+            );
         })
     }
 
@@ -157,7 +202,10 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn getTagsByType(&self, tagType: TagType) -> Result<Vec<PromptTag>, PreferencesDataStoreError> {
+    pub fn getTagsByType(
+        &self,
+        tagType: TagType,
+    ) -> Result<Vec<PromptTag>, PreferencesDataStoreError> {
         Ok(self
             .getAllTags()?
             .into_iter()
@@ -166,7 +214,10 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn findTagWithSameContent(&self, promptContent: &str) -> Result<Option<PromptTag>, PreferencesDataStoreError> {
+    pub fn findTagWithSameContent(
+        &self,
+        promptContent: &str,
+    ) -> Result<Option<PromptTag>, PreferencesDataStoreError> {
         let trimmed = promptContent.trim();
         Ok(self
             .getAllTags()?
@@ -195,7 +246,9 @@ impl PromptTagManager {
             let idsToRemove = currentList
                 .iter()
                 .filter(|id| {
-                    preferences.get(&stringPreferencesKey(&format!("prompt_tag_{id}_is_system_tag"))) == Some(&"true".to_string())
+                    preferences.get(&stringPreferencesKey(&format!(
+                        "prompt_tag_{id}_is_system_tag"
+                    ))) == Some(&"true".to_string())
                         || preferences
                             .get(&stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")))
                             .map(|value| value.starts_with("SYSTEM_"))

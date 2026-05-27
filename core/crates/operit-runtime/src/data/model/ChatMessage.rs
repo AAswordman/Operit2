@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::util::stream::HotStream::SharedStream;
 use super::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use super::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::util::stream::HotStream::SharedStream;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {

@@ -45,8 +45,7 @@ pub enum PermissionRequestResult {
 
 type PermissionRequester =
     Arc<dyn Fn(&AITool, &str) -> PermissionRequestResult + Send + Sync + 'static>;
-type OperationDescriptionGenerator =
-    Arc<dyn Fn(&AITool) -> String + Send + Sync + 'static>;
+type OperationDescriptionGenerator = Arc<dyn Fn(&AITool) -> String + Send + Sync + 'static>;
 
 #[derive(Clone)]
 pub struct ToolPermissionSystem {
@@ -58,7 +57,9 @@ pub struct ToolPermissionSystem {
 impl ToolPermissionSystem {
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.root_dir().join("tool_permissions.preferences.json")),
+            dataStore: PreferencesDataStore::new(
+                paths.root_dir().join("tool_permissions.preferences.json"),
+            ),
             operationDescriptionRegistry: Arc::new(Mutex::new(BTreeMap::new())),
             permissionRequester: Arc::new(Mutex::new(None)),
         }
@@ -110,7 +111,10 @@ impl ToolPermissionSystem {
     }
 
     #[allow(non_snake_case)]
-    pub fn saveMasterSwitch(&self, level: PermissionLevel) -> Result<(), PreferencesDataStoreError> {
+    pub fn saveMasterSwitch(
+        &self,
+        level: PermissionLevel,
+    ) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             preferences.set(&Self::MASTER_SWITCH(), level.name().to_string());
         })
@@ -150,14 +154,20 @@ impl ToolPermissionSystem {
         let mut out = BTreeMap::new();
         for (key, value) in preferences.entries() {
             if let Some(toolName) = key.strip_prefix("tool_permission_") {
-                out.insert(toolName.to_string(), PermissionLevel::fromString(Some(value.as_str())));
+                out.insert(
+                    toolName.to_string(),
+                    PermissionLevel::fromString(Some(value.as_str())),
+                );
             }
         }
         Ok(out)
     }
 
     #[allow(non_snake_case)]
-    pub fn getToolPermission(&self, toolName: &str) -> Result<PermissionLevel, PreferencesDataStoreError> {
+    pub fn getToolPermission(
+        &self,
+        toolName: &str,
+    ) -> Result<PermissionLevel, PreferencesDataStoreError> {
         let preferences = self.dataStore.data()?;
         Ok(PermissionLevel::fromString(
             preferences

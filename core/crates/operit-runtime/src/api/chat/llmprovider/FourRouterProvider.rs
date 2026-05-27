@@ -37,19 +37,34 @@ impl FourRouterProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         self.inner.create_request_body(request)
     }
 }
 
 #[async_trait]
 impl AIService for FourRouterProvider {
-    fn input_token_count(&self) -> i32 { self.inner.input_token_count() }
-    fn cached_input_token_count(&self) -> i32 { self.inner.cached_input_token_count() }
-    fn output_token_count(&self) -> i32 { self.inner.output_token_count() }
-    fn provider_model(&self) -> String { self.inner.provider_model() }
-    fn reset_token_counts(&mut self) { self.inner.reset_token_counts(); }
-    fn cancel_streaming(&mut self) { self.inner.cancel_streaming(); }
+    fn input_token_count(&self) -> i32 {
+        self.inner.input_token_count()
+    }
+    fn cached_input_token_count(&self) -> i32 {
+        self.inner.cached_input_token_count()
+    }
+    fn output_token_count(&self) -> i32 {
+        self.inner.output_token_count()
+    }
+    fn provider_model(&self) -> String {
+        self.inner.provider_model()
+    }
+    fn reset_token_counts(&mut self) {
+        self.inner.reset_token_counts();
+    }
+    fn cancel_streaming(&mut self) {
+        self.inner.cancel_streaming();
+    }
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -61,6 +76,8 @@ impl AIService for FourRouterProvider {
         chat_history: &[crate::core::chat::hooks::PromptTurn::PromptTurn],
         available_tools: &[crate::data::model::ToolPrompt::ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        self.inner.calculate_input_tokens(chat_history, available_tools).await
+        self.inner
+            .calculate_input_tokens(chat_history, available_tools)
+            .await
     }
 }

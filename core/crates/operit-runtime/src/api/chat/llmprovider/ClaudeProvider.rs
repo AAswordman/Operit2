@@ -4,8 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
-    TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -50,7 +49,10 @@ impl ClaudeProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let (system, messages) = self.build_messages_and_count_tokens(&request.chat_history)?;
         let mut object = Map::new();
         object.insert("model".to_string(), json!(self.model_name));
@@ -63,14 +65,20 @@ impl ClaudeProvider {
             object.insert("max_tokens".to_string(), json!(4096));
         }
         if self.enable_tool_call && !request.available_tools.is_empty() {
-            object.insert("tools".to_string(), self.build_tool_definitions_for_claude(&request.available_tools)?);
+            object.insert(
+                "tools".to_string(),
+                self.build_tool_definitions_for_claude(&request.available_tools)?,
+            );
         }
         self.add_parameters(&mut object, &request.model_parameters);
         self.apply_stable_cache_breakpoints(&mut object);
         Ok(Value::Object(object))
     }
 
-    pub fn build_messages_and_count_tokens(&self, chat_history: &[PromptTurn]) -> Result<(Value, Vec<Value>), AiServiceError> {
+    pub fn build_messages_and_count_tokens(
+        &self,
+        chat_history: &[PromptTurn],
+    ) -> Result<(Value, Vec<Value>), AiServiceError> {
         let mut system_parts = Vec::new();
         let mut messages = Vec::new();
         let provider_ready_history = StructuredToolCallBridge::compileHistoryForProvider(
@@ -79,8 +87,12 @@ impl ClaudeProvider {
         );
         for turn in provider_ready_history {
             match turn.kind {
-                PromptTurnKind::SYSTEM | PromptTurnKind::SUMMARY => system_parts.push(turn.content.clone()),
-                PromptTurnKind::USER => messages.push(json!({"role": "user", "content": self.build_content_array(&turn.content)})),
+                PromptTurnKind::SYSTEM | PromptTurnKind::SUMMARY => {
+                    system_parts.push(turn.content.clone())
+                }
+                PromptTurnKind::USER => messages.push(
+                    json!({"role": "user", "content": self.build_content_array(&turn.content)}),
+                ),
                 PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => {
                     let content = if self.enable_tool_call {
                         self.build_assistant_content_blocks(&turn.content)?
@@ -102,20 +114,28 @@ impl ClaudeProvider {
         let system = if system_parts.is_empty() {
             Value::Null
         } else {
-            Value::Array(system_parts.into_iter().map(|text| {
-                json!({
-                    "type": "text",
-                    "text": text,
-                    "cache_control": {"type": "ephemeral"}
-                })
-            }).collect())
+            Value::Array(
+                system_parts
+                    .into_iter()
+                    .map(|text| {
+                        json!({
+                            "type": "text",
+                            "text": text,
+                            "cache_control": {"type": "ephemeral"}
+                        })
+                    })
+                    .collect(),
+            )
         };
         Ok((system, messages))
     }
 
     pub fn apply_stable_cache_breakpoints(&self, _request_object: &mut Map<String, Value>) {}
 
-    fn build_tool_definitions_for_claude(&self, tool_prompts: &[ToolPrompt]) -> Result<Value, AiServiceError> {
+    fn build_tool_definitions_for_claude(
+        &self,
+        tool_prompts: &[ToolPrompt],
+    ) -> Result<Value, AiServiceError> {
         let tools = tool_prompts
             .iter()
             .map(|tool| {
@@ -143,25 +163,39 @@ impl ClaudeProvider {
         let mut text_content = content.to_string();
         let mut blocks = Vec::new();
         for (call_index, tool_match) in matches.iter().enumerate() {
-            text_content = text_content.replace(&format!(
-                "<{} name=\"{}\">{}</{}>",
-                tool_match.tag_name, tool_match.name, tool_match.body, tool_match.tag_name
-            ), "");
+            text_content = text_content.replace(
+                &format!(
+                    "<{} name=\"{}\">{}</{}>",
+                    tool_match.tag_name, tool_match.name, tool_match.body, tool_match.tag_name
+                ),
+                "",
+            );
             let mut input = Map::new();
-            for (start, end) in crate::util::ChatMarkupRegex::tag_ranges(&tool_match.body, "param") {
+            for (start, end) in crate::util::ChatMarkupRegex::tag_ranges(&tool_match.body, "param")
+            {
                 let raw = &tool_match.body[start..end];
-                let name = crate::util::ChatMarkupRegex::attr_value(raw, "name").unwrap_or_default();
+                let name =
+                    crate::util::ChatMarkupRegex::attr_value(raw, "name").unwrap_or_default();
                 let value = raw
                     .split_once('>')
-                    .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| xml_unescape(body)))
+                    .and_then(|(_, tail)| {
+                        tail.rsplit_once("</").map(|(body, _)| xml_unescape(body))
+                    })
                     .unwrap_or_default()
                     .trim()
                     .to_string();
                 input.insert(name, json!(value));
             }
             let tool_name_part = sanitize_tool_call_id(&tool_match.name);
-            let hash_part = stable_id_hash_part(&format!("{}:{}", tool_match.name, Value::Object(input.clone())));
-            let call_id = sanitize_tool_call_id(&format!("toolu_{}_{}_{}", tool_name_part, hash_part, call_index));
+            let hash_part = stable_id_hash_part(&format!(
+                "{}:{}",
+                tool_match.name,
+                Value::Object(input.clone())
+            ));
+            let call_id = sanitize_tool_call_id(&format!(
+                "toolu_{}_{}_{}",
+                tool_name_part, hash_part, call_index
+            ));
             blocks.push(json!({
                 "type": "tool_use",
                 "id": call_id,
@@ -190,8 +224,10 @@ impl ClaudeProvider {
                 .next()
                 .and_then(|(start, end)| {
                     let raw = &block.body[start..end];
-                    raw.split_once('>')
-                        .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| body.trim().to_string()))
+                    raw.split_once('>').and_then(|(_, tail)| {
+                        tail.rsplit_once("</")
+                            .map(|(body, _)| body.trim().to_string())
+                    })
                 })
                 .unwrap_or_else(|| block.body.trim().to_string());
             result_blocks.push(json!({
@@ -203,7 +239,11 @@ impl ClaudeProvider {
         Value::Array(result_blocks)
     }
 
-    fn add_parameters(&self, json_object: &mut Map<String, Value>, parameters: &[crate::data::model::ModelParameter::ModelParameter<Value>]) {
+    fn add_parameters(
+        &self,
+        json_object: &mut Map<String, Value>,
+        parameters: &[crate::data::model::ModelParameter::ModelParameter<Value>],
+    ) {
         for parameter in parameters {
             if !parameter.isEnabled {
                 continue;
@@ -242,7 +282,8 @@ impl ClaudeProvider {
     fn apply_usage(&mut self, usage: Option<&Value>) -> TokenCounts {
         let cached_input = usage
             .and_then(|value| {
-                value.get("cache_read_input_tokens")
+                value
+                    .get("cache_read_input_tokens")
                     .or_else(|| value.pointer("/input_tokens_details/cached_tokens"))
                     .or_else(|| value.get("cached_tokens"))
             })
@@ -254,28 +295,49 @@ impl ClaudeProvider {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             .max(0) as i32;
-        let input_base = usage.and_then(|value| value.get("input_tokens")).and_then(Value::as_i64).unwrap_or(0).max(0) as i32;
+        let input_base = usage
+            .and_then(|value| value.get("input_tokens"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0) as i32;
         let input = input_base + cache_creation;
-        let output = usage.and_then(|value| value.get("output_tokens")).and_then(Value::as_i64).unwrap_or(0) as i32;
+        let output = usage
+            .and_then(|value| value.get("output_tokens"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0) as i32;
         self.inputTokenCount = input;
         self.cachedInputTokenCount = cached_input;
         self.outputTokenCount = output;
-        TokenCounts { input, cached_input, output }
+        TokenCounts {
+            input,
+            cached_input,
+            output,
+        }
     }
 }
 
 #[async_trait]
 impl AIService for ClaudeProvider {
-    fn input_token_count(&self) -> i32 { self.inputTokenCount }
-    fn cached_input_token_count(&self) -> i32 { self.cachedInputTokenCount }
-    fn output_token_count(&self) -> i32 { self.outputTokenCount }
-    fn provider_model(&self) -> String { format!("{}:{}", self.provider_type, self.model_name) }
+    fn input_token_count(&self) -> i32 {
+        self.inputTokenCount
+    }
+    fn cached_input_token_count(&self) -> i32 {
+        self.cachedInputTokenCount
+    }
+    fn output_token_count(&self) -> i32 {
+        self.outputTokenCount
+    }
+    fn provider_model(&self) -> String {
+        format!("{}:{}", self.provider_type, self.model_name)
+    }
     fn reset_token_counts(&mut self) {
         self.inputTokenCount = 0;
         self.cachedInputTokenCount = 0;
         self.outputTokenCount = 0;
     }
-    fn cancel_streaming(&mut self) { self.cancelled = true; }
+    fn cancel_streaming(&mut self) {
+        self.cancelled = true;
+    }
 
     async fn send_message(
         &mut self,
@@ -294,13 +356,19 @@ impl AIService for ClaudeProvider {
             .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let text = response
+                .text()
+                .await
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             return Err(AiServiceError::RequestFailed(format!("{status}: {text}")));
         }
         if stream {
             return self.process_streaming_response(response).await;
         }
-        let json_response: Value = response.json().await.map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let json_response: Value = response
+            .json()
+            .await
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let token_counts = self.apply_usage(json_response.get("usage"));
         let mut chunks = Vec::new();
         if let Some(content) = json_response.get("content").and_then(Value::as_array) {
@@ -308,10 +376,13 @@ impl AIService for ClaudeProvider {
                 match part.get("type").and_then(Value::as_str).unwrap_or_default() {
                     "text" => {
                         if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(text));
+                            chunks
+                                .push(StructuredToolCallBridge::convertToolCallPayloadToXml(text));
                         }
                     }
-                    "tool_use" => chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(&part.to_string())),
+                    "tool_use" => chunks.push(
+                        StructuredToolCallBridge::convertToolCallPayloadToXml(&part.to_string()),
+                    ),
                     _ => {}
                 }
             }
@@ -320,9 +391,16 @@ impl AIService for ClaudeProvider {
         Ok(response_stream_from_chunks(chunks))
     }
 
-    async fn calculate_input_tokens(&self, chat_history: &[PromptTurn], available_tools: &[ToolPrompt]) -> Result<i32, AiServiceError> {
+    async fn calculate_input_tokens(
+        &self,
+        chat_history: &[PromptTurn],
+        available_tools: &[ToolPrompt],
+    ) -> Result<i32, AiServiceError> {
         let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
-        let tool_chars: usize = available_tools.iter().map(|tool| tool.name.len() + tool.description.len()).sum();
+        let tool_chars: usize = available_tools
+            .iter()
+            .map(|tool| tool.name.len() + tool.description.len())
+            .sum();
         Ok(((history_chars + tool_chars + 3) / 4) as i32)
     }
 }
@@ -333,7 +411,11 @@ impl ClaudeProvider {
         response: reqwest::Response,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let mut chunks = Vec::new();
-        let mut token_counts = TokenCounts { input: 0, cached_input: 0, output: 0 };
+        let mut token_counts = TokenCounts {
+            input: 0,
+            cached_input: 0,
+            output: 0,
+        };
         let mut pending_line = String::new();
         let mut bytes_stream = response.bytes_stream();
         let mut current_tool_parser: Option<StreamingJsonXmlConverter> = None;
@@ -347,7 +429,8 @@ impl ClaudeProvider {
             if self.cancelled {
                 break;
             }
-            let bytes = item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let bytes =
+                item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             pending_line.push_str(&String::from_utf8_lossy(&bytes));
             while let Some(newline_index) = pending_line.find('\n') {
                 let line = pending_line[..newline_index].trim().to_string();
@@ -380,7 +463,9 @@ impl ClaudeProvider {
             )?;
         }
         if !emitted_any && !non_sse_json_lines_buffer.trim().is_empty() {
-            if let Ok(json_response) = serde_json::from_str::<Value>(non_sse_json_lines_buffer.trim()) {
+            if let Ok(json_response) =
+                serde_json::from_str::<Value>(non_sse_json_lines_buffer.trim())
+            {
                 let text = self.parse_anthropic_non_streaming(&json_response);
                 if !text.is_empty() {
                     chunks.push(text);
@@ -431,9 +516,15 @@ impl ClaudeProvider {
         }
         let json_response: Value = serde_json::from_str(data)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let event_type = json_response.get("type").and_then(Value::as_str).unwrap_or("");
+        let event_type = json_response
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if event_type.is_empty() {
-            if let Some(content) = json_response.pointer("/choices/0/delta/content").and_then(Value::as_str) {
+            if let Some(content) = json_response
+                .pointer("/choices/0/delta/content")
+                .and_then(Value::as_str)
+            {
                 if !content.is_empty() {
                     chunks.push(content.to_string());
                     *emitted_any = true;
@@ -449,9 +540,16 @@ impl ClaudeProvider {
             }
             "content_block_start" => {
                 let content_block = json_response.get("content_block").unwrap_or(&Value::Null);
-                match content_block.get("type").and_then(Value::as_str).unwrap_or("") {
+                match content_block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                {
                     "tool_use" if self.enable_tool_call => {
-                        let tool_name = content_block.get("name").and_then(Value::as_str).unwrap_or("");
+                        let tool_name = content_block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
                         if !tool_name.is_empty() {
                             let tag = ChatMarkupRegex::generate_random_tool_tag_name();
                             *current_tool_tag_name = Some(tag.clone());
@@ -461,7 +559,10 @@ impl ClaudeProvider {
                             *emitted_any = true;
                             if let Some(input) = content_block.get("input") {
                                 if let Some(parser) = current_tool_parser.as_mut() {
-                                    append_converter_events(chunks, parser.feed(&input.to_string()));
+                                    append_converter_events(
+                                        chunks,
+                                        parser.feed(&input.to_string()),
+                                    );
                                 }
                             }
                         }
@@ -470,7 +571,9 @@ impl ClaudeProvider {
                         chunks.push("\n<think>".to_string());
                         *is_in_thinking_block = true;
                         *emitted_any = true;
-                        if let Some(thinking) = content_block.get("thinking").and_then(Value::as_str) {
+                        if let Some(thinking) =
+                            content_block.get("thinking").and_then(Value::as_str)
+                        {
                             if !thinking.is_empty() {
                                 chunks.push(thinking.to_string());
                             }
@@ -489,14 +592,19 @@ impl ClaudeProvider {
                             *emitted_any = true;
                         }
                     }
-                } else if *is_in_thinking_block && (delta_type == "thinking_delta" || delta.get("thinking").is_some()) {
+                } else if *is_in_thinking_block
+                    && (delta_type == "thinking_delta" || delta.get("thinking").is_some())
+                {
                     if let Some(thinking) = delta.get("thinking").and_then(Value::as_str) {
                         if !thinking.is_empty() {
                             chunks.push(thinking.to_string());
                             *emitted_any = true;
                         }
                     }
-                } else if self.enable_tool_call && *is_in_tool_call && delta_type == "input_json_delta" {
+                } else if self.enable_tool_call
+                    && *is_in_tool_call
+                    && delta_type == "input_json_delta"
+                {
                     if let Some(partial_json) = delta.get("partial_json").and_then(Value::as_str) {
                         if let Some(parser) = current_tool_parser.as_mut() {
                             append_converter_events(chunks, parser.feed(partial_json));
@@ -562,9 +670,16 @@ impl ClaudeProvider {
                         full_text.push_str(&format!("\n<{tag} name=\"{tool_name}\">"));
                         if let Some(input) = block.get("input") {
                             let mut parser = StreamingJsonXmlConverter::new();
-                            for event in parser.feed(&input.to_string()).into_iter().chain(parser.flush()) {
+                            for event in parser
+                                .feed(&input.to_string())
+                                .into_iter()
+                                .chain(parser.flush())
+                            {
                                 match event {
-                                    StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => full_text.push_str(&text),
+                                    StreamingJsonXmlEvent::Tag(text)
+                                    | StreamingJsonXmlEvent::Content(text) => {
+                                        full_text.push_str(&text)
+                                    }
                                 }
                             }
                         }
@@ -581,7 +696,9 @@ impl ClaudeProvider {
 fn append_converter_events(chunks: &mut Vec<String>, events: Vec<StreamingJsonXmlEvent>) {
     for event in events {
         match event {
-            StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => chunks.push(text),
+            StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => {
+                chunks.push(text)
+            }
         }
     }
 }
@@ -590,7 +707,11 @@ fn sanitize_tool_call_id(raw: &str) -> String {
     let mut output = String::new();
     let mut previous_underscore = false;
     for ch in raw.chars() {
-        let next = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' { ch } else { '_' };
+        let next = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            ch
+        } else {
+            '_'
+        };
         if next == '_' {
             if !previous_underscore {
                 output.push(next);
@@ -602,7 +723,11 @@ fn sanitize_tool_call_id(raw: &str) -> String {
         }
     }
     let output = output.trim_matches('_').to_string();
-    if output.is_empty() { "toolu".to_string() } else { output }
+    if output.is_empty() {
+        "toolu".to_string()
+    } else {
+        output
+    }
 }
 
 fn stable_id_hash_part(raw: &str) -> String {
@@ -610,7 +735,11 @@ fn stable_id_hash_part(raw: &str) -> String {
     for unit in raw.encode_utf16() {
         hash = hash.wrapping_mul(31).wrapping_add(unit as i32);
     }
-    let positive = if hash == i32::MIN { 0 } else { hash.abs() as u32 };
+    let positive = if hash == i32::MIN {
+        0
+    } else {
+        hash.abs() as u32
+    };
     let mut value = positive;
     let mut chars = Vec::new();
     if value == 0 {

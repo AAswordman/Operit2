@@ -202,7 +202,11 @@ impl SystemPromptConfig {
     pub fn getSystemPrompt(options: SystemPromptOptions) -> String {
         let package_system_visible = options.tool_exposure_mode == ToolExposureMode::FULL
             && options.enable_tools
-            && options.tool_visibility.get("use_package").copied().unwrap_or(true);
+            && options
+                .tool_visibility
+                .get("use_package")
+                .copied()
+                .unwrap_or(true);
         let mut packages_section = String::new();
         let has_packages = package_system_visible
             && (!options.enabled_packages.is_empty()
@@ -211,11 +215,17 @@ impl SystemPromptConfig {
 
         if has_packages {
             packages_section.push_str("Available packages:\n");
-            for package in options.enabled_packages.iter().chain(options.mcp_servers.iter()).chain(options.skill_packages.iter()) {
+            for package in options
+                .enabled_packages
+                .iter()
+                .chain(options.mcp_servers.iter())
+                .chain(options.skill_packages.iter())
+            {
                 if package.description.is_empty() {
                     packages_section.push_str(&format!("- {}\n", package.name));
                 } else {
-                    packages_section.push_str(&format!("- {} : {}\n", package.name, package.description));
+                    packages_section
+                        .push_str(&format!("- {} : {}\n", package.name, package.description));
                 }
             }
         } else if package_system_visible {
@@ -247,58 +257,70 @@ impl SystemPromptConfig {
         );
 
         let mut prompt = template_to_use
-            .replace("ACTIVE_PACKAGES_SECTION", if options.enable_tools { &packages_section } else { "" })
+            .replace(
+                "ACTIVE_PACKAGES_SECTION",
+                if options.enable_tools {
+                    &packages_section
+                } else {
+                    ""
+                },
+            )
             .replace("WORKSPACE_GUIDELINES_SECTION", &workspace_guidelines);
 
-        let available_tools_en = if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
-            String::new()
-        } else {
-            format!(
-                "{}{}",
-                SystemToolPrompts::generateMemoryToolsPromptEn(&options.tool_visibility),
-                SystemToolPrompts::generateToolsPromptEnForHost(
-                    options.chat_id.clone(),
-                    options.has_image_recognition,
-                    false,
-                    options.chat_model_has_direct_image,
-                    options.has_audio_recognition,
-                    options.has_video_recognition,
-                    options.chat_model_has_direct_audio,
-                    options.chat_model_has_direct_video,
-                    &options.saf_bookmark_names,
-                    &options.host_environment,
-                    &options.tool_visibility,
-                    options.hook_metadata.clone(),
+        let available_tools_en =
+            if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
+                String::new()
+            } else {
+                format!(
+                    "{}{}",
+                    SystemToolPrompts::generateMemoryToolsPromptEn(&options.tool_visibility),
+                    SystemToolPrompts::generateToolsPromptEnForHost(
+                        options.chat_id.clone(),
+                        options.has_image_recognition,
+                        false,
+                        options.chat_model_has_direct_image,
+                        options.has_audio_recognition,
+                        options.has_video_recognition,
+                        options.chat_model_has_direct_audio,
+                        options.chat_model_has_direct_video,
+                        &options.saf_bookmark_names,
+                        &options.host_environment,
+                        &options.tool_visibility,
+                        options.hook_metadata.clone(),
+                    )
                 )
-            )
-        };
-        let available_tools_cn = if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
-            String::new()
-        } else {
-            format!(
-                "{}{}",
-                SystemToolPrompts::generateMemoryToolsPromptCn(&options.tool_visibility),
-                SystemToolPrompts::generateToolsPromptCnForHost(
-                    options.chat_id.clone(),
-                    options.has_image_recognition,
-                    false,
-                    options.chat_model_has_direct_image,
-                    options.has_audio_recognition,
-                    options.has_video_recognition,
-                    options.chat_model_has_direct_audio,
-                    options.chat_model_has_direct_video,
-                    &options.saf_bookmark_names,
-                    &options.host_environment,
-                    &options.tool_visibility,
-                    options.hook_metadata.clone(),
+            };
+        let available_tools_cn =
+            if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
+                String::new()
+            } else {
+                format!(
+                    "{}{}",
+                    SystemToolPrompts::generateMemoryToolsPromptCn(&options.tool_visibility),
+                    SystemToolPrompts::generateToolsPromptCnForHost(
+                        options.chat_id.clone(),
+                        options.has_image_recognition,
+                        false,
+                        options.chat_model_has_direct_image,
+                        options.has_audio_recognition,
+                        options.has_video_recognition,
+                        options.chat_model_has_direct_audio,
+                        options.chat_model_has_direct_video,
+                        &options.saf_bookmark_names,
+                        &options.host_environment,
+                        &options.tool_visibility,
+                        options.hook_metadata.clone(),
+                    )
                 )
-            )
-        };
+            };
 
         if options.enable_tools {
             if options.tool_exposure_mode == ToolExposureMode::CLI {
                 prompt = prompt
-                    .replace("TOOL_USAGE_GUIDELINES_SECTION", &build_cli_mode_prompt(options.use_english))
+                    .replace(
+                        "TOOL_USAGE_GUIDELINES_SECTION",
+                        &build_cli_mode_prompt(options.use_english),
+                    )
                     .replace("PACKAGE_SYSTEM_GUIDELINES_SECTION", "")
                     .replace("ACTIVE_PACKAGES_SECTION", "")
                     .replace("AVAILABLE_TOOLS_SECTION", "");
@@ -310,20 +332,45 @@ impl SystemPromptConfig {
                 };
                 prompt = prompt
                     .replace("TOOL_USAGE_GUIDELINES_SECTION", "")
-                    .replace("PACKAGE_SYSTEM_GUIDELINES_SECTION", if package_system_visible { package_guidelines } else { "" })
-                    .replace("AVAILABLE_TOOLS_SECTION", "");
-            } else {
-                prompt = prompt
-                    .replace("TOOL_USAGE_GUIDELINES_SECTION", if options.use_english { TOOL_USAGE_GUIDELINES_EN } else { TOOL_USAGE_GUIDELINES_CN })
                     .replace(
                         "PACKAGE_SYSTEM_GUIDELINES_SECTION",
                         if package_system_visible {
-                            if options.use_english { PACKAGE_SYSTEM_GUIDELINES_EN } else { PACKAGE_SYSTEM_GUIDELINES_CN }
+                            package_guidelines
                         } else {
                             ""
                         },
                     )
-                    .replace("AVAILABLE_TOOLS_SECTION", if options.use_english { &available_tools_en } else { &available_tools_cn });
+                    .replace("AVAILABLE_TOOLS_SECTION", "");
+            } else {
+                prompt = prompt
+                    .replace(
+                        "TOOL_USAGE_GUIDELINES_SECTION",
+                        if options.use_english {
+                            TOOL_USAGE_GUIDELINES_EN
+                        } else {
+                            TOOL_USAGE_GUIDELINES_CN
+                        },
+                    )
+                    .replace(
+                        "PACKAGE_SYSTEM_GUIDELINES_SECTION",
+                        if package_system_visible {
+                            if options.use_english {
+                                PACKAGE_SYSTEM_GUIDELINES_EN
+                            } else {
+                                PACKAGE_SYSTEM_GUIDELINES_CN
+                            }
+                        } else {
+                            ""
+                        },
+                    )
+                    .replace(
+                        "AVAILABLE_TOOLS_SECTION",
+                        if options.use_english {
+                            &available_tools_en
+                        } else {
+                            &available_tools_cn
+                        },
+                    );
             }
         } else {
             prompt = prompt
@@ -339,53 +386,114 @@ impl SystemPromptConfig {
     #[allow(non_snake_case)]
     pub fn getSystemPromptWithCustomPrompts(options: SystemPromptWithCustomOptions) -> String {
         let mut metadata = HashMap::from([
-            ("workspacePath".to_string(), json!(options.base.workspace_path)),
-            ("workspaceEnv".to_string(), json!(options.base.workspace_env)),
-            ("hostEnvironment".to_string(), json!(options.base.host_environment.id.clone())),
-            ("safBookmarkNames".to_string(), json!(options.base.saf_bookmark_names)),
-            ("customSystemPromptTemplate".to_string(), json!(options.base.custom_system_prompt_template)),
-            ("customIntroPrompt".to_string(), json!(options.custom_intro_prompt)),
+            (
+                "workspacePath".to_string(),
+                json!(options.base.workspace_path),
+            ),
+            (
+                "workspaceEnv".to_string(),
+                json!(options.base.workspace_env),
+            ),
+            (
+                "hostEnvironment".to_string(),
+                json!(options.base.host_environment.id.clone()),
+            ),
+            (
+                "safBookmarkNames".to_string(),
+                json!(options.base.saf_bookmark_names),
+            ),
+            (
+                "customSystemPromptTemplate".to_string(),
+                json!(options.base.custom_system_prompt_template),
+            ),
+            (
+                "customIntroPrompt".to_string(),
+                json!(options.custom_intro_prompt),
+            ),
             ("enableTools".to_string(), json!(options.base.enable_tools)),
-            ("hasImageRecognition".to_string(), json!(options.base.has_image_recognition)),
-            ("chatModelHasDirectImage".to_string(), json!(options.base.chat_model_has_direct_image)),
-            ("hasAudioRecognition".to_string(), json!(options.base.has_audio_recognition)),
-            ("hasVideoRecognition".to_string(), json!(options.base.has_video_recognition)),
-            ("chatModelHasDirectAudio".to_string(), json!(options.base.chat_model_has_direct_audio)),
-            ("chatModelHasDirectVideo".to_string(), json!(options.base.chat_model_has_direct_video)),
-            ("useToolCallApi".to_string(), json!(options.base.use_tool_call_api)),
-            ("toolExposureMode".to_string(), json!(format!("{:?}", options.base.tool_exposure_mode))),
-            ("toolVisibility".to_string(), json!(options.base.tool_visibility)),
-            ("enableGroupOrchestrationHint".to_string(), json!(options.enable_group_orchestration_hint)),
-            ("groupOrchestrationRoleName".to_string(), json!(options.group_orchestration_role_name)),
-            ("groupParticipantNamesText".to_string(), json!(options.group_participant_names_text)),
+            (
+                "hasImageRecognition".to_string(),
+                json!(options.base.has_image_recognition),
+            ),
+            (
+                "chatModelHasDirectImage".to_string(),
+                json!(options.base.chat_model_has_direct_image),
+            ),
+            (
+                "hasAudioRecognition".to_string(),
+                json!(options.base.has_audio_recognition),
+            ),
+            (
+                "hasVideoRecognition".to_string(),
+                json!(options.base.has_video_recognition),
+            ),
+            (
+                "chatModelHasDirectAudio".to_string(),
+                json!(options.base.chat_model_has_direct_audio),
+            ),
+            (
+                "chatModelHasDirectVideo".to_string(),
+                json!(options.base.chat_model_has_direct_video),
+            ),
+            (
+                "useToolCallApi".to_string(),
+                json!(options.base.use_tool_call_api),
+            ),
+            (
+                "toolExposureMode".to_string(),
+                json!(format!("{:?}", options.base.tool_exposure_mode)),
+            ),
+            (
+                "toolVisibility".to_string(),
+                json!(options.base.tool_visibility),
+            ),
+            (
+                "enableGroupOrchestrationHint".to_string(),
+                json!(options.enable_group_orchestration_hint),
+            ),
+            (
+                "groupOrchestrationRoleName".to_string(),
+                json!(options.group_orchestration_role_name),
+            ),
+            (
+                "groupParticipantNamesText".to_string(),
+                json!(options.group_participant_names_text),
+            ),
         ]);
         metadata.extend(options.base.hook_metadata.clone());
 
-        let before_context = PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
-            stage: "before_compose_system_prompt".to_string(),
-            chat_id: options.base.chat_id.clone(),
-            function_type: None,
-            prompt_function_type: None,
-            use_english: Some(options.base.use_english),
-            raw_input: None,
-            processed_input: None,
-            chat_history: Vec::new(),
-            prepared_history: Vec::new(),
-            system_prompt: None,
-            tool_prompt: None,
-            model_parameters: Vec::new(),
-            available_tools: Vec::new(),
-            metadata,
-        });
+        let before_context =
+            PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
+                stage: "before_compose_system_prompt".to_string(),
+                chat_id: options.base.chat_id.clone(),
+                function_type: None,
+                prompt_function_type: None,
+                use_english: Some(options.base.use_english),
+                raw_input: None,
+                processed_input: None,
+                chat_history: Vec::new(),
+                prepared_history: Vec::new(),
+                system_prompt: None,
+                tool_prompt: None,
+                model_parameters: Vec::new(),
+                available_tools: Vec::new(),
+                metadata,
+            });
 
         let base_prompt = before_context
             .system_prompt
             .clone()
             .unwrap_or_else(|| Self::getSystemPrompt(options.base.clone()));
-        let mut composed_prompt = Self::applyCustomPrompts(&base_prompt, &options.custom_intro_prompt);
+        let mut composed_prompt =
+            Self::applyCustomPrompts(&base_prompt, &options.custom_intro_prompt);
         if options.enable_group_orchestration_hint {
             let role_name = if options.group_orchestration_role_name.is_empty() {
-                if options.base.use_english { "assistant" } else { "助手" }.to_string()
+                if options.base.use_english {
+                    "assistant"
+                } else {
+                    "助手"
+                }
+                .to_string()
             } else {
                 options.group_orchestration_role_name.clone()
             };
@@ -396,23 +504,29 @@ impl SystemPromptConfig {
             ));
         }
 
-        let compose_context = PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
-            stage: "compose_system_prompt_sections".to_string(),
-            system_prompt: Some(composed_prompt),
-            ..before_context
-        });
+        let compose_context =
+            PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
+                stage: "compose_system_prompt_sections".to_string(),
+                system_prompt: Some(composed_prompt),
+                ..before_context
+            });
         let after_compose_prompt = compose_context.system_prompt.clone().unwrap_or_default();
-        let after_context = PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
-            stage: "after_compose_system_prompt".to_string(),
-            system_prompt: Some(after_compose_prompt),
-            ..compose_context
-        });
+        let after_context =
+            PromptHookRegistry::dispatchSystemPromptComposeHooks(PromptHookContext {
+                stage: "after_compose_system_prompt".to_string(),
+                system_prompt: Some(after_compose_prompt),
+                ..compose_context
+            });
         after_context.system_prompt.unwrap_or_default()
     }
 }
 
 #[allow(non_snake_case)]
-fn buildGroupOrchestrationHint(use_english: bool, role_name: &str, participant_names_text: &str) -> String {
+fn buildGroupOrchestrationHint(
+    use_english: bool,
+    role_name: &str,
+    participant_names_text: &str,
+) -> String {
     if use_english {
         format!(
             "\n\nRole response plan hint:\n- This chat uses a role response planner. After each user message, the system dynamically decides who responds and in what order.\n- Always keep your own role identity. Never reply as another role or imitate another persona.\n- Answer the user's latest request in your own role, optionally considering prior agents' replies.\n- If you have nothing new, reply briefly in your own role.\n\nRole-scoped history hint:\n- Messages prefixed with [From role: xxx] are historical outputs from other role cards.\n- Treat them as reference context only, not as the current user's new request.\n- Stay in role as {role_name}, and do not switch persona to the referenced role.\n\nGroup participants: {participant_names_text}"
@@ -425,7 +539,10 @@ fn buildGroupOrchestrationHint(use_english: bool, role_name: &str, participant_n
 }
 
 #[allow(non_snake_case)]
-fn buildWorkspaceRuleFileSection(rule_file: Option<&WorkspaceRuleFile>, use_english: bool) -> String {
+fn buildWorkspaceRuleFileSection(
+    rule_file: Option<&WorkspaceRuleFile>,
+    use_english: bool,
+) -> String {
     let Some(rule_file) = rule_file else {
         return String::new();
     };

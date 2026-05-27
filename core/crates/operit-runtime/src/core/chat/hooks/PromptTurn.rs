@@ -89,7 +89,10 @@ impl PromptTurn {
 }
 
 #[allow(non_snake_case)]
-pub fn appendUserTurnIfMissing(mut turns: Vec<PromptTurn>, message: impl Into<String>) -> Vec<PromptTurn> {
+pub fn appendUserTurnIfMissing(
+    mut turns: Vec<PromptTurn>,
+    message: impl Into<String>,
+) -> Vec<PromptTurn> {
     let message = message.into();
     if message.trim().is_empty() {
         return turns;

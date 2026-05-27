@@ -14,8 +14,10 @@ pub struct ProcessUserInputRequest {
 
 impl InputProcessor {
     pub fn process_user_input(request: ProcessUserInputRequest) -> String {
-        let active_prompt_metadata =
-            build_active_prompt_hook_metadata(request.chat_id.as_deref(), request.role_card_id.as_deref());
+        let active_prompt_metadata = build_active_prompt_hook_metadata(
+            request.chat_id.as_deref(),
+            request.role_card_id.as_deref(),
+        );
         let mut metadata = HashMap::<String, Value>::new();
         metadata.insert(
             "activePrompt".to_string(),

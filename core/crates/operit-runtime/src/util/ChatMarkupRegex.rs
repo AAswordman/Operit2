@@ -38,7 +38,9 @@ impl ChatMarkupRegex {
                 let lower = name.to_ascii_lowercase();
                 lower == "tool_result"
                     || (lower.starts_with("tool_result_")
-                        && lower["tool_result_".len()..].chars().all(is_tool_suffix_char))
+                        && lower["tool_result_".len()..]
+                            .chars()
+                            .all(is_tool_suffix_char))
             })
             .unwrap_or(false)
     }
@@ -46,7 +48,9 @@ impl ChatMarkupRegex {
     pub fn normalize_tool_like_tag_name(tag_name: Option<&str>) -> Option<String> {
         match tag_name {
             Some(name) if Self::is_tool_tag_name(Some(name)) => Some("tool".to_string()),
-            Some(name) if Self::is_tool_result_tag_name(Some(name)) => Some("tool_result".to_string()),
+            Some(name) if Self::is_tool_result_tag_name(Some(name)) => {
+                Some("tool_result".to_string())
+            }
             Some(name) => Some(name.to_string()),
             None => None,
         }
@@ -83,7 +87,11 @@ impl ChatMarkupRegex {
                 break;
             }
         }
-        if name.is_empty() { None } else { Some(name) }
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 
     pub fn generate_random_tool_tag_name() -> String {
@@ -238,7 +246,9 @@ pub fn attr_value(text: &str, attr_name: &str) -> Option<String> {
 pub fn tag_body<'a>(tag: &'a str, tag_name: &str) -> Option<&'a str> {
     let open_end = tag.find('>')? + 1;
     let close = format!("</{tag_name}>");
-    let close_start = tag.to_ascii_lowercase().rfind(&close.to_ascii_lowercase())?;
+    let close_start = tag
+        .to_ascii_lowercase()
+        .rfind(&close.to_ascii_lowercase())?;
     Some(&tag[open_end..close_start])
 }
 
@@ -251,7 +261,12 @@ pub fn tag_ranges(content: &str, tag_name: &str) -> Vec<(usize, usize)> {
     while let Some(relative_start) = lower[cursor..].find(&open_prefix) {
         let start = cursor + relative_start;
         let after_name = start + open_prefix.len();
-        if lower.as_bytes().get(after_name).map(|byte| is_tag_boundary(*byte)).unwrap_or(false) {
+        if lower
+            .as_bytes()
+            .get(after_name)
+            .map(|byte| is_tag_boundary(*byte))
+            .unwrap_or(false)
+        {
             if let Some(relative_close) = lower[after_name..].find(&close) {
                 let end = after_name + relative_close + close.len();
                 ranges.push((start, end));

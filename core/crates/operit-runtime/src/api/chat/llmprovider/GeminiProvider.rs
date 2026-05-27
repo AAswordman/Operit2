@@ -5,13 +5,12 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
-    TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
-use crate::data::model::ModelParameter::{ParameterCategory, ModelParameter};
+use crate::data::model::ModelParameter::{ModelParameter, ParameterCategory};
 use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
@@ -64,7 +63,10 @@ impl GeminiProvider {
         }
     }
 
-    pub fn create_request_body(&mut self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &mut self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut root = Map::new();
         let mut tools = Vec::new();
         if self.enable_tool_call && !request.available_tools.is_empty() {
@@ -97,10 +99,16 @@ impl GeminiProvider {
 
         let mut generation_config = Map::new();
         if request.enable_thinking {
-            generation_config.insert("thinkingConfig".to_string(), json!({"includeThoughts": true}));
+            generation_config.insert(
+                "thinkingConfig".to_string(),
+                json!({"includeThoughts": true}),
+            );
         }
         self.apply_model_parameters(&mut root, &mut generation_config, &request.model_parameters)?;
-        root.insert("generationConfig".to_string(), Value::Object(generation_config));
+        root.insert(
+            "generationConfig".to_string(),
+            Value::Object(generation_config),
+        );
         Ok(Value::Object(root))
     }
 
@@ -114,7 +122,10 @@ impl GeminiProvider {
             chat_history,
             self.enable_tool_call,
         );
-        let history_chars: usize = provider_ready_history.iter().map(|turn| turn.content.chars().count()).sum();
+        let history_chars: usize = provider_ready_history
+            .iter()
+            .map(|turn| turn.content.chars().count())
+            .sum();
         let tools_chars = tools_json.map(str::len).unwrap_or(0);
         let token_count = ((history_chars + tools_chars + 3) / 4) as i32;
 
@@ -147,7 +158,8 @@ impl GeminiProvider {
             } else {
                 turn.content.clone()
             };
-            let content_without_gemini_meta = ChatMarkupRegex::remove_gemini_thought_signature_meta(&content);
+            let content_without_gemini_meta =
+                ChatMarkupRegex::remove_gemini_thought_signature_meta(&content);
 
             if self.enable_tool_call {
                 match turn.kind {
@@ -155,7 +167,13 @@ impl GeminiProvider {
                         let payload = self.parse_xml_tool_calls(&content);
                         if !payload.function_calls.is_empty() {
                             if !open_function_call_names.is_empty() {
-                                flush_open_function_calls_as_cancelled(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
+                                flush_open_function_calls_as_cancelled(
+                                    &mut contents_array,
+                                    &mut queued_assistant_tool_text,
+                                    &mut queued_assistant_thought_signature,
+                                    &mut queued_function_calls,
+                                    &mut open_function_call_names,
+                                );
                             }
                             queue_function_calls(
                                 &mut queued_assistant_tool_text,
@@ -166,7 +184,13 @@ impl GeminiProvider {
                                 payload.thought_signature,
                             );
                         } else {
-                            flush_open_function_calls_as_cancelled(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
+                            flush_open_function_calls_as_cancelled(
+                                &mut contents_array,
+                                &mut queued_assistant_tool_text,
+                                &mut queued_assistant_thought_signature,
+                                &mut queued_function_calls,
+                                &mut open_function_call_names,
+                            );
                             contents_array.push(json!({"role": "model", "parts": self.build_parts_array(&content_without_gemini_meta)}));
                         }
                     }
@@ -174,7 +198,13 @@ impl GeminiProvider {
                         let payload = self.parse_xml_tool_calls(&content);
                         if !payload.function_calls.is_empty() {
                             if !open_function_call_names.is_empty() {
-                                flush_open_function_calls_as_cancelled(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
+                                flush_open_function_calls_as_cancelled(
+                                    &mut contents_array,
+                                    &mut queued_assistant_tool_text,
+                                    &mut queued_assistant_thought_signature,
+                                    &mut queued_function_calls,
+                                    &mut open_function_call_names,
+                                );
                             }
                             queue_function_calls(
                                 &mut queued_assistant_tool_text,
@@ -185,7 +215,13 @@ impl GeminiProvider {
                                 payload.thought_signature,
                             );
                         } else {
-                            flush_open_function_calls_as_cancelled(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
+                            flush_open_function_calls_as_cancelled(
+                                &mut contents_array,
+                                &mut queued_assistant_tool_text,
+                                &mut queued_assistant_thought_signature,
+                                &mut queued_function_calls,
+                                &mut open_function_call_names,
+                            );
                             contents_array.push(json!({"role": "model", "parts": self.build_parts_array(&content_without_gemini_meta)}));
                         }
                     }
@@ -203,10 +239,18 @@ impl GeminiProvider {
                         contents_array.push(json!({"role": "user", "parts": parts}));
                     }
                     PromptTurnKind::TOOL_RESULT => {
-                        emit_queued_function_calls_if_needed(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
-                        let (text_content, responses_list) = self.parse_xml_tool_results(&content_without_gemini_meta);
+                        emit_queued_function_calls_if_needed(
+                            &mut contents_array,
+                            &mut queued_assistant_tool_text,
+                            &mut queued_assistant_thought_signature,
+                            &mut queued_function_calls,
+                            &mut open_function_call_names,
+                        );
+                        let (text_content, responses_list) =
+                            self.parse_xml_tool_results(&content_without_gemini_meta);
                         if !responses_list.is_empty() && !open_function_call_names.is_empty() {
-                            let valid_count = responses_list.len().min(open_function_call_names.len());
+                            let valid_count =
+                                responses_list.len().min(open_function_call_names.len());
                             let mut parts = Vec::new();
                             for index in 0..valid_count {
                                 let mut response = responses_list[index].clone();
@@ -255,7 +299,13 @@ impl GeminiProvider {
             }
         }
 
-        flush_open_function_calls_as_cancelled(&mut contents_array, &mut queued_assistant_tool_text, &mut queued_assistant_thought_signature, &mut queued_function_calls, &mut open_function_call_names);
+        flush_open_function_calls_as_cancelled(
+            &mut contents_array,
+            &mut queued_assistant_tool_text,
+            &mut queued_assistant_thought_signature,
+            &mut queued_function_calls,
+            &mut open_function_call_names,
+        );
 
         Ok((contents_array, system_instruction, token_count))
     }
@@ -294,17 +344,22 @@ impl GeminiProvider {
                 let param_name = attr_value(raw, "name").unwrap_or_default();
                 let param_value = raw
                     .split_once('>')
-                    .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| xml_unescape(body)))
+                    .and_then(|(_, tail)| {
+                        tail.rsplit_once("</").map(|(body, _)| xml_unescape(body))
+                    })
                     .unwrap_or_default()
                     .trim()
                     .to_string();
                 args.insert(param_name, json!(param_value));
             }
             function_calls.push(json!({"name": tool_match.name, "args": Value::Object(args)}));
-            text_content = text_content.replace(&format!(
-                "<{} name=\"{}\">{}</{}>",
-                tool_match.tag_name, tool_match.name, tool_match.body, tool_match.tag_name
-            ), "");
+            text_content = text_content.replace(
+                &format!(
+                    "<{} name=\"{}\">{}</{}>",
+                    tool_match.tag_name, tool_match.name, tool_match.body, tool_match.tag_name
+                ),
+                "",
+            );
         }
         GeminiFunctionCallPayload {
             text_content: text_content.trim().to_string(),
@@ -330,8 +385,10 @@ impl GeminiProvider {
                 .next()
                 .and_then(|(start, end)| {
                     let raw = &block.body[start..end];
-                    raw.split_once('>')
-                        .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| body.trim().to_string()))
+                    raw.split_once('>').and_then(|(_, tail)| {
+                        tail.rsplit_once("</")
+                            .map(|(body, _)| body.trim().to_string())
+                    })
                 })
                 .unwrap_or_else(|| block.body.trim().to_string());
             responses.push(json!({
@@ -373,7 +430,8 @@ impl GeminiProvider {
             }
             match parameter.apiName.as_str() {
                 "temperature" => {
-                    generation_config.insert("temperature".to_string(), parameter.currentValue.clone());
+                    generation_config
+                        .insert("temperature".to_string(), parameter.currentValue.clone());
                 }
                 "top_p" => {
                     generation_config.insert("topP".to_string(), parameter.currentValue.clone());
@@ -382,13 +440,17 @@ impl GeminiProvider {
                     generation_config.insert("topK".to_string(), parameter.currentValue.clone());
                 }
                 "max_tokens" => {
-                    generation_config.insert("maxOutputTokens".to_string(), parameter.currentValue.clone());
+                    generation_config.insert(
+                        "maxOutputTokens".to_string(),
+                        parameter.currentValue.clone(),
+                    );
                 }
                 api_name => {
                     if parameter.category == ParameterCategory::OTHER {
                         root.insert(api_name.to_string(), parameter.currentValue.clone());
                     } else {
-                        generation_config.insert(api_name.to_string(), parameter.currentValue.clone());
+                        generation_config
+                            .insert(api_name.to_string(), parameter.currentValue.clone());
                     }
                 }
             }
@@ -398,7 +460,11 @@ impl GeminiProvider {
 
     fn request_url(&self, stream: bool) -> String {
         let base_url = determine_base_url(&self.api_endpoint);
-        let method = if stream { "streamGenerateContent" } else { "generateContent" };
+        let method = if stream {
+            "streamGenerateContent"
+        } else {
+            "generateContent"
+        };
         let url = format!("{base_url}/v1beta/models/{}:{method}", self.model_name);
         if url.contains('?') {
             format!("{url}&key={}", self.api_key)
@@ -432,7 +498,8 @@ impl GeminiProvider {
             if self.cancelled {
                 break;
             }
-            let bytes = item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let bytes =
+                item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             pending.push_str(&String::from_utf8_lossy(&bytes));
             while let Some(newline_index) = pending.find('\n') {
                 let line = pending[..newline_index].trim().to_string();
@@ -454,7 +521,11 @@ impl GeminiProvider {
         Ok(response_stream_from_chunks(chunks))
     }
 
-    fn process_response_line(&mut self, line: &str, chunks: &mut Vec<String>) -> Result<(), AiServiceError> {
+    fn process_response_line(
+        &mut self,
+        line: &str,
+        chunks: &mut Vec<String>,
+    ) -> Result<(), AiServiceError> {
         if line.is_empty() || line == "[" || line == "]" {
             return Ok(());
         }
@@ -477,7 +548,10 @@ impl GeminiProvider {
         Ok(())
     }
 
-    fn extract_content_from_json(&mut self, json_response: &Value) -> Result<String, AiServiceError> {
+    fn extract_content_from_json(
+        &mut self,
+        json_response: &Value,
+    ) -> Result<String, AiServiceError> {
         if let Some(error) = json_response.get("error") {
             return Err(AiServiceError::RequestFailed(error.to_string()));
         }
@@ -493,15 +567,32 @@ impl GeminiProvider {
                                 search_sources_builder.push_str(&format!("Query: {query}\n"));
                             }
                         }
-                        if let Some(chunks) = metadata.get("groundingChunks").and_then(Value::as_array) {
+                        if let Some(chunks) =
+                            metadata.get("groundingChunks").and_then(Value::as_array)
+                        {
                             for (index, chunk) in chunks.iter().enumerate() {
-                                let uri = chunk.pointer("/web/uri").and_then(Value::as_str).unwrap_or("");
-                                let title = chunk.pointer("/web/title").and_then(Value::as_str).unwrap_or("");
+                                let uri = chunk
+                                    .pointer("/web/uri")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
+                                let title = chunk
+                                    .pointer("/web/title")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
                                 if !uri.is_empty() {
                                     if title.is_empty() {
-                                        search_sources_builder.push_str(&format!("{}. <{}>\n", index + 1, uri));
+                                        search_sources_builder.push_str(&format!(
+                                            "{}. <{}>\n",
+                                            index + 1,
+                                            uri
+                                        ));
                                     } else {
-                                        search_sources_builder.push_str(&format!("{}. [{}]({})\n", index + 1, title, uri));
+                                        search_sources_builder.push_str(&format!(
+                                            "{}. [{}]({})\n",
+                                            index + 1,
+                                            title,
+                                            uri
+                                        ));
                                     }
                                 }
                             }
@@ -511,27 +602,42 @@ impl GeminiProvider {
                 }
             }
         }
-        let Some(parts) = json_response.pointer("/candidates/0/content/parts").and_then(Value::as_array) else {
+        let Some(parts) = json_response
+            .pointer("/candidates/0/content/parts")
+            .and_then(Value::as_array)
+        else {
             self.apply_usage(json_response.get("usageMetadata"));
             return Ok(String::new());
         };
         let mut pending_thought_signatures = Vec::new();
         for (index, part) in parts.iter().enumerate() {
-            let is_thought = part.get("thought").and_then(Value::as_bool).unwrap_or(false);
+            let is_thought = part
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if let Some(function_call) = part.get("functionCall") {
                 if self.enable_tool_call {
                     if self.isInThinkingMode {
                         content_builder.push_str("</think>");
                         self.isInThinkingMode = false;
                     }
-                    let tool_name = function_call.get("name").and_then(Value::as_str).unwrap_or("");
+                    let tool_name = function_call
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
                     if !tool_name.is_empty() {
                         let tag = ChatMarkupRegex::generate_random_tool_tag_name();
                         content_builder.push_str(&format!("\n<{tag} name=\"{tool_name}\">"));
                         if let Some(args) = function_call.get("args") {
                             let mut converter = StreamingJsonXmlConverter::new();
-                            append_converter_events_to_string(&mut content_builder, converter.feed(&args.to_string()));
-                            append_converter_events_to_string(&mut content_builder, converter.flush());
+                            append_converter_events_to_string(
+                                &mut content_builder,
+                                converter.feed(&args.to_string()),
+                            );
+                            append_converter_events_to_string(
+                                &mut content_builder,
+                                converter.flush(),
+                            );
                         }
                         content_builder.push_str(&format!("\n</{tag}>\n"));
                     }
@@ -547,13 +653,18 @@ impl GeminiProvider {
                     .or_else(|| inline_data.get("mimeType"))
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let b64 = inline_data.get("data").and_then(Value::as_str).unwrap_or("");
+                let b64 = inline_data
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if mime_type.starts_with("image/") && !b64.is_empty() {
                     if self.isInThinkingMode {
                         content_builder.push_str("</think>");
                         self.isInThinkingMode = false;
                     }
-                    content_builder.push_str(&format!("\n![gemini_image_{index}](data:{mime_type};base64,{b64})\n"));
+                    content_builder.push_str(&format!(
+                        "\n![gemini_image_{index}](data:{mime_type};base64,{b64})\n"
+                    ));
                 }
             }
             if let Some(text) = part.get("text").and_then(Value::as_str) {
@@ -576,7 +687,9 @@ impl GeminiProvider {
                     content_builder.push('\n');
                 }
                 let encoded = general_purpose::STANDARD.encode(signature.as_bytes());
-                content_builder.push_str(&ChatMarkupRegex::gemini_thought_signature_meta_tag(&encoded));
+                content_builder.push_str(&ChatMarkupRegex::gemini_thought_signature_meta_tag(
+                    &encoded,
+                ));
             }
         }
         self.apply_usage(json_response.get("usageMetadata"));
@@ -587,9 +700,21 @@ impl GeminiProvider {
         let Some(usage) = usage else {
             return;
         };
-        let prompt = usage.get("promptTokenCount").and_then(Value::as_i64).unwrap_or(0).max(0) as i32;
-        let cached = usage.get("cachedContentTokenCount").and_then(Value::as_i64).unwrap_or(0).max(0) as i32;
-        let candidates = usage.get("candidatesTokenCount").and_then(Value::as_i64).unwrap_or(0).max(0) as i32;
+        let prompt = usage
+            .get("promptTokenCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0) as i32;
+        let cached = usage
+            .get("cachedContentTokenCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0) as i32;
+        let candidates = usage
+            .get("candidatesTokenCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0) as i32;
         if prompt > 0 || cached > 0 || candidates > 0 {
             self.inputTokenCount = (prompt - cached).max(0);
             self.cachedInputTokenCount = cached;
@@ -600,10 +725,18 @@ impl GeminiProvider {
 
 #[async_trait]
 impl AIService for GeminiProvider {
-    fn input_token_count(&self) -> i32 { self.inputTokenCount }
-    fn cached_input_token_count(&self) -> i32 { self.cachedInputTokenCount }
-    fn output_token_count(&self) -> i32 { self.outputTokenCount }
-    fn provider_model(&self) -> String { format!("{}:{}", self.provider_type, self.model_name) }
+    fn input_token_count(&self) -> i32 {
+        self.inputTokenCount
+    }
+    fn cached_input_token_count(&self) -> i32 {
+        self.cachedInputTokenCount
+    }
+    fn output_token_count(&self) -> i32 {
+        self.outputTokenCount
+    }
+    fn provider_model(&self) -> String {
+        format!("{}:{}", self.provider_type, self.model_name)
+    }
 
     fn reset_token_counts(&mut self) {
         self.inputTokenCount = 0;
@@ -633,13 +766,19 @@ impl AIService for GeminiProvider {
             .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let text = response
+                .text()
+                .await
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             return Err(AiServiceError::RequestFailed(format!("{status}: {text}")));
         }
         if stream {
             return self.process_streaming_response(response).await;
         }
-        let json_response: Value = response.json().await.map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let json_response: Value = response
+            .json()
+            .await
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let mut chunks = Vec::new();
         let content = self.extract_content_from_json(&json_response)?;
         if content.is_empty() {
@@ -654,7 +793,11 @@ impl AIService for GeminiProvider {
         Ok(response_stream_from_chunks(chunks))
     }
 
-    async fn calculate_input_tokens(&self, chat_history: &[PromptTurn], available_tools: &[ToolPrompt]) -> Result<i32, AiServiceError> {
+    async fn calculate_input_tokens(
+        &self,
+        chat_history: &[PromptTurn],
+        available_tools: &[ToolPrompt],
+    ) -> Result<i32, AiServiceError> {
         let tools_json = if self.enable_tool_call && !available_tools.is_empty() {
             Some(Value::Array(self.build_tool_definitions_for_gemini(available_tools)).to_string())
         } else if self.enable_google_search {
@@ -662,7 +805,8 @@ impl AIService for GeminiProvider {
         } else {
             None
         };
-        let (_, _, token_count) = self.build_contents_and_count_tokens(chat_history, tools_json.as_deref(), false)?;
+        let (_, _, token_count) =
+            self.build_contents_and_count_tokens(chat_history, tools_json.as_deref(), false)?;
         Ok(token_count)
     }
 }
@@ -782,7 +926,9 @@ fn queue_function_calls(
     queued_function_calls.extend(function_calls);
 }
 
-fn build_schema_from_structured(params: &[crate::data::model::ToolPrompt::ToolParameterSchema]) -> Value {
+fn build_schema_from_structured(
+    params: &[crate::data::model::ToolPrompt::ToolParameterSchema],
+) -> Value {
     let mut properties = Map::new();
     let mut required = Vec::new();
     for param in params {
@@ -827,7 +973,9 @@ fn opt_gemini_thought_signature(value: &Value) -> Option<String> {
 fn append_converter_events_to_string(target: &mut String, events: Vec<StreamingJsonXmlEvent>) {
     for event in events {
         match event {
-            StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => target.push_str(&text),
+            StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => {
+                target.push_str(&text)
+            }
         }
     }
 }

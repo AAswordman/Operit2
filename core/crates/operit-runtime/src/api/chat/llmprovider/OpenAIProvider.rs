@@ -8,22 +8,21 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
-    TokenCounts,
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::ModelParameter::ParameterValueType;
 use crate::data::model::ToolPrompt::ToolPrompt;
-use crate::util::ChatUtils::ChatUtils;
-use crate::util::TokenCacheManager::TokenCacheManager;
 use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike, TextStreamEvent,
     TextStreamEventType,
 };
-use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use crate::util::stream::Stream::FnStream;
+use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use crate::util::ChatUtils::ChatUtils;
+use crate::util::TokenCacheManager::TokenCacheManager;
 
 #[derive(Clone)]
 pub struct OpenAIProvider {
@@ -122,7 +121,9 @@ pub struct ToolCallState {
 
 impl ToolCallState {
     pub fn getParser(&mut self, index: i32) -> &mut StreamingJsonXmlConverter {
-        self.parser.entry(index).or_insert_with(StreamingJsonXmlConverter::new)
+        self.parser
+            .entry(index)
+            .or_insert_with(StreamingJsonXmlConverter::new)
     }
 
     pub fn getTagName(&mut self, index: i32) -> String {
@@ -276,7 +277,8 @@ impl StreamingJsonXmlConverter {
                             self.buffer.clear();
                             self.buffer.push(c);
                             self.readingComplexValue = c == '[' || c == '{';
-                            self.primitiveNestingDepth = if self.readingComplexValue { 1 } else { 0 };
+                            self.primitiveNestingDepth =
+                                if self.readingComplexValue { 1 } else { 0 };
                             self.primitiveInString = false;
                             self.primitiveEscape = false;
                         }
@@ -320,7 +322,9 @@ impl StreamingJsonXmlConverter {
                     if self.unicodeCount == 4 {
                         if let Ok(code) = u32::from_str_radix(&self.buffer, 16) {
                             if let Some(ch) = char::from_u32(code) {
-                                events.push(StreamingJsonXmlEvent::Content(escapeXml(&ch.to_string())));
+                                events.push(StreamingJsonXmlEvent::Content(escapeXml(
+                                    &ch.to_string(),
+                                )));
                             }
                         }
                         self.state = StreamingJsonXmlState::READ_STRING;
@@ -450,7 +454,9 @@ impl OpenAIProvider {
                 );
             }
             if token_counts.output > 0 {
-                state.tokenCacheManager.set_output_tokens(token_counts.output.max(0) as usize);
+                state
+                    .tokenCacheManager
+                    .set_output_tokens(token_counts.output.max(0) as usize);
             }
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
@@ -459,14 +465,23 @@ impl OpenAIProvider {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.state.lock().map(|state| state.cancelled).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|state| state.cancelled)
+            .unwrap_or(false)
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         self.create_request_body_internal(request)
     }
 
-    pub fn create_request_body_internal(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body_internal(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut json_object = Map::new();
         json_object.insert("model".to_string(), json!(self.model_name));
         json_object.insert("stream".to_string(), json!(request.stream));
@@ -568,9 +583,11 @@ impl OpenAIProvider {
         let comparable_history =
             self.build_comparable_history(provider_ready_history, preserve_think_in_history);
         if let Ok(mut state) = self.state.lock() {
-            let token_count = state
-                .tokenCacheManager
-                .calculate_input_tokens(&comparable_history, tools_json, true);
+            let token_count = state.tokenCacheManager.calculate_input_tokens(
+                &comparable_history,
+                tools_json,
+                true,
+            );
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
             token_count as i32
@@ -592,12 +609,13 @@ impl OpenAIProvider {
             tools_json,
             preserve_think_in_history,
         );
-        let messages_array = serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
-            &provider_ready_history,
-            preserve_think_in_history,
-            use_tool_call,
-        ))
-        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let messages_array =
+            serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
+                &provider_ready_history,
+                preserve_think_in_history,
+                use_tool_call,
+            ))
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         Ok((messages_array, token_count))
     }
 
@@ -659,7 +677,9 @@ impl OpenAIProvider {
                 }
                 let bytes =
                     item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-                state.pending_line.push_str(&String::from_utf8_lossy(&bytes));
+                state
+                    .pending_line
+                    .push_str(&String::from_utf8_lossy(&bytes));
 
                 while let Some(newline_index) = state.pending_line.find('\n') {
                     let line = state.pending_line[..newline_index].trim().to_string();
@@ -706,8 +726,8 @@ impl OpenAIProvider {
             return Ok(());
         }
 
-        let json_response: Value =
-            serde_json::from_str(data).map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let json_response: Value = serde_json::from_str(data)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
 
         if json_response.get("type").and_then(Value::as_str).is_some() {
             return self.processResponsesStreamingEvent(&json_response, state, on_tool_invocation);
@@ -731,16 +751,14 @@ impl OpenAIProvider {
     fn handleJsonEvents(&self, events: Vec<StreamingJsonXmlEvent>, state: &mut StreamingState) {
         for event in events {
             match event {
-                StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => state.chunks.push(text),
+                StreamingJsonXmlEvent::Tag(text) | StreamingJsonXmlEvent::Content(text) => {
+                    state.chunks.push(text)
+                }
             }
         }
     }
 
-    fn handleToolSwitch(
-        &self,
-        prevIndex: i32,
-        state: &mut StreamingState,
-    ) {
+    fn handleToolSwitch(&self, prevIndex: i32, state: &mut StreamingState) {
         if state.toolCallState.closed.get(&prevIndex).copied() != Some(true)
             && state.toolCallState.nameEmitted.get(&prevIndex).copied() == Some(true)
         {
@@ -760,12 +778,20 @@ impl OpenAIProvider {
             .entry(index)
             .or_insert_with(|| Self::createToolCallAccumulator(index));
 
-        if let Some(id) = deltaCall.get("id").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        if let Some(id) = deltaCall
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
             if let Some(accumulated) = state.accumulatedToolCalls.get_mut(&index) {
                 accumulated["id"] = json!(id);
             }
         }
-        if let Some(call_type) = deltaCall.get("type").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        if let Some(call_type) = deltaCall
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
             if let Some(accumulated) = state.accumulatedToolCalls.get_mut(&index) {
                 accumulated["type"] = json!(call_type);
             }
@@ -774,7 +800,10 @@ impl OpenAIProvider {
         let Some(deltaFunction) = deltaCall.get("function").and_then(Value::as_object) else {
             return;
         };
-        let name = deltaFunction.get("name").and_then(Value::as_str).unwrap_or("");
+        let name = deltaFunction
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if !name.is_empty() {
             if let Some(accumulated) = state.accumulatedToolCalls.get_mut(&index) {
                 accumulated["function"]["name"] = json!(name);
@@ -784,7 +813,8 @@ impl OpenAIProvider {
                     callback(name.to_string());
                 }
                 let toolTagName = state.toolCallState.getTagName(index);
-                let toolStartTag = if state.toolCallState.emitted.get(&index).copied() != Some(true) {
+                let toolStartTag = if state.toolCallState.emitted.get(&index).copied() != Some(true)
+                {
                     state.toolCallState.emitted.insert(index, true);
                     format!("\n<{toolTagName} name=\"{name}\">")
                 } else {
@@ -809,7 +839,10 @@ impl OpenAIProvider {
             }
         }
 
-        let args = deltaFunction.get("arguments").and_then(Value::as_str).unwrap_or("");
+        let args = deltaFunction
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if !args.is_empty() {
             let currentArgs = state
                 .accumulatedToolCalls
@@ -852,7 +885,12 @@ impl OpenAIProvider {
         canonicalArgs: &str,
         state: &mut StreamingState,
     ) -> usize {
-        let previousFedLength = state.toolCallState.fedLength.get(&index).copied().unwrap_or(0);
+        let previousFedLength = state
+            .toolCallState
+            .fedLength
+            .get(&index)
+            .copied()
+            .unwrap_or(0);
         let safeFedLength = previousFedLength.min(canonicalArgs.len());
         if safeFedLength == canonicalArgs.len() {
             state.toolCallState.fedLength.insert(index, safeFedLength);
@@ -861,7 +899,10 @@ impl OpenAIProvider {
         let deltaToFeed = &canonicalArgs[safeFedLength..];
         let events = state.toolCallState.getParser(index).feed(deltaToFeed);
         self.handleJsonEvents(events, state);
-        state.toolCallState.fedLength.insert(index, canonicalArgs.len());
+        state
+            .toolCallState
+            .fedLength
+            .insert(index, canonicalArgs.len());
         deltaToFeed.len()
     }
 
@@ -903,11 +944,7 @@ impl OpenAIProvider {
         }
     }
 
-    fn closeToolCallIfOpen(
-        &self,
-        index: i32,
-        state: &mut StreamingState,
-    ) {
+    fn closeToolCallIfOpen(&self, index: i32, state: &mut StreamingState) {
         if state.toolCallState.closed.get(&index).copied() == Some(true)
             || state.toolCallState.nameEmitted.get(&index).copied() != Some(true)
         {
@@ -938,9 +975,13 @@ impl OpenAIProvider {
     }
 
     fn hasOpenToolCalls(&self, state: &StreamingState) -> bool {
-        state.toolCallState.nameEmitted.iter().any(|(index, emitted)| {
-            *emitted && state.toolCallState.closed.get(index).copied() != Some(true)
-        })
+        state
+            .toolCallState
+            .nameEmitted
+            .iter()
+            .any(|(index, emitted)| {
+                *emitted && state.toolCallState.closed.get(index).copied() != Some(true)
+            })
     }
 
     fn closeAllOpenToolCalls(&self, state: &mut StreamingState) {
@@ -954,11 +995,7 @@ impl OpenAIProvider {
         }
     }
 
-    fn handleFinishReason(
-        &self,
-        finishReason: &str,
-        state: &mut StreamingState,
-    ) {
+    fn handleFinishReason(&self, finishReason: &str, state: &mut StreamingState) {
         let normalizedFinishReason = finishReason.trim();
         if normalizedFinishReason.is_empty()
             || normalizedFinishReason.eq_ignore_ascii_case("null")
@@ -1025,8 +1062,17 @@ impl OpenAIProvider {
 
         let choice = &choices.unwrap()[0];
         if let Some(delta) = choice.get("delta").and_then(Value::as_object) {
-            let finishReason = if choice.get("finish_reason").map(|value| !value.is_null()).unwrap_or(false) {
-                choice.get("finish_reason").and_then(Value::as_str).unwrap_or("").trim().to_string()
+            let finishReason = if choice
+                .get("finish_reason")
+                .map(|value| !value.is_null())
+                .unwrap_or(false)
+            {
+                choice
+                    .get("finish_reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
             } else {
                 String::new()
             };
@@ -1053,11 +1099,17 @@ impl OpenAIProvider {
                 .unwrap_or("");
             let regularContent = message.get("content").and_then(Value::as_str).unwrap_or("");
             if !reasoningContent.is_empty() && !state.hasEmittedRegularContent {
-                state.chunks.push(format!("<think>{reasoningContent}</think>"));
+                state
+                    .chunks
+                    .push(format!("<think>{reasoningContent}</think>"));
             }
             if !regularContent.is_empty() {
                 state.hasEmittedRegularContent = true;
-                state.chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(regularContent));
+                state
+                    .chunks
+                    .push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                        regularContent,
+                    ));
             }
             if let Some(toolCallsDeltas) = message.get("tool_calls").and_then(Value::as_array) {
                 if !toolCallsDeltas.is_empty() && self.enable_tool_call {
@@ -1080,7 +1132,10 @@ impl OpenAIProvider {
         state: &mut StreamingState,
         on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<(), AiServiceError> {
-        let eventType = jsonResponse.get("type").and_then(Value::as_str).unwrap_or("");
+        let eventType = jsonResponse
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
         let normalizedStorage;
         let normalized = if eventType.starts_with("response.image_generation_call.") {
@@ -1102,13 +1157,19 @@ impl OpenAIProvider {
         let eventType = normalized.get("type").and_then(Value::as_str).unwrap_or("");
         match eventType {
             "response.output_text.delta" => {
-                let delta = normalized.get("delta").and_then(Value::as_str).unwrap_or("");
+                let delta = normalized
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if !delta.is_empty() {
                     self.processContentDelta("", delta, state);
                 }
             }
             "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
-                let delta = normalized.get("delta").and_then(Value::as_str).unwrap_or("");
+                let delta = normalized
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if !delta.is_empty() {
                     self.processContentDelta(delta, "", state);
                 }
@@ -1117,11 +1178,16 @@ impl OpenAIProvider {
                 if !self.enable_tool_call {
                     return Ok(());
                 }
-                let outputIndex = normalized.get("output_index").and_then(Value::as_i64).unwrap_or(-1) as i32;
+                let outputIndex = normalized
+                    .get("output_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1) as i32;
                 let Some(item) = normalized.get("item").and_then(Value::as_object) else {
                     return Ok(());
                 };
-                if outputIndex < 0 || item.get("type").and_then(Value::as_str).unwrap_or("") != "function_call" {
+                if outputIndex < 0
+                    || item.get("type").and_then(Value::as_str).unwrap_or("") != "function_call"
+                {
                     return Ok(());
                 }
                 let mut functionObj = Map::new();
@@ -1153,7 +1219,10 @@ impl OpenAIProvider {
                 if !self.enable_tool_call {
                     return Ok(());
                 }
-                let outputIndex = normalized.get("output_index").and_then(Value::as_i64).unwrap_or(-1) as i32;
+                let outputIndex = normalized
+                    .get("output_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1) as i32;
                 if outputIndex < 0 {
                     return Ok(());
                 }
@@ -1162,7 +1231,10 @@ impl OpenAIProvider {
                 if !name.is_empty() {
                     functionObj.insert("name".to_string(), json!(name));
                 }
-                let delta = normalized.get("delta").and_then(Value::as_str).unwrap_or("");
+                let delta = normalized
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if !delta.is_empty() {
                     functionObj.insert("arguments".to_string(), json!(delta));
                 }
@@ -1178,7 +1250,10 @@ impl OpenAIProvider {
                 if !self.enable_tool_call {
                     return Ok(());
                 }
-                let outputIndex = normalized.get("output_index").and_then(Value::as_i64).unwrap_or(-1) as i32;
+                let outputIndex = normalized
+                    .get("output_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1) as i32;
                 if outputIndex >= 0 {
                     self.closeToolCallIfOpen(outputIndex, state);
                     state.lastProcessedToolIndex = Some(outputIndex);
@@ -1216,19 +1291,33 @@ impl OpenAIProvider {
     fn processImageGenerationEvent(&self, jsonResponse: &Value, state: &mut StreamingState) {
         if let Some(delta) = jsonResponse.get("delta").and_then(Value::as_str) {
             if !delta.is_empty() {
-                let outputIndex = jsonResponse.get("output_index").and_then(Value::as_i64).unwrap_or(0);
-                state.chunks.push(format!("\n![openai_image_{outputIndex}](data:image/png;base64,{delta})\n"));
+                let outputIndex = jsonResponse
+                    .get("output_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                state.chunks.push(format!(
+                    "\n![openai_image_{outputIndex}](data:image/png;base64,{delta})\n"
+                ));
             }
         }
         if let Some(completed) = jsonResponse.get("b64_json").and_then(Value::as_str) {
             if !completed.is_empty() {
-                let outputIndex = jsonResponse.get("output_index").and_then(Value::as_i64).unwrap_or(0);
-                state.chunks.push(format!("\n![openai_image_{outputIndex}](data:image/png;base64,{completed})\n"));
+                let outputIndex = jsonResponse
+                    .get("output_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                state.chunks.push(format!(
+                    "\n![openai_image_{outputIndex}](data:image/png;base64,{completed})\n"
+                ));
             }
         }
     }
 
-    fn apply_model_parameters(&self, json_object: &mut Map<String, Value>, parameters: &[ModelParameter<Value>]) {
+    fn apply_model_parameters(
+        &self,
+        json_object: &mut Map<String, Value>,
+        parameters: &[ModelParameter<Value>],
+    ) {
         for parameter in parameters {
             if parameter.isEnabled {
                 let value = match parameter.valueType {
@@ -1263,7 +1352,9 @@ impl OpenAIProvider {
                             let trimmed = raw.trim();
                             if trimmed.starts_with('{') || trimmed.starts_with('[') {
                                 serde_json::from_str(trimmed)
-                                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
+                                    .map_err(|error| {
+                                        AiServiceError::RequestFailed(error.to_string())
+                                    })
                                     .ok()
                                     .unwrap_or_else(|| json!(trimmed))
                             } else {
@@ -1308,13 +1399,12 @@ impl OpenAIProvider {
         for (name, value) in &self.custom_headers {
             let header_name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let header_value =
-                HeaderValue::from_str(value).map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             headers.insert(header_name, header_value);
         }
         Ok(headers)
     }
-
 }
 
 fn xml_escape(value: &str) -> String {
@@ -1478,15 +1568,18 @@ impl OpenAIProvider {
                                 .json(&request_body)
                                 .send()
                                 .await
-                                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                                .map_err(|error| {
+                                    AiServiceError::ConnectionFailed(error.to_string())
+                                })?;
 
                             let status = response.status();
                             if !status.is_success() {
-                                let message = response
-                                    .text()
-                                    .await
-                                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-                                return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+                                let message = response.text().await.map_err(|error| {
+                                    AiServiceError::ConnectionFailed(error.to_string())
+                                })?;
+                                return Err(AiServiceError::RequestFailed(format!(
+                                    "{status}: {message}"
+                                )));
                             }
 
                             worker_provider
@@ -1505,7 +1598,8 @@ impl OpenAIProvider {
                         result
                     });
                     if let Err(error) = result {
-                        let error_chunk = format!("<error>{}</error>", xml_escape(&error.to_string()));
+                        let error_chunk =
+                            format!("<error>{}</error>", xml_escape(&error.to_string()));
                         let _ = tx.send(error_chunk);
                     }
                     worker_event_channel.close();
@@ -1533,7 +1627,9 @@ impl OpenAIProvider {
                 .text()
                 .await
                 .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+            return Err(AiServiceError::RequestFailed(format!(
+                "{status}: {message}"
+            )));
         }
 
         let json_response: Value = response
@@ -1558,18 +1654,20 @@ impl OpenAIProvider {
         }
         if let Some(content) = extract_content_chunk(&json_response) {
             if !content.is_empty() {
-                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(&content));
+                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &content,
+                ));
             }
         }
         chunks.extend(extract_tool_calls_xml_chunks(&json_response));
 
         Ok(response_stream_from_chunks(chunks))
     }
-
 }
 
 fn parse_tool_parameters(parameters: &str) -> Result<Value, AiServiceError> {
-    serde_json::from_str(parameters).map_err(|error| AiServiceError::RequestFailed(error.to_string()))
+    serde_json::from_str(parameters)
+        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
 }
 
 fn escapeXml(text: &str) -> String {
@@ -1632,7 +1730,9 @@ fn extract_tool_calls_xml_chunks(value: &Value) -> Vec<String> {
     };
     tool_calls
         .iter()
-        .map(|tool_call| StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string()))
+        .map(|tool_call| {
+            StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string())
+        })
         .filter(|content| crate::util::ChatMarkupRegex::ChatMarkupRegex::contains_tool_tag(content))
         .collect()
 }
@@ -1640,7 +1740,9 @@ fn extract_tool_calls_xml_chunks(value: &Value) -> Vec<String> {
 fn convertToolCallsToXmlChunks(tool_calls: &[Value]) -> Vec<String> {
     tool_calls
         .iter()
-        .map(|tool_call| StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string()))
+        .map(|tool_call| {
+            StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string())
+        })
         .filter(|content| !content.trim().is_empty())
         .collect()
 }

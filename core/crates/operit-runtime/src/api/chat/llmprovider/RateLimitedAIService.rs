@@ -2,15 +2,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::AIService::{
-    AIService, AiServiceError, SendMessageRequest,
-};
-use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
+use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use crate::api::chat::llmprovider::RequestConcurrencyRegistry::RequestSemaphore;
 use crate::api::chat::llmprovider::SlidingWindowRateLimiter::SlidingWindowRateLimiter;
 use crate::core::chat::hooks::PromptTurn::PromptTurn;
 use crate::data::model::OpenAIModels::ModelOption;
 use crate::data::model::ToolPrompt::ToolPrompt;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct RateLimitedAIService {
     delegate: Box<dyn AIService>,

@@ -35,7 +35,9 @@ impl KmpCondition {
             KmpCondition::Set(chars) => chars.contains(&c),
             KmpCondition::Not(condition) => !condition.matches(c),
             KmpCondition::Or(conditions) => conditions.iter().any(|condition| condition.matches(c)),
-            KmpCondition::And(conditions) => conditions.iter().all(|condition| condition.matches(c)),
+            KmpCondition::And(conditions) => {
+                conditions.iter().all(|condition| condition.matches(c))
+            }
             KmpCondition::Predicate { predicate, .. } => predicate(c),
             KmpCondition::GreedyStar(condition) => condition.matches(c),
             KmpCondition::Group { .. } => false,
@@ -65,7 +67,9 @@ impl KmpCondition {
                     .join(" AND ")
             ),
             KmpCondition::Predicate { description, .. } => description.clone(),
-            KmpCondition::GreedyStar(condition) => format!("greedy*({})", condition.get_description()),
+            KmpCondition::GreedyStar(condition) => {
+                format!("greedy*({})", condition.get_description())
+            }
             KmpCondition::Group { group_id, .. } => format!("GROUP({group_id})"),
         }
     }
@@ -162,7 +166,9 @@ impl KmpPattern {
     }
 
     pub fn none_of(&mut self, chars: &[char]) {
-        self.add(KmpCondition::Not(Box::new(KmpCondition::Set(chars.to_vec()))));
+        self.add(KmpCondition::Not(Box::new(KmpCondition::Set(
+            chars.to_vec(),
+        ))));
     }
 
     pub fn predicate(&mut self, description: &str, predicate: fn(char) -> bool) {
@@ -369,12 +375,7 @@ impl StreamKmpGraphBuilder {
         let mut graph = StreamKmpGraph::new();
         graph.pattern = Some(pattern.clone());
         let start_node = graph.start_node;
-        let (final_node, _) = build_recursive(
-            &mut graph,
-            start_node,
-            &pattern.conditions,
-            0,
-        );
+        let (final_node, _) = build_recursive(&mut graph, start_node, &pattern.conditions, 0);
         graph.nodes[final_node].is_final = true;
         setup_failure_transitions(&mut graph);
         graph

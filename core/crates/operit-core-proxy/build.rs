@@ -4,13 +4,16 @@ use std::path::{Path, PathBuf};
 
 use quote::ToTokens;
 use syn::{
-    FnArg, ImplItem, ImplItemFn, Item, ItemImpl, Pat, ReturnType, Type, TypePath, UseTree, Visibility,
+    FnArg, ImplItem, ImplItemFn, Item, ItemImpl, Pat, ReturnType, Type, TypePath, UseTree,
+    Visibility,
 };
 
 fn main() {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let runtime_src = manifest_dir.join("../operit-runtime/src");
     let serializable_types = collect_serializable_types(&runtime_src);
+    let type_registry = collect_type_registry(&runtime_src);
     let object_specs = object_specs(&runtime_src);
     for spec in &object_specs {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());
@@ -18,18 +21,7 @@ fn main() {
 
     let objects = object_specs
         .iter()
-        .map(|spec| ScannedObject {
-            schema_key: spec.schema_key.clone(),
-            dispatch_name: spec.dispatch_name.clone(),
-            full_type: spec.full_type.clone(),
-            access: spec.access.clone(),
-            methods: collect_methods(
-                &spec.source_path,
-                &spec.type_name,
-                parent_module_path(&spec.full_type),
-                &serializable_types,
-            ),
-        })
+        .map(|spec| scan_object(spec, &serializable_types, &type_registry))
         .collect::<Vec<_>>();
     let generated = render_generated(&objects);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
@@ -37,6 +29,7 @@ fn main() {
         .expect("write generated_core_dispatch.rs");
 }
 
+#[derive(Clone, Debug)]
 struct ObjectSpec {
     schema_key: String,
     dispatch_name: String,
@@ -54,7 +47,6 @@ enum ObjectAccess {
     GetInstanceConstruct,
     ResultGetInstanceConstruct,
     NewConstruct,
-    GitHubTokenNewConstruct,
     StringNewConstruct,
     ContextGetInstanceConstruct,
     ContextRefGetInstanceConstruct,
@@ -70,7 +62,6 @@ impl ObjectAccess {
                 | ObjectAccess::GetInstanceConstruct
                 | ObjectAccess::ResultGetInstanceConstruct
                 | ObjectAccess::NewConstruct
-                | ObjectAccess::GitHubTokenNewConstruct
                 | ObjectAccess::StringNewConstruct
                 | ObjectAccess::ContextGetInstanceConstruct
                 | ObjectAccess::ContextRefGetInstanceConstruct
@@ -188,7 +179,13 @@ fn discover_constructible_objects_recursive(
 ) -> Vec<ObjectSpec> {
     let dir = runtime_src.join(relative_dir);
     let mut specs = Vec::new();
-    discover_constructible_objects_recursive_inner(runtime_src, &dir, &dir, schema_prefix, &mut specs);
+    discover_constructible_objects_recursive_inner(
+        runtime_src,
+        &dir,
+        &dir,
+        schema_prefix,
+        &mut specs,
+    );
     specs
 }
 
@@ -205,7 +202,13 @@ fn discover_constructible_objects_recursive_inner(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            discover_constructible_objects_recursive_inner(runtime_src, root_dir, &path, schema_prefix, specs);
+            discover_constructible_objects_recursive_inner(
+                runtime_src,
+                root_dir,
+                &path,
+                schema_prefix,
+                specs,
+            );
             continue;
         }
         if path.extension().and_then(|value| value.to_str()) != Some("rs") {
@@ -245,22 +248,25 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let Item::Struct(item_struct) = item else {
             continue;
         };
-        if !matches!(item_struct.vis, Visibility::Public(_)) || !item_struct.generics.params.is_empty() {
+        if !matches!(item_struct.vis, Visibility::Public(_))
+            || !item_struct.generics.params.is_empty()
+        {
             continue;
         }
         public_types.push(item_struct.ident.to_string());
     }
+
     for type_name in public_types {
         let mut has_default = false;
         let mut has_get_instance = false;
         let mut has_result_get_instance = false;
         let mut has_new = false;
-        let mut has_github_token_new = false;
         let mut has_string_new = false;
         let mut has_context_get_instance = false;
         let mut has_context_ref_get_instance = false;
         let mut has_store_paths_new = false;
         let mut has_result_store_paths_new = false;
+
         for item in &file.items {
             let Item::Impl(item_impl) = item else {
                 continue;
@@ -295,8 +301,6 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     let Some(arg_type) = first_function_arg_type(function) else {
                         continue;
                     };
-                    has_github_token_new |= name == "newWithGitHubToken"
-                        && arg_type.contains("Option < String >");
                     if name == "getInstance" && arg_type.contains("OperitApplicationContext") {
                         if arg_type.trim_start().starts_with('&') {
                             has_context_ref_get_instance = true;
@@ -319,6 +323,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                 }
             }
         }
+
         if has_context_get_instance {
             return Some((type_name, ObjectAccess::ContextGetInstanceConstruct));
         }
@@ -336,9 +341,6 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         }
         if has_result_store_paths_new {
             return Some((type_name, ObjectAccess::ResultStorePathsConstruct));
-        }
-        if has_github_token_new {
-            return Some((type_name, ObjectAccess::GitHubTokenNewConstruct));
         }
         if has_string_new {
             return Some((type_name, ObjectAccess::StringNewConstruct));
@@ -368,6 +370,13 @@ fn function_return_type(function: &ImplItemFn) -> String {
 }
 
 fn full_type_for_source(runtime_src: &Path, source_path: &Path, type_name: &str) -> String {
+    format!(
+        "{}::{type_name}",
+        module_path_for_source(runtime_src, source_path)
+    )
+}
+
+fn module_path_for_source(runtime_src: &Path, source_path: &Path) -> String {
     let relative = source_path
         .strip_prefix(runtime_src)
         .expect("source path must be inside runtime src");
@@ -375,7 +384,6 @@ fn full_type_for_source(runtime_src: &Path, source_path: &Path, type_name: &str)
     for component in relative.with_extension("").components() {
         module_path.push(component.as_os_str().to_string_lossy().to_string());
     }
-    module_path.push(type_name.to_string());
     module_path.join("::")
 }
 
@@ -423,6 +431,105 @@ fn parent_module_path(full_type: &str) -> &str {
         .expect("object full_type must include module path")
 }
 
+#[derive(Clone, Debug, Default)]
+struct TypeRegistry {
+    aliases: HashMap<String, String>,
+    trait_impls: HashMap<String, HashSet<String>>,
+    stream_items: HashMap<String, String>,
+}
+
+impl TypeRegistry {
+    fn resolve_alias(&self, ty: &str) -> String {
+        let mut current = ty.to_string();
+        let mut visited = HashSet::new();
+        while visited.insert(current.clone()) {
+            let Some(next) = self.aliases.get(&current) else {
+                break;
+            };
+            current = next.clone();
+        }
+        current
+    }
+
+    fn implements(&self, ty: &str, trait_name: &str) -> bool {
+        let resolved = self.resolve_alias(ty);
+        self.trait_impls
+            .get(&resolved)
+            .map(|traits| traits.contains(trait_name))
+            .unwrap_or(false)
+    }
+
+    fn stream_item(&self, ty: &str) -> Option<String> {
+        let resolved = self.resolve_alias(ty);
+        self.stream_items.get(&resolved).cloned()
+    }
+}
+
+fn collect_type_registry(runtime_src: &Path) -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    collect_type_registry_from_dir(runtime_src, runtime_src, &mut registry);
+    registry
+}
+
+fn collect_type_registry_from_dir(root: &Path, dir: &Path, registry: &mut TypeRegistry) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_type_registry_from_dir(root, &path, registry);
+            continue;
+        }
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).expect("read runtime source");
+        let file = syn::parse_file(&content).expect("parse runtime source");
+        let module_path = module_path_for_source(root, &path);
+        let resolver =
+            TypeResolver::from_file(&file, &module_path, HashSet::new(), TypeRegistry::default());
+        for item in &file.items {
+            match item {
+                Item::Type(item_type) => {
+                    let alias = full_type_for_source(root, &path, &item_type.ident.to_string());
+                    registry
+                        .aliases
+                        .insert(alias, normalize_type(&item_type.ty, &resolver));
+                }
+                Item::Impl(item_impl) => {
+                    let self_type = normalize_type(&item_impl.self_ty, &resolver);
+                    if let Some((_, trait_path, _)) = &item_impl.trait_ {
+                        if let Some(trait_name) = trait_path
+                            .segments
+                            .last()
+                            .map(|segment| segment.ident.to_string())
+                        {
+                            registry
+                                .trait_impls
+                                .entry(self_type.clone())
+                                .or_default()
+                                .insert(trait_name);
+                        }
+                    }
+                    for item in &item_impl.items {
+                        let ImplItem::Type(item_type) = item else {
+                            continue;
+                        };
+                        if item_type.ident == "Item" {
+                            registry.stream_items.insert(
+                                self_type.clone(),
+                                normalize_type(&item_type.ty, &resolver),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 fn collect_serializable_types(runtime_src: &Path) -> HashSet<String> {
     let mut out = HashSet::new();
     collect_serializable_types_from_dir(runtime_src, runtime_src, &mut out);
@@ -450,13 +557,21 @@ fn collect_serializable_types_from_dir(root: &Path, dir: &Path, out: &mut HashSe
                     if matches!(item_struct.vis, Visibility::Public(_))
                         && derives_serde_pair(&item_struct.attrs) =>
                 {
-                    out.insert(full_type_for_source(root, &path, &item_struct.ident.to_string()));
+                    out.insert(full_type_for_source(
+                        root,
+                        &path,
+                        &item_struct.ident.to_string(),
+                    ));
                 }
                 Item::Enum(item_enum)
                     if matches!(item_enum.vis, Visibility::Public(_))
                         && derives_serde_pair(&item_enum.attrs) =>
                 {
-                    out.insert(full_type_for_source(root, &path, &item_enum.ident.to_string()));
+                    out.insert(full_type_for_source(
+                        root,
+                        &path,
+                        &item_enum.ident.to_string(),
+                    ));
                 }
                 _ => {}
             }
@@ -479,59 +594,121 @@ fn derives_serde_pair(attrs: &[syn::Attribute]) -> bool {
 }
 
 #[derive(Clone, Debug)]
-struct ScannedObject {
+struct SourceObject {
     schema_key: String,
     dispatch_name: String,
     full_type: String,
     access: ObjectAccess,
-    methods: Vec<ScannedMethod>,
+    methods: Vec<SourceMethod>,
 }
 
 #[derive(Clone, Debug)]
-struct ScannedMethod {
+struct SourceMethod {
     name: String,
-    args: Vec<ScannedArg>,
-    return_type: ReturnKind,
+    args: Vec<SourceArg>,
+    rust_return_type: String,
     is_async: bool,
-    callable: bool,
-    watchable: bool,
-    unsupported_reason: Option<String>,
+    protocol: MethodProtocol,
 }
 
 #[derive(Clone, Debug)]
-struct ScannedArg {
+struct SourceArg {
     name: String,
     ty: String,
 }
 
 #[derive(Clone, Debug)]
-enum ReturnKind {
-    Unit,
-    ResultUnit,
-    ResultValue(String),
-    ResultFlow(String),
-    Value(String),
-    Flow(String),
-    StateFlow(String),
-    SharedTextStream,
+enum MethodProtocol {
+    Call(CallProtocol),
+    Watch(WatchProtocol),
     Unsupported(String),
 }
 
-fn collect_methods(
+#[derive(Clone, Debug)]
+enum CallProtocol {
+    Unit,
+    ResultUnit,
+    Value(String),
+    ResultValue(String),
+}
+
+#[derive(Clone, Debug)]
+struct WatchProtocol {
+    snapshot_type: Option<String>,
+    stream: WatchStreamProtocol,
+}
+
+#[derive(Clone, Debug)]
+enum WatchStreamProtocol {
+    JsonFlow { fallible: bool },
+    JsonState { fallible: bool },
+    TextEvent { optional: bool },
+}
+
+impl SourceMethod {
+    fn call_protocol(&self) -> Option<&CallProtocol> {
+        match &self.protocol {
+            MethodProtocol::Call(protocol) => Some(protocol),
+            _ => None,
+        }
+    }
+
+    fn watch_protocol(&self) -> Option<&WatchProtocol> {
+        match &self.protocol {
+            MethodProtocol::Watch(protocol) => Some(protocol),
+            _ => None,
+        }
+    }
+
+    fn unsupported_reason(&self) -> Option<&str> {
+        match &self.protocol {
+            MethodProtocol::Unsupported(reason) => Some(reason),
+            _ => None,
+        }
+    }
+}
+
+fn scan_object(
+    spec: &ObjectSpec,
+    serializable_types: &HashSet<String>,
+    type_registry: &TypeRegistry,
+) -> SourceObject {
+    SourceObject {
+        schema_key: spec.schema_key.clone(),
+        dispatch_name: spec.dispatch_name.clone(),
+        full_type: spec.full_type.clone(),
+        access: spec.access.clone(),
+        methods: scan_methods(
+            &spec.source_path,
+            &spec.type_name,
+            parent_module_path(&spec.full_type),
+            serializable_types,
+            type_registry,
+        ),
+    }
+}
+
+fn scan_methods(
     path: &Path,
     type_name: &str,
     module_path: &str,
     serializable_types: &HashSet<String>,
-) -> Vec<ScannedMethod> {
+    type_registry: &TypeRegistry,
+) -> Vec<SourceMethod> {
     let content = fs::read_to_string(path).expect("read runtime source");
     let file = syn::parse_file(&content).expect("parse runtime source");
-    let resolver = TypeResolver::from_file(&file, module_path, serializable_types.clone());
+    let resolver = TypeResolver::from_file(
+        &file,
+        module_path,
+        serializable_types.clone(),
+        type_registry.clone(),
+    );
     let mut methods = Vec::new();
     for item in file.items.iter() {
         let Item::Impl(item_impl) = item else {
             continue;
         };
-        if impl_type_name(&item_impl) != Some(type_name.to_string()) {
+        if impl_type_name(item_impl) != Some(type_name.to_string()) {
             continue;
         }
         for impl_item in item_impl.items.iter() {
@@ -551,15 +728,18 @@ fn impl_type_name(item_impl: &ItemImpl) -> Option<String> {
     let Type::Path(TypePath { path, .. }) = item_impl.self_ty.as_ref() else {
         return None;
     };
-    path.segments.last().map(|segment| segment.ident.to_string())
+    path.segments
+        .last()
+        .map(|segment| segment.ident.to_string())
 }
 
-fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> ScannedMethod {
+fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let name = function.sig.ident.to_string();
     let mut args = Vec::new();
-    let mut unsupported_reason = None::<String>;
+    let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
     let mut has_receiver = false;
+
     for input in function.sig.inputs.iter() {
         match input {
             FnArg::Receiver(_) => {
@@ -567,109 +747,54 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> ScannedMethod 
             }
             FnArg::Typed(pat_type) => {
                 let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
-                    unsupported_reason = Some("non-ident argument pattern".to_string());
+                    method_error = Some("non-ident argument pattern".to_string());
                     continue;
                 };
                 let ty = normalize_type(&pat_type.ty, resolver);
                 if !is_supported_arg_type(&ty, resolver) {
-                    unsupported_reason = Some(format!("unsupported argument type: {ty}"));
+                    method_error = Some(format!("unsupported argument type: {ty}"));
                 }
-                args.push(ScannedArg {
+                args.push(SourceArg {
                     name: pat_ident.ident.to_string(),
                     ty,
                 });
             }
         }
     }
+
     if !has_receiver {
-        unsupported_reason = Some("associated function is not an instance method".to_string());
+        method_error = Some("associated function is not an instance method".to_string());
     }
-    let return_type = scan_return_type(&function.sig.output, resolver);
-    if let ReturnKind::Unsupported(reason) = &return_type {
-        unsupported_reason = Some(reason.clone());
+    let (rust_return_type, mut protocol) = scan_return_protocol(&function.sig.output, resolver);
+    if is_async && matches!(protocol, MethodProtocol::Watch(_)) {
+        protocol = MethodProtocol::Unsupported("async watch method is not supported".to_string());
     }
-    let callable = unsupported_reason.is_none()
-        && !matches!(
-            return_type,
-            ReturnKind::ResultFlow(_)
-                | ReturnKind::Flow(_)
-                | ReturnKind::StateFlow(_)
-                | ReturnKind::SharedTextStream
-        );
-    let watchable = unsupported_reason.is_none()
-        && matches!(
-            return_type,
-            ReturnKind::ResultFlow(_)
-                | ReturnKind::Flow(_)
-                | ReturnKind::StateFlow(_)
-                | ReturnKind::SharedTextStream
-        );
-    ScannedMethod {
+    if let Some(reason) = method_error {
+        protocol = MethodProtocol::Unsupported(reason);
+    }
+
+    SourceMethod {
         name,
         args,
-        return_type,
+        rust_return_type,
         is_async,
-        callable,
-        watchable,
-        unsupported_reason,
-    }
-}
-
-fn scan_return_type(return_type: &ReturnType, resolver: &TypeResolver) -> ReturnKind {
-    match return_type {
-        ReturnType::Default => ReturnKind::Unit,
-        ReturnType::Type(_, ty) => {
-            let normalized = normalize_type(ty, resolver);
-            if normalized == "()" {
-                ReturnKind::Unit
-            } else if result_unit(&normalized) {
-                ReturnKind::ResultUnit
-            } else if let Some(inner) = result_value_inner(&normalized) {
-                if let Some(flow_inner) = flow_inner(inner) {
-                    if is_supported_return_type(flow_inner, resolver) {
-                        ReturnKind::ResultFlow(flow_inner.to_string())
-                    } else {
-                        ReturnKind::Unsupported(format!(
-                            "unsupported Result Flow value type: {flow_inner}"
-                        ))
-                    }
-                } else if is_supported_return_type(inner, resolver) {
-                    ReturnKind::ResultValue(inner.to_string())
-                } else {
-                    ReturnKind::Unsupported(format!("unsupported Result value type: {inner}"))
-                }
-            } else if let Some(inner) = state_flow_inner(&normalized) {
-                if is_supported_return_type(inner, resolver) {
-                    ReturnKind::StateFlow(inner.to_string())
-                } else {
-                    ReturnKind::Unsupported(format!("unsupported StateFlow value type: {inner}"))
-                }
-            } else if let Some(inner) = flow_inner(&normalized) {
-                if is_supported_return_type(inner, resolver) {
-                    ReturnKind::Flow(inner.to_string())
-                } else {
-                    ReturnKind::Unsupported(format!("unsupported Flow value type: {inner}"))
-                }
-            } else if is_shared_text_stream_return_type(&normalized) {
-                ReturnKind::SharedTextStream
-            } else if normalized.starts_with('&') {
-                ReturnKind::Unsupported(format!("borrowed return type cannot cross link: {normalized}"))
-            } else if is_supported_return_type(&normalized, resolver) {
-                ReturnKind::Value(normalized)
-            } else {
-                ReturnKind::Unsupported(format!("unsupported return type: {normalized}"))
-            }
-        }
+        protocol,
     }
 }
 
 struct TypeResolver {
     names: HashMap<String, String>,
     serializable_types: HashSet<String>,
+    type_registry: TypeRegistry,
 }
 
 impl TypeResolver {
-    fn from_file(file: &syn::File, module_path: &str, serializable_types: HashSet<String>) -> Self {
+    fn from_file(
+        file: &syn::File,
+        module_path: &str,
+        serializable_types: HashSet<String>,
+        type_registry: TypeRegistry,
+    ) -> Self {
         let mut names = HashMap::new();
         for item in &file.items {
             match item {
@@ -689,7 +814,11 @@ impl TypeResolver {
                 _ => {}
             }
         }
-        Self { names, serializable_types }
+        Self {
+            names,
+            serializable_types,
+            type_registry,
+        }
     }
 }
 
@@ -787,11 +916,121 @@ fn is_path_segment(value: &str, start: usize, end: usize) -> bool {
     value[..start].ends_with("::") || value[end..].starts_with("::")
 }
 
+fn scan_return_protocol(
+    return_type: &ReturnType,
+    resolver: &TypeResolver,
+) -> (String, MethodProtocol) {
+    match return_type {
+        ReturnType::Default => ("()".to_string(), MethodProtocol::Call(CallProtocol::Unit)),
+        ReturnType::Type(_, ty) => {
+            let normalized = normalize_type(ty, resolver);
+            let protocol = classify_return_protocol(&normalized, resolver);
+            (normalized, protocol)
+        }
+    }
+}
+
+fn classify_return_protocol(ty: &str, resolver: &TypeResolver) -> MethodProtocol {
+    if ty == "()" {
+        return MethodProtocol::Call(CallProtocol::Unit);
+    }
+    if result_unit(ty) {
+        return MethodProtocol::Call(CallProtocol::ResultUnit);
+    }
+    if let Some(inner) = result_value_inner(ty) {
+        if let Some(flow_inner) = flow_inner(inner) {
+            return classify_json_watch(
+                flow_inner,
+                WatchStreamProtocol::JsonFlow { fallible: true },
+                resolver,
+            );
+        }
+        if let Some(state_inner) = state_flow_inner(inner) {
+            return classify_json_watch(
+                state_inner,
+                WatchStreamProtocol::JsonState { fallible: true },
+                resolver,
+            );
+        }
+        return if is_supported_return_type(inner, resolver) {
+            MethodProtocol::Call(CallProtocol::ResultValue(inner.to_string()))
+        } else {
+            MethodProtocol::Unsupported(format!("unsupported Result value type: {inner}"))
+        };
+    }
+    if let Some(inner) = state_flow_inner(ty) {
+        return classify_json_watch(
+            inner,
+            WatchStreamProtocol::JsonState { fallible: false },
+            resolver,
+        );
+    }
+    if let Some(inner) = flow_inner(ty) {
+        return classify_json_watch(
+            inner,
+            WatchStreamProtocol::JsonFlow { fallible: false },
+            resolver,
+        );
+    }
+    if let Some(optional) = text_event_watch_optionality(ty, resolver) {
+        return MethodProtocol::Watch(WatchProtocol {
+            snapshot_type: None,
+            stream: WatchStreamProtocol::TextEvent { optional },
+        });
+    }
+    if ty.starts_with('&') {
+        return MethodProtocol::Unsupported(format!(
+            "borrowed return type cannot cross link: {ty}"
+        ));
+    }
+    if is_supported_return_type(ty, resolver) {
+        MethodProtocol::Call(CallProtocol::Value(ty.to_string()))
+    } else {
+        MethodProtocol::Unsupported(format!("unsupported return type: {ty}"))
+    }
+}
+
+fn classify_json_watch(
+    value_type: &str,
+    stream: WatchStreamProtocol,
+    resolver: &TypeResolver,
+) -> MethodProtocol {
+    if is_supported_return_type(value_type, resolver) {
+        MethodProtocol::Watch(WatchProtocol {
+            snapshot_type: Some(value_type.to_string()),
+            stream,
+        })
+    } else {
+        MethodProtocol::Unsupported(format!("unsupported watch value type: {value_type}"))
+    }
+}
+
+fn text_event_watch_optionality(ty: &str, resolver: &TypeResolver) -> Option<bool> {
+    if is_text_event_stream_type(ty, resolver) {
+        return Some(false);
+    }
+    let inner = single_generic_arg(ty, "Option")?;
+    is_text_event_stream_type(inner, resolver).then_some(true)
+}
+
+fn is_text_event_stream_type(ty: &str, resolver: &TypeResolver) -> bool {
+    let resolved = resolver.type_registry.resolve_alias(ty);
+    resolver
+        .type_registry
+        .stream_item(&resolved)
+        .map(|item| item == "String")
+        .unwrap_or(false)
+        && resolver
+            .type_registry
+            .implements(&resolved, "TextStreamEventCarrier")
+}
+
 fn is_supported_arg_type(ty: &str, resolver: &TypeResolver) -> bool {
     if ty == "&str" || ty == "Option<&str>" || ty == "&std::path::Path" {
         return true;
     }
-    if let Some(inner) = single_generic_arg(ty, "Option").and_then(|inner| inner.strip_prefix('&')) {
+    if let Some(inner) = single_generic_arg(ty, "Option").and_then(|inner| inner.strip_prefix('&'))
+    {
         return is_supported_return_type(inner, resolver);
     }
     if let Some(inner) = borrowed_slice_inner(ty) {
@@ -813,6 +1052,7 @@ fn is_supported_return_type(ty: &str, resolver: &TypeResolver) -> bool {
     if is_primitive_link_value_type(ty)
         || ty == "serde_json::Value"
         || is_serializable_named_value_type(ty, resolver)
+        || is_tuple_value_type(ty, resolver)
     {
         return true;
     }
@@ -846,13 +1086,29 @@ fn is_supported_return_type(ty: &str, resolver: &TypeResolver) -> bool {
     false
 }
 
+fn is_tuple_value_type(ty: &str, resolver: &TypeResolver) -> bool {
+    let Some(inner) = ty
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return false;
+    };
+    if inner.is_empty() {
+        return true;
+    }
+    split_top_level_args(inner)
+        .iter()
+        .copied()
+        .all(|item| is_supported_return_type(item, resolver))
+}
+
 fn is_never_link_value_type(ty: &str) -> bool {
     ty.is_empty()
         || ty == "Self"
         || ty.starts_with('&')
         || ty.starts_with("fn(")
-        || ty.starts_with("Flow<")
-        || ty.starts_with("StateFlow<")
+        || generic_args(ty, "Flow").is_some()
+        || generic_args(ty, "StateFlow").is_some()
         || ty.contains("&mut")
         || ty.contains("dyn")
 }
@@ -860,8 +1116,7 @@ fn is_never_link_value_type(ty: &str) -> bool {
 fn is_primitive_link_value_type(ty: &str) -> bool {
     matches!(
         ty,
-        "()"
-            | "bool"
+        "()" | "bool"
             | "i8"
             | "i16"
             | "i32"
@@ -931,8 +1186,8 @@ fn split_top_level_args(value: &str) -> Vec<&str> {
     let mut start = 0usize;
     for (index, ch) in value.char_indices() {
         match ch {
-            '<' => depth += 1,
-            '>' => depth -= 1,
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
             ',' if depth == 0 => {
                 args.push(value[start..index].trim());
                 start = index + ch.len_utf8();
@@ -966,23 +1221,7 @@ fn result_unit(ty: &str) -> bool {
     matches!(generic_args(ty, "Result").as_deref(), Some(["()", _]))
 }
 
-fn is_shared_text_stream_return_type(ty: &str) -> bool {
-    if is_shared_text_stream_type(ty) {
-        return true;
-    }
-    single_generic_arg(ty, "Option")
-        .map(is_shared_text_stream_type)
-        .unwrap_or(false)
-}
-
-fn is_shared_text_stream_type(ty: &str) -> bool {
-    ty == "SharedAiResponseStream"
-        || ty == "operit_runtime::api::chat::llmprovider::AIService::SharedAiResponseStream"
-        || ty == "DelegatingRevisableSharedTextStream"
-        || ty == "operit_runtime::util::stream::RevisableTextStream::DelegatingRevisableSharedTextStream"
-}
-
-fn render_generated(objects: &[ScannedObject]) -> String {
+fn render_generated(objects: &[SourceObject]) -> String {
     let schema_json = render_schema_objects(objects);
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
@@ -994,13 +1233,9 @@ fn render_generated(objects: &[ScannedObject]) -> String {
     for object in objects {
         output.push_str(&render_object_call_dispatch(object));
         output.push('\n');
-        if object.access == ObjectAccess::GitHubTokenNewConstruct {
-            output.push_str(&render_object_call_dispatch_sync(object));
-            output.push('\n');
-        }
-        output.push_str(&render_object_watch_dispatch(object));
+        output.push_str(&render_object_watch_snapshot_dispatch(object));
         output.push('\n');
-        output.push_str(&render_object_watch_stream_dispatch(object));
+        output.push_str(&render_object_watch_dispatch(object));
         output.push('\n');
     }
     output.push_str(&render_core_proxy_dispatch(objects));
@@ -1009,7 +1244,7 @@ fn render_generated(objects: &[ScannedObject]) -> String {
     output
 }
 
-fn render_schema_objects(objects: &[ScannedObject]) -> String {
+fn render_schema_objects(objects: &[SourceObject]) -> String {
     let entries = objects
         .iter()
         .map(|object| {
@@ -1024,7 +1259,63 @@ fn render_schema_objects(objects: &[ScannedObject]) -> String {
     format!("{{{entries}}}")
 }
 
-fn render_object_call_dispatch(object: &ScannedObject) -> String {
+fn render_schema_methods(methods: &[SourceMethod]) -> String {
+    let entries = methods
+        .iter()
+        .map(|method| {
+            let args = method
+                .args
+                .iter()
+                .map(|arg| {
+                    format!(
+                        "{{\"name\":{},\"type\":{}}}",
+                        json_string(&arg.name),
+                        json_string(&arg.ty)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"name\":{},\"args\":[{}],\"async\":{},\"callable\":{},\"watchable\":{},\"returnType\":{},\"protocol\":{},\"unsupportedReason\":{}}}",
+                json_string(&method.name),
+                args,
+                method.is_async,
+                method.call_protocol().is_some(),
+                method.watch_protocol().is_some(),
+                json_string(&method.rust_return_type),
+                render_schema_protocol(&method.protocol),
+                option_json_string(method.unsupported_reason())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{}]", entries)
+}
+
+fn render_schema_protocol(protocol: &MethodProtocol) -> String {
+    match protocol {
+        MethodProtocol::Call(_) => {
+            "{\"mode\":\"Call\",\"payload\":\"Json\",\"initial\":\"None\"}".to_string()
+        }
+        MethodProtocol::Watch(watch) => {
+            let payload = match watch.stream {
+                WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
+                    "Json"
+                }
+                WatchStreamProtocol::TextEvent { .. } => "TextStreamEvent",
+            };
+            let initial = if watch.snapshot_type.is_some() {
+                "Snapshot"
+            } else {
+                "None"
+            };
+            format!("{{\"mode\":\"Watch\",\"payload\":\"{payload}\",\"initial\":\"{initial}\"}}")
+        }
+        MethodProtocol::Unsupported(_) => "null".to_string(),
+    }
+}
+
+fn render_object_call_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
@@ -1034,36 +1325,23 @@ fn render_object_call_dispatch(object: &ScannedObject) -> String {
     output.push_str("    let registryKey = request.registryKey();\n");
     output.push_str("    let mut __core_args = object_args(request.args)?;\n");
     output.push_str("    match request.methodName.as_str() {\n");
-    for method in object.methods.iter().filter(|method| method.callable) {
+    for method in object
+        .methods
+        .iter()
+        .filter(|method| method.call_protocol().is_some())
+    {
         output.push_str(&render_call_arm(method));
     }
     if object.schema_key == "application" {
         output.push_str("        \"coreProxySchema\" => Ok(generated_core_proxy_schema()),\n");
     }
-    output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&registryKey)),\n");
+    output
+        .push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&registryKey)),\n");
     output.push_str("    }\n}\n");
     output
 }
 
-fn render_object_call_dispatch_sync(object: &ScannedObject) -> String {
-    let mut output = String::new();
-    output.push_str("#[allow(unused_mut, unused_variables)]\n");
-    output.push_str(&format!(
-        "fn generated_dispatch_{}_call_sync(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<serde_json::Value, operit_link::CoreLinkError> {{\n",
-        object.dispatch_name, object.full_type
-    ));
-    output.push_str("    let registryKey = request.registryKey();\n");
-    output.push_str("    let mut __core_args = object_args(request.args)?;\n");
-    output.push_str("    match request.methodName.as_str() {\n");
-    for method in object.methods.iter().filter(|method| method.callable) {
-        output.push_str(&render_call_arm(method));
-    }
-    output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&registryKey)),\n");
-    output.push_str("    }\n}\n");
-    output
-}
-
-fn render_object_watch_dispatch(object: &ScannedObject) -> String {
+fn render_object_watch_snapshot_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
@@ -1073,19 +1351,20 @@ fn render_object_watch_dispatch(object: &ScannedObject) -> String {
     output.push_str("    let registryKey = request.registryKey();\n");
     output.push_str("    let mut __core_args = object_args(request.args.clone())?;\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for method in object
-        .methods
-        .iter()
-        .filter(|method| matches!(method.return_type, ReturnKind::Flow(_) | ReturnKind::StateFlow(_)))
-    {
-        output.push_str(&render_watch_arm(method));
+    for method in object.methods.iter().filter(|method| {
+        method
+            .watch_protocol()
+            .and_then(|watch| watch.snapshot_type.as_ref())
+            .is_some()
+    }) {
+        output.push_str(&render_watch_snapshot_arm(method));
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
     output.push_str("    }\n}\n");
     output
 }
 
-fn render_object_watch_stream_dispatch(object: &ScannedObject) -> String {
+fn render_object_watch_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
@@ -1095,7 +1374,11 @@ fn render_object_watch_stream_dispatch(object: &ScannedObject) -> String {
     output.push_str("    let registryKey = request.registryKey();\n");
     output.push_str("    let mut __core_args = object_args(request.args.clone())?;\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for method in object.methods.iter().filter(|method| method.watchable) {
+    for method in object
+        .methods
+        .iter()
+        .filter(|method| method.watch_protocol().is_some())
+    {
         output.push_str(&render_watch_stream_arm(method));
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
@@ -1103,58 +1386,62 @@ fn render_object_watch_stream_dispatch(object: &ScannedObject) -> String {
     output
 }
 
-fn render_core_proxy_dispatch(objects: &[ScannedObject]) -> String {
+fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_call(proxy: &mut LocalCoreProxy, request: operit_link::CoreCallRequest) -> Result<serde_json::Value, operit_link::CoreLinkError> {\n");
-    if let Some(application) = objects.iter().find(|object| object.access == ObjectAccess::Application) {
+    if let Some(application) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::Application)
+    {
         output.push_str(&format!(
             "    if request.targetPath.key() == {:?} {{\n        return generated_dispatch_{}_call(&mut proxy.application, request).await;\n    }}\n",
             application.schema_key, application.dispatch_name
         ));
     }
-    if let Some(chat_runtime) = objects.iter().find(|object| object.access == ObjectAccess::ChatRuntimeMain) {
+    if let Some(chat_runtime) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
+    {
         output.push_str(&format!(
             "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        return generated_dispatch_{}_call(core, request).await;\n    }}\n",
             chat_runtime.dispatch_name
         ));
     }
     output.push_str("    match request.targetPath.key().as_str() {\n");
-    for object in objects.iter().filter(|object| object.access == ObjectAccess::StringNewConstruct) {
-        output.push_str(&render_string_constructible_dispatch(object, "call"));
-    }
     for object in objects
         .iter()
-        .filter(|object| object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct)
+        .filter(|object| object.access == ObjectAccess::StringNewConstruct)
     {
-        let dispatch = if object.access == ObjectAccess::GitHubTokenNewConstruct {
-            format!(
-                "            std::thread::spawn(move || {{\n                let __core_github_token = operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences::getInstance().getCurrentAccessToken();\n                let mut object = {}::newWithGitHubToken(__core_github_token);\n                generated_dispatch_{}_call_sync(&mut object, request)\n            }}).join().map_err(|error| operit_link::CoreLinkError::internal(format!(\"market service call panicked: {{:?}}\", error)))?\n",
-                object.full_type, object.dispatch_name
-            )
-        } else {
+        output.push_str(&render_string_constructible_dispatch(
+            object,
+            DispatchMode::Call,
+        ));
+    }
+    for object in objects.iter().filter(|object| {
+        object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct
+    }) {
+        output.push_str(&format!(
+            "        {:?} => {{\n{}{}        }}\n",
+            object.schema_key,
+            render_object_constructor(object),
             format!(
                 "            generated_dispatch_{}_call(&mut object, request).await\n",
                 object.dispatch_name
             )
-        };
-        output.push_str(&format!(
-            "        {:?} => {{\n{}{}        }}\n",
-            object.schema_key,
-            if object.access == ObjectAccess::GitHubTokenNewConstruct {
-                String::new()
-            } else {
-                render_object_constructor(object)
-            },
-            dispatch
         ));
     }
-    output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n");
+    output.push_str(
+        "        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n",
+    );
     output.push_str("    }\n}\n\n");
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_dispatch_core_proxy_watch_snapshot(proxy: &mut LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects.iter().find(|object| object.access == ObjectAccess::ChatRuntimeMain) {
+    if let Some(chat_runtime) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
+    {
         output.push_str(&format!(
             "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        let value = generated_dispatch_{}_watch_snapshot(core, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
             chat_runtime.dispatch_name
@@ -1162,35 +1449,35 @@ fn render_core_proxy_dispatch(objects: &[ScannedObject]) -> String {
     }
     output.push_str("    let propertyName = request.propertyName.clone();\n");
     output.push_str("    let value = match request.targetPath.key().as_str() {\n");
-    if let Some(application) = objects.iter().find(|object| object.access == ObjectAccess::Application) {
+    if let Some(application) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::Application)
+    {
         output.push_str(&format!(
             "        {:?} => generated_dispatch_{}_watch_snapshot(&mut proxy.application, &request)?,\n",
             application.schema_key, application.dispatch_name
         ));
     }
-    for object in objects.iter().filter(|object| object.access == ObjectAccess::StringNewConstruct) {
-        output.push_str(&render_string_constructible_dispatch(object, "watch_snapshot"));
-    }
     for object in objects
         .iter()
-        .filter(|object| object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct)
+        .filter(|object| object.access == ObjectAccess::StringNewConstruct)
     {
-        let dispatch = if object.access == ObjectAccess::GitHubTokenNewConstruct {
-            format!(
-                "            let __core_result = generated_dispatch_{}_watch_snapshot(&mut object, &request)?;\n            std::mem::forget(object);\n            __core_result\n",
-                object.dispatch_name
-            )
-        } else {
-            format!(
-                "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
-                object.dispatch_name
-            )
-        };
+        output.push_str(&render_string_constructible_dispatch(
+            object,
+            DispatchMode::WatchSnapshot,
+        ));
+    }
+    for object in objects.iter().filter(|object| {
+        object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct
+    }) {
         output.push_str(&format!(
             "        {:?} => {{\n{}{}        }}\n",
             object.schema_key,
             render_object_constructor(object),
-            dispatch
+            format!(
+                "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
+                object.dispatch_name
+            )
         ));
     }
     output.push_str("        _ => return Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n");
@@ -1200,92 +1487,110 @@ fn render_core_proxy_dispatch(objects: &[ScannedObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_dispatch_core_proxy_watch(proxy: &mut LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects.iter().find(|object| object.access == ObjectAccess::ChatRuntimeMain) {
+    if let Some(chat_runtime) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
+    {
         output.push_str(&format!(
             "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        return generated_dispatch_{}_watch(core, request);\n    }}\n",
             chat_runtime.dispatch_name
         ));
     }
     output.push_str("    match request.targetPath.key().as_str() {\n");
-    if let Some(application) = objects.iter().find(|object| object.access == ObjectAccess::Application) {
+    if let Some(application) = objects
+        .iter()
+        .find(|object| object.access == ObjectAccess::Application)
+    {
         output.push_str(&format!(
             "        {:?} => generated_dispatch_{}_watch(&mut proxy.application, request),\n",
             application.schema_key, application.dispatch_name
         ));
     }
-    for object in objects.iter().filter(|object| object.access == ObjectAccess::StringNewConstruct) {
-        output.push_str(&render_string_constructible_dispatch(object, "watch"));
-    }
     for object in objects
         .iter()
-        .filter(|object| object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct)
+        .filter(|object| object.access == ObjectAccess::StringNewConstruct)
     {
-        let dispatch = if object.access == ObjectAccess::GitHubTokenNewConstruct {
-            format!(
-                "            let __core_result = generated_dispatch_{}_watch(&mut object, request);\n            std::mem::forget(object);\n            __core_result\n",
-                object.dispatch_name
-            )
-        } else {
-            format!(
-                "            generated_dispatch_{}_watch(&mut object, request)\n",
-                object.dispatch_name
-            )
-        };
+        output.push_str(&render_string_constructible_dispatch(
+            object,
+            DispatchMode::Watch,
+        ));
+    }
+    for object in objects.iter().filter(|object| {
+        object.access.is_constructible() && object.access != ObjectAccess::StringNewConstruct
+    }) {
         output.push_str(&format!(
             "        {:?} => {{\n{}{}        }}\n",
             object.schema_key,
             render_object_constructor(object),
-            dispatch
+            format!(
+                "            generated_dispatch_{}_watch(&mut object, request)\n",
+                object.dispatch_name
+            )
         ));
     }
-    output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n");
+    output.push_str(
+        "        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n",
+    );
     output.push_str("    }\n}\n");
     output
 }
 
-fn render_string_constructible_dispatch(object: &ScannedObject, mode: &str) -> String {
+#[derive(Clone, Copy)]
+enum DispatchMode {
+    Call,
+    WatchSnapshot,
+    Watch,
+}
+
+fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMode) -> String {
     let base_segments = object.schema_key.split('.').collect::<Vec<_>>();
     let len = base_segments.len();
     let segment_checks = base_segments
         .iter()
         .enumerate()
         .map(|(index, segment)| {
-            format!("request.targetPath.segments.get({index}).map(String::as_str) == Some({segment:?})")
+            format!(
+                "request.targetPath.segments.get({index}).map(String::as_str) == Some({segment:?})"
+            )
         })
         .collect::<Vec<_>>()
         .join(" && ");
-    let constructor = render_object_constructor(object);
     let dispatch = match mode {
-        "call" => format!(
+        DispatchMode::Call => format!(
             "            return generated_dispatch_{}_call(&mut object, request).await;\n",
             object.dispatch_name
         ),
-        "watch_snapshot" => format!(
+        DispatchMode::WatchSnapshot => format!(
             "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
             object.dispatch_name
         ),
-        "watch" => format!(
+        DispatchMode::Watch => format!(
             "            return generated_dispatch_{}_watch(&mut object, request);\n",
             object.dispatch_name
         ),
-        _ => String::new(),
     };
     format!(
         "        _ if request.targetPath.segments.len() == {} && {} => {{\n{}{}        }}\n",
         len + 1,
         segment_checks,
-        constructor,
+        render_object_constructor(object),
         dispatch
     )
 }
 
-fn render_object_constructor(object: &ScannedObject) -> String {
+fn render_object_constructor(object: &SourceObject) -> String {
     match object.access {
         ObjectAccess::DefaultConstruct => {
-            format!("            let mut object = {}::default();\n", object.full_type)
+            format!(
+                "            let mut object = {}::default();\n",
+                object.full_type
+            )
         }
         ObjectAccess::GetInstanceConstruct => {
-            format!("            let mut object = {}::getInstance();\n", object.full_type)
+            format!(
+                "            let mut object = {}::getInstance();\n",
+                object.full_type
+            )
         }
         ObjectAccess::ResultGetInstanceConstruct => {
             format!(
@@ -1294,11 +1599,8 @@ fn render_object_constructor(object: &ScannedObject) -> String {
             )
         }
         ObjectAccess::NewConstruct => {
-            format!("            let mut object = {}::new();\n", object.full_type)
-        }
-        ObjectAccess::GitHubTokenNewConstruct => {
             format!(
-                "            let __core_github_token = operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences::getInstance().getCurrentAccessToken();\n            let mut object = {}::newWithGitHubToken(__core_github_token);\n",
+                "            let mut object = {}::new();\n",
                 object.full_type
             )
         }
@@ -1337,39 +1639,7 @@ fn render_object_constructor(object: &ScannedObject) -> String {
     }
 }
 
-fn render_schema_methods(methods: &[ScannedMethod]) -> String {
-    let entries = methods
-        .iter()
-        .map(|method| {
-            let args = method
-                .args
-                .iter()
-                .map(|arg| {
-                    format!(
-                        "{{\"name\":{},\"type\":{}}}",
-                        json_string(&arg.name),
-                        json_string(&arg.ty)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "{{\"name\":{},\"args\":[{}],\"async\":{},\"callable\":{},\"watchable\":{},\"returnType\":{},\"unsupportedReason\":{}}}",
-                json_string(&method.name),
-                args,
-                method.is_async,
-                method.callable,
-                method.watchable,
-                json_string(&return_type_label(&method.return_type)),
-                option_json_string(method.unsupported_reason.as_deref())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{}]", entries)
-}
-
-fn render_generated_proxy(objects: &[ScannedObject]) -> String {
+fn render_generated_proxy(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("pub struct GeneratedCoreProxy<C> {\n");
     output.push_str("    client: C,\n");
@@ -1418,56 +1688,48 @@ fn render_generated_proxy(objects: &[ScannedObject]) -> String {
         output.push_str("    }\n\n");
     }
     output.push_str("}\n\n");
+
     for object in objects {
         let proxy_type = proxy_object_type_name(object);
         output.push_str(&format!("pub struct {}<'a, C> {{\n", proxy_type));
         output.push_str("    client: &'a mut C,\n");
         output.push_str("    target_path: operit_link::CoreObjectPath,\n");
         output.push_str("}\n\n");
-        output.push_str(&format!("impl<'a, C: operit_link::CoreLinkClient> {}<'a, C> {{\n", proxy_type));
-        output.push_str("    fn new(client: &'a mut C, target_path: operit_link::CoreObjectPath) -> Self {\n");
+        output.push_str(&format!(
+            "impl<'a, C: operit_link::CoreLinkClient> {}<'a, C> {{\n",
+            proxy_type
+        ));
+        output.push_str(
+            "    fn new(client: &'a mut C, target_path: operit_link::CoreObjectPath) -> Self {\n",
+        );
         output.push_str("        Self { client, target_path }\n");
         output.push_str("    }\n\n");
         output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: serde_json::Value) -> Result<T, operit_link::CoreLinkError> {\n");
-        output.push_str(&format!(
-            "        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n"
-        ));
+        output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
         output.push_str("        let value = response.result?;\n");
         output.push_str("        serde_json::from_value(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
         output.push_str("    }\n\n");
         output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: serde_json::Value) -> Result<(), operit_link::CoreLinkError> {\n");
-        output.push_str(&format!(
-            "        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n"
-        ));
+        output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
         output.push_str("        response.result.map(|_| ())\n");
         output.push_str("    }\n\n");
         output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: serde_json::Value) -> Result<T, operit_link::CoreLinkError> {\n");
-        output.push_str(&format!(
-            "        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n"
-        ));
+        output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n");
         output.push_str("        serde_json::from_value(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
         output.push_str("    }\n\n");
-        for method in object.methods.iter().filter(|method| method.callable) {
+        for method in object
+            .methods
+            .iter()
+            .filter(|method| method.call_protocol().is_some())
+        {
             output.push_str(&render_proxy_call_method(method));
         }
         for method in object
             .methods
             .iter()
-            .filter(|method| {
-                matches!(
-                    method.return_type,
-                    ReturnKind::ResultFlow(_) | ReturnKind::Flow(_) | ReturnKind::StateFlow(_)
-                )
-            })
+            .filter(|method| method.watch_protocol().is_some())
         {
             output.push_str(&render_proxy_watch_method(object, method));
-        }
-        for method in object
-            .methods
-            .iter()
-            .filter(|method| matches!(method.return_type, ReturnKind::SharedTextStream))
-        {
-            output.push_str(&render_proxy_stream_watch_method(object, method));
         }
         output.push_str(&render_proxy_watch_all_method(object));
         output.push_str("}\n\n");
@@ -1475,28 +1737,7 @@ fn render_generated_proxy(objects: &[ScannedObject]) -> String {
     output
 }
 
-fn render_proxy_watch_all_method(object: &ScannedObject) -> String {
-    let watchable_methods = object
-        .methods
-        .iter()
-        .filter(|method| is_argless_state_flow_or_flow(method))
-        .collect::<Vec<_>>();
-    if watchable_methods.is_empty() {
-        return "    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
-    }
-    let watchable = watchable_methods
-        .iter()
-        .map(|method| json_string(&method.name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        for propertyName in [{}] {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), {:?}, propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
-        watchable,
-        object.schema_key
-    )
-}
-
-fn proxy_object_type_name(object: &ScannedObject) -> String {
+fn proxy_object_type_name(object: &SourceObject) -> String {
     let mut out = String::from("GeneratedCoreProxy");
     for part in object.dispatch_name.split('_') {
         let mut chars = part.chars();
@@ -1508,97 +1749,97 @@ fn proxy_object_type_name(object: &ScannedObject) -> String {
     out
 }
 
-fn render_proxy_call_method(method: &ScannedMethod) -> String {
+fn render_proxy_call_method(method: &SourceMethod) -> String {
     let params = render_proxy_params(method);
     let args_json = render_proxy_args_json(method);
-    match &method.return_type {
-        ReturnKind::Unit | ReturnKind::ResultUnit => format!(
+    match method.call_protocol() {
+        Some(CallProtocol::Unit | CallProtocol::ResultUnit) => format!(
             "    pub async fn {}(&mut self{}) -> Result<(), operit_link::CoreLinkError> {{\n        self.callGeneratedUnit({:?}, {}).await\n    }}\n\n",
             method.name, params, method.name, args_json
         ),
-        ReturnKind::ResultValue(value) | ReturnKind::Value(value) => format!(
+        Some(CallProtocol::Value(value) | CallProtocol::ResultValue(value)) => format!(
             "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.callGenerated({:?}, {}).await\n    }}\n\n",
             method.name, params, value, method.name, args_json
         ),
-        ReturnKind::ResultFlow(_) => String::new(),
-        ReturnKind::Flow(_)
-        | ReturnKind::StateFlow(_)
-        | ReturnKind::SharedTextStream
-        | ReturnKind::Unsupported(_) => String::new(),
+        None => String::new(),
     }
 }
 
-fn render_proxy_watch_method(object: &ScannedObject, method: &ScannedMethod) -> String {
-    let value = match &method.return_type {
-        ReturnKind::ResultFlow(value) | ReturnKind::Flow(value) | ReturnKind::StateFlow(value) => value,
-        _ => return String::new(),
+fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> String {
+    let Some(watch) = method.watch_protocol() else {
+        return String::new();
     };
-    let params = render_proxy_params(method);
-    let args_json = render_proxy_args_json(method);
-    let mut output = format!(
-        "    pub async fn {}Snapshot(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
-        method.name, params, value, method.name, args_json
-    );
-    let Some(alias) = method.name.strip_suffix("Flow") else {
-        return output;
-    };
-    if alias.is_empty()
-        || object
-            .methods
-            .iter()
-            .any(|existing| existing.name == alias)
-    {
-        return output;
+    match &watch.stream {
+        WatchStreamProtocol::TextEvent { .. } => {
+            let params = render_proxy_params(method);
+            let args_json = render_proxy_args_json(method);
+            format!(
+                "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}, {})).await\n    }}\n\n",
+                method.name, params, method.name, args_json
+            )
+        }
+        WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
+            let Some(value) = watch.snapshot_type.as_ref() else {
+                return String::new();
+            };
+            let params = render_proxy_params(method);
+            let args_json = render_proxy_args_json(method);
+            let mut output = format!(
+                "    pub async fn {}Snapshot(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
+                method.name, params, value, method.name, args_json
+            );
+            let Some(alias) = method.name.strip_suffix("Flow") else {
+                return output;
+            };
+            if alias.is_empty() || object.methods.iter().any(|existing| existing.name == alias) {
+                return output;
+            }
+            output.push_str(&format!(
+                "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
+                alias, params, value, method.name, args_json
+            ));
+            output
+        }
     }
-    output.push_str(&format!(
-        "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
-        alias, params, value, method.name, args_json
-    ));
-    output
 }
 
-fn state_flow_or_flow_value(method: &ScannedMethod) -> Option<&str> {
-    match &method.return_type {
-        ReturnKind::ResultFlow(value) | ReturnKind::Flow(value) | ReturnKind::StateFlow(value) => Some(value),
-        _ => None,
+fn render_proxy_watch_all_method(object: &SourceObject) -> String {
+    let watchable = object
+        .methods
+        .iter()
+        .filter(|method| method.args.is_empty())
+        .filter(|method| {
+            method
+                .watch_protocol()
+                .and_then(|watch| watch.snapshot_type.as_ref())
+                .is_some()
+        })
+        .map(|method| json_string(&method.name))
+        .collect::<Vec<_>>();
+    if watchable.is_empty() {
+        return "    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
     }
-}
-
-fn is_state_flow_or_flow(method: &ScannedMethod) -> bool {
-    state_flow_or_flow_value(method).is_some()
-}
-
-fn is_argless_state_flow_or_flow(method: &ScannedMethod) -> bool {
-    method.args.is_empty() && is_state_flow_or_flow(method)
-}
-
-fn render_proxy_stream_watch_method(object: &ScannedObject, method: &ScannedMethod) -> String {
-    let params = render_proxy_params(method);
-    let args_json = render_proxy_args_json(method);
     format!(
-        "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}, {})).await\n    }}\n\n",
-        method.name, params, method.name, args_json
+        "    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        for propertyName in [{}] {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), {:?}, propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
+        watchable.join(", "),
+        object.schema_key
     )
 }
 
-fn render_proxy_params(method: &ScannedMethod) -> String {
+fn render_proxy_params(method: &SourceMethod) -> String {
     if method.args.is_empty() {
         return String::new();
     }
     let params = method
         .args
         .iter()
-        .map(|arg| format!("{}: {}", arg.name, render_proxy_arg_type(arg)))
+        .map(|arg| format!("{}: {}", arg.name, arg.ty))
         .collect::<Vec<_>>()
         .join(", ");
     format!(", {params}")
 }
 
-fn render_proxy_arg_type(arg: &ScannedArg) -> &str {
-    &arg.ty
-}
-
-fn render_proxy_args_json(method: &ScannedMethod) -> String {
+fn render_proxy_args_json(method: &SourceMethod) -> String {
     if method.args.is_empty() {
         return "serde_json::json!({})".to_string();
     }
@@ -1611,7 +1852,7 @@ fn render_proxy_args_json(method: &ScannedMethod) -> String {
     format!("serde_json::json!({{{entries}}})")
 }
 
-fn render_proxy_arg_json_expr(arg: &ScannedArg) -> String {
+fn render_proxy_arg_json_expr(arg: &SourceArg) -> String {
     if arg.ty == "&std::path::Path" {
         format!("{}.to_string_lossy().to_string()", arg.name)
     } else {
@@ -1619,124 +1860,132 @@ fn render_proxy_arg_json_expr(arg: &ScannedArg) -> String {
     }
 }
 
-fn render_call_arm(method: &ScannedMethod) -> String {
+fn render_call_arm(method: &SourceMethod) -> String {
     let args = render_arg_decoders(method);
-    let call_args = method
-        .args
-        .iter()
-        .map(render_arg_call_expr)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match method.return_type {
-        ReturnKind::Unit => format!(
+    let call_args = render_arg_call_list(method);
+    match method.call_protocol() {
+        Some(CallProtocol::Unit) => format!(
             "        {:?} => {{\n{}            object.{}({}){};\n            Ok(serde_json::Value::Null)\n        }}\n",
-            method.name, args, method.name, call_args, await_suffix(method)
+            method.name,
+            args,
+            method.name,
+            call_args,
+            await_suffix(method)
         ),
-        ReturnKind::ResultUnit => format!(
+        Some(CallProtocol::ResultUnit) => format!(
             "        {:?} => {{\n{}            object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(serde_json::Value::Null)\n        }}\n",
-            method.name, args, method.name, call_args, await_suffix(method)
+            method.name,
+            args,
+            method.name,
+            call_args,
+            await_suffix(method)
         ),
-        ReturnKind::ResultValue(_) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
-            method.name, args, method.name, call_args, await_suffix(method)
-        ),
-        ReturnKind::ResultFlow(_) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
-            method.name, args, method.name, call_args, await_suffix(method)
-        ),
-        ReturnKind::Value(_) => format!(
+        Some(CallProtocol::Value(_)) => format!(
             "        {:?} => {{\n{}            to_core_value(object.{}({}){})\n        }}\n",
-            method.name, args, method.name, call_args, await_suffix(method)
+            method.name,
+            args,
+            method.name,
+            call_args,
+            await_suffix(method)
         ),
-        ReturnKind::Flow(_)
-        | ReturnKind::StateFlow(_)
-        | ReturnKind::SharedTextStream
-        | ReturnKind::Unsupported(_) => String::new(),
+        Some(CallProtocol::ResultValue(_)) => format!(
+            "        {:?} => {{\n{}            to_core_value(object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
+            method.name,
+            args,
+            method.name,
+            call_args,
+            await_suffix(method)
+        ),
+        None => String::new(),
     }
 }
 
-fn await_suffix(method: &ScannedMethod) -> &'static str {
-    if method.is_async {
-        ".await"
-    } else {
-        ""
-    }
-}
-
-fn render_watch_arm(method: &ScannedMethod) -> String {
+fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
+    let Some(watch) = method.watch_protocol() else {
+        return String::new();
+    };
     let args = render_arg_decoders(method);
-    let call_args = method
-        .args
-        .iter()
-        .map(render_arg_call_expr)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match method.return_type {
-        ReturnKind::ResultFlow(_) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
-            method.name, args, method.name, call_args
+    let call_args = render_arg_call_list(method);
+    let value_expr = match watch.stream {
+        WatchStreamProtocol::JsonFlow { fallible: true } => format!(
+            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args
         ),
-        ReturnKind::Flow(_) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}).first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
-            method.name, args, method.name, call_args
+        WatchStreamProtocol::JsonFlow { fallible: false } => format!(
+            "object.{}({}).first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args
         ),
-        ReturnKind::StateFlow(_) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}).value())\n        }}\n",
-            method.name, args, method.name, call_args
+        WatchStreamProtocol::JsonState { fallible: true } => format!(
+            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.value()",
+            method.name, call_args
         ),
-        _ => String::new(),
-    }
-}
-
-fn render_watch_stream_arm(method: &ScannedMethod) -> String {
-    match method.return_type {
-        ReturnKind::ResultFlow(_) | ReturnKind::Flow(_) | ReturnKind::StateFlow(_) => {
-            let args = render_arg_decoders(method);
-            let call_args = method
-                .args
-                .iter()
-                .map(render_arg_call_expr)
-                .collect::<Vec<_>>()
-                .join(", ");
-            let flow_expr = if matches!(method.return_type, ReturnKind::ResultFlow(_)) {
-                format!(
-                    "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
-                    method.name, call_args
-                )
-            } else {
-                format!("object.{}({})", method.name, call_args)
-            };
-            format!(
-                "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            std::thread::spawn(move || {{\n                let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n                let _ = flow.collect(|value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = serde_json::to_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }});\n            }});\n            Ok(receiver)\n        }}\n",
-                method.name, args, flow_expr
-            )
+        WatchStreamProtocol::JsonState { fallible: false } => {
+            format!("object.{}({}).value()", method.name, call_args)
         }
-        ReturnKind::SharedTextStream => render_shared_text_stream_watch_arm(method),
-        _ => String::new(),
+        WatchStreamProtocol::TextEvent { .. } => return String::new(),
+    };
+    format!(
+        "        {:?} => {{\n{}            to_core_value({})\n        }}\n",
+        method.name, args, value_expr
+    )
+}
+
+fn render_watch_stream_arm(method: &SourceMethod) -> String {
+    let Some(watch) = method.watch_protocol() else {
+        return String::new();
+    };
+    match watch.stream {
+        WatchStreamProtocol::JsonFlow { fallible }
+        | WatchStreamProtocol::JsonState { fallible } => {
+            render_json_watch_stream_arm(method, fallible)
+        }
+        WatchStreamProtocol::TextEvent { optional } => {
+            render_text_event_watch_stream_arm(method, optional)
+        }
     }
 }
 
-fn render_shared_text_stream_watch_arm(method: &ScannedMethod) -> String {
+fn render_json_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
     let args = render_arg_decoders(method);
-    let call_args = method
-        .args
-        .iter()
-        .map(render_arg_call_expr)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let call_args = render_arg_call_list(method);
+    let flow_expr = if fallible {
+        format!(
+            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args
+        )
+    } else {
+        format!("object.{}({})", method.name, call_args)
+    };
+    format!(
+        "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            std::thread::spawn(move || {{\n                let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n                let _ = flow.collect(|value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = serde_json::to_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }});\n            }});\n            Ok(receiver)\n        }}\n",
+        method.name, args, flow_expr
+    )
+}
+
+fn render_text_event_watch_stream_arm(method: &SourceMethod, optional: bool) -> String {
+    let args = render_arg_decoders(method);
+    let call_args = render_arg_call_list(method);
     let chat_id_expr = method
         .args
         .iter()
         .find(|arg| arg.name == "chatId" || arg.name == "chat_id")
         .map(|arg| arg.name.clone())
         .unwrap_or_else(|| "\"\".to_string()".to_string());
+    let stream_expr = if optional {
+        format!(
+            "object.{}({}).ok_or_else(|| operit_link::CoreLinkError::watchNotFound(&registryKey))?",
+            method.name, call_args
+        )
+    } else {
+        format!("object.{}({})", method.name, call_args)
+    };
     format!(
-        "        {:?} => {{\n{}            let streamChatId = {}.clone();\n            let stream = object.{}({}).ok_or_else(|| operit_link::CoreLinkError::watchNotFound(&registryKey))?;\n            let mut textStream = stream.clone();\n            let mut eventStream = operit_runtime::util::stream::RevisableTextStream::TextStreamEventCarrier::event_channel(&stream).clone();\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let eventSender = sender.clone();\n            let eventRequestId = requestId.clone();\n            let eventTargetPath = targetPath.clone();\n            let eventPropertyName = propertyName.clone();\n            let eventChatId = streamChatId.clone();\n            std::thread::spawn(move || {{\n                operit_runtime::util::stream::Stream::Stream::collect(&mut eventStream, &mut |event| {{\n                    let eventType = match event.event_type {{\n                        operit_runtime::util::stream::RevisableTextStream::TextStreamEventType::Savepoint => \"savepoint\",\n                        operit_runtime::util::stream::RevisableTextStream::TextStreamEventType::Rollback => \"rollback\",\n                    }};\n                    let value = serde_json::json!({{\"chatId\": eventChatId, \"type\": eventType, \"id\": event.id}});\n                    let _ = eventSender.send(operit_link::CoreEvent {{\n                        requestId: Some(eventRequestId.clone()),\n                        targetPath: eventTargetPath.clone(),\n                        propertyName: eventPropertyName.clone(),\n                        kind: operit_link::CoreEventKind::Changed,\n                        value,\n                    }});\n                }});\n            }});\n            std::thread::spawn(move || {{\n                operit_runtime::util::stream::Stream::Stream::collect(&mut textStream, &mut |chunk| {{\n                    let value = serde_json::json!({{\"chatId\": streamChatId, \"type\": \"chunk\", \"value\": chunk}});\n                    let _ = sender.send(operit_link::CoreEvent {{\n                        requestId: Some(requestId.clone()),\n                        targetPath: targetPath.clone(),\n                        propertyName: propertyName.clone(),\n                        kind: operit_link::CoreEventKind::Changed,\n                        value,\n                    }});\n                }});\n                let value = serde_json::json!({{\"chatId\": streamChatId, \"type\": \"completed\"}});\n                let _ = sender.send(operit_link::CoreEvent {{\n                    requestId: Some(requestId),\n                    targetPath,\n                    propertyName,\n                    kind: operit_link::CoreEventKind::Completed,\n                    value,\n                }});\n            }});\n            Ok(receiver)\n        }}\n",
-        method.name, args, chat_id_expr, method.name, call_args
+        "        {:?} => {{\n{}            let streamChatId = {}.clone();\n            let stream = {};\n            Ok(core_text_event_stream(streamChatId, stream, request))\n        }}\n",
+        method.name, args, chat_id_expr, stream_expr
     )
 }
 
-fn render_arg_decoders(method: &ScannedMethod) -> String {
+fn render_arg_decoders(method: &SourceMethod) -> String {
     method
         .args
         .iter()
@@ -1751,12 +2000,14 @@ fn render_arg_decoders(method: &ScannedMethod) -> String {
         .collect::<String>()
 }
 
-fn render_arg_decode_type(arg: &ScannedArg) -> String {
+fn render_arg_decode_type(arg: &SourceArg) -> String {
     if arg.ty == "&str" {
         "String".to_string()
     } else if arg.ty == "Option<&str>" {
         "Option<String>".to_string()
-    } else if let Some(inner) = single_generic_arg(&arg.ty, "Option").and_then(|inner| inner.strip_prefix('&')) {
+    } else if let Some(inner) =
+        single_generic_arg(&arg.ty, "Option").and_then(|inner| inner.strip_prefix('&'))
+    {
         format!("Option<{inner}>")
     } else if arg.ty == "&std::path::Path" {
         "String".to_string()
@@ -1774,7 +2025,16 @@ fn render_arg_decode_type(arg: &ScannedArg) -> String {
     }
 }
 
-fn render_arg_call_expr(arg: &ScannedArg) -> String {
+fn render_arg_call_list(method: &SourceMethod) -> String {
+    method
+        .args
+        .iter()
+        .map(render_arg_call_expr)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_arg_call_expr(arg: &SourceArg) -> String {
     if arg.ty == "&str" {
         format!("{}.as_str()", arg.name)
     } else if arg.ty == "Option<&str>" {
@@ -1795,17 +2055,11 @@ fn render_arg_call_expr(arg: &ScannedArg) -> String {
     }
 }
 
-fn return_type_label(kind: &ReturnKind) -> String {
-    match kind {
-        ReturnKind::Unit => "()".to_string(),
-        ReturnKind::ResultUnit => "Result<(), String>".to_string(),
-        ReturnKind::ResultValue(value) => format!("Result<{value}, _>"),
-        ReturnKind::ResultFlow(value) => format!("Result<Flow<{value}>, _>"),
-        ReturnKind::Value(value) => value.clone(),
-        ReturnKind::Flow(value) => format!("Flow<{value}>"),
-        ReturnKind::StateFlow(value) => format!("StateFlow<{value}>"),
-        ReturnKind::SharedTextStream => "SharedAiResponseStream".to_string(),
-        ReturnKind::Unsupported(value) => value.clone(),
+fn await_suffix(method: &SourceMethod) -> &'static str {
+    if method.is_async {
+        ".await"
+    } else {
+        ""
     }
 }
 

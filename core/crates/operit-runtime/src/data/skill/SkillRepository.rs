@@ -75,7 +75,8 @@ impl SkillRepository {
 
     #[allow(non_snake_case)]
     pub fn isSkillVisibleToAi(&self, skillName: &str) -> bool {
-        self.skillVisibilityPreferences.isSkillVisibleToAi(skillName)
+        self.skillVisibilityPreferences
+            .isSkillVisibleToAi(skillName)
     }
 
     #[allow(non_snake_case)]
@@ -178,7 +179,8 @@ impl SkillRepository {
             return "Skill id is required".to_string();
         }
         if !isValidSkillId(trimmedId) {
-            return "Skill id may only contain letters, numbers, dot, underscore, and hyphen".to_string();
+            return "Skill id may only contain letters, numbers, dot, underscore, and hyphen"
+                .to_string();
         }
         if trimmedContent.is_empty() {
             return "Skill content is required".to_string();
@@ -248,10 +250,8 @@ impl SkillRepository {
                     Some(value) => value.to_string_lossy().to_string(),
                     None => format!("attachment_{}", index + 1),
                 };
-                let safeName = ensureUniqueFileName(
-                    &sanitizeAttachmentName(&displayName),
-                    &mut usedFileNames,
-                );
+                let safeName =
+                    ensureUniqueFileName(&sanitizeAttachmentName(&displayName), &mut usedFileNames);
                 fs::copy(path, assetsDir.join(safeName)).map_err(|error| error.to_string())?;
             }
         }

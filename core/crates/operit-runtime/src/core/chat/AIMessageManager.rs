@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::api::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
@@ -97,8 +97,10 @@ pub struct StableContextWindowRequest<'a> {
 
 static ACTIVE_CHAT_KEYS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static LAST_ACTIVE_CHAT_KEY: OnceLock<Mutex<String>> = OnceLock::new();
-static ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, EnhancedAIService>>> = OnceLock::new();
-static ACTIVE_RESPONSE_STREAM_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, SharedAiResponseStream>>> = OnceLock::new();
+static ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, EnhancedAIService>>> =
+    OnceLock::new();
+static ACTIVE_RESPONSE_STREAM_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, SharedAiResponseStream>>> =
+    OnceLock::new();
 
 pub fn messageTimingNow() -> MessageTiming {
     let startedAtMs = SystemTime::now()
@@ -128,7 +130,10 @@ impl AIMessageManager {
                         .to_ascii_lowercase()
                         .contains("<proxy_sender") =>
             {
-                format!("<proxy_sender name=\"{}\"/>", proxySenderName.replace('"', "'"))
+                format!(
+                    "<proxy_sender name=\"{}\"/>",
+                    proxySenderName.replace('"', "'")
+                )
             }
             _ => String::new(),
         };
@@ -168,17 +173,26 @@ impl AIMessageManager {
             .collect::<Vec<_>>()
             .join(" ");
 
-        [proxySenderTag, processedMessageText, attachmentTags, workspaceTag, replyTag]
-            .into_iter()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+        [
+            proxySenderTag,
+            processedMessageText,
+            attachmentTags,
+            workspaceTag,
+            replyTag,
+        ]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 
     #[allow(non_snake_case)]
     pub async fn sendMessage(
         request: SendMessageRequest<'_>,
-    ) -> Result<crate::api::chat::llmprovider::AIService::SharedAiResponseStream, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<
+        crate::api::chat::llmprovider::AIService::SharedAiResponseStream,
+        crate::api::chat::llmprovider::AIService::AiServiceError,
+    > {
         let chatKey = match &request.chatId {
             Some(chatId) => chatId.clone(),
             None => DEFAULT_CHAT_KEY.to_string(),
@@ -293,15 +307,14 @@ impl AIMessageManager {
         let lastSummaryIndex = messages
             .iter()
             .rposition(|message| message.sender == "summary");
-        let previousSummary = lastSummaryIndex
-            .and_then(|index| {
-                let content = messages[index].content.trim().to_string();
-                if content.is_empty() {
-                    None
-                } else {
-                    Some(content)
-                }
-            });
+        let previousSummary = lastSummaryIndex.and_then(|index| {
+            let content = messages[index].content.trim().to_string();
+            if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            }
+        });
 
         let messagesToSummarize = match lastSummaryIndex {
             Some(index) => messages[index + 1..]
@@ -358,7 +371,8 @@ impl AIMessageManager {
                         } else {
                             condenseUserForReview(&cleanedContent)
                         };
-                        conversationReviewEntries.push((summarySpeakerLabel(message), displayContent));
+                        conversationReviewEntries
+                            .push((summarySpeakerLabel(message), displayContent));
                     }
                     (role, format!("#{}: {cleanedContent}", index + 1))
                 })
@@ -385,7 +399,10 @@ impl AIMessageManager {
         }
 
         let finalSummary = if autoContinue {
-            format!("{}\n\n如果任务尚未完成，请基于以上摘要继续。", summaryWithQuotes.trim_end())
+            format!(
+                "{}\n\n如果任务尚未完成，请基于以上摘要继续。",
+                summaryWithQuotes.trim_end()
+            )
         } else {
             summaryWithQuotes.trim_end().to_string()
         };
@@ -451,7 +468,9 @@ impl AIMessageManager {
             }
         }
         if enableSummaryByMessageCount {
-            let lastSummaryIndex = messages.iter().rposition(|message| message.sender == "summary");
+            let lastSummaryIndex = messages
+                .iter()
+                .rposition(|message| message.sender == "summary");
             let relevantMessages = match lastSummaryIndex {
                 Some(index) => &messages[index + 1..],
                 None => messages.as_slice(),
@@ -472,7 +491,9 @@ impl AIMessageManager {
         targetRoleName: Option<String>,
         groupOrchestrationMode: bool,
     ) -> Vec<PromptTurn> {
-        let lastSummaryIndex = messages.iter().rposition(|message| message.sender == "summary");
+        let lastSummaryIndex = messages
+            .iter()
+            .rposition(|message| message.sender == "summary");
         let relevantMessages = match lastSummaryIndex {
             Some(index) => &messages[index..],
             None => messages.as_slice(),
@@ -492,7 +513,10 @@ impl AIMessageManager {
                     isRoleScopedMode,
                     groupOrchestrationMode,
                 )),
-                "summary" => Some(PromptTurn::new(PromptTurnKind::SUMMARY, message.content.clone())),
+                "summary" => Some(PromptTurn::new(
+                    PromptTurnKind::SUMMARY,
+                    message.content.clone(),
+                )),
                 _ => None,
             })
             .collect()
@@ -505,12 +529,18 @@ impl AIMessageManager {
         targetRoleName: &str,
     ) -> Option<PromptTurn> {
         if !isRoleScopedMode {
-            return Some(PromptTurn::new(PromptTurnKind::ASSISTANT, message.content.clone()));
+            return Some(PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                message.content.clone(),
+            ));
         }
 
         let messageRoleName = message.roleName.trim();
         if messageRoleName == targetRoleName {
-            return Some(PromptTurn::new(PromptTurnKind::ASSISTANT, message.content.clone()));
+            return Some(PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                message.content.clone(),
+            ));
         }
 
         let cleanedContent = remove_status_tags(&remove_thinking_content(&message.content));
@@ -580,13 +610,31 @@ impl AIMessageManager {
         enableDirectVideoProcessing: bool,
     ) -> String {
         let hasInlineContent = !attachment.content.trim().is_empty();
-        if !hasInlineContent && enableDirectImageProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("image/") {
+        if !hasInlineContent
+            && enableDirectImageProcessing
+            && attachment
+                .mimeType
+                .to_ascii_lowercase()
+                .starts_with("image/")
+        {
             return format!("<image_link id=\"{}\"/>", attachment.filePath);
         }
-        if !hasInlineContent && enableDirectAudioProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("audio/") {
+        if !hasInlineContent
+            && enableDirectAudioProcessing
+            && attachment
+                .mimeType
+                .to_ascii_lowercase()
+                .starts_with("audio/")
+        {
             return format!("<audio_link id=\"{}\"/>", attachment.filePath);
         }
-        if !hasInlineContent && enableDirectVideoProcessing && attachment.mimeType.to_ascii_lowercase().starts_with("video/") {
+        if !hasInlineContent
+            && enableDirectVideoProcessing
+            && attachment
+                .mimeType
+                .to_ascii_lowercase()
+                .starts_with("video/")
+        {
             return format!("<video_link id=\"{}\"/>", attachment.filePath);
         }
 
@@ -597,7 +645,10 @@ impl AIMessageManager {
         if attachment.fileSize > 0 {
             attributes.push_str(&format!(" size=\"{}\"", attachment.fileSize));
         }
-        format!("<attachment {attributes}>{}</attachment>", attachment.content)
+        format!(
+            "<attachment {attributes}>{}</attachment>",
+            attachment.content
+        )
     }
 
     fn rememberActiveChatKey(chatKey: String) {
@@ -728,7 +779,8 @@ impl AIMessageManager {
                 .collect::<Vec<_>>()
         };
         let service_keys = {
-            let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
+            let map =
+                ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
             map.lock()
                 .expect("active enhanced ai service mutex poisoned")
                 .keys()
@@ -839,7 +891,11 @@ impl crate::util::stream::Stream::Stream for ActiveChatTextStream {
 }
 
 impl crate::util::stream::RevisableTextStream::TextStreamEventCarrier for ActiveChatTextStream {
-    fn event_channel(&self) -> &crate::util::stream::HotStream::MutableSharedStreamImpl<crate::util::stream::RevisableTextStream::TextStreamEvent> {
+    fn event_channel(
+        &self,
+    ) -> &crate::util::stream::HotStream::MutableSharedStreamImpl<
+        crate::util::stream::RevisableTextStream::TextStreamEvent,
+    > {
         self.stream.event_channel()
     }
 }
@@ -907,7 +963,10 @@ fn summarySpeakerLabel(message: &ChatMessage) -> String {
 #[allow(non_snake_case)]
 fn condenseUserForReview(text: &str) -> String {
     let pruned = strip_tag_blocks(
-        &strip_tag_blocks(&strip_tag_blocks(text, "workspace_attachment"), "attachment"),
+        &strip_tag_blocks(
+            &strip_tag_blocks(text, "workspace_attachment"),
+            "attachment",
+        ),
         "reply_to",
     );
     condense_head_tail(&strip_xml_tags(&pruned), 240, 96)
@@ -948,7 +1007,10 @@ fn condense_head_tail(text: &str, head_chars: usize, tail_chars: usize) -> Strin
         );
     }
     if tail_chars == 0 {
-        return format!("{}...", normalized.chars().take(head_chars).collect::<String>());
+        return format!(
+            "{}...",
+            normalized.chars().take(head_chars).collect::<String>()
+        );
     }
     let head = normalized.chars().take(head_chars).collect::<String>();
     let tail = normalized
@@ -975,7 +1037,9 @@ fn normalize_for_review(text: &str) -> String {
 fn strip_media_links(text: &str) -> String {
     ["image_link", "audio_link", "video_link", "media_link"]
         .into_iter()
-        .fold(text.to_string(), |current, tag| strip_self_closing_tags(&current, tag))
+        .fold(text.to_string(), |current, tag| {
+            strip_self_closing_tags(&current, tag)
+        })
 }
 
 fn strip_self_closing_tags(text: &str, tag_name: &str) -> String {

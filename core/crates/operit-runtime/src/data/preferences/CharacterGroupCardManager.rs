@@ -16,7 +16,9 @@ pub struct CharacterGroupCardManager {
 impl CharacterGroupCardManager {
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.root_dir().join("character_groups.preferences.json")),
+            dataStore: PreferencesDataStore::new(
+                paths.root_dir().join("character_groups.preferences.json"),
+            ),
             characterCardManager: CharacterCardManager::new(paths),
         }
     }
@@ -43,7 +45,9 @@ impl CharacterGroupCardManager {
 
     #[allow(non_snake_case)]
     pub fn characterGroupCardListFlow(&self) -> Flow<Vec<String>> {
-        self.dataStore.dataFlow().map(|preferences| Self::readGroupList(&preferences))
+        self.dataStore
+            .dataFlow()
+            .map(|preferences| Self::readGroupList(&preferences))
     }
 
     #[allow(non_snake_case)]
@@ -111,7 +115,11 @@ impl CharacterGroupCardManager {
         };
         let normalizedGroup = self.normalizeGroup(CharacterGroupCard {
             id: id.clone(),
-            createdAt: if group.createdAt > 0 { group.createdAt } else { now },
+            createdAt: if group.createdAt > 0 {
+                group.createdAt
+            } else {
+                now
+            },
             updatedAt: now,
             ..group
         });
@@ -187,7 +195,10 @@ impl CharacterGroupCardManager {
         groupId: Option<String>,
     ) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
-            match groupId.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+            match groupId
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
                 Some(groupId) => preferences.set(&Self::ACTIVE_CHARACTER_GROUP_ID(), groupId),
                 None => preferences.remove(&Self::ACTIVE_CHARACTER_GROUP_ID()),
             }
@@ -203,7 +214,9 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn getAllCharacterGroupCards(&self) -> Result<Vec<CharacterGroupCard>, PreferencesDataStoreError> {
+    pub fn getAllCharacterGroupCards(
+        &self,
+    ) -> Result<Vec<CharacterGroupCard>, PreferencesDataStoreError> {
         self.allCharacterGroupCardsFlow().first()
     }
 
@@ -271,8 +284,16 @@ impl CharacterGroupCardManager {
         let now = currentTimeMillis();
         CharacterGroupCard {
             members: normalizedMembers,
-            createdAt: if group.createdAt > 0 { group.createdAt } else { now },
-            updatedAt: if group.updatedAt > 0 { group.updatedAt } else { now },
+            createdAt: if group.createdAt > 0 {
+                group.createdAt
+            } else {
+                now
+            },
+            updatedAt: if group.updatedAt > 0 {
+                group.updatedAt
+            } else {
+                now
+            },
             ..group
         }
     }

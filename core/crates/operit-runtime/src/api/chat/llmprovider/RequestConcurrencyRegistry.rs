@@ -50,9 +50,14 @@ static SEMAPHORES: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
 
 impl RequestConcurrencyRegistry {
     pub fn getOrCreate(key: &str, maxConcurrentRequests: i32) -> Arc<RequestSemaphore> {
-        assert!(maxConcurrentRequests > 0, "maxConcurrentRequests must be > 0");
+        assert!(
+            maxConcurrentRequests > 0,
+            "maxConcurrentRequests must be > 0"
+        );
         let map = SEMAPHORES.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = map.lock().expect("RequestConcurrencyRegistry mutex poisoned");
+        let mut guard = map
+            .lock()
+            .expect("RequestConcurrencyRegistry mutex poisoned");
         let shouldCreate = guard
             .get(key)
             .map(|existing| existing.maxConcurrentRequests != maxConcurrentRequests)
@@ -66,6 +71,10 @@ impl RequestConcurrencyRegistry {
                 },
             );
         }
-        guard.get(key).expect("semaphore must exist").semaphore.clone()
+        guard
+            .get(key)
+            .expect("semaphore must exist")
+            .semaphore
+            .clone()
     }
 }

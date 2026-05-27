@@ -10,9 +10,7 @@ use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
 
 use super::super::PathValidator::PathValidator;
@@ -38,7 +36,10 @@ impl StandardFileSystemTools {
         }
 
         match self.host.listFiles(&path) {
-            Ok(entries) => success(tool, directoryListingDataToString(self.envLabel(), &path, &entries)),
+            Ok(entries) => success(
+                tool,
+                directoryListingDataToString(self.envLabel(), &path, &entries),
+            ),
             Err(error) => toolError(tool, String::new(), error.message),
         }
     }
@@ -54,7 +55,10 @@ impl StandardFileSystemTools {
 
         match self.host.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
-                match self.host.readFileWithLimit(&path, ToolExecutionLimits::MAX_FILE_READ_BYTES) {
+                match self
+                    .host
+                    .readFileWithLimit(&path, ToolExecutionLimits::MAX_FILE_READ_BYTES)
+                {
                     Ok(content) => {
                         let mut finalContent = addLineNumbers(&content, 0, 0);
                         if existence.size > ToolExecutionLimits::MAX_FILE_READ_BYTES as i64 {
@@ -65,7 +69,11 @@ impl StandardFileSystemTools {
                             fileContentDataToString(self.envLabel(), &path, &finalContent),
                         )
                     }
-                    Err(error) => toolError(tool, String::new(), format!("Error reading file: {}", error.message)),
+                    Err(error) => toolError(
+                        tool,
+                        String::new(),
+                        format!("Error reading file: {}", error.message),
+                    ),
                 }
             }
             Ok(_) => toolError(tool, String::new(), format!("Path is not a file: {path}")),
@@ -89,7 +97,11 @@ impl StandardFileSystemTools {
                         tool,
                         fileContentDataToString(self.envLabel(), &path, &content),
                     ),
-                    Err(error) => toolError(tool, String::new(), format!("Error reading file: {}", error.message)),
+                    Err(error) => toolError(
+                        tool,
+                        String::new(),
+                        format!("Error reading file: {}", error.message),
+                    ),
                 }
             }
             Ok(existence) if !existence.exists => {
@@ -103,9 +115,11 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn readFilePart(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let startLineParam = parameterValue(tool, "start_line").parse::<usize>().unwrap_or(1);
-        let endLineParam = optionalParameterValue(tool, "end_line")
-            .and_then(|value| value.parse::<usize>().ok());
+        let startLineParam = parameterValue(tool, "start_line")
+            .parse::<usize>()
+            .unwrap_or(1);
+        let endLineParam =
+            optionalParameterValue(tool, "end_line").and_then(|value| value.parse::<usize>().ok());
         if let Some(result) =
             PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
         {
@@ -177,10 +191,19 @@ impl StandardFileSystemTools {
                 let base64Content = STANDARD.encode(&bytes);
                 success(
                     tool,
-                    binaryFileContentDataToString(self.envLabel(), &path, bytes.len(), base64Content.len()),
+                    binaryFileContentDataToString(
+                        self.envLabel(),
+                        &path,
+                        bytes.len(),
+                        base64Content.len(),
+                    ),
                 )
             }
-            Err(error) => toolError(tool, String::new(), format!("Error reading binary file: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                String::new(),
+                format!("Error reading binary file: {}", error.message),
+            ),
         }
     }
 
@@ -230,7 +253,11 @@ impl StandardFileSystemTools {
             Ok(value) => value,
             Err(errorValue) => {
                 let message = format!("Invalid base64 content: {errorValue}");
-                return toolError(tool, fileOperationDataToString(self.envLabel(), &message), message);
+                return toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                );
             }
         };
         match self.host.writeFileBytes(&path, &decoded) {
@@ -269,7 +296,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -307,9 +338,12 @@ impl StandardFileSystemTools {
         {
             return result;
         }
-        if let Some(result) =
-            PathValidator::validateHostPath(self.host.as_ref(), &destPath, &tool.name, "destination")
-        {
+        if let Some(result) = PathValidator::validateHostPath(
+            self.host.as_ref(),
+            &destPath,
+            &tool.name,
+            "destination",
+        ) {
             return result;
         }
 
@@ -323,7 +357,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -338,9 +376,12 @@ impl StandardFileSystemTools {
         {
             return result;
         }
-        if let Some(result) =
-            PathValidator::validateHostPath(self.host.as_ref(), &destPath, &tool.name, "destination")
-        {
+        if let Some(result) = PathValidator::validateHostPath(
+            self.host.as_ref(),
+            &destPath,
+            &tool.name,
+            "destination",
+        ) {
             return result;
         }
 
@@ -354,7 +395,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -376,7 +421,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = format!("Error creating directory: {}", errorValue.message);
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -401,7 +450,9 @@ impl StandardFileSystemTools {
         let request = FindFilesRequest {
             path: path.clone(),
             pattern: pattern.clone(),
-            maxDepth: parameterValue(tool, "max_depth").parse::<i32>().unwrap_or(-1),
+            maxDepth: parameterValue(tool, "max_depth")
+                .parse::<i32>()
+                .unwrap_or(-1),
             usePathPattern: parameterBool(tool, "use_path_pattern"),
             caseInsensitive: parameterBool(tool, "case_insensitive"),
         };
@@ -443,7 +494,11 @@ impl StandardFileSystemTools {
             return result;
         }
         if pattern.trim().is_empty() {
-            return toolError(tool, String::new(), "Pattern parameter is required".to_string());
+            return toolError(
+                tool,
+                String::new(),
+                "Pattern parameter is required".to_string(),
+            );
         }
 
         let request = GrepCodeRequest {
@@ -462,7 +517,10 @@ impl StandardFileSystemTools {
                 .unwrap_or(100),
         };
         match self.host.grepCode(request) {
-            Ok(result) => success(tool, grepResultDataToString(self.envLabel(), &path, &pattern, &result)),
+            Ok(result) => success(
+                tool,
+                grepResultDataToString(self.envLabel(), &path, &pattern, &result),
+            ),
             Err(errorValue) => toolError(tool, String::new(), errorValue.message),
         }
     }
@@ -476,9 +534,12 @@ impl StandardFileSystemTools {
         let destPath = parameterValue(tool, "destination");
         let headersParam = optionalParameterValue(tool, "headers");
 
-        if let Some(result) =
-            PathValidator::validateHostPath(self.host.as_ref(), &destPath, &tool.name, "destination")
-        {
+        if let Some(result) = PathValidator::validateHostPath(
+            self.host.as_ref(),
+            &destPath,
+            &tool.name,
+            "destination",
+        ) {
             return result;
         }
 
@@ -553,7 +614,9 @@ impl StandardFileSystemTools {
                 tool,
                 fileOperationDataToString(
                     self.envLabel(),
-                    &format!("Download failed for {destPath}: URL must start with http:// or https://"),
+                    &format!(
+                        "Download failed for {destPath}: URL must start with http:// or https://"
+                    ),
                 ),
                 "URL must start with http:// or https://".to_string(),
             );
@@ -577,11 +640,17 @@ impl StandardFileSystemTools {
         let headersForThread = headers.clone();
         let downloadResult = thread::spawn(move || {
             let client = Client::new();
-            let response = client.get(&resolvedUrlForThread).headers(headersForThread).send();
+            let response = client
+                .get(&resolvedUrlForThread)
+                .headers(headersForThread)
+                .send();
             match response {
                 Ok(response) => {
                     if !response.status().is_success() {
-                        Err(format!("Error downloading file: HTTP {}", response.status()))
+                        Err(format!(
+                            "Error downloading file: HTTP {}",
+                            response.status()
+                        ))
                     } else {
                         response
                             .bytes()
@@ -656,7 +725,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = format!("Error writing to file: {}", errorValue.message);
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -676,12 +749,20 @@ impl StandardFileSystemTools {
             Ok(value) => value,
             Err(errorValue) => {
                 let message = format!("Error reading file: {}", errorValue.message);
-                return toolError(tool, fileOperationDataToString(self.envLabel(), &message), message);
+                return toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                );
             }
         };
         if !current.contains(&oldContent) {
             let message = "Old content was not found in file.".to_string();
-            return toolError(tool, fileOperationDataToString(self.envLabel(), &message), message);
+            return toolError(
+                tool,
+                fileOperationDataToString(self.envLabel(), &message),
+                message,
+            );
         }
         let updated = current.replacen(&oldContent, &newContent, 1);
         match self.host.writeFile(&path, &updated, false) {
@@ -691,7 +772,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = format!("Error writing to file: {}", errorValue.message);
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -723,7 +808,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -755,7 +844,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -775,7 +868,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -783,7 +880,8 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn shareFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let title = optionalParameterValue(tool, "title").unwrap_or_else(|| "Share File".to_string());
+        let title =
+            optionalParameterValue(tool, "title").unwrap_or_else(|| "Share File".to_string());
         if let Some(result) =
             PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
         {
@@ -796,7 +894,11 @@ impl StandardFileSystemTools {
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
-                toolError(tool, fileOperationDataToString(self.envLabel(), &message), message)
+                toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )
             }
         }
     }
@@ -1130,7 +1232,10 @@ fn grepResultDataToString(
             .iter()
             .take(remainingSlots)
             .collect::<Vec<_>>();
-        let matchesCollapsedInFile = fileMatch.lineMatches.len().saturating_sub(matchesToShow.len());
+        let matchesCollapsedInFile = fileMatch
+            .lineMatches
+            .len()
+            .saturating_sub(matchesToShow.len());
 
         for lineMatch in matchesToShow {
             match &lineMatch.matchContext {

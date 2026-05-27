@@ -9,14 +9,9 @@ use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolParameter, ToolValidationResult,
 };
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
-use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
-use crate::core::tools::mcp::MCPManager::MCPManager;
-use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
-use crate::core::tools::defaultTool::ToolGetter::ToolGetter;
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::{
     FileSystemToolExecutor, FileSystemToolOperation, StandardFileSystemTools,
 };
@@ -29,7 +24,12 @@ use crate::core::tools::defaultTool::standard::StandardMemoryTools::{
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::{
     StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
 };
+use crate::core::tools::defaultTool::ToolGetter::ToolGetter;
+use crate::core::tools::mcp::MCPManager::MCPManager;
+use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
+use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use operit_host_api::FileSystemHost;
 
 #[allow(non_snake_case)]
@@ -207,26 +207,76 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
 
 #[allow(non_snake_case)]
 fn registerMemoryPublicTools(handler: &mut AIToolHandler) {
-    registerMemoryTool(handler, "query_memory", MemoryToolOperation::QueryMemory, false);
-    registerMemoryTool(handler, "get_memory_by_title", MemoryToolOperation::GetMemoryByTitle, false);
+    registerMemoryTool(
+        handler,
+        "query_memory",
+        MemoryToolOperation::QueryMemory,
+        false,
+    );
+    registerMemoryTool(
+        handler,
+        "get_memory_by_title",
+        MemoryToolOperation::GetMemoryByTitle,
+        false,
+    );
 }
 
 #[allow(non_snake_case)]
 fn registerMemoryInternalTools(handler: &mut AIToolHandler) {
-    registerMemoryTool(handler, "create_memory", MemoryToolOperation::CreateMemory, true);
-    registerMemoryTool(handler, "update_memory", MemoryToolOperation::UpdateMemory, true);
-    registerMemoryTool(handler, "delete_memory", MemoryToolOperation::DeleteMemory, true);
-    registerMemoryTool(handler, "move_memory", MemoryToolOperation::MoveMemory, true);
+    registerMemoryTool(
+        handler,
+        "create_memory",
+        MemoryToolOperation::CreateMemory,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "update_memory",
+        MemoryToolOperation::UpdateMemory,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "delete_memory",
+        MemoryToolOperation::DeleteMemory,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "move_memory",
+        MemoryToolOperation::MoveMemory,
+        true,
+    );
     registerMemoryTool(
         handler,
         "update_user_preferences",
         MemoryToolOperation::UpdateUserPreferences,
         true,
     );
-    registerMemoryTool(handler, "link_memories", MemoryToolOperation::LinkMemories, true);
-    registerMemoryTool(handler, "query_memory_links", MemoryToolOperation::QueryMemoryLinks, true);
-    registerMemoryTool(handler, "update_memory_link", MemoryToolOperation::UpdateMemoryLink, true);
-    registerMemoryTool(handler, "delete_memory_link", MemoryToolOperation::DeleteMemoryLink, true);
+    registerMemoryTool(
+        handler,
+        "link_memories",
+        MemoryToolOperation::LinkMemories,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "query_memory_links",
+        MemoryToolOperation::QueryMemoryLinks,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "update_memory_link",
+        MemoryToolOperation::UpdateMemoryLink,
+        true,
+    );
+    registerMemoryTool(
+        handler,
+        "delete_memory_link",
+        MemoryToolOperation::DeleteMemoryLink,
+        true,
+    );
 }
 
 #[allow(non_snake_case)]
@@ -517,7 +567,9 @@ impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for UsePackag
     }
 }
 
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for SearchHiddenToolCatalogExecutor {
+impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor
+    for SearchHiddenToolCatalogExecutor
+{
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
         if requiredParameterValue(tool, "query").trim().is_empty() {
             return invalidToolValidation("query is required.");
@@ -678,7 +730,10 @@ fn requiredParameterValue(tool: &AITool, name: &str) -> String {
 }
 
 fn validateUsePackage(tool: &AITool) -> ToolValidationResult {
-    if requiredParameterValue(tool, "package_name").trim().is_empty() {
+    if requiredParameterValue(tool, "package_name")
+        .trim()
+        .is_empty()
+    {
         return invalidToolValidation("package_name is required.");
     }
     ToolValidationResult {
@@ -694,10 +749,13 @@ fn executeUsePackage(
 ) -> ToolResult {
     let packageName = requiredParameterValue(tool, "package_name");
     let (result, selectedPackage) = {
-        let mut guard = packageManager.lock().expect("package manager mutex poisoned");
+        let mut guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
         let result = guard.executeUsePackageTool(&tool.name, &packageName);
         let selectedPackage = if result.success {
-            guard.getEffectivePackageTools(&packageName)
+            guard
+                .getEffectivePackageTools(&packageName)
                 .filter(|package| !guard.isToolPkgContainer(&package.name))
         } else {
             None
@@ -735,7 +793,9 @@ fn registerPackageTools(
         if isMcpPackage {
             clonedHandler.registerTool(
                 toolName,
-                Box::new(MCPToolExecutor::new(MCPManager::getInstance(context.clone()))),
+                Box::new(MCPToolExecutor::new(MCPManager::getInstance(
+                    context.clone(),
+                ))),
             );
         } else {
             clonedHandler.registerTool(
@@ -976,8 +1036,17 @@ fn parseProxyInvocation(
     tool: &AITool,
     requireQualifiedTarget: bool,
 ) -> (Option<ParsedProxyInvocation>, Option<ToolResult>) {
-    let allowedParamNames =
-        BTreeSet::from_iter(["tool_name", "params", "__operit_package_caller_name", "__operit_package_chat_id", "__operit_package_caller_card_id"].into_iter().map(String::from));
+    let allowedParamNames = BTreeSet::from_iter(
+        [
+            "tool_name",
+            "params",
+            "__operit_package_caller_name",
+            "__operit_package_chat_id",
+            "__operit_package_caller_card_id",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
     let unknownParamNames = tool
         .parameters
         .iter()
@@ -1099,7 +1168,10 @@ fn parseProxyInvocation(
             .map(|parameter| parameter.value.trim().to_string())
             .filter(|value| !value.is_empty());
         if let Some(value) = value {
-            if forwardedParameters.iter().all(|parameter| parameter.name != paramName) {
+            if forwardedParameters
+                .iter()
+                .all(|parameter| parameter.name != paramName)
+            {
                 forwardedParameters.push(ToolParameter {
                     name: paramName.to_string(),
                     value,

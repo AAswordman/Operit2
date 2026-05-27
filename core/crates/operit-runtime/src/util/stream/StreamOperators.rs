@@ -1,6 +1,6 @@
+use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::util::stream::Stream::{Stream, VecStream};
 use crate::util::stream::StreamGroup::StreamGroup;
-use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use std::collections::VecDeque;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -295,7 +295,11 @@ where
     VecStream::new(values)
 }
 
-pub fn timeout_trigger<S>(mut source: S, _timeout_duration: Duration, timeout_value: Option<S::Item>) -> VecStream<S::Item>
+pub fn timeout_trigger<S>(
+    mut source: S,
+    _timeout_duration: Duration,
+    timeout_value: Option<S::Item>,
+) -> VecStream<S::Item>
 where
     S: Stream,
 {
@@ -370,7 +374,9 @@ pub fn split_chars_by(
                 let tag = Some(plugins[index].name().to_string());
                 groups.push(StreamGroup::new(
                     tag,
-                    Box::new(VecStream::new(vec![std::mem::take(&mut active_plugin_buffer)])),
+                    Box::new(VecStream::new(vec![std::mem::take(
+                        &mut active_plugin_buffer,
+                    )])),
                 ));
                 active_plugin = None;
             }
@@ -394,7 +400,9 @@ pub fn split_chars_by(
             if !default_text_buffer.is_empty() {
                 groups.push(StreamGroup::new(
                     None,
-                    Box::new(VecStream::new(vec![std::mem::take(&mut default_text_buffer)])),
+                    Box::new(VecStream::new(vec![std::mem::take(
+                        &mut default_text_buffer,
+                    )])),
                 ));
             }
 
@@ -417,7 +425,10 @@ pub fn split_chars_by(
                     plugin.reset();
                 }
             }
-        } else if plugins.iter().all(|plugin| plugin.state() != PluginState::Trying) {
+        } else if plugins
+            .iter()
+            .all(|plugin| plugin.state() != PluginState::Trying)
+        {
             for buffered_ch in evaluation_buffer.drain(..) {
                 default_text_buffer.push(buffered_ch);
             }
@@ -430,7 +441,10 @@ pub fn split_chars_by(
 
     if !active_plugin_buffer.is_empty() {
         let tag = active_plugin.map(|index| plugins[index].name().to_string());
-        groups.push(StreamGroup::new(tag, Box::new(VecStream::new(vec![active_plugin_buffer]))));
+        groups.push(StreamGroup::new(
+            tag,
+            Box::new(VecStream::new(vec![active_plugin_buffer])),
+        ));
     }
     if !evaluation_buffer.is_empty() {
         for buffered_ch in evaluation_buffer {
@@ -438,7 +452,10 @@ pub fn split_chars_by(
         }
     }
     if !default_text_buffer.is_empty() {
-        groups.push(StreamGroup::new(None, Box::new(VecStream::new(vec![default_text_buffer]))));
+        groups.push(StreamGroup::new(
+            None,
+            Box::new(VecStream::new(vec![default_text_buffer])),
+        ));
     }
 
     VecStream::new(groups)

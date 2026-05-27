@@ -28,7 +28,11 @@ impl LocaleUtils {
             language(LanguageCodes::SPANISH, "Spanish", "Español"),
             language(LanguageCodes::MALAY, "Malay", "Bahasa Melayu"),
             language(LanguageCodes::INDONESIAN, "Indonesian", "Bahasa Indonesia"),
-            language(LanguageCodes::PORTUGUESE_BRAZIL, "Portuguese (Brazil)", "Português (Brasil)"),
+            language(
+                LanguageCodes::PORTUGUESE_BRAZIL,
+                "Portuguese (Brazil)",
+                "Português (Brasil)",
+            ),
         ]
     }
 
@@ -63,18 +67,30 @@ impl LocaleUtils {
             return normalized;
         }
         let supported = supported_language_codes();
-        if supported.iter().any(|code| code.eq_ignore_ascii_case(&normalized)) {
+        if supported
+            .iter()
+            .any(|code| code.eq_ignore_ascii_case(&normalized))
+        {
             return supported
                 .into_iter()
                 .find(|code| code.eq_ignore_ascii_case(&normalized))
                 .unwrap()
                 .to_string();
         }
-        let language = normalized.split('-').next().unwrap_or("").to_ascii_lowercase();
+        let language = normalized
+            .split('-')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         let matches: Vec<&str> = supported
             .iter()
             .copied()
-            .filter(|code| code.split('-').next().unwrap_or("").eq_ignore_ascii_case(&language))
+            .filter(|code| {
+                code.split('-')
+                    .next()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(&language)
+            })
             .collect();
         if matches.len() == 1 {
             matches[0].to_string()

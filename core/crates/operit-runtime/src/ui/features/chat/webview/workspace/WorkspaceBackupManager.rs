@@ -134,7 +134,12 @@ impl WorkspaceBackupManager {
         workspaceEnv: Option<String>,
         chatId: Option<String>,
     ) {
-        self.syncStateProvider(&workspacePath, workspaceEnv.as_deref(), messageTimestamp, chatId.as_deref());
+        self.syncStateProvider(
+            &workspacePath,
+            workspaceEnv.as_deref(),
+            messageTimestamp,
+            chatId.as_deref(),
+        );
     }
 
     #[allow(non_snake_case)]
@@ -318,7 +323,8 @@ impl WorkspaceBackupManager {
                 let Some(relativeChildPath) = makeRelativePath(workspacePath, &childPath) else {
                     continue;
                 };
-                let Some((hash, stat)) = self.snapshotFileForStateProvider(&childPath, objectsDir) else {
+                let Some((hash, stat)) = self.snapshotFileForStateProvider(&childPath, objectsDir)
+                else {
                     continue;
                 };
                 files.insert(relativeChildPath.clone(), hash);
@@ -335,7 +341,9 @@ impl WorkspaceBackupManager {
             return;
         }
 
-        if let Some((hash, stat)) = self.snapshotFileForStateProvider(normalizedTargetPath, objectsDir) {
+        if let Some((hash, stat)) =
+            self.snapshotFileForStateProvider(normalizedTargetPath, objectsDir)
+        {
             files.insert(relativeTarget.clone(), hash);
             stats.insert(relativeTarget, stat);
         }
@@ -376,13 +384,20 @@ impl WorkspaceBackupManager {
             .collect()
     }
 
-    fn snapshotFileForStateProvider(&self, filePath: &str, objectsDir: &str) -> Option<(String, FileStat)> {
+    fn snapshotFileForStateProvider(
+        &self,
+        filePath: &str,
+        objectsDir: &str,
+    ) -> Option<(String, FileStat)> {
         let host = self.host()?;
         let bytes = host.readFileBytes(filePath).ok()?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
         let info = host.fileInfo(filePath).ok();
         let stat = FileStat {
-            size: info.as_ref().map(|value| value.size).unwrap_or(bytes.len() as i64),
+            size: info
+                .as_ref()
+                .map(|value| value.size)
+                .unwrap_or(bytes.len() as i64),
             lastModified: info
                 .as_ref()
                 .and_then(|value| parseLastModifiedToMillis(&value.lastModified))
@@ -402,7 +417,11 @@ impl WorkspaceBackupManager {
         Some((hash, stat))
     }
 
-    fn loadBackupManifestProvider(&self, backupDir: &str, targetTimestamp: i64) -> Option<BackupManifest> {
+    fn loadBackupManifestProvider(
+        &self,
+        backupDir: &str,
+        targetTimestamp: i64,
+    ) -> Option<BackupManifest> {
         let manifestPath = joinPath(backupDir, &format!("{targetTimestamp}.json"));
         let content = self.host()?.readFile(&manifestPath).ok()?;
         if content.trim().is_empty() {
@@ -411,13 +430,19 @@ impl WorkspaceBackupManager {
         serde_json::from_str(&content).ok()
     }
 
-    fn loadGitignoreRulesProvider(&self, workspacePath: &str, _workspaceEnv: Option<&str>) -> Vec<String> {
+    fn loadGitignoreRulesProvider(
+        &self,
+        workspacePath: &str,
+        _workspaceEnv: Option<&str>,
+    ) -> Vec<String> {
         let Some(host) = self.host() else {
             return GitIgnoreFilter::defaultRules();
         };
         let gitignorePath = joinPath(workspacePath, ".gitignore");
         match host.readFile(&gitignorePath) {
-            Ok(content) if !content.trim().is_empty() => GitIgnoreFilter::buildRulesFromContent(&content),
+            Ok(content) if !content.trim().is_empty() => {
+                GitIgnoreFilter::buildRulesFromContent(&content)
+            }
             _ => GitIgnoreFilter::defaultRules(),
         }
     }
@@ -491,7 +516,9 @@ impl WorkspaceBackupManager {
         }
 
         if existingBackups.contains(&messageTimestamp) {
-            if let Some(existingManifest) = self.loadBackupManifestProvider(&backupDir, messageTimestamp) {
+            if let Some(existingManifest) =
+                self.loadBackupManifestProvider(&backupDir, messageTimestamp)
+            {
                 self.saveCurrentStateManifestProvider(&backupDir, &existingManifest);
             }
             return;
@@ -533,14 +560,18 @@ impl WorkspaceBackupManager {
             if currentState.files.get(&relativePath) == Some(&hash) {
                 continue;
             }
-            let Some(objectPath) = resolveObjectPathForRead(host.as_ref(), objectsDir, &hash) else {
+            let Some(objectPath) = resolveObjectPathForRead(host.as_ref(), objectsDir, &hash)
+            else {
                 continue;
             };
             let Ok(bytes) = host.readFileBytes(&objectPath) else {
                 continue;
             };
             let targetPath = joinPath(workspacePath, &relativePath);
-            let parent = targetPath.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("");
+            let parent = targetPath
+                .rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("");
             if !parent.is_empty() {
                 ensureDirectory(host.as_ref(), parent);
             }
@@ -560,8 +591,13 @@ impl WorkspaceBackupManager {
                 fileStats: BTreeMap::new(),
             };
         };
-        if let Some(latestTimestamp) = listBackupsInBackupDir(host.as_ref(), backupDir).last().copied() {
-            if let Some(latestManifest) = self.loadBackupManifestProvider(backupDir, latestTimestamp) {
+        if let Some(latestTimestamp) = listBackupsInBackupDir(host.as_ref(), backupDir)
+            .last()
+            .copied()
+        {
+            if let Some(latestManifest) =
+                self.loadBackupManifestProvider(backupDir, latestTimestamp)
+            {
                 return latestManifest;
             }
         }
@@ -692,14 +728,18 @@ impl WorkspaceToolHookSession {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        let state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
+        let state = self
+            .state
+            .lock()
+            .expect("WorkspaceToolHookSession mutex poisoned");
         if !state.initialized {
             return;
         }
         if let (Some(backupDir), Some(currentState)) =
             (state.backupDir.as_deref(), state.currentState.as_ref())
         {
-            self.manager.saveCurrentStateManifestProvider(backupDir, currentState);
+            self.manager
+                .saveCurrentStateManifestProvider(backupDir, currentState);
         }
     }
 }
@@ -713,12 +753,16 @@ impl AIToolHook for WorkspaceToolHookSession {
         if self.closed.load(Ordering::SeqCst) || !isWorkspaceMutatingTool(&tool.name) {
             return;
         }
-        let affectedPaths = extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
+        let affectedPaths =
+            extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
         if affectedPaths.is_empty() {
             return;
         }
 
-        let mut state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("WorkspaceToolHookSession mutex poisoned");
         if state.initialized {
             return;
         }
@@ -738,15 +782,22 @@ impl AIToolHook for WorkspaceToolHookSession {
     }
 
     fn onToolExecutionResult(&self, tool: &AITool, result: &ToolResult) {
-        if self.closed.load(Ordering::SeqCst) || !result.success || !isWorkspaceMutatingTool(&tool.name) {
+        if self.closed.load(Ordering::SeqCst)
+            || !result.success
+            || !isWorkspaceMutatingTool(&tool.name)
+        {
             return;
         }
-        let affectedPaths = extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
+        let affectedPaths =
+            extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
         if affectedPaths.is_empty() {
             return;
         }
 
-        let mut state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .expect("WorkspaceToolHookSession mutex poisoned");
         if !state.initialized {
             return;
         }
@@ -804,18 +855,49 @@ fn extractWorkspaceAffectedPaths(
     let mut result = Vec::<String>::new();
     let defaultEnvironment = toolParam(tool, "environment");
     match tool.name.as_str() {
-        "apply_file" | "create_file" | "edit_file" | "delete_file" | "write_file" | "write_file_binary" => {
-            collectWorkspacePath(&mut result, toolParam(tool, "path"), defaultEnvironment, workspacePath, workspaceEnv);
+        "apply_file" | "create_file" | "edit_file" | "delete_file" | "write_file"
+        | "write_file_binary" => {
+            collectWorkspacePath(
+                &mut result,
+                toolParam(tool, "path"),
+                defaultEnvironment,
+                workspacePath,
+                workspaceEnv,
+            );
         }
         "move_file" => {
-            collectWorkspacePath(&mut result, toolParam(tool, "source"), defaultEnvironment, workspacePath, workspaceEnv);
-            collectWorkspacePath(&mut result, toolParam(tool, "destination"), defaultEnvironment, workspacePath, workspaceEnv);
+            collectWorkspacePath(
+                &mut result,
+                toolParam(tool, "source"),
+                defaultEnvironment,
+                workspacePath,
+                workspaceEnv,
+            );
+            collectWorkspacePath(
+                &mut result,
+                toolParam(tool, "destination"),
+                defaultEnvironment,
+                workspacePath,
+                workspaceEnv,
+            );
         }
         "copy_file" => {
             let sourceEnvironment = toolParam(tool, "source_environment").or(defaultEnvironment);
             let destinationEnvironment = toolParam(tool, "dest_environment").or(defaultEnvironment);
-            collectWorkspacePath(&mut result, toolParam(tool, "source"), sourceEnvironment, workspacePath, workspaceEnv);
-            collectWorkspacePath(&mut result, toolParam(tool, "destination"), destinationEnvironment, workspacePath, workspaceEnv);
+            collectWorkspacePath(
+                &mut result,
+                toolParam(tool, "source"),
+                sourceEnvironment,
+                workspacePath,
+                workspaceEnv,
+            );
+            collectWorkspacePath(
+                &mut result,
+                toolParam(tool, "destination"),
+                destinationEnvironment,
+                workspacePath,
+                workspaceEnv,
+            );
         }
         _ => {}
     }
@@ -843,7 +925,9 @@ fn collectWorkspacePath(
     if normalizedPath.is_empty() || !isEnvironmentMatchForWorkspace(toolEnv, workspaceEnv) {
         return;
     }
-    if makeRelativePath(workspacePath, &normalizedPath).is_none() && !startsWithAbsoluteRoot(&normalizedPath) {
+    if makeRelativePath(workspacePath, &normalizedPath).is_none()
+        && !startsWithAbsoluteRoot(&normalizedPath)
+    {
         normalizedPath = joinPath(workspacePath, &normalizedPath);
     }
     let Some(relativePath) = makeRelativePath(workspacePath, &normalizedPath) else {
@@ -867,7 +951,12 @@ fn listBackupsInBackupDir(host: &dyn FileSystemHost, backupDir: &str) -> Vec<i64
     let mut timestamps = entries
         .into_iter()
         .filter(|entry| !entry.isDirectory)
-        .filter_map(|entry| entry.name.strip_suffix(".json").and_then(|value| value.parse::<i64>().ok()))
+        .filter_map(|entry| {
+            entry
+                .name
+                .strip_suffix(".json")
+                .and_then(|value| value.parse::<i64>().ok())
+        })
         .collect::<Vec<_>>();
     timestamps.sort_unstable();
     timestamps
@@ -894,12 +983,17 @@ fn normalizeChatScope(chatId: Option<&str>) -> String {
 }
 
 fn resolveChatBackupDir(backupRootDir: &str, chatId: Option<&str>) -> String {
-    joinPath(&joinPath(backupRootDir, CHAT_BACKUPS_DIR_NAME), &normalizeChatScope(chatId))
+    joinPath(
+        &joinPath(backupRootDir, CHAT_BACKUPS_DIR_NAME),
+        &normalizeChatScope(chatId),
+    )
 }
 
 fn joinPath(parent: &str, child: &str) -> String {
     let parent = GitIgnoreFilter::normalizePath(parent);
-    let child = GitIgnoreFilter::normalizePath(child).trim_start_matches('/').to_string();
+    let child = GitIgnoreFilter::normalizePath(child)
+        .trim_start_matches('/')
+        .to_string();
     if parent.is_empty() {
         format!("/{child}")
     } else if parent == "/" {
@@ -924,7 +1018,11 @@ fn makeRelativePath(root: &str, fullPath: &str) -> Option<String> {
     if !normalizedFullPath.starts_with(&prefix) {
         return None;
     }
-    Some(normalizedFullPath[prefix.len()..].trim_start_matches('/').to_string())
+    Some(
+        normalizedFullPath[prefix.len()..]
+            .trim_start_matches('/')
+            .to_string(),
+    )
 }
 
 fn objectBucketPrefix(hash: &str) -> String {
@@ -943,13 +1041,25 @@ fn buildLegacyObjectPath(objectsDir: &str, hash: &str) -> String {
     joinPath(objectsDir, hash)
 }
 
-fn resolveObjectPathForRead(host: &dyn FileSystemHost, objectsDir: &str, hash: &str) -> Option<String> {
+fn resolveObjectPathForRead(
+    host: &dyn FileSystemHost,
+    objectsDir: &str,
+    hash: &str,
+) -> Option<String> {
     let sharded = buildShardedObjectPath(objectsDir, hash);
-    if host.fileExists(&sharded).map(|value| value.exists).unwrap_or(false) {
+    if host
+        .fileExists(&sharded)
+        .map(|value| value.exists)
+        .unwrap_or(false)
+    {
         return Some(sharded);
     }
     let legacy = buildLegacyObjectPath(objectsDir, hash);
-    if host.fileExists(&legacy).map(|value| value.exists).unwrap_or(false) {
+    if host
+        .fileExists(&legacy)
+        .map(|value| value.exists)
+        .unwrap_or(false)
+    {
         return Some(legacy);
     }
     None
@@ -1035,7 +1145,10 @@ fn longestCommonSubsequenceLength(left: &[String], right: &[String]) -> usize {
 
 fn isTextBasedFileName(fileName: &str) -> bool {
     let lower = fileName.to_ascii_lowercase();
-    let extension = lower.rsplit_once('.').map(|(_, extension)| extension).unwrap_or("");
+    let extension = lower
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .unwrap_or("");
     matches!(
         extension,
         "txt"

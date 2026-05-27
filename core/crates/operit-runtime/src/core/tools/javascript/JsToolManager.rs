@@ -5,12 +5,12 @@ use serde_json::Value;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::AITool;
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::javascript::JsEngine::JsEngine;
 use crate::core::tools::javascript::JsExecutionResultProtocol::{
     extractJsExecutionFailure, JsExecutionFailure,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 
 #[derive(Clone)]
 pub struct JsToolManager {
@@ -25,7 +25,10 @@ struct ToolParameterConversionException {
 
 impl JsToolManager {
     #[allow(non_snake_case)]
-    pub fn getInstance(packageManager: Arc<Mutex<PackageManager>>, toolHandler: AIToolHandler) -> Self {
+    pub fn getInstance(
+        packageManager: Arc<Mutex<PackageManager>>,
+        toolHandler: AIToolHandler,
+    ) -> Self {
         Self {
             packageManager,
             toolHandler,
@@ -57,7 +60,11 @@ impl JsToolManager {
     }
 
     #[allow(non_snake_case)]
-    fn buildRuntimeParams(&self, packageName: &str, params: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    fn buildRuntimeParams(
+        &self,
+        packageName: &str,
+        params: BTreeMap<String, Value>,
+    ) -> BTreeMap<String, Value> {
         let mut runtimeParams = params;
         if let Some(stateId) = self
             .packageManager
@@ -123,7 +130,10 @@ impl JsToolManager {
                     .iter()
                     .filter(|parameter| {
                         parameter.required
-                            && !tool.parameters.iter().any(|item| item.name == parameter.name)
+                            && !tool
+                                .parameters
+                                .iter()
+                                .any(|item| item.name == parameter.name)
                     })
                     .map(|parameter| parameter.name.clone())
                     .collect::<Vec<_>>()
@@ -237,7 +247,9 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     pub fn executeScriptByName(&self, toolName: &str, params: BTreeMap<String, String>) -> String {
         let Some((packageName, functionName)) = Self::parseDotCall(toolName) else {
-            return format!("Invalid tool name format: {toolName}. Expected format: packageName.functionName");
+            return format!(
+                "Invalid tool name format: {toolName}. Expected format: packageName.functionName"
+            );
         };
         let script = self
             .packageManager

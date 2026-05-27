@@ -28,20 +28,22 @@ impl ActivePromptManager {
     pub fn activePromptFlow(&self) -> Flow<ActivePrompt> {
         let cardManager = self.characterCardManager.clone();
         let groupManager = self.characterGroupCardManager.clone();
-        groupManager.observeActiveCharacterGroupId().map(move |groupId| {
-            if let Some(groupId) = groupId {
-                return ActivePrompt::CharacterGroup { id: groupId };
-            }
-            let cardId = cardManager
-                .observeActiveCharacterCardId()
-                .first()
-                .ok()
-                .flatten()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string());
-            ActivePrompt::CharacterCard { id: cardId }
-        })
+        groupManager
+            .observeActiveCharacterGroupId()
+            .map(move |groupId| {
+                if let Some(groupId) = groupId {
+                    return ActivePrompt::CharacterGroup { id: groupId };
+                }
+                let cardId = cardManager
+                    .observeActiveCharacterCardId()
+                    .first()
+                    .ok()
+                    .flatten()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string());
+                ActivePrompt::CharacterCard { id: cardId }
+            })
     }
 
     #[allow(non_snake_case)]
@@ -59,7 +61,8 @@ impl ActivePromptManager {
             }
             ActivePrompt::CharacterCard { id } => {
                 self.characterCardManager.setActiveCharacterCard(&id)?;
-                self.characterGroupCardManager.setActiveCharacterGroupCard(None)
+                self.characterGroupCardManager
+                    .setActiveCharacterGroupCard(None)
             }
         }
     }
@@ -81,7 +84,10 @@ impl ActivePromptManager {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         if let Some(cardName) = normalizedCardName {
-            if let Some(targetCard) = self.characterCardManager.findCharacterCardByName(&cardName)? {
+            if let Some(targetCard) = self
+                .characterCardManager
+                .findCharacterCardByName(&cardName)?
+            {
                 return self.setActivePrompt(ActivePrompt::CharacterCard { id: targetCard.id });
             }
         }
@@ -95,7 +101,9 @@ impl ActivePromptManager {
     pub fn resolveActiveCardIdForSend(&self) -> Result<String, PreferencesDataStoreError> {
         match self.getActivePrompt()? {
             ActivePrompt::CharacterCard { id } => Ok(id),
-            ActivePrompt::CharacterGroup { .. } => Ok(CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string()),
+            ActivePrompt::CharacterGroup { .. } => {
+                Ok(CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string())
+            }
         }
     }
 }

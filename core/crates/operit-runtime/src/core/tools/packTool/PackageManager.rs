@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::ToolPackage::{
-    EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
-};
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPPackage::MCPPackage;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::core::tools::skill::SkillManager::SkillManager;
+use crate::core::tools::ToolPackage::{
+    EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
+};
 use crate::data::mcp::MCPLocalServer::MCPLocalServer;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use operit_store::PreferencesDataStore::{
@@ -92,7 +92,8 @@ impl PackageManager {
 
         let enabledPackageNames = self.getEnabledPackageNames();
         if enabledPackageNames.contains(&normalizedPackageName) {
-            let Some(toolPackage) = self.availablePackages.get(&normalizedPackageName).cloned() else {
+            let Some(toolPackage) = self.availablePackages.get(&normalizedPackageName).cloned()
+            else {
                 return format!("Failed to load package data for: {}", normalizedPackageName);
             };
             let selectedPackage = self.selectToolPackageState(&toolPackage);
@@ -107,10 +108,7 @@ impl PackageManager {
             .contains_key(&normalizedPackageName)
             && !skillVisibilityPreferences.isSkillVisibleToAi(&normalizedPackageName)
         {
-            return format!(
-                "Skill '{}' is set to not show to AI",
-                normalizedPackageName
-            );
+            return format!("Skill '{}' is set to not show to AI", normalizedPackageName);
         }
 
         if let Some(skillPrompt) = skillManager.getSkillSystemPrompt(&normalizedPackageName) {
@@ -212,7 +210,10 @@ impl PackageManager {
         enabledPackageNames.insert(normalizedPackageName.clone());
         let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
         if let Err(error) = self.saveEnabledPackageNames(&names) {
-            return format!("Failed to enable package '{}': {}", normalizedPackageName, error);
+            return format!(
+                "Failed to enable package '{}': {}",
+                normalizedPackageName, error
+            );
         }
         format!("Successfully enabled package: {}", normalizedPackageName)
     }
@@ -225,7 +226,10 @@ impl PackageManager {
         if enabledPackageNames.remove(&normalizedPackageName) {
             let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
             if let Err(error) = self.saveEnabledPackageNames(&names) {
-                return format!("Failed to disable package '{}': {}", normalizedPackageName, error);
+                return format!(
+                    "Failed to disable package '{}': {}",
+                    normalizedPackageName, error
+                );
             }
             return format!("Successfully disabled package: {}", normalizedPackageName);
         }
@@ -289,7 +293,8 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn setAvailablePackage(&mut self, packageName: String, toolPackage: ToolPackage) {
         let normalizedPackageName = self.normalizePackageName(&packageName);
-        self.availablePackages.insert(normalizedPackageName, toolPackage);
+        self.availablePackages
+            .insert(normalizedPackageName, toolPackage);
     }
 
     #[allow(non_snake_case)]
@@ -338,7 +343,8 @@ impl PackageManager {
         let isJsLike = lowerPath.ends_with(".js") || lowerPath.ends_with(".ts");
         let isHjson = lowerPath.ends_with(".hjson");
         if !isJsLike && !isHjson {
-            return "Only HJSON, JavaScript (.js) and TypeScript (.ts) package files are supported".to_string();
+            return "Only HJSON, JavaScript (.js) and TypeScript (.ts) package files are supported"
+                .to_string();
         }
 
         let packageMetadata = if isHjson {
@@ -356,7 +362,11 @@ impl PackageManager {
                 None => {
                     return format!(
                         "Failed to parse {} package file",
-                        if lowerPath.ends_with(".ts") { "TypeScript" } else { "JavaScript" }
+                        if lowerPath.ends_with(".ts") {
+                            "TypeScript"
+                        } else {
+                            "JavaScript"
+                        }
                     )
                 }
             }
@@ -382,8 +392,13 @@ impl PackageManager {
             }
         }
 
-        self.availablePackages
-            .insert(packageMetadata.name.clone(), ToolPackage { is_built_in: false, ..packageMetadata.clone() });
+        self.availablePackages.insert(
+            packageMetadata.name.clone(),
+            ToolPackage {
+                is_built_in: false,
+                ..packageMetadata.clone()
+            },
+        );
         format!(
             "Successfully imported package: {}\nStored at: {}",
             packageMetadata.name,
@@ -400,11 +415,7 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn setAvailableServerPackage(
-        &mut self,
-        serverName: String,
-        serverConfig: MCPServerConfig,
-    ) {
+    pub fn setAvailableServerPackage(&mut self, serverName: String, serverConfig: MCPServerConfig) {
         self.mcpManager.registerServer(serverName, serverConfig);
     }
 
@@ -416,16 +427,26 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn useMCPServer(&mut self, serverName: &str) -> String {
         if !self.isRegisteredMCPServer(serverName) {
-            return format!("MCP server '{}' does not exist or is not registered.", serverName);
+            return format!(
+                "MCP server '{}' does not exist or is not registered.",
+                serverName
+            );
         }
-        let Some(serverConfig) = self.mcpManager.getRegisteredServers().get(serverName).cloned() else {
+        let Some(serverConfig) = self
+            .mcpManager
+            .getRegisteredServers()
+            .get(serverName)
+            .cloned()
+        else {
             return format!("Cannot get MCP server configuration: {}", serverName);
         };
         let mcpLoadResult = MCPPackage::loadFromServer(&self.context, serverConfig);
         let Some(mcpPackage) = mcpLoadResult.mcpPackage else {
             return mcpLoadResult
                 .errorMessage
-                .map(|message| format!("Cannot connect to MCP server '{}': {}", serverName, message))
+                .map(|message| {
+                    format!("Cannot connect to MCP server '{}': {}", serverName, message)
+                })
                 .unwrap_or_else(|| format!("Cannot connect to MCP server: {}", serverName));
         };
         let toolPackage = mcpPackage.toToolPackage();
@@ -574,7 +595,11 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
-    fn parsePackageMetadata(&self, metadataString: &str, script: &str) -> Result<ToolPackage, String> {
+    fn parsePackageMetadata(
+        &self,
+        metadataString: &str,
+        script: &str,
+    ) -> Result<ToolPackage, String> {
         let normalized = normalizeHjsonLikeMetadata(metadataString);
         let value: serde_json::Value =
             json5::from_str(&normalized).map_err(|error| error.to_string())?;
@@ -617,11 +642,14 @@ impl PackageManager {
             tools,
             states,
             env,
-            is_built_in: boolField(object, "isBuiltIn")
-                || boolField(object, "is_built_in"),
+            is_built_in: boolField(object, "isBuiltIn") || boolField(object, "is_built_in"),
             enabled_by_default: boolField(object, "enabledByDefault")
                 || boolField(object, "enabled_by_default"),
-            display_name: localizedTextField(object.get("display_name").or_else(|| object.get("displayName"))),
+            display_name: localizedTextField(
+                object
+                    .get("display_name")
+                    .or_else(|| object.get("displayName")),
+            ),
             category: stringField(object, "category").if_empty_then("Other"),
             author: stringListField(object.get("author")),
         })
@@ -735,10 +763,7 @@ fn currentUseTime() -> String {
 }
 
 #[allow(non_snake_case)]
-fn mergeToolsForState(
-    baseTools: &[PackageTool],
-    state: &ToolPackageState,
-) -> Vec<PackageTool> {
+fn mergeToolsForState(baseTools: &[PackageTool], state: &ToolPackageState) -> Vec<PackageTool> {
     let mut toolMap = BTreeMap::new();
     if state.inherit_tools {
         for tool in baseTools {
@@ -757,7 +782,10 @@ fn mergeToolsForState(
 #[allow(non_snake_case)]
 fn buildConditionCapabilitiesSnapshot() -> BTreeMap<String, ConditionValue> {
     BTreeMap::from([
-        ("ui.virtual_display".to_string(), ConditionValue::Bool(false)),
+        (
+            "ui.virtual_display".to_string(),
+            ConditionValue::Bool(false),
+        ),
         (
             "android.permission_level".to_string(),
             ConditionValue::Str("STANDARD".to_string()),
@@ -828,10 +856,7 @@ enum ConditionToken {
 }
 
 #[allow(non_snake_case)]
-fn evaluateCondition(
-    expression: &str,
-    capabilities: &BTreeMap<String, ConditionValue>,
-) -> bool {
+fn evaluateCondition(expression: &str, capabilities: &BTreeMap<String, ConditionValue>) -> bool {
     let trimmed = expression.trim();
     if trimmed.is_empty() {
         return true;
@@ -1003,7 +1028,10 @@ struct ConditionParser<'a> {
 }
 
 impl<'a> ConditionParser<'a> {
-    fn new(tokens: Vec<ConditionToken>, capabilities: &'a BTreeMap<String, ConditionValue>) -> Self {
+    fn new(
+        tokens: Vec<ConditionToken>,
+        capabilities: &'a BTreeMap<String, ConditionValue>,
+    ) -> Self {
         Self {
             tokens,
             pos: 0,
@@ -1201,7 +1229,10 @@ fn boolField(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> 
         Some(serde_json::Value::Bool(value)) => *value,
         Some(serde_json::Value::Number(value)) => value.as_i64().unwrap_or(0) != 0,
         Some(serde_json::Value::String(value)) => {
-            matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on")
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            )
         }
         _ => false,
     }
@@ -1268,7 +1299,10 @@ fn parsePackageToolParameter(value: &serde_json::Value) -> Option<PackageToolPar
         name: stringField(object, "name"),
         description: localizedTextField(object.get("description")),
         parameter_type: stringField(object, "type").if_empty_then("string"),
-        required: object.get("required").map(|_| boolField(object, "required")).unwrap_or(true),
+        required: object
+            .get("required")
+            .map(|_| boolField(object, "required"))
+            .unwrap_or(true),
     })
 }
 
@@ -1292,7 +1326,9 @@ fn parsePackageState(value: &serde_json::Value, script: &str) -> Result<ToolPack
         inherit_tools: object
             .get("inheritTools")
             .or_else(|| object.get("inherit_tools"))
-            .and_then(|_| Some(boolField(object, "inheritTools") || boolField(object, "inherit_tools")))
+            .and_then(|_| {
+                Some(boolField(object, "inheritTools") || boolField(object, "inherit_tools"))
+            })
             .unwrap_or(false),
         exclude_tools: object
             .get("excludeTools")
@@ -1314,7 +1350,10 @@ fn parseEnvVar(value: &serde_json::Value) -> Option<EnvVar> {
         serde_json::Value::Object(object) => Some(EnvVar {
             name: stringField(object, "name"),
             description: localizedTextField(object.get("description")),
-            required: object.get("required").map(|_| boolField(object, "required")).unwrap_or(true),
+            required: object
+                .get("required")
+                .map(|_| boolField(object, "required"))
+                .unwrap_or(true),
             default_value: object
                 .get("defaultValue")
                 .or_else(|| object.get("default_value"))
@@ -1414,7 +1453,13 @@ fn normalizeBareWords(line: &str) -> String {
                 continue;
             }
             let next = chars[lookahead];
-            if next == '"' || next == '\'' || next == '{' || next == '[' || next == '-' || next.is_ascii_digit() {
+            if next == '"'
+                || next == '\''
+                || next == '{'
+                || next == '['
+                || next == '-'
+                || next.is_ascii_digit()
+            {
                 index = lookahead;
                 continue;
             }

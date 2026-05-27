@@ -4,12 +4,12 @@ use crate::api::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::data::mcp::plugins::MCPStarter::MCPStarter;
+use crate::data::model::Memory::{Memory, MemoryLink};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
-use crate::data::model::Memory::{Memory, MemoryLink};
-use crate::data::mcp::plugins::MCPStarter::MCPStarter;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
@@ -126,8 +126,7 @@ impl OperitApplication {
             &mut clock,
             sqlStore.localClock().map_err(|error| error.to_string())?,
         );
-        serde_json::to_value(clock)
-            .map_err(|error| error.to_string())
+        serde_json::to_value(clock).map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
@@ -160,7 +159,10 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
-    pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value, String> {
+    pub fn syncApplyOperations(
+        &self,
+        operations: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let mut operations: Vec<SyncOperation> =
             serde_json::from_value(operations).map_err(|error| error.to_string())?;
         operations.sort_by(|left, right| {

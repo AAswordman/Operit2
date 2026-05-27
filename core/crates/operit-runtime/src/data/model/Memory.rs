@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use operit_store::ObjectBoxStore::ObjectBoxEntity;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Memory {

@@ -94,7 +94,9 @@ impl MCPManager {
                     .to_string()
             });
             let mut guard = self.inner.lock().expect("mcp manager mutex poisoned");
-            guard.connectionFailureReasons.insert(serverName.to_string(), detail);
+            guard
+                .connectionFailureReasons
+                .insert(serverName.to_string(), detail);
             guard.clientCache.remove(serverName);
         }
 
@@ -120,7 +122,9 @@ impl MCPManager {
         let client = MCPBridgeClient::new(context, serverName.to_string());
         if client.connect() {
             let mut guard = self.inner.lock().expect("mcp manager mutex poisoned");
-            guard.clientCache.insert(serverName.to_string(), client.clone());
+            guard
+                .clientCache
+                .insert(serverName.to_string(), client.clone());
             guard.connectionFailureReasons.remove(serverName);
             return Some(client);
         }
@@ -140,7 +144,9 @@ impl MCPManager {
     #[allow(non_snake_case)]
     pub fn registerServer(&self, serverName: String, serverConfig: MCPServerConfig) {
         let mut guard = self.inner.lock().expect("mcp manager mutex poisoned");
-        guard.serverConfigCache.insert(serverName.clone(), serverConfig);
+        guard
+            .serverConfigCache
+            .insert(serverName.clone(), serverConfig);
         guard.connectionFailureReasons.remove(&serverName);
         guard.clientCache.remove(&serverName);
     }

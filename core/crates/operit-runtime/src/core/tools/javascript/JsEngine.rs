@@ -6,10 +6,10 @@ use boa_engine::{js_string, Context, JsResult, JsValue, Source};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::javascript::JsExecutionResultProtocol::buildJsExecutionErrorPayload;
 use crate::core::tools::javascript::JsNativeInterfaceDelegates;
 use crate::core::tools::javascript::JsTools::getJsToolsDefinition;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 
 thread_local! {
     static CURRENT_TOOL_HANDLER: RefCell<Option<AIToolHandler>> = RefCell::new(None);
@@ -42,9 +42,11 @@ impl JsEngine {
             .spawn(move || {
                 engine.executeScriptFunctionOnCurrentThread(&script, &functionName, &params)
             }) {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|_| Some(buildJsExecutionErrorPayload("JavaScript engine thread panicked"))),
+            Ok(handle) => handle.join().unwrap_or_else(|_| {
+                Some(buildJsExecutionErrorPayload(
+                    "JavaScript engine thread panicked",
+                ))
+            }),
             Err(error) => Some(buildJsExecutionErrorPayload(&error.to_string())),
         }
     }
@@ -77,7 +79,8 @@ impl JsEngine {
             Err(error) => return Some(buildJsExecutionErrorPayload(&error.to_string())),
         };
         let normalizedScript = normalizeLegacyAsyncToolScript(script);
-        let scriptJson = serde_json::to_string(&normalizedScript).unwrap_or_else(|_| "\"\"".to_string());
+        let scriptJson =
+            serde_json::to_string(&normalizedScript).unwrap_or_else(|_| "\"\"".to_string());
         let functionNameJson =
             serde_json::to_string(functionName).unwrap_or_else(|_| "\"\"".to_string());
         let callId = format!(
@@ -510,7 +513,9 @@ fn startsWithKeyword(chars: &[char], index: usize, keyword: &str) -> bool {
 fn isAsyncMarker(chars: &[char], index: usize) -> bool {
     let next = skipWhitespace(chars, index);
     startsWithKeyword(chars, next, "function")
-        || chars.get(next).is_some_and(|ch| *ch == '(' || isIdentifierStart(*ch))
+        || chars
+            .get(next)
+            .is_some_and(|ch| *ch == '(' || isIdentifierStart(*ch))
 }
 
 #[allow(non_snake_case)]

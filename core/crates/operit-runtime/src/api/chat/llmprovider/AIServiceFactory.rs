@@ -262,7 +262,9 @@ pub enum ApiKeyMode {
 pub struct AIServiceFactory;
 
 impl AIServiceFactory {
-    pub fn create_service(request: ProviderCreateRequest) -> Result<ProviderServiceSpec, AiServiceError> {
+    pub fn create_service(
+        request: ProviderCreateRequest,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
         let config = request.config;
         let provider_type_id = request.provider_type_id.trim().to_string();
 
@@ -286,19 +288,19 @@ impl AIServiceFactory {
         let provider_type = request.provider_type;
 
         let spec = match provider_type {
-            ApiProviderType::OPENAI | ApiProviderType::OPENAI_GENERIC | ApiProviderType::OPENAI_LOCAL => {
-                Self::open_ai_provider(
-                    config.apiEndpoint,
-                    api_key_provider,
-                    model_name,
-                    custom_headers,
-                    provider_type,
-                    supports_vision,
-                    supports_audio,
-                    supports_video,
-                    enable_tool_call,
-                )
-            }
+            ApiProviderType::OPENAI
+            | ApiProviderType::OPENAI_GENERIC
+            | ApiProviderType::OPENAI_LOCAL => Self::open_ai_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
             ApiProviderType::OPENAI_RESPONSES | ApiProviderType::OPENAI_RESPONSES_GENERIC => {
                 Self::open_ai_responses_provider(
                     config.apiEndpoint,
@@ -322,17 +324,15 @@ impl AIServiceFactory {
                     enable_tool_call,
                 )
             }
-            ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => {
-                Self::gemini_provider(
-                    config.apiEndpoint,
-                    api_key_provider,
-                    model_name,
-                    custom_headers,
-                    provider_type,
-                    config.enableGoogleSearch,
-                    enable_tool_call,
-                )
-            }
+            ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => Self::gemini_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                config.enableGoogleSearch,
+                enable_tool_call,
+            ),
             ApiProviderType::LMSTUDIO => Self::open_ai_provider(
                 config.apiEndpoint,
                 api_key_provider,
@@ -517,17 +517,20 @@ impl AIServiceFactory {
         Ok(spec)
     }
 
-    pub fn parse_custom_headers(custom_headers_json: &str) -> Result<BTreeMap<String, String>, AiServiceError> {
+    pub fn parse_custom_headers(
+        custom_headers_json: &str,
+    ) -> Result<BTreeMap<String, String>, AiServiceError> {
         let trimmed = custom_headers_json.trim();
         if trimmed.is_empty() || trimmed == "{}" {
             return Ok(BTreeMap::new());
         }
 
-        let value: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|error| AiServiceError::RequestFailed(format!("parse custom headers failed: {error}")))?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| AiServiceError::RequestFailed("customHeaders is not a JSON object".to_string()))?;
+        let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
+            AiServiceError::RequestFailed(format!("parse custom headers failed: {error}"))
+        })?;
+        let object = value.as_object().ok_or_else(|| {
+            AiServiceError::RequestFailed("customHeaders is not a JSON object".to_string())
+        })?;
 
         object
             .iter()
@@ -536,7 +539,9 @@ impl AIServiceFactory {
                     .as_str()
                     .map(|header_value| (key.clone(), header_value.to_string()))
                     .ok_or_else(|| {
-                        AiServiceError::RequestFailed(format!("customHeaders value for {key} is not a string"))
+                        AiServiceError::RequestFailed(format!(
+                            "customHeaders value for {key} is not a string"
+                        ))
                     })
             })
             .collect()
@@ -562,7 +567,10 @@ impl AIServiceFactory {
         }
     }
 
-    pub fn build_android_llama_session_config(config: &ModelConfigData, available_processors: i32) -> LlamaSessionConfig {
+    pub fn build_android_llama_session_config(
+        config: &ModelConfigData,
+        available_processors: i32,
+    ) -> LlamaSessionConfig {
         let processor_count = available_processors.max(1);
         let safe_thread_count = config.llamaThreadCount.max(1).min(processor_count);
         LlamaSessionConfig {

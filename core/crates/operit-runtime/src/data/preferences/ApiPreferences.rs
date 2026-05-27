@@ -81,7 +81,10 @@ impl ApiPreferences {
 
     pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("enable_thinking_mode"), isEnabled.to_string());
+            preferences.set(
+                &stringPreferencesKey("enable_thinking_mode"),
+                isEnabled.to_string(),
+            );
         })
     }
 
@@ -94,9 +97,15 @@ impl ApiPreferences {
         })
     }
 
-    pub fn saveDisableStreamOutput(&self, isDisabled: bool) -> Result<(), PreferencesDataStoreError> {
+    pub fn saveDisableStreamOutput(
+        &self,
+        isDisabled: bool,
+    ) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("disable_stream_output"), isDisabled.to_string());
+            preferences.set(
+                &stringPreferencesKey("disable_stream_output"),
+                isDisabled.to_string(),
+            );
         })
     }
 

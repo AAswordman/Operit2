@@ -17,7 +17,8 @@ impl MessageDao {
     }
 
     pub fn getTotalMessageCount(&self) -> Result<i32, SqliteStoreError> {
-        self.store.queryScalar("SELECT COUNT(*) FROM messages", sqliteParams![])
+        self.store
+            .queryScalar("SELECT COUNT(*) FROM messages", sqliteParams![])
     }
 
     pub fn getMessagesForChat(&self, chatId: &str) -> Result<Vec<MessageEntity>, SqliteStoreError> {
@@ -259,9 +260,13 @@ impl MessageDao {
 
     pub fn insertMessage(&self, message: MessageEntity) -> Result<i64, SqliteStoreError> {
         if message.messageId == 0 {
-            self.store
-                .execute(insertMessageSql(false), insertMessageParams(&message, false))?;
-            let rowId: i64 = self.store.queryScalar("SELECT last_insert_rowid()", sqliteParams![])?;
+            self.store.execute(
+                insertMessageSql(false),
+                insertMessageParams(&message, false),
+            )?;
+            let rowId: i64 = self
+                .store
+                .queryScalar("SELECT last_insert_rowid()", sqliteParams![])?;
             Ok(rowId)
         } else {
             self.store
@@ -279,10 +284,8 @@ impl MessageDao {
                         insertMessageParams(&message, false),
                     )?;
                 } else {
-                    transaction.execute(
-                        insertMessageSql(true),
-                        insertMessageParams(&message, true),
-                    )?;
+                    transaction
+                        .execute(insertMessageSql(true), insertMessageParams(&message, true))?;
                 }
             }
             Ok(())
@@ -366,8 +369,10 @@ impl MessageDao {
     }
 
     pub fn deleteAllMessagesForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
-        self.store
-            .execute("DELETE FROM messages WHERE chatId = ?1", sqliteParams![chatId])?;
+        self.store.execute(
+            "DELETE FROM messages WHERE chatId = ?1",
+            sqliteParams![chatId],
+        )?;
         Ok(())
     }
 
@@ -389,11 +394,7 @@ impl MessageDao {
             .transpose()
     }
 
-    pub fn deleteMessagesFrom(
-        &self,
-        chatId: &str,
-        timestamp: i64,
-    ) -> Result<(), SqliteStoreError> {
+    pub fn deleteMessagesFrom(&self, chatId: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.store.execute(
             "DELETE FROM messages WHERE chatId = ?1 AND timestamp >= ?2",
             sqliteParams![chatId, timestamp],
@@ -494,7 +495,10 @@ impl MessageDao {
         sql: &str,
         params: Vec<SqliteValue>,
     ) -> Result<Option<i64>, SqliteStoreError> {
-        self.store.queryOne(sql, params)?.map(|row| row.get(0)).transpose()
+        self.store
+            .queryOne(sql, params)?
+            .map(|row| row.get(0))
+            .transpose()
     }
 
     fn execute(&self, sql: &str, params: Vec<SqliteValue>) -> Result<(), SqliteStoreError> {

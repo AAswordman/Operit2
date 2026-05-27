@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::sqliteParams;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SqliteStore::{
     SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction,
 };
@@ -68,7 +68,10 @@ pub struct SqlChatSyncStore {
 }
 
 impl SqlChatSyncStore {
-    pub fn new(paths: RuntimeStorePaths, database: &AppDatabase) -> Result<Self, SqlChatSyncStoreError> {
+    pub fn new(
+        paths: RuntimeStorePaths,
+        database: &AppDatabase,
+    ) -> Result<Self, SqlChatSyncStoreError> {
         let deviceId = SyncOperationStore::native(paths).localDeviceId()?;
         Ok(Self {
             store: database.store().clone(),
@@ -105,10 +108,18 @@ impl SqlChatSyncStore {
         timestamp: i64,
     ) -> Result<(), SqlChatSyncStoreError> {
         let payload = self.payloadForMessageSnapshot(chatId, timestamp)?;
-        if payload.chatRows.is_empty() && payload.messageRows.is_empty() && payload.variantRows.is_empty() {
+        if payload.chatRows.is_empty()
+            && payload.messageRows.is_empty()
+            && payload.variantRows.is_empty()
+        {
             return Ok(());
         }
-        self.appendLocalOperation("message", &format!("{chatId}:{timestamp}"), "upsert", payload)?;
+        self.appendLocalOperation(
+            "message",
+            &format!("{chatId}:{timestamp}"),
+            "upsert",
+            payload,
+        )?;
         Ok(())
     }
 
@@ -144,7 +155,12 @@ impl SqlChatSyncStore {
             messageTimestamp: Some(timestamp),
             variantIndex: None,
         });
-        self.appendLocalOperation("message", &format!("{chatId}:{timestamp}"), "delete", payload)?;
+        self.appendLocalOperation(
+            "message",
+            &format!("{chatId}:{timestamp}"),
+            "delete",
+            payload,
+        )?;
         Ok(())
     }
 
@@ -166,11 +182,19 @@ impl SqlChatSyncStore {
             messageTimestamp: Some(timestamp),
             variantIndex: None,
         });
-        self.appendLocalOperation("messages", &format!("{chatId}:{timestamp}"), "delete", payload)?;
+        self.appendLocalOperation(
+            "messages",
+            &format!("{chatId}:{timestamp}"),
+            "delete",
+            payload,
+        )?;
         Ok(())
     }
 
-    pub fn recordAllMessagesForChatDeletion(&self, chatId: &str) -> Result<(), SqlChatSyncStoreError> {
+    pub fn recordAllMessagesForChatDeletion(
+        &self,
+        chatId: &str,
+    ) -> Result<(), SqlChatSyncStoreError> {
         let mut payload = self.payloadForChatMetadata(chatId)?;
         payload.deletions.push(ChatSyncDeletion {
             tableName: DELETE_VARIANTS_FOR_CHAT.to_string(),
@@ -292,7 +316,10 @@ impl SqlChatSyncStore {
         Ok(operation)
     }
 
-    fn payloadForChatMetadata(&self, chatId: &str) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
+    fn payloadForChatMetadata(
+        &self,
+        chatId: &str,
+    ) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
         let chatDao = ChatDao::new(self.store.clone());
         let chatRows = chatDao.getChatById(chatId)?.into_iter().collect();
         Ok(ChatSyncPayload {
@@ -301,7 +328,10 @@ impl SqlChatSyncStore {
         })
     }
 
-    fn payloadForChatSnapshot(&self, chatId: &str) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
+    fn payloadForChatSnapshot(
+        &self,
+        chatId: &str,
+    ) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
         let chatDao = ChatDao::new(self.store.clone());
         let messageDao = MessageDao::new(self.store.clone());
         let variantDao = MessageVariantDao::new(self.store.clone());
@@ -399,7 +429,10 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
         .collect()
 }
 
-fn readMessageRows(store: &SqliteStore, opId: &str) -> Result<Vec<MessageEntity>, SqliteStoreError> {
+fn readMessageRows(
+    store: &SqliteStore,
+    opId: &str,
+) -> Result<Vec<MessageEntity>, SqliteStoreError> {
     store
         .queryRows(
             r#"
@@ -440,7 +473,10 @@ fn readMessageRows(store: &SqliteStore, opId: &str) -> Result<Vec<MessageEntity>
         .collect()
 }
 
-fn readVariantRows(store: &SqliteStore, opId: &str) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
+fn readVariantRows(
+    store: &SqliteStore,
+    opId: &str,
+) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
     store
         .queryRows(
             r#"
@@ -476,7 +512,10 @@ fn readVariantRows(store: &SqliteStore, opId: &str) -> Result<Vec<MessageVariant
         .collect()
 }
 
-fn readDeletions(store: &SqliteStore, opId: &str) -> Result<Vec<ChatSyncDeletion>, SqliteStoreError> {
+fn readDeletions(
+    store: &SqliteStore,
+    opId: &str,
+) -> Result<Vec<ChatSyncDeletion>, SqliteStoreError> {
     store
         .queryRows(
             r#"
@@ -666,7 +705,10 @@ fn insertVariantSyncRow(
     Ok(())
 }
 
-fn applyPayload(transaction: &mut SqliteTransaction<'_>, payload: &ChatSyncPayload) -> Result<(), SqliteStoreError> {
+fn applyPayload(
+    transaction: &mut SqliteTransaction<'_>,
+    payload: &ChatSyncPayload,
+) -> Result<(), SqliteStoreError> {
     for deletion in &payload.deletions {
         applyDeletion(transaction, deletion)?;
     }
@@ -688,7 +730,10 @@ fn applyDeletion(
 ) -> Result<(), SqliteStoreError> {
     match deletion.tableName.as_str() {
         DELETE_CHAT => {
-            transaction.execute("DELETE FROM chats WHERE id = ?1", sqliteParams![deletion.chatId])?;
+            transaction.execute(
+                "DELETE FROM chats WHERE id = ?1",
+                sqliteParams![deletion.chatId],
+            )?;
         }
         DELETE_MESSAGE => {
             let timestamp = requiredTimestamp(deletion)?;
@@ -747,7 +792,10 @@ fn applyDeletion(
     Ok(())
 }
 
-fn upsertChat(transaction: &mut SqliteTransaction<'_>, chat: &ChatEntity) -> Result<(), SqliteStoreError> {
+fn upsertChat(
+    transaction: &mut SqliteTransaction<'_>,
+    chat: &ChatEntity,
+) -> Result<(), SqliteStoreError> {
     transaction.execute(
         r#"
         INSERT INTO chats (
@@ -793,7 +841,10 @@ fn upsertChat(transaction: &mut SqliteTransaction<'_>, chat: &ChatEntity) -> Res
     Ok(())
 }
 
-fn upsertMessage(transaction: &mut SqliteTransaction<'_>, message: &MessageEntity) -> Result<(), SqliteStoreError> {
+fn upsertMessage(
+    transaction: &mut SqliteTransaction<'_>,
+    message: &MessageEntity,
+) -> Result<(), SqliteStoreError> {
     transaction.execute(
         "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
         sqliteParams![message.chatId, message.timestamp],
@@ -869,7 +920,10 @@ fn upsertVariant(
     Ok(())
 }
 
-fn operationExists(transaction: &mut SqliteTransaction<'_>, opId: &str) -> Result<bool, SqliteStoreError> {
+fn operationExists(
+    transaction: &mut SqliteTransaction<'_>,
+    opId: &str,
+) -> Result<bool, SqliteStoreError> {
     Ok(transaction
         .queryOne(
             "SELECT 1 FROM sync_sql_operations WHERE opId = ?1 LIMIT 1",
@@ -936,7 +990,10 @@ fn mergeOlderUpserts(
     Ok(())
 }
 
-fn sequenceFor(transaction: &mut SqliteTransaction<'_>, originDeviceId: &str) -> Result<i64, SqliteStoreError> {
+fn sequenceFor(
+    transaction: &mut SqliteTransaction<'_>,
+    originDeviceId: &str,
+) -> Result<i64, SqliteStoreError> {
     let sequence = transaction
         .queryOne(
             "SELECT sequence FROM sync_sql_clocks WHERE originDeviceId = ?1",
@@ -976,10 +1033,7 @@ fn requiredTimestamp(deletion: &ChatSyncDeletion) -> Result<i64, SqliteStoreErro
 
 fn requiredVariantIndex(deletion: &ChatSyncDeletion) -> Result<i32, SqliteStoreError> {
     deletion.variantIndex.ok_or_else(|| {
-        SqliteStoreError::Message(format!(
-            "missing variantIndex for {}",
-            deletion.tableName
-        ))
+        SqliteStoreError::Message(format!("missing variantIndex for {}", deletion.tableName))
     })
 }
 
@@ -1001,8 +1055,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use operit_host_api::{
-        HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
-        RuntimeStorageEntry, RuntimeStorageHost, SqliteRow as HostSqliteRow, SqliteValue,
+        HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost,
+        RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost,
+        SqliteRow as HostSqliteRow, SqliteValue,
     };
     use operit_store::sqliteParams;
     use operit_store::RuntimeStorageHost::{
@@ -1328,7 +1383,12 @@ mod tests {
         }
     }
 
-    fn insertChatMessage(database: &AppDatabase, chatId: &str, timestamp: i64, content: &str) -> i64 {
+    fn insertChatMessage(
+        database: &AppDatabase,
+        chatId: &str,
+        timestamp: i64,
+        content: &str,
+    ) -> i64 {
         database.chatDao().insertChat(chat(chatId)).unwrap();
         database
             .messageDao()
@@ -1350,7 +1410,10 @@ mod tests {
     fn sqlMessageRowCount(database: &AppDatabase) -> i64 {
         database
             .store()
-            .queryScalar("SELECT COUNT(*) FROM sync_sql_message_rows", sqliteParams![])
+            .queryScalar(
+                "SELECT COUNT(*) FROM sync_sql_message_rows",
+                sqliteParams![],
+            )
             .unwrap()
     }
 
@@ -1416,7 +1479,9 @@ mod tests {
                 .messageDao()
                 .updateMessageContent(messageId, format!("chunk-{index}"))
                 .unwrap();
-            sourceSyncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
+            sourceSyncStore
+                .recordMessageSnapshot(chatId, timestamp)
+                .unwrap();
         }
         let operations = sourceSyncStore
             .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
@@ -1434,7 +1499,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(message.content, "chunk-50");
-        assert_eq!(targetSyncStore.localClock().unwrap().sequenceFor(&operations[0].originDeviceId), 50);
+        assert_eq!(
+            targetSyncStore
+                .localClock()
+                .unwrap()
+                .sequenceFor(&operations[0].originDeviceId),
+            50
+        );
         AppDatabase::closeDatabase();
     }
 
@@ -1465,16 +1536,26 @@ mod tests {
         let chatId = "chat-delete";
         let timestamp = 12_000;
         insertChatMessage(&sourceDatabase, chatId, timestamp, "remove-me");
-        sourceSyncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
+        sourceSyncStore
+            .recordMessageSnapshot(chatId, timestamp)
+            .unwrap();
         sourceDatabase
             .messageDao()
             .deleteMessageByTimestamp(chatId, timestamp)
             .unwrap();
-        sourceSyncStore.recordMessageDeletion(chatId, timestamp).unwrap();
+        sourceSyncStore
+            .recordMessageDeletion(chatId, timestamp)
+            .unwrap();
         let operations = sourceSyncStore
             .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
             .unwrap();
-        assert_eq!(operations.iter().map(|operation| operation.operation.as_str()).collect::<Vec<_>>(), vec!["upsert", "delete"]);
+        assert_eq!(
+            operations
+                .iter()
+                .map(|operation| operation.operation.as_str())
+                .collect::<Vec<_>>(),
+            vec!["upsert", "delete"]
+        );
         AppDatabase::closeDatabase();
 
         let (_targetPaths, targetDatabase, targetSyncStore) = openTestStore("target-delete");
@@ -1524,7 +1605,8 @@ mod tests {
     #[test]
     fn stress_many_messages_roundtrip_with_stream_compaction() {
         let _guard = DATABASE_MUTEX.lock().unwrap();
-        let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("stress-roundtrip-source");
+        let (_sourcePaths, sourceDatabase, sourceSyncStore) =
+            openTestStore("stress-roundtrip-source");
         let chatId = "chat-stress-roundtrip";
         let messageCount = 60;
         let updateRounds = 30;
@@ -1552,19 +1634,28 @@ mod tests {
                         format!("message-{messageIndex}-round-{round}"),
                     )
                     .unwrap();
-                sourceSyncStore.recordMessageSnapshot(chatId, *timestamp).unwrap();
+                sourceSyncStore
+                    .recordMessageSnapshot(chatId, *timestamp)
+                    .unwrap();
             }
         }
 
         assert_eq!(sqlOperationCount(&sourceDatabase), messageCount as i64);
         let operations = sourceSyncStore
-            .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], messageCount + 10)
+            .operationsSince(
+                &SyncClock::empty(),
+                &[CHAT_SYNC_DOMAIN.to_string()],
+                messageCount + 10,
+            )
             .unwrap();
         assert_eq!(operations.len(), messageCount);
-        assert!(operations.iter().all(|operation| operation.operation == "upsert"));
+        assert!(operations
+            .iter()
+            .all(|operation| operation.operation == "upsert"));
         AppDatabase::closeDatabase();
 
-        let (_targetPaths, targetDatabase, targetSyncStore) = openTestStore("stress-roundtrip-target");
+        let (_targetPaths, targetDatabase, targetSyncStore) =
+            openTestStore("stress-roundtrip-target");
         for operation in &operations {
             targetSyncStore.applyOperation(operation).unwrap();
         }
@@ -1620,7 +1711,9 @@ mod tests {
                         format!("message-{messageIndex}-round-{round}"),
                     )
                     .unwrap();
-                sourceSyncStore.recordMessageSnapshot(chatId, *timestamp).unwrap();
+                sourceSyncStore
+                    .recordMessageSnapshot(chatId, *timestamp)
+                    .unwrap();
             }
         }
 
@@ -1628,7 +1721,11 @@ mod tests {
         let operationRows = sqlOperationCount(&sourceDatabase);
         let messageRows = sqlMessageRowCount(&sourceDatabase);
         let operations = sourceSyncStore
-            .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], messageCount + 10)
+            .operationsSince(
+                &SyncClock::empty(),
+                &[CHAT_SYNC_DOMAIN.to_string()],
+                messageCount + 10,
+            )
             .unwrap();
         let exportedPayloadBytes = operations
             .iter()
@@ -1642,7 +1739,9 @@ mod tests {
         assert_eq!(operationRows, messageCount as i64);
         assert_eq!(messageRows, messageCount as i64);
         assert_eq!(operations.len(), messageCount);
-        assert!(operations.iter().all(|operation| operation.operation == "upsert"));
+        assert!(operations
+            .iter()
+            .all(|operation| operation.operation == "upsert"));
         AppDatabase::closeDatabase();
 
         let (_targetPaths, targetDatabase, targetSyncStore) = openTestStore("stress-ultra-target");

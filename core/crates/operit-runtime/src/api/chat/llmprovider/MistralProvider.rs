@@ -3,8 +3,8 @@ use serde_json::{json, Map, Value};
 
 use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
-use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
+use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 pub struct MistralProvider {
     inner: OpenAIProvider,
@@ -38,14 +38,22 @@ impl MistralProvider {
         }
     }
 
-    pub fn create_request_body(&self, request: &SendMessageRequest) -> Result<Value, AiServiceError> {
+    pub fn create_request_body(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
         let mut request_body = self.inner.create_request_body(request)?;
-        if let Some(messages) = request_body.get_mut("messages").and_then(Value::as_array_mut) {
+        if let Some(messages) = request_body
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+        {
             for message in messages {
                 if message.get("role").and_then(Value::as_str) != Some("assistant") {
                     continue;
                 }
-                if let Some(tool_calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                if let Some(tool_calls) =
+                    message.get_mut("tool_calls").and_then(Value::as_array_mut)
+                {
                     for (index, tool_call) in tool_calls.iter_mut().enumerate() {
                         let name = tool_call
                             .pointer("/function/name")
@@ -56,9 +64,13 @@ impl MistralProvider {
                             .pointer("/function/arguments")
                             .and_then(Value::as_str)
                             .unwrap_or("{}");
-                        let params = serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| json!({}));
+                        let params =
+                            serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| json!({}));
                         if let Some(object) = tool_call.as_object_mut() {
-                            object.insert("id".to_string(), json!(generate_mistral_tool_call_id(&name, &params, index)));
+                            object.insert(
+                                "id".to_string(),
+                                json!(generate_mistral_tool_call_id(&name, &params, index)),
+                            );
                         }
                     }
                 }
@@ -70,25 +82,41 @@ impl MistralProvider {
 
 #[async_trait]
 impl AIService for MistralProvider {
-    fn input_token_count(&self) -> i32 { self.inner.input_token_count() }
-    fn cached_input_token_count(&self) -> i32 { self.inner.cached_input_token_count() }
-    fn output_token_count(&self) -> i32 { self.inner.output_token_count() }
-    fn provider_model(&self) -> String { self.inner.provider_model() }
-    fn reset_token_counts(&mut self) { self.inner.reset_token_counts(); }
-    fn cancel_streaming(&mut self) { self.inner.cancel_streaming(); }
+    fn input_token_count(&self) -> i32 {
+        self.inner.input_token_count()
+    }
+    fn cached_input_token_count(&self) -> i32 {
+        self.inner.cached_input_token_count()
+    }
+    fn output_token_count(&self) -> i32 {
+        self.inner.output_token_count()
+    }
+    fn provider_model(&self) -> String {
+        self.inner.provider_model()
+    }
+    fn reset_token_counts(&mut self) {
+        self.inner.reset_token_counts();
+    }
+    fn cancel_streaming(&mut self) {
+        self.inner.cancel_streaming();
+    }
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let request_body = self.create_request_body(&request)?;
-        self.inner.send_prepared_request(request, request_body).await
+        self.inner
+            .send_prepared_request(request, request_body)
+            .await
     }
     async fn calculate_input_tokens(
         &self,
         chat_history: &[crate::core::chat::hooks::PromptTurn::PromptTurn],
         available_tools: &[crate::data::model::ToolPrompt::ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        self.inner.calculate_input_tokens(chat_history, available_tools).await
+        self.inner
+            .calculate_input_tokens(chat_history, available_tools)
+            .await
     }
 }
 
@@ -98,7 +126,11 @@ fn generate_mistral_tool_call_id(tool_name: &str, params: &Value, index: usize) 
     for unit in raw.encode_utf16() {
         hash = hash.wrapping_mul(31).wrapping_add(unit as i32);
     }
-    let positive = if hash == i32::MIN { 0 } else { hash.abs() as u32 };
+    let positive = if hash == i32::MIN {
+        0
+    } else {
+        hash.abs() as u32
+    };
     let mut base = to_base36(positive)
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())

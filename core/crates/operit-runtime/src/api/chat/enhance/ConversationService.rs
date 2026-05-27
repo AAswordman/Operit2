@@ -7,10 +7,8 @@ use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::api::chat::llmprovider::AIService::{
     collect_stream_chunks, AiServiceError, SendMessageRequest,
 };
-use crate::core::chat::hooks::SummaryHookRegistry::{
-    SummaryHookContext, SummaryHookRegistry,
-};
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::core::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::ModelParameter::ModelParameter;
@@ -108,8 +106,8 @@ impl ConversationService {
             .iter()
             .any(|turn| turn.kind == PromptTurnKind::SYSTEM)
         {
-            let system_prompt = system_prompt_composer
-                .get_system_prompt_with_custom_prompts(&request, use_english);
+            let system_prompt =
+                system_prompt_composer.get_system_prompt_with_custom_prompts(&request, use_english);
             let final_system_prompt = build_final_system_prompt(
                 &request.avatar_mood_rules_text,
                 &system_prompt,
@@ -210,14 +208,14 @@ impl ConversationService {
         chat_history
             .iter()
             .map(|turn| match turn.kind {
-                PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL | PromptTurnKind::TOOL_RESULT => {
-                    PromptTurn {
-                        kind: turn.kind.clone(),
-                        content: self.normalize_tool_result_markup_for_model(&turn.content),
-                        tool_name: turn.tool_name.clone(),
-                        metadata: turn.metadata.clone(),
-                    }
-                }
+                PromptTurnKind::ASSISTANT
+                | PromptTurnKind::TOOL_CALL
+                | PromptTurnKind::TOOL_RESULT => PromptTurn {
+                    kind: turn.kind.clone(),
+                    content: self.normalize_tool_result_markup_for_model(&turn.content),
+                    tool_name: turn.tool_name.clone(),
+                    metadata: turn.metadata.clone(),
+                },
                 _ => turn.clone(),
             })
             .collect()
@@ -244,8 +242,9 @@ impl ConversationService {
         let mut segments = Vec::new();
         for tag in xml_tags {
             let tag_name = tag.get(0).cloned().unwrap_or_default();
-            let normalized_tag_name = ChatMarkupRegex::normalize_tool_like_tag_name(Some(&tag_name))
-                .unwrap_or_else(|| tag_name.clone());
+            let normalized_tag_name =
+                ChatMarkupRegex::normalize_tool_like_tag_name(Some(&tag_name))
+                    .unwrap_or_else(|| tag_name.clone());
             let tag_content = tag.get(1).cloned().unwrap_or_default();
 
             match normalized_tag_name.as_str() {
@@ -379,11 +378,14 @@ impl ConversationService {
         let mut summaryPrompt = FunctionalPrompts::summaryUserMessage(useEnglish).to_string();
         let baseSummaryMetadata = std::collections::HashMap::from([
             ("providerModel".to_string(), json!(providerModel)),
-            ("sourceMessageCount".to_string(), json!(summaryHistory.len())),
+            (
+                "sourceMessageCount".to_string(),
+                json!(summaryHistory.len()),
+            ),
         ]);
 
-        let beforePrepareContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(
-            SummaryHookContext {
+        let beforePrepareContext =
+            SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "before_prepare_summary_prompt".to_string(),
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary.clone(),
@@ -394,15 +396,14 @@ impl ConversationService {
                 summary_result: None,
                 model_parameters: serializedModelParameters.clone(),
                 metadata: baseSummaryMetadata.clone(),
-            },
-        );
+            });
         summaryHistory = beforePrepareContext.chat_history;
-        systemPrompt = beforePrepareContext
-            .system_prompt
-            .expect("SummaryHookContext.system_prompt must be present after before_prepare_summary_prompt");
-        summaryPrompt = beforePrepareContext
-            .summary_prompt
-            .expect("SummaryHookContext.summary_prompt must be present after before_prepare_summary_prompt");
+        systemPrompt = beforePrepareContext.system_prompt.expect(
+            "SummaryHookContext.system_prompt must be present after before_prepare_summary_prompt",
+        );
+        summaryPrompt = beforePrepareContext.summary_prompt.expect(
+            "SummaryHookContext.summary_prompt must be present after before_prepare_summary_prompt",
+        );
         let mut preparedHistory = if beforePrepareContext.prepared_history.is_empty() {
             buildSummaryPreparedHistory(
                 systemPrompt.clone(),
@@ -414,8 +415,8 @@ impl ConversationService {
         };
 
         let beforeSendBasePreparedHistory = preparedHistory.clone();
-        let beforeSendContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(
-            SummaryHookContext {
+        let beforeSendContext =
+            SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "before_send_to_model".to_string(),
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary.clone(),
@@ -433,8 +434,7 @@ impl ConversationService {
                     );
                     metadata
                 },
-            },
-        );
+            });
         summaryHistory = beforeSendContext.chat_history;
         systemPrompt = beforeSendContext
             .system_prompt
@@ -468,8 +468,7 @@ impl ConversationService {
                 .await?
         };
         let summaryChunks = collect_stream_chunks(summaryStream);
-        let mut summaryContent =
-            removeThinkingContent(&summaryChunks.join("").trim().to_string());
+        let mut summaryContent = removeThinkingContent(&summaryChunks.join("").trim().to_string());
         let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
             let service = summaryService.lock().await;
             (
@@ -479,8 +478,8 @@ impl ConversationService {
             )
         };
 
-        let afterGenerateContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(
-            SummaryHookContext {
+        let afterGenerateContext =
+            SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "after_generate_summary".to_string(),
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary,
@@ -496,25 +495,18 @@ impl ConversationService {
                         "preparedMessageCount".to_string(),
                         json!(preparedHistory.len()),
                     );
-                    metadata.insert(
-                        "inputTokens".to_string(),
-                        json!(summaryInputTokens),
-                    );
+                    metadata.insert("inputTokens".to_string(), json!(summaryInputTokens));
                     metadata.insert(
                         "cachedInputTokens".to_string(),
                         json!(summaryCachedInputTokens),
                     );
-                    metadata.insert(
-                        "outputTokens".to_string(),
-                        json!(summaryOutputTokens),
-                    );
+                    metadata.insert("outputTokens".to_string(), json!(summaryOutputTokens));
                     metadata
                 },
-            },
+            });
+        summaryContent = afterGenerateContext.summary_result.expect(
+            "SummaryHookContext.summary_result must be present after after_generate_summary",
         );
-        summaryContent = afterGenerateContext
-            .summary_result
-            .expect("SummaryHookContext.summary_result must be present after after_generate_summary");
         if summaryContent.trim().is_empty() {
             return Ok("Conversation Summary: Unable to generate valid summary.".to_string());
         }
@@ -525,7 +517,11 @@ impl ConversationService {
         text.to_string()
     }
 
-    pub fn generate_package_description(&self, plugin_name: &str, tool_descriptions: &[String]) -> String {
+    pub fn generate_package_description(
+        &self,
+        plugin_name: &str,
+        tool_descriptions: &[String],
+    ) -> String {
         format!("{}\n{}", plugin_name, tool_descriptions.join("\n"))
     }
 
@@ -587,7 +583,11 @@ impl ConversationService {
         .expect("file request content regex must compile");
         file_request_content_regex
             .captures(content_body)
-            .and_then(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
+            .and_then(|captures| {
+                captures
+                    .get(1)
+                    .map(|value| value.as_str().trim().to_string())
+            })
     }
 }
 
@@ -606,8 +606,16 @@ fn build_prepare_history_metadata(
     request: &PrepareConversationHistoryRequest,
 ) -> BTreeMap<String, String> {
     let mut metadata = request.active_prompt_metadata.clone();
-    insert_option(&mut metadata, "workspacePath", request.workspace_path.as_ref());
-    insert_option(&mut metadata, "workspaceEnv", request.workspace_env.as_ref());
+    insert_option(
+        &mut metadata,
+        "workspacePath",
+        request.workspace_path.as_ref(),
+    );
+    insert_option(
+        &mut metadata,
+        "workspaceEnv",
+        request.workspace_env.as_ref(),
+    );
     insert_option(
         &mut metadata,
         "customSystemPromptTemplate",
@@ -622,7 +630,11 @@ fn build_prepare_history_metadata(
         "groupParticipantNamesText",
         request.group_participant_names_text.as_ref(),
     );
-    insert_option(&mut metadata, "proxySenderName", request.proxy_sender_name.as_ref());
+    insert_option(
+        &mut metadata,
+        "proxySenderName",
+        request.proxy_sender_name.as_ref(),
+    );
     metadata.insert(
         "hasImageRecognition".to_string(),
         request.has_image_recognition.to_string(),
@@ -643,7 +655,10 @@ fn build_prepare_history_metadata(
         "chatModelHasDirectVideo".to_string(),
         request.chat_model_has_direct_video.to_string(),
     );
-    metadata.insert("useToolCallApi".to_string(), request.use_tool_call_api.to_string());
+    metadata.insert(
+        "useToolCallApi".to_string(),
+        request.use_tool_call_api.to_string(),
+    );
     metadata.insert(
         "chatModelHasDirectImage".to_string(),
         request.chat_model_has_direct_image.to_string(),
@@ -685,14 +700,23 @@ fn serializeSummaryHookModelParameters(
                 ("id".to_string(), json!(parameter.id.clone())),
                 ("name".to_string(), json!(parameter.name.clone())),
                 ("apiName".to_string(), json!(parameter.apiName.clone())),
-                ("description".to_string(), json!(parameter.description.clone())),
+                (
+                    "description".to_string(),
+                    json!(parameter.description.clone()),
+                ),
                 ("defaultValue".to_string(), parameter.defaultValue.clone()),
                 ("currentValue".to_string(), parameter.currentValue.clone()),
                 ("isEnabled".to_string(), json!(parameter.isEnabled)),
-                ("valueType".to_string(), json!(format!("{:?}", parameter.valueType))),
+                (
+                    "valueType".to_string(),
+                    json!(format!("{:?}", parameter.valueType)),
+                ),
                 ("minValue".to_string(), json!(parameter.minValue.clone())),
                 ("maxValue".to_string(), json!(parameter.maxValue.clone())),
-                ("category".to_string(), json!(format!("{:?}", parameter.category))),
+                (
+                    "category".to_string(),
+                    json!(format!("{:?}", parameter.category)),
+                ),
                 ("isCustom".to_string(), json!(parameter.isCustom)),
             ])
         })
@@ -739,7 +763,9 @@ fn build_final_system_prompt(
 }
 
 fn replace_prompt_placeholders(prompt: &str, ai_name: &str) -> String {
-    prompt.replace("{{aiName}}", ai_name).replace("{aiName}", ai_name)
+    prompt
+        .replace("{{aiName}}", ai_name)
+        .replace("{aiName}", ai_name)
 }
 
 fn build_media_intent_prompt(media_type: &str, path: &str, user_intent: Option<&str>) -> String {

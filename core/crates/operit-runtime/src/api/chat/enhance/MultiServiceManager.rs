@@ -7,8 +7,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::api::chat::llmprovider::AIService::{AIService, AiServiceError};
 use crate::api::chat::llmprovider::AIServiceFactory::{
-    AIServiceFactory, ApiKeyProviderSpec, ProviderCreateParams, ProviderCreateRequest, ProviderServiceKind,
-    ProviderServiceSpec,
+    AIServiceFactory, ApiKeyProviderSpec, ProviderCreateParams, ProviderCreateRequest,
+    ProviderServiceKind, ProviderServiceSpec,
 };
 use crate::api::chat::llmprovider::ClaudeProvider::ClaudeProvider;
 use crate::api::chat::llmprovider::DeepseekProvider::DeepseekProvider;
@@ -17,15 +17,15 @@ use crate::api::chat::llmprovider::FourRouterProvider::FourRouterProvider;
 use crate::api::chat::llmprovider::GeminiProvider::GeminiProvider;
 use crate::api::chat::llmprovider::KimiProvider::KimiProvider;
 use crate::api::chat::llmprovider::LlamaProvider::LlamaProvider;
+use crate::api::chat::llmprovider::MNNProvider::MNNProvider;
 use crate::api::chat::llmprovider::MimoProvider::MimoProvider;
 use crate::api::chat::llmprovider::MistralProvider::MistralProvider;
-use crate::api::chat::llmprovider::MNNProvider::MNNProvider;
-use crate::api::chat::llmprovider::NvidiaAIProvider::NvidiaAIProvider;
 use crate::api::chat::llmprovider::NousPortalProvider::NousPortalProvider;
+use crate::api::chat::llmprovider::NvidiaAIProvider::NvidiaAIProvider;
 use crate::api::chat::llmprovider::OllamaProvider::OllamaProvider;
+use crate::api::chat::llmprovider::OpenAIProvider::OpenAIProvider;
 use crate::api::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesProvider;
 use crate::api::chat::llmprovider::OpenRouterProvider::OpenRouterProvider;
-use crate::api::chat::llmprovider::OpenAIProvider::OpenAIProvider;
 use crate::api::chat::llmprovider::QwenAIProvider::QwenAIProvider;
 use crate::api::chat::llmprovider::RateLimitedAIService::RateLimitedAIService;
 use crate::api::chat::llmprovider::RateLimiterRegistry::RateLimiterRegistry;
@@ -85,9 +85,7 @@ impl MultiServiceManager {
         Self::ensureInitializedLocked(&mut inner)
     }
 
-    fn ensureInitializedLocked(
-        inner: &mut MultiServiceManagerState,
-    ) -> Result<(), AiServiceError> {
+    fn ensureInitializedLocked(inner: &mut MultiServiceManagerState) -> Result<(), AiServiceError> {
         if inner.isInitialized {
             return Ok(());
         }
@@ -119,8 +117,11 @@ impl MultiServiceManager {
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
                 .first()
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let service = Self::createServiceFromConfigLocked(&inner, config, configMapping.modelIndex)?;
-            inner.serviceInstances.insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
+            let service =
+                Self::createServiceFromConfigLocked(&inner, config, configMapping.modelIndex)?;
+            inner
+                .serviceInstances
+                .insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
             if functionType == FunctionType::CHAT {
                 inner.defaultServiceKey = Some(FunctionType::CHAT);
             }
@@ -172,7 +173,14 @@ impl MultiServiceManager {
     pub fn getServiceBundleForFunction(
         &mut self,
         functionType: FunctionType,
-    ) -> Result<(ModelConfigData, Vec<ModelParameter<Value>>, SharedAIServiceHandle), AiServiceError> {
+    ) -> Result<
+        (
+            ModelConfigData,
+            Vec<ModelParameter<Value>>,
+            SharedAIServiceHandle,
+        ),
+        AiServiceError,
+    > {
         let mut inner = self
             .inner
             .lock()
@@ -193,9 +201,14 @@ impl MultiServiceManager {
             .getModelParametersForConfig(&configMapping.configId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         if !inner.serviceInstances.contains_key(&functionType) {
-            let service =
-                Self::createServiceFromConfigLocked(&inner, config.clone(), configMapping.modelIndex)?;
-            inner.serviceInstances.insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
+            let service = Self::createServiceFromConfigLocked(
+                &inner,
+                config.clone(),
+                configMapping.modelIndex,
+            )?;
+            inner
+                .serviceInstances
+                .insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
             if functionType == FunctionType::CHAT {
                 inner.defaultServiceKey = Some(FunctionType::CHAT);
             }
@@ -212,7 +225,14 @@ impl MultiServiceManager {
         &mut self,
         configId: String,
         modelIndex: i32,
-    ) -> Result<(ModelConfigData, Vec<ModelParameter<Value>>, SharedAIServiceHandle), AiServiceError> {
+    ) -> Result<
+        (
+            ModelConfigData,
+            Vec<ModelParameter<Value>>,
+            SharedAIServiceHandle,
+        ),
+        AiServiceError,
+    > {
         let mut inner = self
             .inner
             .lock()
@@ -231,7 +251,8 @@ impl MultiServiceManager {
         let normalizedIndex = modelIndex.max(0);
         let cacheKey = format!("{configId}#{normalizedIndex}");
         if !inner.customServiceInstances.contains_key(&cacheKey) {
-            let service = Self::createServiceFromConfigLocked(&inner, config.clone(), normalizedIndex)?;
+            let service =
+                Self::createServiceFromConfigLocked(&inner, config.clone(), normalizedIndex)?;
             inner
                 .customServiceInstances
                 .insert(cacheKey.clone(), Arc::new(AsyncMutex::new(service)));
@@ -691,7 +712,10 @@ impl MultiServiceManager {
             ))),
             ProviderCreateParams::MNNProvider { .. } => Ok(Box::new(MNNProvider)),
             ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
-            _ => Err(AiServiceError::ProviderNotImplemented(format!("{:?}", spec.kind))),
+            _ => Err(AiServiceError::ProviderNotImplemented(format!(
+                "{:?}",
+                spec.kind
+            ))),
         }
     }
 

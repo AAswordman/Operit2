@@ -4,11 +4,11 @@ use crate::core::chat::hooks::PromptTurn::PromptTurn;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::OpenAIModels::ModelOption;
 use crate::data::model::ToolPrompt::ToolPrompt;
-use crate::util::stream::Stream::VecStream;
 use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
     RevisableTextStreamLike,
 };
+use crate::util::stream::Stream::VecStream;
 use async_trait::async_trait;
 use serde_json::Value;
 use thiserror::Error;
@@ -86,18 +86,24 @@ pub trait AIService: Send + Sync {
     fn cancel_streaming(&mut self) {}
 
     async fn get_models_list(&self) -> Result<Vec<ModelOption>, AiServiceError> {
-        Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
+        Err(AiServiceError::ProviderNotImplemented(
+            self.provider_model(),
+        ))
     }
 
     async fn send_message(
         &mut self,
         _request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
+        Err(AiServiceError::ProviderNotImplemented(
+            self.provider_model(),
+        ))
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
-        Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
+        Err(AiServiceError::ProviderNotImplemented(
+            self.provider_model(),
+        ))
     }
 
     async fn calculate_input_tokens(
@@ -105,7 +111,9 @@ pub trait AIService: Send + Sync {
         _chat_history: &[PromptTurn],
         _available_tools: &[ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        Err(AiServiceError::ProviderNotImplemented(self.provider_model()))
+        Err(AiServiceError::ProviderNotImplemented(
+            self.provider_model(),
+        ))
     }
 
     fn release(&mut self) {}

@@ -69,11 +69,7 @@ impl ChatRuntimeHolder {
     }
 
     #[allow(non_snake_case)]
-    pub fn registerTurnSync(
-        &mut self,
-        _sourceSlot: ChatRuntimeSlot,
-        _targetSlot: ChatRuntimeSlot,
-    ) {
+    pub fn registerTurnSync(&mut self, _sourceSlot: ChatRuntimeSlot, _targetSlot: ChatRuntimeSlot) {
     }
 
     #[allow(non_snake_case)]

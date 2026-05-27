@@ -78,7 +78,8 @@ impl TokenCacheManager {
             } else {
                 calculate_tokens_for_history(&history_with_tools[..common_prefix_length])
             };
-            let new_tokens = calculate_tokens_for_history(&history_with_tools[common_prefix_length..]);
+            let new_tokens =
+                calculate_tokens_for_history(&history_with_tools[common_prefix_length..]);
             (cached_tokens, new_tokens)
         } else {
             (0, calculate_tokens_for_history(&history_with_tools))
@@ -114,10 +115,7 @@ fn history_with_tools(
     history
 }
 
-fn find_common_prefix_length(
-    current: &[(String, String)],
-    previous: &[(String, String)],
-) -> usize {
+fn find_common_prefix_length(current: &[(String, String)], previous: &[(String, String)]) -> usize {
     let mut common = 0;
     for (left, right) in current.iter().zip(previous.iter()) {
         if left == right {

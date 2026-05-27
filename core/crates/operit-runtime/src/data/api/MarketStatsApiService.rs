@@ -494,11 +494,17 @@ impl MarketStatsApiService {
         metric: &str,
         page: i32,
     ) -> Result<ArtifactProjectRankPageResponse, String> {
-        self.requestStaticJson(&["artifact-rank", &format!("{type}-{metric}-page-{page}.json")])
+        self.requestStaticJson(&[
+            "artifact-rank",
+            &format!("{type}-{metric}-page-{page}.json"),
+        ])
     }
 
     #[allow(non_snake_case)]
-    pub fn getArtifactProject(&self, projectId: &str) -> Result<ArtifactProjectDetailResponse, String> {
+    pub fn getArtifactProject(
+        &self,
+        projectId: &str,
+    ) -> Result<ArtifactProjectDetailResponse, String> {
         self.requestStaticJson(&["artifact-projects", &format!("{projectId}.json")])
     }
 
@@ -518,7 +524,11 @@ impl MarketStatsApiService {
         if status.is_success() || status.is_redirection() {
             Ok(())
         } else {
-            Err(format!("HTTP {}: {}", status.as_u16(), response.text().unwrap_or_default()))
+            Err(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                response.text().unwrap_or_default()
+            ))
         }
     }
 
@@ -544,15 +554,19 @@ impl MarketStatsApiService {
             ],
         )
         .map_err(|error| error.to_string())?;
-        let request = self
-            .githubClient
-            .get(url)
-            .header("Accept", "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json");
+        let request = self.githubClient.get(url).header(
+            "Accept",
+            "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json",
+        );
         let response = self.sendGitHub(request)?;
         let status = response.status();
         let body = response.text().map_err(|error| error.to_string())?;
         if !status.is_success() {
-            return Err(format!("HTTP {}: {}", status.as_u16(), summarizeBody(&body)));
+            return Err(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                summarizeBody(&body)
+            ));
         }
         serde_json::from_str::<GitHubIssueSearchResponse>(&body)
             .map(|response| response.items)
@@ -560,12 +574,17 @@ impl MarketStatsApiService {
     }
 
     #[allow(non_snake_case)]
-    pub fn getIssue(&self, owner: &str, repo: &str, issueNumber: i32) -> Result<GitHubIssue, String> {
+    pub fn getIssue(
+        &self,
+        owner: &str,
+        repo: &str,
+        issueNumber: i32,
+    ) -> Result<GitHubIssue, String> {
         let url = format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}");
-        let request = self
-            .githubClient
-            .get(url)
-            .header("Accept", "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json");
+        let request = self.githubClient.get(url).header(
+            "Accept",
+            "application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json",
+        );
         self.decodeGitHub(request)
     }
 
@@ -580,7 +599,10 @@ impl MarketStatsApiService {
     ) -> Result<Vec<GitHubComment>, String> {
         let url = reqwest::Url::parse_with_params(
             &format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/comments"),
-            &[("page", page.to_string()), ("per_page", perPage.to_string())],
+            &[
+                ("page", page.to_string()),
+                ("per_page", perPage.to_string()),
+            ],
         )
         .map_err(|error| error.to_string())?;
         let request = self
@@ -598,7 +620,8 @@ impl MarketStatsApiService {
         issueNumber: i32,
         body: &str,
     ) -> Result<GitHubComment, String> {
-        let url = format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/comments");
+        let url =
+            format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/comments");
         let request = self
             .githubClient
             .post(url)
@@ -614,11 +637,12 @@ impl MarketStatsApiService {
         repo: &str,
         issueNumber: i32,
     ) -> Result<Vec<GitHubReaction>, String> {
-        let url = format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
-        let request = self
-            .githubClient
-            .get(url)
-            .header("Accept", "application/vnd.github.squirrel-girl-preview+json");
+        let url =
+            format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
+        let request = self.githubClient.get(url).header(
+            "Accept",
+            "application/vnd.github.squirrel-girl-preview+json",
+        );
         self.decodeGitHub(request)
     }
 
@@ -630,11 +654,15 @@ impl MarketStatsApiService {
         issueNumber: i32,
         content: &str,
     ) -> Result<GitHubReaction, String> {
-        let url = format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
+        let url =
+            format!("{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/issues/{issueNumber}/reactions");
         let request = self
             .githubClient
             .post(url)
-            .header("Accept", "application/vnd.github.squirrel-girl-preview+json")
+            .header(
+                "Accept",
+                "application/vnd.github.squirrel-girl-preview+json",
+            )
             .json(&serde_json::json!({ "content": content }));
         self.decodeGitHub(request)
     }
@@ -649,7 +677,10 @@ impl MarketStatsApiService {
     }
 
     #[allow(non_snake_case)]
-    fn requestStaticJson<T: for<'de> Deserialize<'de>>(&self, pathSegments: &[&str]) -> Result<T, String> {
+    fn requestStaticJson<T: for<'de> Deserialize<'de>>(
+        &self,
+        pathSegments: &[&str],
+    ) -> Result<T, String> {
         let mut url = reqwest::Url::parse(STATIC_BASE_URL).map_err(|error| error.to_string())?;
         {
             let mut segments = url
@@ -667,14 +698,25 @@ impl MarketStatsApiService {
         let status = response.status();
         let body = response.text().map_err(|error| error.to_string())?;
         if !status.is_success() {
-            return Err(format!("HTTP {}: {}", status.as_u16(), summarizeBody(&body)));
+            return Err(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                summarizeBody(&body)
+            ));
         }
         serde_json::from_str::<T>(&body).map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
-    fn sendGitHub(&self, request: reqwest::blocking::RequestBuilder) -> Result<reqwest::blocking::Response, String> {
-        let request = if let Some(token) = self.githubToken.as_ref().filter(|token| !token.trim().is_empty()) {
+    fn sendGitHub(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> Result<reqwest::blocking::Response, String> {
+        let request = if let Some(token) = self
+            .githubToken
+            .as_ref()
+            .filter(|token| !token.trim().is_empty())
+        {
             request.bearer_auth(token)
         } else {
             request
@@ -691,7 +733,11 @@ impl MarketStatsApiService {
         let status = response.status();
         let body = response.text().map_err(|error| error.to_string())?;
         if !status.is_success() {
-            return Err(format!("HTTP {}: {}", status.as_u16(), summarizeBody(&body)));
+            return Err(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                summarizeBody(&body)
+            ));
         }
         serde_json::from_str::<T>(&body).map_err(|error| error.to_string())
     }
@@ -839,7 +885,10 @@ fn parseCommentJson<T: for<'de> Deserialize<'de>>(body: &str, prefix: &str) -> O
 #[allow(non_snake_case)]
 fn canonicalizeMarketSource(raw: &str) -> String {
     if let Ok(url) = reqwest::Url::parse(raw.trim()) {
-        let host = url.host_str().unwrap_or_default().trim_start_matches("www.");
+        let host = url
+            .host_str()
+            .unwrap_or_default()
+            .trim_start_matches("www.");
         let path = url.path().trim_matches('/').trim_end_matches(".git");
         return [host, path]
             .into_iter()
@@ -891,7 +940,13 @@ fn summarizeBody(body: &str) -> String {
     if body.contains("<html") || body.contains("<!DOCTYPE html") {
         return "[html body omitted]".to_string();
     }
-    body.lines().next().unwrap_or_default().trim().chars().take(180).collect()
+    body.lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(180)
+        .collect()
 }
 
 #[allow(non_snake_case)]

@@ -129,7 +129,12 @@ impl CharacterCardToolAccessResolver {
         let allowedPackages = if canUsePackageSystem {
             globalPackageNames
                 .iter()
-                .filter(|name| roleCardConfig.allowedPackages.iter().any(|allowed| allowed == *name))
+                .filter(|name| {
+                    roleCardConfig
+                        .allowedPackages
+                        .iter()
+                        .any(|allowed| allowed == *name)
+                })
                 .cloned()
                 .collect::<HashSet<_>>()
         } else {
@@ -138,7 +143,12 @@ impl CharacterCardToolAccessResolver {
         let allowedSkills = if canUsePackageSystem {
             globalSkillNames
                 .iter()
-                .filter(|name| roleCardConfig.allowedSkills.iter().any(|allowed| allowed == *name))
+                .filter(|name| {
+                    roleCardConfig
+                        .allowedSkills
+                        .iter()
+                        .any(|allowed| allowed == *name)
+                })
                 .cloned()
                 .collect::<HashSet<_>>()
         } else {
@@ -147,14 +157,20 @@ impl CharacterCardToolAccessResolver {
         let allowedMcpServers = if canUsePackageSystem {
             globalMcpServerNames
                 .iter()
-                .filter(|name| roleCardConfig.allowedMcpServers.iter().any(|allowed| allowed == *name))
+                .filter(|name| {
+                    roleCardConfig
+                        .allowedMcpServers
+                        .iter()
+                        .any(|allowed| allowed == *name)
+                })
                 .cloned()
                 .collect::<HashSet<_>>()
         } else {
             HashSet::new()
         };
-        let hasAnyAllowedExternalSource =
-            !allowedPackages.is_empty() || !allowedSkills.is_empty() || !allowedMcpServers.is_empty();
+        let hasAnyAllowedExternalSource = !allowedPackages.is_empty()
+            || !allowedSkills.is_empty()
+            || !allowedMcpServers.is_empty();
 
         ResolvedCharacterCardToolAccess {
             customEnabled: true,

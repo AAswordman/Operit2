@@ -7,7 +7,8 @@ pub const LINK_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use client::CoreLinkClient;
 pub use protocol::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
-    CoreObjectPath, CoreRequestId, CoreValue, CoreWatchRequest,
+    CoreMethodMode, CoreMethodProtocol, CoreObjectPath, CorePayloadKind, CoreRequestId, CoreValue,
+    CoreWatchInitial, CoreWatchRequest,
 };
 pub use remote::{
     PairedRemoteSession, PairedRemoteSessionRecord, PairFinishRequest, PairFinishResponse,

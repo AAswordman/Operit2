@@ -67,7 +67,10 @@ impl EndpointCompleter {
                     if pathWithoutSlash.is_empty() {
                         return format!("{endpointWithoutSlash}/v1/messages");
                     }
-                    if pathWithoutSlash.to_ascii_lowercase().ends_with("/anthropic") {
+                    if pathWithoutSlash
+                        .to_ascii_lowercase()
+                        .ends_with("/anthropic")
+                    {
                         return format!("{endpointWithoutSlash}/v1/messages");
                     }
                     if pathWithoutSlash.to_ascii_lowercase().ends_with("/v1") {

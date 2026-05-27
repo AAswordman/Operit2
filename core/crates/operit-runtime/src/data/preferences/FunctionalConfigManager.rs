@@ -152,9 +152,7 @@ impl FunctionalConfigManager {
     ) -> Result<(), FunctionalConfigError> {
         let mappingWithIndex = mapping
             .into_iter()
-            .map(|(functionType, configId)| {
-                (functionType, FunctionConfigMapping::new(configId, 0))
-            })
+            .map(|(functionType, configId)| (functionType, FunctionConfigMapping::new(configId, 0)))
             .collect();
         self.saveFunctionConfigMappingWithIndex(mappingWithIndex)
     }
@@ -190,10 +188,7 @@ impl FunctionalConfigManager {
         functionType: FunctionType,
     ) -> Result<FunctionConfigMapping, FunctionalConfigError> {
         let mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
-        Ok(mapping
-            .get(&functionType)
-            .cloned()
-            .unwrap_or_default())
+        Ok(mapping.get(&functionType).cloned().unwrap_or_default())
     }
 
     pub fn setConfigForFunction(
@@ -211,7 +206,10 @@ impl FunctionalConfigManager {
         modelIndex: i32,
     ) -> Result<(), FunctionalConfigError> {
         let mut mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
-        mapping.insert(functionType, FunctionConfigMapping::new(configId, modelIndex));
+        mapping.insert(
+            functionType,
+            FunctionConfigMapping::new(configId, modelIndex),
+        );
         self.saveFunctionConfigMappingWithIndex(mapping)
     }
 
@@ -284,7 +282,9 @@ impl FunctionalConfigManager {
             "IMAGE_RECOGNITION" => Ok(FunctionType::IMAGE_RECOGNITION),
             "AUDIO_RECOGNITION" => Ok(FunctionType::AUDIO_RECOGNITION),
             "VIDEO_RECOGNITION" => Ok(FunctionType::VIDEO_RECOGNITION),
-            _ => Err(FunctionalConfigError::UnknownFunctionType(value.to_string())),
+            _ => Err(FunctionalConfigError::UnknownFunctionType(
+                value.to_string(),
+            )),
         }
     }
 }

@@ -4,11 +4,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreObjectPath, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
+    CoreLinkError, CoreObjectPath, CoreRequestId, CoreWatchRequest,
 };
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::util::stream::RevisableTextStream::{
+    RevisableTextStream, TextStreamEventCarrier, TextStreamEventType,
+};
+use operit_runtime::util::stream::Stream::Stream;
+use operit_runtime::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -40,7 +45,10 @@ impl CoreLinkClient for LocalCoreProxy {
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         self.dispatchWatchSnapshot(request)
     }
 
@@ -56,12 +64,18 @@ impl LocalCoreProxy {
     }
 
     #[allow(non_snake_case)]
-    fn dispatchWatchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    fn dispatchWatchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         generated_dispatch_core_proxy_watch_snapshot(self, request)
     }
 
     #[allow(non_snake_case)]
-    fn dispatchWatch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+    fn dispatchWatch(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
         generated_dispatch_core_proxy_watch(self, request)
     }
 }
@@ -106,8 +120,94 @@ fn to_core_value(value: impl serde::Serialize) -> Result<Value, CoreLinkError> {
     serde_json::to_value(value).map_err(|error| CoreLinkError::internal(error.to_string()))
 }
 
-fn core_event_stream_channel() -> (tokio::sync::mpsc::UnboundedSender<CoreEvent>, CoreEventStream) {
+fn core_event_stream_channel() -> (
+    tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    CoreEventStream,
+) {
     tokio::sync::mpsc::unbounded_channel()
+}
+
+fn core_text_event_stream<S>(
+    stream_chat_id: String,
+    stream: S,
+    request: CoreWatchRequest,
+) -> CoreEventStream
+where
+    S: RevisableTextStream + Clone + Send + 'static,
+{
+    let mut text_stream = stream.clone();
+    let mut event_stream = TextStreamEventCarrier::event_channel(&stream).clone();
+    let (sender, receiver) = core_event_stream_channel();
+    let event_sender = sender.clone();
+    let event_request_id = request.requestId.clone();
+    let event_target_path = request.targetPath.clone();
+    let event_property_name = request.propertyName.clone();
+    let event_chat_id = stream_chat_id.clone();
+
+    std::thread::spawn(move || {
+        event_stream.collect(&mut |event| {
+            let value = to_core_value(match event.event_type {
+                TextStreamEventType::Savepoint => {
+                    MarkdownStreamEvent::savepoint(event_chat_id.clone(), event.id)
+                }
+                TextStreamEventType::Rollback => {
+                    MarkdownStreamEvent::rollback(event_chat_id.clone(), event.id)
+                }
+            })
+            .expect("MarkdownStreamEvent must serialize");
+            send_text_event(
+                &event_sender,
+                &event_request_id,
+                &event_target_path,
+                &event_property_name,
+                CoreEventKind::Changed,
+                value,
+            );
+        });
+    });
+
+    std::thread::spawn(move || {
+        let mut markdown_stream = MarkdownRenderEventStream::new(stream_chat_id);
+        text_stream.collect(&mut |chunk| {
+            for event in markdown_stream.pushChunk(&chunk) {
+                send_text_event(
+                    &sender,
+                    &request.requestId,
+                    &request.targetPath,
+                    &request.propertyName,
+                    CoreEventKind::Changed,
+                    to_core_value(event).expect("MarkdownStreamEvent must serialize"),
+                );
+            }
+        });
+        send_text_event(
+            &sender,
+            &request.requestId,
+            &request.targetPath,
+            &request.propertyName,
+            CoreEventKind::Completed,
+            to_core_value(markdown_stream.completed()).expect("MarkdownStreamEvent must serialize"),
+        );
+    });
+
+    receiver
+}
+
+fn send_text_event(
+    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    request_id: &CoreRequestId,
+    target_path: &CoreObjectPath,
+    property_name: &str,
+    kind: CoreEventKind,
+    value: Value,
+) {
+    let _ = sender.send(CoreEvent {
+        requestId: Some(request_id.clone()),
+        targetPath: target_path.clone(),
+        propertyName: property_name.to_string(),
+        kind,
+        value,
+    });
 }
 
 fn generated_proxy_request_id() -> String {

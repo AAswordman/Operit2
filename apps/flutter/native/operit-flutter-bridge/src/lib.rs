@@ -10,6 +10,9 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
     CoreRequestId, CoreWatchRequest,
 };
+use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
+use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -56,6 +59,11 @@ impl OperitFlutterBridge {
             .map_err(|error| error.to_string())?;
         let mut core = create_local_core(storage_root)?;
         core.localApplicationMut().onCreate()?;
+        let mainCore = core
+            .localApplicationMut()
+            .chatRuntimeHolder
+            .getCore(ChatRuntimeSlot::MAIN);
+        mainCore.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
         Ok(Self {
             runtime,
             proxyCore: Mutex::new(core),
@@ -283,9 +291,7 @@ fn bridge_call_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> S
             );
         }
         Err(error) => {
-            eprintln!(
-                "[OperitFlutterBridge] call <- err {target}.{method} id={requestId} {error}"
-            );
+            eprintln!("[OperitFlutterBridge] call <- err {target}.{method} id={requestId} {error}");
         }
     }
     json_string(&response)

@@ -31,7 +31,10 @@ impl MemorySearchSettingsPreferences {
     pub fn save(&self, config: &MemorySearchConfig) -> Result<(), PreferencesDataStoreError> {
         let encoded = serde_json::to_string(config)?;
         self.dataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("memory_search_config"), encoded.clone());
+            preferences.set(
+                &stringPreferencesKey("memory_search_config"),
+                encoded.clone(),
+            );
         })
     }
 }

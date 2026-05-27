@@ -194,7 +194,10 @@ impl MCPLocalServer {
             serverId,
             ServerConfig {
                 command: normalizedCommand,
-                args: args.into_iter().filter(|item| !item.trim().is_empty()).collect(),
+                args: args
+                    .into_iter()
+                    .filter(|item| !item.trim().is_empty())
+                    .collect(),
                 disabled,
                 autoApprove: autoApprove
                     .into_iter()
@@ -241,7 +244,10 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     pub fn getConfigFilePath(&self) -> String {
-        self.storePaths.mcp_config_path().to_string_lossy().to_string()
+        self.storePaths
+            .mcp_config_path()
+            .to_string_lossy()
+            .to_string()
     }
 
     #[allow(non_snake_case)]
@@ -280,7 +286,11 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     pub fn getPluginMetadata(&self, pluginId: &str) -> Option<PluginMetadata> {
-        self.readMCPConfig().ok()?.pluginMetadata.get(pluginId).cloned()
+        self.readMCPConfig()
+            .ok()?
+            .pluginMetadata
+            .get(pluginId)
+            .cloned()
     }
 
     #[allow(non_snake_case)]
@@ -328,7 +338,11 @@ impl MCPLocalServer {
     }
 
     #[allow(non_snake_case)]
-    pub fn cacheServerTools(&self, serverId: String, tools: Vec<CachedToolInfo>) -> Result<(), String> {
+    pub fn cacheServerTools(
+        &self,
+        serverId: String,
+        tools: Vec<CachedToolInfo>,
+    ) -> Result<(), String> {
         self.updateServerStatus(serverId, None, Some(tools), None, None)
     }
 
@@ -342,7 +356,10 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     pub fn hasValidToolCache(&self, serverId: &str) -> bool {
-        let Some(status) = self.readServerStatus().ok().and_then(|map| map.get(serverId).cloned())
+        let Some(status) = self
+            .readServerStatus()
+            .ok()
+            .and_then(|map| map.get(serverId).cloned())
         else {
             return false;
         };
@@ -459,12 +476,15 @@ impl MCPLocalServer {
         let Some(serverConfig) = parsedServerConfig else {
             return Ok(false);
         };
-        let Some(sanitizedServer) = self.sanitizeServerConfig(pluginId, serverConfig, "savePluginConfig")
+        let Some(sanitizedServer) =
+            self.sanitizeServerConfig(pluginId, serverConfig, "savePluginConfig")
         else {
             return Ok(false);
         };
         let mut config = self.readMCPConfig()?;
-        config.mcpServers.insert(pluginId.to_string(), sanitizedServer);
+        config
+            .mcpServers
+            .insert(pluginId.to_string(), sanitizedServer);
         self.writeMCPConfig(&config)?;
         Ok(true)
     }
@@ -482,7 +502,8 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     pub fn importConfigFromJson(&self, json: &str) -> Result<bool, String> {
-        let value = serde_json::from_str::<serde_json::Value>(json).map_err(|error| error.to_string())?;
+        let value =
+            serde_json::from_str::<serde_json::Value>(json).map_err(|error| error.to_string())?;
         if let Some(configValue) = value.get("mcpConfig") {
             let rawConfig = serde_json::from_value::<MCPConfig>(configValue.clone())
                 .map_err(|error| error.to_string())?;
@@ -490,8 +511,9 @@ impl MCPLocalServer {
             self.writeMCPConfig(&self.autoFillMissingMetadata(sanitized.config))?;
         }
         if let Some(statusValue) = value.get("serverStatus") {
-            let status = serde_json::from_value::<BTreeMap<String, ServerStatus>>(statusValue.clone())
-                .map_err(|error| error.to_string())?;
+            let status =
+                serde_json::from_value::<BTreeMap<String, ServerStatus>>(statusValue.clone())
+                    .map_err(|error| error.to_string())?;
             self.writeServerStatus(&status)?;
         }
         Ok(true)
@@ -591,7 +613,9 @@ impl MCPLocalServer {
         let mut sanitizedServers = BTreeMap::new();
         let mut removedServerIds = Vec::new();
         for (serverId, serverConfig) in config.mcpServers {
-            if let Some(sanitizedServer) = self.sanitizeServerConfig(&serverId, serverConfig, source) {
+            if let Some(sanitizedServer) =
+                self.sanitizeServerConfig(&serverId, serverConfig, source)
+            {
                 sanitizedServers.insert(serverId, sanitizedServer);
             } else {
                 removedServerIds.push(serverId);
@@ -695,8 +719,7 @@ impl MCPLocalServer {
             .ensure_mcp_plugins_dir()
             .map_err(|error| error.to_string())?;
         let text = serde_json::to_string_pretty(status).map_err(|error| error.to_string())?;
-        fs::write(self.storePaths.mcp_server_status_path(), text)
-            .map_err(|error| error.to_string())
+        fs::write(self.storePaths.mcp_server_status_path(), text).map_err(|error| error.to_string())
     }
 }
 

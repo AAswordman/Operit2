@@ -1,12 +1,12 @@
 use serde_json::Value;
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::ToolPackage::{
-    LocalizedText, PackageTool, PackageToolParameter, ToolPackage,
-};
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::core::tools::mcp::MCPTool::MCPTool;
 use crate::core::tools::mcp::MCPToolParameter::MCPToolParameter;
+use crate::core::tools::ToolPackage::{
+    LocalizedText, PackageTool, PackageToolParameter, ToolPackage,
+};
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

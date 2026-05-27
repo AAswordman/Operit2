@@ -246,7 +246,11 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn currentDisplayPageCount(&self) -> i32 {
-        if self.chatHistory.is_empty() { 1 } else { 1 }
+        if self.chatHistory.is_empty() {
+            1
+        } else {
+            1
+        }
     }
 
     #[allow(non_snake_case)]
@@ -315,7 +319,11 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn runCurrentChatDestructiveHistoryMutation<F>(&mut self, _staleMessage: String, mutation: F) -> bool
+    pub fn runCurrentChatDestructiveHistoryMutation<F>(
+        &mut self,
+        _staleMessage: String,
+        mutation: F,
+    ) -> bool
     where
         F: FnOnce(&mut Self, String) -> bool,
     {
@@ -357,8 +365,16 @@ impl ChatHistoryDelegate {
     ) -> Vec<ChatMessage> {
         self.getRuntimeChatHistory(chatId)
             .into_iter()
-            .filter(|message| beforeTimestampExclusive.map(|ts| message.timestamp < ts).unwrap_or(true))
-            .filter(|message| upToTimestampInclusive.map(|ts| message.timestamp <= ts).unwrap_or(true))
+            .filter(|message| {
+                beforeTimestampExclusive
+                    .map(|ts| message.timestamp < ts)
+                    .unwrap_or(true)
+            })
+            .filter(|message| {
+                upToTimestampInclusive
+                    .map(|ts| message.timestamp <= ts)
+                    .unwrap_or(true)
+            })
             .collect()
     }
 
@@ -396,7 +412,11 @@ impl ChatHistoryDelegate {
         let Some(first) = self.chatHistory.first() else {
             return false;
         };
-        let messages = self.collectOlderDisplayPagesBefore(chatId.clone(), self.currentDisplayPageCount(), first.timestamp);
+        let messages = self.collectOlderDisplayPagesBefore(
+            chatId.clone(),
+            self.currentDisplayPageCount(),
+            first.timestamp,
+        );
         if messages.is_empty() {
             return false;
         }
@@ -414,7 +434,11 @@ impl ChatHistoryDelegate {
         let Some(last) = self.chatHistory.last() else {
             return false;
         };
-        let messages = self.collectNewerDisplayPagesAfter(chatId.clone(), self.currentDisplayPageCount(), last.timestamp);
+        let messages = self.collectNewerDisplayPagesAfter(
+            chatId.clone(),
+            self.currentDisplayPageCount(),
+            last.timestamp,
+        );
         if messages.is_empty() {
             return false;
         }
@@ -546,7 +570,11 @@ impl ChatHistoryDelegate {
         }
         self.createNewChat(None, None, None, true, true, None);
         if let Some(branchId) = self.currentChatId.clone() {
-            if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == branchId) {
+            if let Some(chat) = self
+                .chatHistories
+                .iter_mut()
+                .find(|chat| chat.id == branchId)
+            {
                 chat.messages = branchMessages;
             }
             self.loadChatMessages(branchId);
@@ -554,7 +582,10 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn resolveDeletionReplacementTarget(&self, chat: ChatHistory) -> Option<ChatDeletionReplacementTarget> {
+    pub fn resolveDeletionReplacementTarget(
+        &self,
+        chat: ChatHistory,
+    ) -> Option<ChatDeletionReplacementTarget> {
         self.chatHistories
             .iter()
             .find(|candidate| candidate.id != chat.id)
@@ -565,13 +596,20 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn matchesDeletionReplacementTarget(&self, chat: &ChatHistory, target: &ChatDeletionReplacementTarget) -> bool {
+    pub fn matchesDeletionReplacementTarget(
+        &self,
+        chat: &ChatHistory,
+        target: &ChatDeletionReplacementTarget,
+    ) -> bool {
         chat.id == target.chatId
     }
 
     #[allow(non_snake_case)]
     pub fn findLatestDeletionReplacementChat(&self, chat: ChatHistory) -> Option<ChatHistory> {
-        self.chatHistories.iter().find(|candidate| candidate.id != chat.id).cloned()
+        self.chatHistories
+            .iter()
+            .find(|candidate| candidate.id != chat.id)
+            .cloned()
     }
 
     #[allow(non_snake_case)]
@@ -597,7 +635,12 @@ impl ChatHistoryDelegate {
     pub fn deleteChatHistory(&mut self, chatId: String) -> bool {
         self.prepareChatForDestructiveMutation(chatId.clone());
         if self.currentChatId.as_ref() == Some(&chatId) {
-            if let Some(currentChat) = self.chatHistories.iter().find(|chat| chat.id == chatId).cloned() {
+            if let Some(currentChat) = self
+                .chatHistories
+                .iter()
+                .find(|chat| chat.id == chatId)
+                .cloned()
+            {
                 self.moveCurrentChatAwayBeforeDeletion(currentChat);
             }
         }
@@ -628,7 +671,8 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn deleteMessageByTimestamp(&mut self, chatId: String, timestamp: i64) -> bool {
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            chat.messages.retain(|message| message.timestamp != timestamp);
+            chat.messages
+                .retain(|message| message.timestamp != timestamp);
         }
         if self.currentChatId.as_ref() == Some(&chatId) {
             self.reloadCurrentChatDisplayHistory(chatId);
@@ -649,7 +693,11 @@ impl ChatHistoryDelegate {
             return;
         };
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            if let Some(message) = chat.messages.iter_mut().find(|message| message.timestamp == timestamp) {
+            if let Some(message) = chat
+                .messages
+                .iter_mut()
+                .find(|message| message.timestamp == timestamp)
+            {
                 message.isFavorite = isFavorite;
             }
         }
@@ -671,7 +719,8 @@ impl ChatHistoryDelegate {
         }
         let timestamp = self.chatHistory[index].timestamp;
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            chat.messages.retain(|message| message.timestamp < timestamp);
+            chat.messages
+                .retain(|message| message.timestamp < timestamp);
         }
         self.reloadCurrentChatDisplayHistory(chatId);
         true
@@ -683,7 +732,11 @@ impl ChatHistoryDelegate {
             return;
         };
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            if let Some(message) = chat.messages.iter_mut().find(|message| message.timestamp == timestamp) {
+            if let Some(message) = chat
+                .messages
+                .iter_mut()
+                .find(|message| message.timestamp == timestamp)
+            {
                 message.selectedVariantIndex = selectedVariantIndex;
             }
         }
@@ -691,11 +744,22 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn addMessageVariant(&mut self, timestamp: i64, message: ChatMessage, chatIdOverride: Option<String>) -> i32 {
-        let chatId = chatIdOverride.or_else(|| self.currentChatId.clone()).expect("No active chat");
+    pub fn addMessageVariant(
+        &mut self,
+        timestamp: i64,
+        message: ChatMessage,
+        chatIdOverride: Option<String>,
+    ) -> i32 {
+        let chatId = chatIdOverride
+            .or_else(|| self.currentChatId.clone())
+            .expect("No active chat");
         let mut selectedVariantIndex = 0;
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            if let Some(existing) = chat.messages.iter_mut().find(|existing| existing.timestamp == timestamp) {
+            if let Some(existing) = chat
+                .messages
+                .iter_mut()
+                .find(|existing| existing.timestamp == timestamp)
+            {
                 existing.variantCount += 1;
                 selectedVariantIndex = existing.variantCount - 1;
             } else {
@@ -758,9 +822,18 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String, workspaceEnv: Option<String>) {
+    pub fn bindChatToWorkspace(
+        &mut self,
+        chatId: String,
+        workspace: String,
+        workspaceEnv: Option<String>,
+    ) {
         self.chatHistoryManager
-            .updateChatWorkspace(chatId.clone(), Some(workspace.clone()), workspaceEnv.clone())
+            .updateChatWorkspace(
+                chatId.clone(),
+                Some(workspace.clone()),
+                workspaceEnv.clone(),
+            )
             .expect("ChatHistoryManager.updateChatWorkspace must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.workspace = Some(workspace);
@@ -816,7 +889,12 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn renameWorkspaceAndChat(&mut self, chatId: String, newWorkspace: String, newTitle: String) {
+    pub fn renameWorkspaceAndChat(
+        &mut self,
+        chatId: String,
+        newWorkspace: String,
+        newTitle: String,
+    ) {
         self.bindChatToWorkspace(chatId.clone(), newWorkspace, None);
         self.updateChatTitle(chatId, newTitle);
     }
@@ -824,8 +902,14 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn upsertCurrentChatMessageInMemory(&mut self, message: ChatMessage) -> bool {
         self.chatHistory = self.chatHistoryFlow.value();
-        if let Some(existingIndex) = self.chatHistory.iter().position(|existing| existing.timestamp == message.timestamp) {
-            if message.contentStream.is_none() || self.chatHistory[existingIndex].contentStream.is_none() {
+        if let Some(existingIndex) = self
+            .chatHistory
+            .iter()
+            .position(|existing| existing.timestamp == message.timestamp)
+        {
+            if message.contentStream.is_none()
+                || self.chatHistory[existingIndex].contentStream.is_none()
+            {
                 self.chatHistory[existingIndex] = message;
                 self.emitChatHistoryState();
             }
@@ -865,7 +949,10 @@ impl ChatHistoryDelegate {
 
         let didUpdateVisibleMessage = self.upsertCurrentChatMessageInMemory(message.clone());
         let isVisibleNewMessage = !self.currentChatWindow.hasNewerDisplayHistory
-            && self.chatHistory.iter().any(|existing| existing.timestamp == message.timestamp);
+            && self
+                .chatHistory
+                .iter()
+                .any(|existing| existing.timestamp == message.timestamp);
 
         if didUpdateVisibleMessage {
             self.chatHistoryManager
@@ -881,7 +968,6 @@ impl ChatHistoryDelegate {
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
         }
-
     }
 
     #[allow(non_snake_case)]
@@ -907,7 +993,12 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn updateChatOrderAndGroup(&mut self, chatId: String, displayOrder: i64, group: Option<String>) {
+    pub fn updateChatOrderAndGroup(
+        &mut self,
+        chatId: String,
+        displayOrder: i64,
+        group: Option<String>,
+    ) {
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.displayOrder = displayOrder;
             chat.group = group;
@@ -916,21 +1007,37 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn updateGroupName(&mut self, oldName: String, newName: String, characterCardName: Option<String>) {
+    pub fn updateGroupName(
+        &mut self,
+        oldName: String,
+        newName: String,
+        characterCardName: Option<String>,
+    ) {
         self.chatHistoryManager
             .updateGroupName(oldName, newName, characterCardName)
             .expect("ChatHistoryManager.updateGroupName must succeed");
     }
 
     #[allow(non_snake_case)]
-    pub fn deleteGroup(&mut self, groupName: String, deleteChats: bool, characterCardName: Option<String>) {
+    pub fn deleteGroup(
+        &mut self,
+        groupName: String,
+        deleteChats: bool,
+        characterCardName: Option<String>,
+    ) {
         self.chatHistoryManager
             .deleteGroup(groupName, deleteChats, characterCardName)
             .expect("ChatHistoryManager.deleteGroup must succeed");
     }
 
     #[allow(non_snake_case)]
-    pub fn createGroup(&mut self, _groupName: String, _characterCardName: Option<String>, _characterGroupId: Option<String>) {}
+    pub fn createGroup(
+        &mut self,
+        _groupName: String,
+        _characterCardName: Option<String>,
+        _characterGroupId: Option<String>,
+    ) {
+    }
 
     #[allow(non_snake_case)]
     pub fn addSummaryMessage(
@@ -952,7 +1059,11 @@ impl ChatHistoryDelegate {
             let insertPosition = chat
                 .messages
                 .iter()
-                .position(|message| afterTimestamp.map(|ts| message.timestamp == ts).unwrap_or(false))
+                .position(|message| {
+                    afterTimestamp
+                        .map(|ts| message.timestamp == ts)
+                        .unwrap_or(false)
+                })
                 .or_else(|| {
                     beforeTimestamp.and_then(|ts| {
                         chat.messages
@@ -971,7 +1082,12 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn shouldGenerateSummary(&self, messages: Vec<ChatMessage>, currentTokens: i32, maxTokens: i32) -> bool {
+    pub fn shouldGenerateSummary(
+        &self,
+        messages: Vec<ChatMessage>,
+        currentTokens: i32,
+        maxTokens: i32,
+    ) -> bool {
         !messages.is_empty() && currentTokens >= maxTokens
     }
 

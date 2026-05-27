@@ -130,7 +130,8 @@ pub const SUMMARY_SECTION_PROGRESS_EN: &str = "[Conversation Progress & Overview
 pub const SUMMARY_SECTION_KEY_INFO_EN: &str = "[Key Information & Context]";
 
 pub const UI_CONTROLLER_PROMPT: &str = r#"You are a UI controller. Analyze the current UI state and decide the next action. Output only the action required by the controller schema."#;
-pub const UI_CONTROLLER_PROMPT_CN: &str = r#"你是 UI 控制器。请分析当前界面状态并决定下一步动作。只输出控制器格式要求的动作。"#;
+pub const UI_CONTROLLER_PROMPT_CN: &str =
+    r#"你是 UI 控制器。请分析当前界面状态并决定下一步动作。只输出控制器格式要求的动作。"#;
 
 pub const UI_AUTOMATION_AGENT_PROMPT: &str = r#"You are an Android UI automation agent. Current date: {{current_date}}.
 Rules:
@@ -172,7 +173,11 @@ pub const GROUP_ROLE_RESPONSE_PLANNER_PROMPT_CN: &str = r#"你是群聊角色发
 impl FunctionalPrompts {
     #[allow(non_snake_case)]
     pub fn summaryPrompt(use_english: bool) -> &'static str {
-        if use_english { SUMMARY_PROMPT_EN } else { SUMMARY_PROMPT }
+        if use_english {
+            SUMMARY_PROMPT_EN
+        } else {
+            SUMMARY_PROMPT
+        }
     }
 
     #[allow(non_snake_case)]
@@ -198,12 +203,20 @@ impl FunctionalPrompts {
 
     #[allow(non_snake_case)]
     pub fn fileBindingMergePrompt(use_english: bool) -> &'static str {
-        if use_english { FILE_BINDING_MERGE_PROMPT } else { FILE_BINDING_MERGE_PROMPT_CN }
+        if use_english {
+            FILE_BINDING_MERGE_PROMPT
+        } else {
+            FILE_BINDING_MERGE_PROMPT_CN
+        }
     }
 
     #[allow(non_snake_case)]
     pub fn memoryAutoCategorizeUserMessage(use_english: bool) -> &'static str {
-        if use_english { "Please categorize the memories above." } else { "请为以上记忆分类" }
+        if use_english {
+            "Please categorize the memories above."
+        } else {
+            "请为以上记忆分类"
+        }
     }
 
     #[allow(non_snake_case)]
@@ -225,7 +238,10 @@ impl FunctionalPrompts {
     }
 
     #[allow(non_snake_case)]
-    pub fn knowledgeGraphExistingFoldersPrompt(existing_folders: &[String], use_english: bool) -> String {
+    pub fn knowledgeGraphExistingFoldersPrompt(
+        existing_folders: &[String],
+        use_english: bool,
+    ) -> String {
         if existing_folders.is_empty() {
             return if use_english {
                 "No folder categories exist yet. Please create a suitable category based on the content.".to_string()
@@ -237,12 +253,18 @@ impl FunctionalPrompts {
         if use_english {
             format!("Existing folder categories (prefer reusing them):\n{joined}")
         } else {
-            format!("当前已存在的文件夹分类如下，请优先使用或参考它们来决定新知识的分类：\n{joined}")
+            format!(
+                "当前已存在的文件夹分类如下，请优先使用或参考它们来决定新知识的分类：\n{joined}"
+            )
         }
     }
 
     #[allow(non_snake_case)]
-    pub fn knowledgeGraphDuplicateTitleInstruction(title: &str, count: usize, use_english: bool) -> String {
+    pub fn knowledgeGraphDuplicateTitleInstruction(
+        title: &str,
+        count: usize,
+        use_english: bool,
+    ) -> String {
         if use_english {
             format!("Found {count} memories with the exact same title: \"{title}\". You should strongly prefer `merge` in this analysis and avoid creating another parallel `new` memory for the same fact.")
         } else {
@@ -262,12 +284,20 @@ impl FunctionalPrompts {
 
     #[allow(non_snake_case)]
     pub fn knowledgeGraphDuplicateHeader(use_english: bool) -> &'static str {
-        if use_english { "[IMPORTANT: deduplicate memories]\n" } else { "【重要指令：清理重复记忆】\n" }
+        if use_english {
+            "[IMPORTANT: deduplicate memories]\n"
+        } else {
+            "【重要指令：清理重复记忆】\n"
+        }
     }
 
     #[allow(non_snake_case)]
     pub fn summaryUserMessage(use_english: bool) -> &'static str {
-        if use_english { "Please summarize the conversation as instructed." } else { "请按照要求总结对话内容" }
+        if use_english {
+            "Please summarize the conversation as instructed."
+        } else {
+            "请按照要求总结对话内容"
+        }
     }
 
     #[allow(non_snake_case)]
@@ -291,7 +321,10 @@ impl FunctionalPrompts {
     }
 
     #[allow(non_snake_case)]
-    pub fn avatarMoodRulesText(custom_mood_definitions: &[(&str, &str)], use_english: bool) -> String {
+    pub fn avatarMoodRulesText(
+        custom_mood_definitions: &[(&str, &str)],
+        use_english: bool,
+    ) -> String {
         let mut allowed = vec!["angry", "happy", "shy", "aojiao", "cry"];
         allowed.extend(custom_mood_definitions.iter().map(|(key, _)| *key));
         let custom_section = if custom_mood_definitions.is_empty() {
@@ -299,11 +332,19 @@ impl FunctionalPrompts {
         } else {
             let mut lines = String::new();
             lines.push('\n');
-            lines.push_str(if use_english { "Custom moods (use only when the description clearly matches):\n" } else { "自定义 mood（仅在描述明显符合时使用）：\n" });
+            lines.push_str(if use_english {
+                "Custom moods (use only when the description clearly matches):\n"
+            } else {
+                "自定义 mood（仅在描述明显符合时使用）：\n"
+            });
             for (key, prompt_hint) in custom_mood_definitions {
                 lines.push_str(&format!("- {key}：{prompt_hint}\n"));
             }
-            lines.push_str(if use_english { "If both a custom mood and a base mood fit, prefer the more specific one." } else { "若自定义 mood 与基础 mood 同时适用，优先更精确的那个。" });
+            lines.push_str(if use_english {
+                "If both a custom mood and a base mood fit, prefer the more specific one."
+            } else {
+                "若自定义 mood 与基础 mood 同时适用，优先更精确的那个。"
+            });
             lines
         };
         if use_english {
@@ -333,7 +374,11 @@ impl FunctionalPrompts {
     }
 
     #[allow(non_snake_case)]
-    pub fn packageDescriptionUserPrompt(plugin_name: &str, tool_list: &str, use_english: bool) -> String {
+    pub fn packageDescriptionUserPrompt(
+        plugin_name: &str,
+        tool_list: &str,
+        use_english: bool,
+    ) -> String {
         if use_english {
             format!("Please generate a concise description for the MCP tool package named \"{plugin_name}\". This package includes the following tools:\n\n{tool_list}\n\nReturn only the description.")
         } else {
@@ -352,7 +397,11 @@ impl FunctionalPrompts {
 
     #[allow(non_snake_case)]
     pub fn uiControllerPrompt(use_english: bool) -> &'static str {
-        if use_english { UI_CONTROLLER_PROMPT } else { UI_CONTROLLER_PROMPT_CN }
+        if use_english {
+            UI_CONTROLLER_PROMPT
+        } else {
+            UI_CONTROLLER_PROMPT_CN
+        }
     }
 
     #[allow(non_snake_case)]
@@ -375,7 +424,8 @@ impl FunctionalPrompts {
         use_english: bool,
     ) -> String {
         if use_english {
-            format!(r#"You are a code search assistant.
+            format!(
+                r#"You are a code search assistant.
 Based on the previous grep_code matches, decide:
 1) which candidates should be inspected with read_file_part (by id), and
 2) improved regex queries for the next grep_code round.
@@ -393,9 +443,11 @@ Requirements:
 3) Optionally choose up to {max_read} candidate ids to read using read_file_part. If no read is needed, output an empty array.
 4) Do NOT output placeholder queries like "..." or "…". If you cannot propose concrete regex queries, output an empty queries array.
 
-Output must be a JSON object with keys "queries" (array of regex strings) and "read" (array of candidate ids)."#)
+Output must be a JSON object with keys "queries" (array of regex strings) and "read" (array of candidate ids)."#
+            )
         } else {
-            format!(r#"你是一个代码检索助手。
+            format!(
+                r#"你是一个代码检索助手。
 你需要根据上一轮 grep_code 的命中结果，决定：
 1) 是否需要用 read_file_part 进一步读取候选片段（通过候选 #id 选择），以及
 2) 下一轮 grep_code 要使用的正则 queries。
@@ -413,12 +465,19 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
 3) 可选地选择最多 {max_read} 个候选 id 用于 read_file_part；如果不需要读取，read 输出空数组。
 4) 不要输出类似 "..." / "…" 这种占位符作为 query；如果无法给出具体正则，queries 输出空数组。
 
-输出必须是一个 JSON 对象，包含 "queries"（正则字符串数组）和 "read"（候选 id 数组）两个字段。"#)
+输出必须是一个 JSON 对象，包含 "queries"（正则字符串数组）和 "read"（候选 id 数组）两个字段。"#
+            )
         }
     }
 
     #[allow(non_snake_case)]
-    pub fn grepContextSelectPrompt(intent: &str, display_path: &str, candidates_digest: &str, max_results: usize, use_english: bool) -> String {
+    pub fn grepContextSelectPrompt(
+        intent: &str,
+        display_path: &str,
+        candidates_digest: &str,
+        max_results: usize,
+        use_english: bool,
+    ) -> String {
         if use_english {
             format!("You are a code search assistant. Select the most relevant snippets from the candidates.\n\nIntent: {intent}\nSearch path: {display_path}\n\nCandidates (each starts with #id):\n{candidates_digest}\n\nRequirements:\n1) Output strict JSON only. Do not output any other text.\n2) Select up to {max_results} items and output their ids in descending relevance.\n\nOutput format: {{\"selected\":[0,1,2]}}")
         } else {
@@ -427,8 +486,16 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
     }
 
     #[allow(non_snake_case)]
-    pub fn buildMemoryAutoCategorizePrompt(existing_folders: &[String], memories_digest: &str, use_english: bool) -> String {
-        let folders_text = if existing_folders.is_empty() { String::new() } else { existing_folders.join(", ") };
+    pub fn buildMemoryAutoCategorizePrompt(
+        existing_folders: &[String],
+        memories_digest: &str,
+        use_english: bool,
+    ) -> String {
+        let folders_text = if existing_folders.is_empty() {
+            String::new()
+        } else {
+            existing_folders.join(", ")
+        };
         if use_english {
             format!("You are a knowledge classification expert. Based on memory content, assign an appropriate folder path to each memory.\n\nExisting folders: {folders_text}\n\nPlease categorize the following memories. Prefer existing folders and only create new folders when necessary.\nReturn a JSON array: [{{\"title\":\"memory title\",\"folder\":\"folder path\"}}]\n\nMemory list:\n{memories_digest}\n\nOnly return the JSON array. Do not output any other content.")
         } else {
@@ -445,7 +512,8 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
         use_english: bool,
     ) -> String {
         if use_english {
-            format!(r#"You are building a long-term memory graph from this conversation.
+            format!(
+                r#"You are building a long-term memory graph from this conversation.
 
 {duplicates_prompt_part}
 {existing_memories_prompt}
@@ -473,9 +541,11 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
 
 Existing user preferences: {current_preferences}
 
-Return only a valid JSON object. No extra text."#)
+Return only a valid JSON object. No extra text."#
+            )
         } else {
-            format!(r#"你要从对话中构建长期记忆图谱。
+            format!(
+                r#"你要从对话中构建长期记忆图谱。
 
 {duplicates_prompt_part}
 {existing_memories_prompt}
@@ -503,26 +573,47 @@ Return only a valid JSON object. No extra text."#)
 
 现有用户偏好：{current_preferences}
 
-只返回合法 JSON 对象，不要输出其他内容。"#)
+只返回合法 JSON 对象，不要输出其他内容。"#
+            )
         }
     }
 
     #[allow(non_snake_case)]
     pub fn groupRoleResponsePlannerPrompt(use_english: bool) -> &'static str {
-        if use_english { GROUP_ROLE_RESPONSE_PLANNER_PROMPT } else { GROUP_ROLE_RESPONSE_PLANNER_PROMPT_CN }
+        if use_english {
+            GROUP_ROLE_RESPONSE_PLANNER_PROMPT
+        } else {
+            GROUP_ROLE_RESPONSE_PLANNER_PROMPT_CN
+        }
     }
 
     #[allow(non_snake_case)]
-    pub fn buildGroupRoleResponsePlannerPrompt(member_lines: &str, user_text: &str, use_english: bool) -> String {
+    pub fn buildGroupRoleResponsePlannerPrompt(
+        member_lines: &str,
+        user_text: &str,
+        use_english: bool,
+    ) -> String {
         let base_prompt = Self::groupRoleResponsePlannerPrompt(use_english);
         if use_english {
-            format!("{base_prompt}\nMembers:\n{}\n\nUser message:\n{}", text_or_none(member_lines, "(none)"), text_or_none(user_text, "(user sent attachments or empty text)"))
+            format!(
+                "{base_prompt}\nMembers:\n{}\n\nUser message:\n{}",
+                text_or_none(member_lines, "(none)"),
+                text_or_none(user_text, "(user sent attachments or empty text)")
+            )
         } else {
-            format!("{base_prompt}\n成员列表：\n{}\n\n用户消息：\n{}", text_or_none(member_lines, "（无）"), text_or_none(user_text, "（用户发送了附件或空文本）"))
+            format!(
+                "{base_prompt}\n成员列表：\n{}\n\n用户消息：\n{}",
+                text_or_none(member_lines, "（无）"),
+                text_or_none(user_text, "（用户发送了附件或空文本）")
+            )
         }
     }
 }
 
 fn text_or_none<'a>(value: &'a str, empty_text: &'a str) -> &'a str {
-    if value.trim().is_empty() { empty_text } else { value }
+    if value.trim().is_empty() {
+        empty_text
+    } else {
+        value
+    }
 }
