@@ -18,15 +18,13 @@ use operit_host_windows_native::{
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("operit2 CLI host is implemented for Windows and Linux.");
 
 pub(crate) fn create_cli_application() -> OperitApplication {
-    let storePaths = RuntimeStorePaths::default();
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
-        storePaths.root_dir().to_path_buf(),
+        NativeRuntimeStorageHost::defaultRoot(),
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     OperitApplication::newWithContext(

@@ -11,6 +11,8 @@ enum NavigationEntryKind { host }
 
 enum RouteEntrySource { defaultSource, drawer, script }
 
+enum NavigationTransitionSource { defaultSource, drawer }
+
 @immutable
 class RouteSpec {
   const RouteSpec({

@@ -4,6 +4,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::data::model::Memory::{Memory, MemoryLink, MemoryTag};
+use crate::data::model::MemoryExportModel::{
+    ImportStrategy, MemoryExportData, MemoryImportResult, SerializableLink, SerializableMemory,
+};
 use operit_store::ObjectBoxStore::ObjectBox;
 use operit_store::RuntimeStorePaths::default_data_dir;
 
@@ -486,6 +489,217 @@ impl MemoryRepository {
             }
         }
         Ok(folders.into_iter().collect())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportMemoriesToJson(&self) -> Result<String, String> {
+        let memories = self
+            .memoryBox
+            .all()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|memory| !memory.isDocumentNode)
+            .collect::<Vec<_>>();
+        let memoryUuids = memories
+            .iter()
+            .map(|memory| memory.uuid.clone())
+            .collect::<HashSet<_>>();
+        let memoryUuidById = memories
+            .iter()
+            .map(|memory| (memory.id, memory.uuid.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let serializableMemories = memories
+            .into_iter()
+            .map(|memory| SerializableMemory {
+                uuid: memory.uuid,
+                title: memory.title,
+                content: memory.content,
+                contentType: memory.contentType,
+                source: memory.source,
+                credibility: memory.credibility,
+                importance: memory.importance,
+                folderPath: memory.folderPath,
+                createdAt: memory.createdAt,
+                updatedAt: memory.updatedAt,
+                tagNames: memory.tags.into_iter().map(|tag| tag.name).collect(),
+            })
+            .collect::<Vec<_>>();
+        let mut seenLinks = BTreeSet::new();
+        let mut serializableLinks = Vec::new();
+        for link in self.linkBox.all().map_err(|error| error.to_string())? {
+            let Some(sourceUuid) = memoryUuidById.get(&link.sourceMemoryId) else {
+                continue;
+            };
+            let Some(targetUuid) = memoryUuidById.get(&link.targetMemoryId) else {
+                continue;
+            };
+            if !memoryUuids.contains(sourceUuid) || !memoryUuids.contains(targetUuid) {
+                continue;
+            }
+            let key = (
+                sourceUuid.clone(),
+                targetUuid.clone(),
+                link.type_.clone(),
+                link.weight.to_bits(),
+                link.description.clone(),
+            );
+            if !seenLinks.insert(key) {
+                continue;
+            }
+            serializableLinks.push(SerializableLink {
+                sourceUuid: sourceUuid.clone(),
+                targetUuid: targetUuid.clone(),
+                type_: link.type_,
+                weight: link.weight,
+                description: link.description,
+            });
+        }
+        let exportData = MemoryExportData {
+            memories: serializableMemories,
+            links: serializableLinks,
+            exportDate: nowMillis(),
+            version: "1.0".to_string(),
+        };
+        serde_json::to_string_pretty(&exportData).map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importMemoriesFromJson(
+        &self,
+        jsonString: String,
+        strategy: ImportStrategy,
+    ) -> Result<MemoryImportResult, String> {
+        let exportData: MemoryExportData =
+            serde_json::from_str(&jsonString).map_err(|error| error.to_string())?;
+        let mut result = MemoryImportResult::default();
+        let mut uuidMap = std::collections::HashMap::<String, Memory>::new();
+
+        for serializableMemory in exportData.memories {
+            let existingMemory = self.findMemoryByUuid(&serializableMemory.uuid)?;
+            match (existingMemory, &strategy) {
+                (Some(existing), ImportStrategy::SKIP) => {
+                    result.skippedMemories += 1;
+                    uuidMap.insert(serializableMemory.uuid, existing);
+                }
+                (Some(mut existing), ImportStrategy::UPDATE) => {
+                    existing.title = serializableMemory.title;
+                    existing.content = serializableMemory.content;
+                    existing.contentType = serializableMemory.contentType;
+                    existing.source = serializableMemory.source;
+                    existing.credibility = serializableMemory.credibility;
+                    existing.importance = serializableMemory.importance;
+                    existing.folderPath =
+                        Self::normalizeFolderPath(serializableMemory.folderPath.as_deref());
+                    existing.updatedAt = nowMillis();
+                    existing.tags = buildTags(serializableMemory.tagNames);
+                    let saved = self
+                        .memoryBox
+                        .put(existing)
+                        .map_err(|error| error.to_string())?;
+                    result.updatedMemories += 1;
+                    uuidMap.insert(serializableMemory.uuid, saved);
+                }
+                (_, _) => {
+                    let sourceUuid = serializableMemory.uuid.clone();
+                    let forceNewUuid = strategy == ImportStrategy::CREATE_NEW;
+                    let memory =
+                        self.createMemoryFromSerializable(serializableMemory, forceNewUuid)?;
+                    result.newMemories += 1;
+                    uuidMap.insert(sourceUuid, memory);
+                }
+            }
+        }
+
+        for serializableLink in exportData.links {
+            let Some(sourceMemory) = uuidMap.get(&serializableLink.sourceUuid) else {
+                continue;
+            };
+            let Some(targetMemory) = uuidMap.get(&serializableLink.targetUuid) else {
+                continue;
+            };
+            if self.memoryLinkExists(sourceMemory.id, targetMemory.id, &serializableLink.type_)? {
+                continue;
+            }
+            let link = MemoryLink {
+                id: 0,
+                sourceMemoryId: sourceMemory.id,
+                targetMemoryId: targetMemory.id,
+                type_: serializableLink.type_,
+                weight: serializableLink.weight,
+                description: serializableLink.description,
+            };
+            self.linkBox.put(link).map_err(|error| error.to_string())?;
+            result.newLinks += 1;
+        }
+
+        Ok(result)
+    }
+
+    #[allow(non_snake_case)]
+    fn findMemoryByUuid(&self, uuid: &str) -> Result<Option<Memory>, String> {
+        self.memoryBox
+            .query()
+            .filter({
+                let uuid = uuid.to_string();
+                move |memory| memory.uuid == uuid
+            })
+            .build()
+            .findFirst()
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    fn createMemoryFromSerializable(
+        &self,
+        serializable: SerializableMemory,
+        forceNewUuid: bool,
+    ) -> Result<Memory, String> {
+        let now = nowMillis();
+        let memory = Memory {
+            id: 0,
+            uuid: if forceNewUuid {
+                Uuid::new_v4().to_string()
+            } else {
+                serializable.uuid
+            },
+            title: serializable.title,
+            content: serializable.content,
+            contentType: serializable.contentType,
+            source: serializable.source,
+            credibility: serializable.credibility,
+            importance: serializable.importance,
+            documentPath: None,
+            isDocumentNode: false,
+            chunkIndexFilePath: None,
+            folderPath: Self::normalizeFolderPath(serializable.folderPath.as_deref()),
+            createdAt: serializable.createdAt,
+            updatedAt: serializable.updatedAt,
+            lastAccessedAt: now,
+            tags: buildTags(serializable.tagNames),
+            properties: Vec::new(),
+        };
+        self.memoryBox
+            .put(memory)
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    fn memoryLinkExists(
+        &self,
+        sourceMemoryId: i64,
+        targetMemoryId: i64,
+        linkType: &str,
+    ) -> Result<bool, String> {
+        Ok(self
+            .linkBox
+            .all()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .any(|link| {
+                link.sourceMemoryId == sourceMemoryId
+                    && link.targetMemoryId == targetMemoryId
+                    && link.type_ == linkType
+            }))
     }
 }
 

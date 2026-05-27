@@ -1,8 +1,10 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import 'XmlCanvasSummaryComponents.dart';
 
 class ToolResultDisplay extends StatelessWidget {
   const ToolResultDisplay({
@@ -20,10 +22,6 @@ class ToolResultDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final statusColor = isSuccess
-        ? theme.colorScheme.primary
-        : theme.colorScheme.error;
     final trimmedResult = result.trim();
     final hasContent = trimmedResult.isNotEmpty;
     final summary = hasContent
@@ -33,39 +31,179 @@ class ToolResultDisplay extends StatelessWidget {
           )
         : (isSuccess ? 'Execution success' : 'Execution failed');
 
-    return Padding(
-      padding: const EdgeInsets.only(left: 24, bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          Icon(
-            Icons.subdirectory_arrow_right,
-            size: 16,
-            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-          ),
-          const SizedBox(width: 6),
-          Icon(
-            isSuccess ? Icons.check : Icons.close,
-            size: 15,
-            color: statusColor,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: CanvasToolResultRow(
+            summary: summary,
+            isSuccess: isSuccess,
+            semanticDescription: _semanticDescription(
+              toolName,
               summary,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              trimmedResult,
+              isSuccess,
+              hasContent,
+            ),
+            emphasizeSummary: !hasContent,
+            onClick: hasContent
+                ? () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (dialogContext) {
+                        return _ToolResultDetailDialog(
+                          toolName: toolName,
+                          result: result,
+                          isSuccess: isSuccess,
+                          onDismiss: () {
+                            Navigator.of(dialogContext).pop();
+                          },
+                          onCopy: () {
+                            Clipboard.setData(ClipboardData(text: result));
+                          },
+                        );
+                      },
+                    );
+                  }
+                : null,
+            onCopyClick: hasContent
+                ? () {
+                    Clipboard.setData(ClipboardData(text: result));
+                  }
+                : null,
+          ),
+        ),
+        if (isStreaming)
+          const Padding(
+            padding: EdgeInsets.only(left: 6),
+            child: StreamingCursor(),
+          ),
+      ],
+    );
+  }
+}
+
+String _semanticDescription(
+  String toolName,
+  String summary,
+  String result,
+  bool isSuccess,
+  bool hasContent,
+) {
+  final status = isSuccess ? 'Success' : 'Failed';
+  if (!hasContent) {
+    return 'Tool execution result: $toolName, $status, $summary';
+  }
+  final normalized = result.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final resultText = normalized.length <= 20
+      ? normalized
+      : '${normalized.substring(0, 20)}...';
+  return 'Tool execution result: $toolName, $status, $resultText';
+}
+
+class _ToolResultDetailDialog extends StatelessWidget {
+  const _ToolResultDetailDialog({
+    required this.toolName,
+    required this.result,
+    required this.isSuccess,
+    required this.onDismiss,
+    required this.onCopy,
+  });
+
+  final String toolName;
+  final String result;
+  final bool isSuccess;
+  final VoidCallback onDismiss;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Card(
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          color: theme.colorScheme.surface,
+          elevation: 6,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Icon(
+                      isSuccess ? Icons.check : Icons.close,
+                      size: 20,
+                      color: isSuccess
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.error,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '$toolName ${isSuccess ? 'Execution success' : 'Execution failed'}',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: theme.colorScheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: onCopy,
+                      icon: Icon(
+                        Icons.content_copy,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Divider(color: theme.colorScheme.outlineVariant, height: 1),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(
+                    minHeight: 50,
+                    maxHeight: 300,
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isSuccess
+                        ? theme.colorScheme.surfaceContainerHighest.withValues(
+                            alpha: 0.5,
+                          )
+                        : theme.colorScheme.errorContainer.withValues(
+                            alpha: 0.2,
+                          ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      result,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: onDismiss,
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
             ),
           ),
-          if (isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(left: 6),
-              child: StreamingCursor(),
-            ),
-        ],
+        ),
       ),
     );
   }

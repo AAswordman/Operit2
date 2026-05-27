@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 pub mod api;
+pub mod backup;
 pub mod dao;
 pub mod db;
 pub mod mcp;

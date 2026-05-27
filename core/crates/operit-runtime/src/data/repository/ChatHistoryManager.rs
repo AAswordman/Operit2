@@ -21,7 +21,12 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::model::MessageEntity::MessageEntity;
 use crate::data::model::MessageVariantEntity::MessageVariantEntity;
+use crate::data::model::OperitChatArchive::{
+    OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
+    ARCHIVE_TYPE, CURRENT_FORMAT_VERSION,
+};
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
+use serde::{Deserialize, Serialize};
 
 const LOCATOR_PREVIEW_CHAR_COUNT: i32 = 48;
 
@@ -205,6 +210,43 @@ impl ChatHistoryManager {
         Ok(completeHistories)
     }
 
+    fn buildOperitArchivedChat(
+        &self,
+        chatHistory: ChatHistory,
+    ) -> ChatHistoryManagerResult<OperitArchivedChat> {
+        let messageEntities = self.messageDao.getMessagesForChat(&chatHistory.id)?;
+        let mut variantsByTimestamp: HashMap<i64, Vec<MessageVariantEntity>> = HashMap::new();
+        for variant in self.messageVariantDao.getVariantsForChat(&chatHistory.id)? {
+            variantsByTimestamp
+                .entry(variant.messageTimestamp)
+                .or_default()
+                .push(variant);
+        }
+        for variants in variantsByTimestamp.values_mut() {
+            variants.sort_by_key(|variant| variant.variantIndex);
+        }
+        let archivedMessages = messageEntities
+            .into_iter()
+            .map(|messageEntity| {
+                let messageVariants = variantsByTimestamp
+                    .remove(&messageEntity.timestamp)
+                    .unwrap_or_default();
+                OperitArchivedMessage {
+                    baseMessage: ChatMessage {
+                        variantCount: messageVariants.len() as i32 + 1,
+                        ..messageEntity.toChatMessage()
+                    },
+                    variants: messageVariants
+                        .into_iter()
+                        .map(OperitArchivedMessageVariant::fromEntity)
+                        .collect(),
+                }
+            })
+            .collect();
+        OperitArchivedChat::fromChatHistory(chatHistory, archivedMessages)
+            .map_err(ChatHistoryManagerError::IllegalState)
+    }
+
     fn toChatHistory(&self, chatEntity: ChatEntity) -> ChatHistory {
         chatEntity.toChatHistory(Vec::new())
     }
@@ -292,6 +334,105 @@ impl ChatHistoryManager {
     pub fn saveChatHistory(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
         let chatId = history.id.clone();
         self.saveChatHistoryInternal(history)?;
+        self.recordChatSnapshot(&chatId)?;
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportChatHistoriesToJson(&self) -> ChatHistoryManagerResult<String> {
+        let chats = self
+            .chatHistoriesFlow
+            .value()
+            .into_iter()
+            .map(|chatHistory| self.buildOperitArchivedChat(chatHistory))
+            .collect::<ChatHistoryManagerResult<Vec<_>>>()?;
+        let archive = OperitChatArchive {
+            archiveType: ARCHIVE_TYPE.to_string(),
+            formatVersion: CURRENT_FORMAT_VERSION,
+            exportedAt: currentTimeMillis(),
+            chats,
+        };
+        serde_json::to_string_pretty(&archive)
+            .map_err(|error| ChatHistoryManagerError::IllegalState(error.to_string()))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importChatHistoriesFromJson(
+        &self,
+        jsonString: String,
+    ) -> ChatHistoryManagerResult<ChatImportResult> {
+        let archive: OperitChatArchive = serde_json::from_str(&jsonString)
+            .map_err(|error| ChatHistoryManagerError::IllegalArgument(error.to_string()))?;
+        if archive.archiveType != ARCHIVE_TYPE {
+            return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                "invalid archiveType: {}",
+                archive.archiveType
+            )));
+        }
+        if archive.formatVersion != CURRENT_FORMAT_VERSION {
+            return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                "unsupported formatVersion: {}",
+                archive.formatVersion
+            )));
+        }
+
+        let mut existingIds = self
+            .chatHistoriesFlow
+            .value()
+            .into_iter()
+            .map(|chat| chat.id)
+            .collect::<HashSet<_>>();
+        let mut counters = ImportCounters {
+            newCount: 0,
+            updatedCount: 0,
+            skippedCount: 0,
+        };
+        for archivedChat in archive.chats {
+            if archivedChat.messages.is_empty() {
+                counters.skippedCount += 1;
+                continue;
+            }
+            if existingIds.contains(&archivedChat.id) {
+                counters.updatedCount += 1;
+            } else {
+                existingIds.insert(archivedChat.id.clone());
+                counters.newCount += 1;
+            }
+            self.saveArchivedChat(archivedChat)?;
+        }
+        Ok(ChatImportResult {
+            new: counters.newCount,
+            updated: counters.updatedCount,
+            skipped: counters.skippedCount,
+        })
+    }
+
+    #[allow(non_snake_case)]
+    fn saveArchivedChat(&self, archivedChat: OperitArchivedChat) -> ChatHistoryManagerResult<()> {
+        let chatId = archivedChat.id.clone();
+        let history = archivedChat
+            .toChatHistory()
+            .map_err(ChatHistoryManagerError::IllegalArgument)?;
+        self.chatDao
+            .insertChat(ChatEntity::fromChatHistory(&history))?;
+        self.messageDao.deleteAllMessagesForChat(&chatId)?;
+        self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
+
+        let mut variants = Vec::new();
+        let messages = archivedChat
+            .messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, archivedMessage)| {
+                let baseMessage = archivedMessage.baseMessage;
+                for variant in archivedMessage.variants {
+                    variants.push(variant.toEntity(chatId.clone(), baseMessage.timestamp));
+                }
+                MessageEntity::fromChatMessage(chatId.clone(), baseMessage, index as i32, 0)
+            })
+            .collect::<Vec<_>>();
+        self.messageDao.insertMessages(messages)?;
+        self.messageVariantDao.insertVariants(variants)?;
         self.recordChatSnapshot(&chatId)?;
         Ok(())
     }
@@ -1433,7 +1574,7 @@ impl ChatHistoryManager {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct ChatImportResult {
     pub new: i32,
     pub updated: i32,

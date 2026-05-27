@@ -1,0 +1,54 @@
+{
+  "@@locale": "zh",
+  "askOperitHint": "向 Operit 提问",
+  "aiChat": "AI聊天",
+  "fullscreenInput": "全屏输入",
+  "settings": "设置",
+  "addAttachment": "添加附件",
+  "cancel": "取消",
+  "send": "发送",
+  "model": "模型",
+  "processingInput": "正在处理输入...",
+  "processingMessage": "正在处理消息...",
+  "connectingAiService": "正在连接 AI 服务...",
+  "receivingAiResponse": "正在接收 AI 响应...",
+  "receivingToolResultAiResponse": "正在接收工具执行后的 AI 响应...",
+  "summarizingMemories": "正在总结记忆...",
+  "executingPlan": "正在执行计划...",
+  "executingTool": "正在执行工具: {toolName}",
+  "@executingTool": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "processingToolResult": "正在处理工具结果: {toolName}",
+  "@processingToolResult": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolRunning": "工具执行中...",
+  "toolRunningWithName": "{toolName}: 工具执行中...",
+  "@toolRunningWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolStatusWithName": "{toolName}: {message}",
+  "@toolStatusWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  }
+}

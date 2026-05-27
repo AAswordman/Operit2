@@ -1,12 +1,14 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
 
-class TabletLayout extends StatelessWidget {
+class TabletLayout extends StatefulWidget {
   const TabletLayout({
     super.key,
     required this.content,
@@ -31,17 +33,85 @@ class TabletLayout extends StatelessWidget {
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
 
   @override
+  State<TabletLayout> createState() => _TabletLayoutState();
+}
+
+class _TabletLayoutState extends State<TabletLayout> {
+  static const Duration _sidebarWidthAnimationDuration = Duration(
+    milliseconds: 280,
+  );
+  static const Duration _sidebarContentFadeDuration = Duration(
+    milliseconds: 160,
+  );
+
+  late bool _isSidebarWidthExpanded;
+  late bool _isSidebarContentExpanded;
+  Timer? _contentSwitchTimer;
+  Timer? _widthSwitchTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _isSidebarWidthExpanded = widget.isTabletSidebarExpanded;
+    _isSidebarContentExpanded = widget.isTabletSidebarExpanded;
+  }
+
+  @override
+  void didUpdateWidget(covariant TabletLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isTabletSidebarExpanded == widget.isTabletSidebarExpanded) {
+      return;
+    }
+
+    _contentSwitchTimer?.cancel();
+    _widthSwitchTimer?.cancel();
+
+    if (widget.isTabletSidebarExpanded) {
+      setState(() {
+        _isSidebarWidthExpanded = true;
+      });
+      _contentSwitchTimer = Timer(_sidebarWidthAnimationDuration, () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isSidebarContentExpanded = true;
+        });
+      });
+    } else {
+      setState(() {
+        _isSidebarContentExpanded = false;
+      });
+      _widthSwitchTimer = Timer(_sidebarContentFadeDuration, () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isSidebarWidthExpanded = false;
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _contentSwitchTimer?.cancel();
+    _widthSwitchTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
-    final targetSidebarWidth = isTabletSidebarExpanded
-        ? tabletSidebarWidth
-        : collapsedTabletSidebarWidth;
+    final targetSidebarWidth = _isSidebarWidthExpanded
+        ? widget.tabletSidebarWidth
+        : widget.collapsedTabletSidebarWidth;
 
     return Row(
       children: <Widget>[
         AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeInOut,
+          duration: _sidebarWidthAnimationDuration,
+          curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
           decoration: BoxDecoration(
@@ -54,24 +124,29 @@ class TabletLayout extends StatelessWidget {
             ],
           ),
           clipBehavior: Clip.antiAlias,
-          child: isTabletSidebarExpanded
-              ? DrawerContent(
-                  navigationEntries: navigationEntries,
-                  selectedRouteId: selectedRouteId,
-                  isNetworkAvailable: isNetworkAvailable,
-                  networkType: networkType,
-                  appearance: appearance,
-                  onNavigationEntrySelected: onNavigationEntrySelected,
-                )
-              : CollapsedDrawerContent(
-                  navigationEntries: navigationEntries,
-                  selectedRouteId: selectedRouteId,
-                  isNetworkAvailable: isNetworkAvailable,
-                  appearance: appearance,
-                  onNavigationEntrySelected: onNavigationEntrySelected,
-                ),
+          child: AnimatedSwitcher(
+            duration: _sidebarContentFadeDuration,
+            child: _isSidebarContentExpanded
+                ? DrawerContent(
+                    key: const ValueKey<String>('expandedSidebarContent'),
+                    navigationEntries: widget.navigationEntries,
+                    selectedRouteId: widget.selectedRouteId,
+                    isNetworkAvailable: widget.isNetworkAvailable,
+                    networkType: widget.networkType,
+                    appearance: appearance,
+                    onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                  )
+                : CollapsedDrawerContent(
+                    key: const ValueKey<String>('collapsedSidebarContent'),
+                    navigationEntries: widget.navigationEntries,
+                    selectedRouteId: widget.selectedRouteId,
+                    isNetworkAvailable: widget.isNetworkAvailable,
+                    appearance: appearance,
+                    onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                  ),
+          ),
         ),
-        Expanded(child: content),
+        Expanded(child: widget.content),
       ],
     );
   }

@@ -2,6 +2,7 @@ use std::env;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Debug)]
 pub struct RuntimeStorePaths {
@@ -14,7 +15,7 @@ impl RuntimeStorePaths {
     }
 
     pub fn default() -> Self {
-        Self::new(default_data_dir())
+        Self::new(default_runtime_store_root().unwrap_or_else(default_data_dir))
     }
 
     pub fn root_dir(&self) -> &Path {
@@ -91,7 +92,27 @@ impl RuntimeStorePaths {
     }
 }
 
+#[allow(non_snake_case)]
+pub fn setDefaultRuntimeStoreRoot(root_dir: PathBuf) {
+    let holder = DEFAULT_RUNTIME_STORE_ROOT.get_or_init(|| Mutex::new(None));
+    let mut guard = holder
+        .lock()
+        .expect("default runtime store root mutex poisoned");
+    *guard = Some(root_dir);
+}
+
+fn default_runtime_store_root() -> Option<PathBuf> {
+    let holder = DEFAULT_RUNTIME_STORE_ROOT.get_or_init(|| Mutex::new(None));
+    holder
+        .lock()
+        .expect("default runtime store root mutex poisoned")
+        .clone()
+}
+
 pub fn default_data_dir() -> PathBuf {
+    if let Some(root_dir) = default_runtime_store_root() {
+        return root_dir;
+    }
     if cfg!(target_arch = "wasm32") {
         return PathBuf::from("operit2");
     }
@@ -112,6 +133,8 @@ pub fn default_data_dir() -> PathBuf {
     let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
     PathBuf::from(home).join(".local").join("share").join("operit2")
 }
+
+static DEFAULT_RUNTIME_STORE_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 #[allow(non_snake_case)]
 #[cfg(not(target_arch = "wasm32"))]

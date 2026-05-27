@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import 'Color.dart';
+import '../../l10n/generated/app_localizations.dart';
 
 class OperitTheme extends StatelessWidget {
   const OperitTheme({super.key, required this.child});
@@ -14,16 +15,22 @@ class OperitTheme extends StatelessWidget {
     return MaterialApp(
       title: 'Operit',
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData(
         colorScheme: _lightColorScheme,
         scaffoldBackgroundColor: _lightColorScheme.surface,
         canvasColor: _lightColorScheme.surface,
+        fontFamily: _fontFamily,
+        fontFamilyFallback: _fontFamilyFallback,
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
         colorScheme: _darkColorScheme,
         scaffoldBackgroundColor: _darkColorScheme.surface,
         canvasColor: _darkColorScheme.surface,
+        fontFamily: _fontFamily,
+        fontFamilyFallback: _fontFamilyFallback,
         useMaterial3: true,
       ),
       themeMode: ThemeMode.light,
@@ -31,6 +38,18 @@ class OperitTheme extends StatelessWidget {
     );
   }
 }
+
+const String _fontFamily = 'Microsoft YaHei UI';
+
+const List<String> _fontFamilyFallback = <String>[
+  'Segoe UI',
+  'Microsoft YaHei',
+  'SimHei',
+  'Noto Sans CJK SC',
+  'Source Han Sans SC',
+  'Roboto',
+  'Arial',
+];
 
 const ColorScheme _darkColorScheme = ColorScheme.dark(
   primary: purple80,

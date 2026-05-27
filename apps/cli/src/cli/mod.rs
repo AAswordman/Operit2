@@ -61,6 +61,7 @@ mod people;
 mod prefs;
 mod skill;
 mod tag;
+mod transfer;
 
 pub(crate) use chat::{
     build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
@@ -81,6 +82,7 @@ use people::{run_active_prompt_command, run_character_command, run_group_command
 use prefs::run_prefs_command;
 use skill::{read_skill_content_arg, run_skill_command};
 use tag::run_tag_command;
+use transfer::{run_backup_command, run_export_command, run_import_command};
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -107,6 +109,9 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "prefs" => run_prefs_command(&mut core, &args[1..]).await,
         "host" => run_host_command(&mut core, &args[1..]).await,
         "memory" => run_memory_command(&mut core, &args[1..]).await,
+        "export" => run_export_command(&mut core, &args[1..]).await,
+        "import" => run_import_command(&mut core, &args[1..]).await,
+        "backup" => run_backup_command(&mut core, &args[1..]).await,
         "chat" => run_chat_command_with_core(&mut core, &args[1..]).await,
         "shell" => {
             let mut shell_args = vec!["shell".to_string()];
@@ -144,6 +149,9 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         "prefs" => run_prefs_command(&mut core, &args[1..]).await,
         "host" => run_host_command(&mut core, &args[1..]).await,
         "memory" => run_memory_command(&mut core, &args[1..]).await,
+        "export" => run_export_command(&mut core, &args[1..]).await,
+        "import" => run_import_command(&mut core, &args[1..]).await,
+        "backup" => run_backup_command(&mut core, &args[1..]).await,
         "chat" => run_chat_command_with_core(&mut core, &args[1..]).await,
         "shell" => {
             let mut shell_args = vec!["shell".to_string()];
@@ -191,8 +199,8 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|memory|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|link|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|memory|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|link|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -203,6 +211,9 @@ fn print_cli_usage() {
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history>");
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli memory <profile|kv|item>");
+    println!("operit2 cli export <memory|chat|snapshot>");
+    println!("operit2 cli import <memory|chat|snapshot>");
+    println!("operit2 cli backup <create|restore|inspect>");
     println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     println!("operit2 cli tag <list|show|create|update|delete>");
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
@@ -235,7 +246,7 @@ fn print_cli_usage() {
 }
 
 fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|memory|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
     println!("operit2 cli link run <session> <version|chat>");
 }
 

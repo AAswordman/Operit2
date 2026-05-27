@@ -19,6 +19,10 @@ class OperitChatRuntime {
       'currentChatIdFlow',
     );
     final chatHistory = await bridge.watch(mainTargetPath, 'chatHistoryFlow');
+    final chatHistories = await bridge.watch(
+      mainTargetPath,
+      'chatHistoriesFlow',
+    );
     final isLoading = await bridge.call(
       CoreCallRequest(
         requestId: _requestId(),
@@ -40,14 +44,63 @@ class OperitChatRuntime {
         (json) => _messageFromSnapshotJson(json),
       ),
     );
+    final currentChatMetadata = _currentChatMetadataFromSnapshot(
+      currentChatId.value as String?,
+      (chatHistories.value as List<Object?>).cast<Map<String, Object?>>(),
+    );
+    final activeCharacterCardName = await _activeCharacterCardName();
     return ChatRuntimeSnapshot(
       currentChatId: currentChatId.value as String?,
+      currentChatTitle: currentChatMetadata.title,
+      currentCharacterCardName: currentChatMetadata.characterCardName,
+      activeCharacterCardName: activeCharacterCardName,
       isLoading: isLoading as bool,
       inputProcessingState: ChatInputProcessingState.fromJson(
         inputProcessingState,
       ),
       messages: messages,
     );
+  }
+
+  ChatRuntimeChatMetadata _currentChatMetadataFromSnapshot(
+    String? currentChatId,
+    List<Map<String, Object?>> chatHistories,
+  ) {
+    for (final history in chatHistories) {
+      if (history['id'] == currentChatId) {
+        return ChatRuntimeChatMetadata(
+          title: history['title'] as String,
+          characterCardName: history['characterCardName'] as String?,
+        );
+      }
+    }
+    return const ChatRuntimeChatMetadata(title: '', characterCardName: null);
+  }
+
+  Future<String?> _activeCharacterCardName() async {
+    final activePrompt = await bridge.call(
+      CoreCallRequest(
+        requestId: _requestId(),
+        targetPath: CoreObjectPath.parse('preferences.activePromptManager'),
+        methodName: 'getActivePrompt',
+        args: const {},
+      ),
+    );
+    final prompt = activePrompt as Map<String, Object?>;
+    final characterCard = prompt['CharacterCard'] as Map<String, Object?>?;
+    if (characterCard == null) {
+      return null;
+    }
+    final id = characterCard['id'] as String;
+    final card = await bridge.call(
+      CoreCallRequest(
+        requestId: _requestId(),
+        targetPath: CoreObjectPath.parse('preferences.characterCardManager'),
+        methodName: 'getCharacterCard',
+        args: {'id': id},
+      ),
+    );
+    return (card as Map<String, Object?>)['name'] as String;
   }
 
   Future<ChatRuntimeMessage> _messageFromSnapshotJson(
@@ -180,15 +233,31 @@ class OperitChatRuntime {
 class ChatRuntimeSnapshot {
   const ChatRuntimeSnapshot({
     required this.currentChatId,
+    required this.currentChatTitle,
+    required this.currentCharacterCardName,
+    required this.activeCharacterCardName,
     required this.isLoading,
     required this.inputProcessingState,
     required this.messages,
   });
 
   final String? currentChatId;
+  final String currentChatTitle;
+  final String? currentCharacterCardName;
+  final String? activeCharacterCardName;
   final bool isLoading;
   final ChatInputProcessingState inputProcessingState;
   final List<ChatRuntimeMessage> messages;
+}
+
+class ChatRuntimeChatMetadata {
+  const ChatRuntimeChatMetadata({
+    required this.title,
+    required this.characterCardName,
+  });
+
+  final String title;
+  final String? characterCardName;
 }
 
 class ChatRuntimeMessage {
@@ -274,7 +343,11 @@ class ChatMarkdownStreamState {
           return;
         }
         blocks.add(
-          ChatMarkdownBlockNode(id: blockId, nodeType: event.nodeType),
+          ChatMarkdownBlockNode(
+            id: blockId,
+            nodeType: event.nodeType,
+            headerLevel: event.headerLevel,
+          ),
         );
       case 'markdownBlockChunk':
         final block = _blockById(event.blockId);
@@ -318,10 +391,15 @@ class ChatMarkdownStreamState {
 }
 
 class ChatMarkdownBlockNode {
-  ChatMarkdownBlockNode({required this.id, required this.nodeType});
+  ChatMarkdownBlockNode({
+    required this.id,
+    required this.nodeType,
+    required this.headerLevel,
+  });
 
   final int id;
   final String? nodeType;
+  final int? headerLevel;
   final StringBuffer content = StringBuffer();
   final List<ChatMarkdownInlineNode> children = <ChatMarkdownInlineNode>[];
 }
@@ -435,6 +513,7 @@ class ChatResponseStreamEvent {
     required this.blockId,
     required this.inlineId,
     required this.nodeType,
+    required this.headerLevel,
   });
 
   factory ChatResponseStreamEvent.fromJson(Object? json) {
@@ -446,6 +525,7 @@ class ChatResponseStreamEvent {
       blockId: data['blockId'] as int?,
       inlineId: data['inlineId'] as int?,
       nodeType: data['nodeType'] as String?,
+      headerLevel: data['headerLevel'] as int?,
     );
   }
 
@@ -455,6 +535,7 @@ class ChatResponseStreamEvent {
   final int? blockId;
   final int? inlineId;
   final String? nodeType;
+  final int? headerLevel;
 
   bool get isMarkdownEvent {
     return type == 'markdownBlockStart' ||

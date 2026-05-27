@@ -1,5 +1,8 @@
 // ignore_for_file: file_names
 
+import 'package:flutter/widgets.dart';
+
+import '../../../l10n/generated/app_localizations.dart';
 import '../screens/OperitScreens.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import 'AppNavigationModels.dart';
@@ -7,10 +10,11 @@ import 'AppNavigationModels.dart';
 class AppRouteCatalog {
   const AppRouteCatalog._();
 
-  static AppNavigationModel build() {
+  static AppNavigationModel build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AppNavigationModel(
-      routes: ScreenRouteRegistry.hostRouteSpecs(),
-      navigationEntries: ScreenRouteRegistry.mainSidebarEntries(),
+      routes: ScreenRouteRegistry.hostRouteSpecs(l10n),
+      navigationEntries: ScreenRouteRegistry.mainSidebarEntries(l10n),
     );
   }
 

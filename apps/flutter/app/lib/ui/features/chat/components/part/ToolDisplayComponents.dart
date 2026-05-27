@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import 'DialogComponents.dart';
+import 'XmlCanvasSummaryComponents.dart';
 
 class CompactToolDisplay extends StatelessWidget {
   const CompactToolDisplay({
@@ -25,37 +27,26 @@ class CompactToolDisplay extends StatelessWidget {
     final theme = Theme.of(context);
     final display = normalizeToolDisplayForStrictProxy(toolName, params);
     final summary = buildParamsHeadPreview(display.params);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return _ToolDetailLauncher(
+      displayToolName: display.toolName,
+      displayParams: display.params,
+      childBuilder: (openDialog) => Row(
         children: <Widget>[
-          Icon(
-            getToolIcon(display.toolName),
-            size: 17,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            display.toolName,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (summary.isNotEmpty) ...<Widget>[
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                summary,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: textColor.withValues(alpha: 0.68),
-                ),
+          Expanded(
+            child: CanvasToolSummaryRow(
+              toolName: display.toolName,
+              summary: summary,
+              semanticDescription: buildToolSemanticDescription(
+                display.toolName,
+                display.params,
+                useByteSummary: false,
               ),
+              leadingIcon: getToolIcon(display.toolName),
+              titleColor: theme.colorScheme.primary,
+              summaryColor: textColor.withValues(alpha: 0.7),
+              onClick: display.params.trim().isEmpty ? null : openDialog,
             ),
-          ],
+          ),
           if (isStreaming)
             const Padding(
               padding: EdgeInsets.only(left: 6),
@@ -85,34 +76,24 @@ class DetailedToolDisplay extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final display = normalizeToolDisplayForStrictProxy(toolName, params);
-    final bytes = calculateToolParamsBytes(display.params);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+    return _ToolDetailLauncher(
+      displayToolName: display.toolName,
+      displayParams: display.params,
+      childBuilder: (openDialog) => Row(
         children: <Widget>[
-          Icon(
-            getToolIcon(display.toolName),
-            size: 17,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            display.toolName,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              '$bytes B',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: textColor.withValues(alpha: 0.68),
+            child: CanvasToolSummaryRow(
+              toolName: display.toolName,
+              summary: buildToolParamsSizeLabel(display.params),
+              semanticDescription: buildToolSemanticDescription(
+                display.toolName,
+                display.params,
+                useByteSummary: true,
               ),
+              leadingIcon: getToolIcon(display.toolName),
+              titleColor: theme.colorScheme.primary,
+              summaryColor: textColor.withValues(alpha: 0.7),
+              onClick: display.params.trim().isEmpty ? null : openDialog,
             ),
           ),
           if (isStreaming)
@@ -123,6 +104,96 @@ class DetailedToolDisplay extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class CodeContentWithLineNumbers extends StatelessWidget {
+  const CodeContentWithLineNumbers({
+    super.key,
+    required this.lines,
+    required this.textColor,
+  });
+
+  final List<String> lines;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (var index = 0; index < lines.length; index++)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                width: 40,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(
+                    '${index + 1}',
+                    textAlign: TextAlign.end,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  lines[index],
+                  softWrap: true,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: textColor.withValues(alpha: 0.8),
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _ToolDetailLauncher extends StatefulWidget {
+  const _ToolDetailLauncher({
+    required this.displayToolName,
+    required this.displayParams,
+    required this.childBuilder,
+  });
+
+  final String displayToolName;
+  final String displayParams;
+  final Widget Function(VoidCallback openDialog) childBuilder;
+
+  @override
+  State<_ToolDetailLauncher> createState() => _ToolDetailLauncherState();
+}
+
+class _ToolDetailLauncherState extends State<_ToolDetailLauncher> {
+  @override
+  Widget build(BuildContext context) {
+    return widget.childBuilder(() {
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return ContentDetailDialog(
+            title: '${widget.displayToolName} Tool call parameters',
+            content: widget.displayParams,
+            icon: getToolIcon(widget.displayToolName),
+            onDismiss: () {
+              Navigator.of(dialogContext).pop();
+            },
+          );
+        },
+      );
+    });
   }
 }
 
@@ -271,6 +342,21 @@ int calculateToolParamsBytes(String params) {
     0,
     (total, payload) => total + utf8.encode(payload).length,
   );
+}
+
+String buildToolParamsSizeLabel(String params) {
+  return '${calculateToolParamsBytes(params)} B';
+}
+
+String buildToolSemanticDescription(
+  String toolName,
+  String params, {
+  required bool useByteSummary,
+}) {
+  final summary = useByteSummary
+      ? buildToolParamsSizeLabel(params)
+      : buildParamsHeadPreview(params);
+  return 'Tool operation: $toolName, $summary';
 }
 
 List<String> extractParamPayloadsForSize(String params) {

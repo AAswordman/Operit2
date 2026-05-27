@@ -3,12 +3,13 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
 
-class PhoneLayout extends StatelessWidget {
+class PhoneLayout extends StatefulWidget {
   const PhoneLayout({
     super.key,
     required this.content,
@@ -35,124 +36,183 @@ class PhoneLayout extends StatelessWidget {
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
 
   @override
+  State<PhoneLayout> createState() => _PhoneLayoutState();
+}
+
+class _PhoneLayoutState extends State<PhoneLayout>
+    with SingleTickerProviderStateMixin {
+  static const double _lowBouncyDampingRatio = 0.75;
+  static const double _noBouncyDampingRatio = 1.0;
+  static const double _springStiffness = 1000;
+  static const double _composeCameraPerspective = -0.001;
+
+  late final AnimationController _drawerProgressController;
+
+  @override
+  void initState() {
+    super.initState();
+    _drawerProgressController = AnimationController.unbounded(
+      vsync: this,
+      value: widget.drawerOpen ? 1.0 : 0.0,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant PhoneLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.drawerOpen != widget.drawerOpen) {
+      _animateDrawerProgress();
+    }
+  }
+
+  @override
+  void dispose() {
+    _drawerProgressController.dispose();
+    super.dispose();
+  }
+
+  void _animateDrawerProgress() {
+    final target = widget.drawerOpen ? 1.0 : 0.0;
+    final dampingRatio = widget.drawerOpen
+        ? _lowBouncyDampingRatio
+        : _noBouncyDampingRatio;
+    final simulation = SpringSimulation(
+      SpringDescription(
+        mass: 1.0,
+        stiffness: _springStiffness,
+        damping: dampingRatio * 2 * math.sqrt(_springStiffness),
+      ),
+      _drawerProgressController.value,
+      target,
+      _drawerProgressController.velocity,
+    );
+    _drawerProgressController.animateWith(simulation);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final appearance = navigationDrawerAppearanceOf(context);
-    final drawerProgress = drawerOpen ? 1.0 : 0.0;
-    final contentTranslationX = enableNavigationAnimation
-        ? drawerWidth * (0.82 * drawerProgress)
-        : drawerWidth * drawerProgress;
-    final contentTranslationY = enableNavigationAnimation
-        ? 12.0 * drawerProgress
-        : 0.0;
-    final contentScale = enableNavigationAnimation
-        ? 1.0 - (0.08 * drawerProgress)
-        : 1.0;
-    final contentRotationY = enableNavigationAnimation
-        ? -7.0 * drawerProgress
-        : 0.0;
-    final contentCornerRadius = enableNavigationAnimation
-        ? 24.0 * drawerProgress
-        : 0.0;
-    final contentShadowElevation = enableNavigationAnimation
-        ? 18.0 * drawerProgress
-        : 0.0;
-    final drawerOffset = -drawerWidth * (1.0 - drawerProgress);
-    final sidebarElevation = enableNavigationAnimation
-        ? 16.0 * drawerProgress
-        : 3.0 * drawerProgress;
-    final drawerScale = enableNavigationAnimation
-        ? 0.92 + (0.08 * drawerProgress)
-        : 1.0;
-    final drawerContentAlpha = enableNavigationAnimation
-        ? 0.72 + (0.28 * drawerProgress)
-        : 1.0;
+    return AnimatedBuilder(
+      animation: _drawerProgressController,
+      builder: (context, _) {
+        final appearance = navigationDrawerAppearanceOf(context);
+        final drawerProgress = _drawerProgressController.value;
+        final contentTranslationX = widget.enableNavigationAnimation
+            ? widget.drawerWidth * (0.82 * drawerProgress)
+            : widget.drawerWidth * drawerProgress;
+        final contentTranslationY = widget.enableNavigationAnimation
+            ? 12.0 * drawerProgress
+            : 0.0;
+        final contentScale = widget.enableNavigationAnimation
+            ? 1.0 - (0.08 * drawerProgress)
+            : 1.0;
+        final contentRotationY = widget.enableNavigationAnimation
+            ? -7.0 * drawerProgress
+            : 0.0;
+        final contentCornerRadius = widget.enableNavigationAnimation
+            ? 24.0 * drawerProgress
+            : 0.0;
+        final contentShadowElevation = widget.enableNavigationAnimation
+            ? 18.0 * drawerProgress
+            : 0.0;
+        final drawerOffset = -widget.drawerWidth * (1.0 - drawerProgress);
+        final sidebarElevation = widget.enableNavigationAnimation
+            ? 16.0 * drawerProgress
+            : 3.0 * drawerProgress;
+        final drawerScale = widget.enableNavigationAnimation
+            ? 0.92 + (0.08 * drawerProgress)
+            : 1.0;
+        final drawerContentAlpha = widget.enableNavigationAnimation
+            ? 0.72 + (0.28 * drawerProgress)
+            : 0.8 + (0.2 * drawerProgress);
+        final clampedContentCornerRadius = math.max(
+          0.0,
+          math.min(contentCornerRadius, 30.0),
+        );
+        final clampedDrawerContentAlpha = math.max(
+          0.0,
+          math.min(drawerContentAlpha, 1.0),
+        );
 
-    final screenSize = MediaQuery.sizeOf(context);
-
-    return Stack(
-      children: <Widget>[
-        Positioned.fill(
-          child: AnimatedSlide(
-            offset: Offset(
-              contentTranslationX / screenSize.width,
-              contentTranslationY / screenSize.height,
-            ),
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.fastOutSlowIn,
-            child: Transform(
-              alignment: Alignment.centerLeft,
-              transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.001)
-                ..rotateY(contentRotationY * math.pi / 180),
-              child: AnimatedScale(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.fastOutSlowIn,
-                scale: contentScale,
-                alignment: Alignment.centerLeft,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.fastOutSlowIn,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(contentCornerRadius),
-                    boxShadow: <BoxShadow>[
-                      if (contentShadowElevation > 0)
-                        BoxShadow(
-                          blurRadius: contentShadowElevation,
-                          color: Colors.black.withValues(alpha: 0.16),
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: Transform.translate(
+                offset: Offset(contentTranslationX, contentTranslationY),
+                child: Transform(
+                  alignment: Alignment.centerLeft,
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, _composeCameraPerspective)
+                    ..rotateY(contentRotationY * math.pi / 180),
+                  child: Transform.scale(
+                    alignment: Alignment.centerLeft,
+                    scale: contentScale,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(
+                          clampedContentCornerRadius,
                         ),
-                    ],
+                        boxShadow: <BoxShadow>[
+                          if (contentShadowElevation > 0)
+                            BoxShadow(
+                              blurRadius: contentShadowElevation,
+                              color: Colors.black.withValues(alpha: 0.16),
+                            ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                          clampedContentCornerRadius,
+                        ),
+                        child: widget.content,
+                      ),
+                    ),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: content,
                 ),
               ),
             ),
-          ),
-        ),
-        if (drawerOpen)
-          Positioned.fill(
-            left: drawerWidth,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onCloseDrawer,
-              child: const ColoredBox(color: Colors.transparent),
-            ),
-          ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.fastOutSlowIn,
-          left: drawerOffset,
-          top: MediaQuery.paddingOf(context).top,
-          bottom: 0,
-          width: drawerWidth,
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.fastOutSlowIn,
-            opacity: drawerContentAlpha,
-            child: Transform.scale(
-              alignment: Alignment.centerLeft,
-              scale: drawerScale,
-              child: Material(
-                color: appearance.containerColor,
-                elevation: sidebarElevation,
-                borderRadius: const BorderRadiusDirectional.only(
-                  topEnd: Radius.circular(16),
-                  bottomEnd: Radius.circular(16),
+            if (widget.drawerOpen)
+              Positioned.fill(
+                left: widget.drawerWidth,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onCloseDrawer,
+                  child: const ColoredBox(color: Colors.transparent),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: DrawerContent(
-                  navigationEntries: navigationEntries,
-                  selectedRouteId: selectedRouteId,
-                  isNetworkAvailable: isNetworkAvailable,
-                  networkType: networkType,
-                  appearance: appearance,
-                  onNavigationEntrySelected: onNavigationEntrySelected,
+              ),
+            Positioned(
+              left: drawerOffset,
+              top: MediaQuery.paddingOf(context).top,
+              bottom: 0,
+              width: widget.drawerWidth,
+              child: Opacity(
+                opacity: clampedDrawerContentAlpha,
+                child: Transform.scale(
+                  alignment: Alignment.centerLeft,
+                  scale: drawerScale,
+                  child: Material(
+                    color: appearance.containerColor,
+                    elevation: math.max(0.0, sidebarElevation),
+                    borderRadius: const BorderRadiusDirectional.only(
+                      topEnd: Radius.circular(16),
+                      bottomEnd: Radius.circular(16),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: DrawerContent(
+                      navigationEntries: widget.navigationEntries,
+                      selectedRouteId: widget.selectedRouteId,
+                      isNetworkAvailable: widget.isNetworkAvailable,
+                      networkType: widget.networkType,
+                      appearance: appearance,
+                      onNavigationEntrySelected:
+                          widget.onNavigationEntrySelected,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }

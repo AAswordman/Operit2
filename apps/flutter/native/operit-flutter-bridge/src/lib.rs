@@ -15,7 +15,6 @@ use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
@@ -40,6 +39,16 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsWebVisitHost as NativeWebVisitHost,
 };
+#[cfg(target_arch = "wasm32")]
+use operit_host_web::{
+    WebFileSystemHost as NativeFileSystemHost,
+    WebManagedRuntimeHost as NativeManagedRuntimeHost,
+    WebRuntimeStorageHost as NativeRuntimeStorageHost,
+    WebSystemOperationHost as NativeSystemOperationHost,
+    WebWebVisitHost as NativeWebVisitHost,
+};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 pub struct OperitFlutterBridge {
     runtime: tokio::runtime::Runtime,
@@ -53,7 +62,11 @@ impl OperitFlutterBridge {
     }
 
     fn new_with_storage_root(storage_root: Option<PathBuf>) -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
+        #[cfg(target_arch = "wasm32")]
+        let mut runtimeBuilder = tokio::runtime::Builder::new_current_thread();
+        let runtime = runtimeBuilder
             .enable_all()
             .build()
             .map_err(|error| error.to_string())?;
@@ -171,7 +184,7 @@ impl OperitFlutterBridge {
 fn create_local_core(storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
     let root_dir = match storage_root {
         Some(root_dir) => root_dir,
-        None => RuntimeStorePaths::default().root_dir().to_path_buf(),
+        None => default_native_storage_root()?,
     };
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
@@ -188,7 +201,39 @@ fn create_local_core(storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, St
     Ok(LocalCoreProxy::new(application))
 }
 
-#[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
+#[cfg(any(windows, target_os = "linux"))]
+fn default_native_storage_root() -> Result<PathBuf, String> {
+    Ok(NativeRuntimeStorageHost::defaultRoot())
+}
+
+#[cfg(target_os = "android")]
+fn default_native_storage_root() -> Result<PathBuf, String> {
+    Err("Android runtime storage root must be provided by the Android host".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
+    let runtimeSqliteHost = runtimeStorageHost.clone();
+    let application = OperitApplication::newWithContext(
+        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+            Arc::new(NativeFileSystemHost::new()),
+            Arc::new(NativeWebVisitHost::new()),
+            Arc::new(NativeSystemOperationHost::new()),
+            Arc::new(NativeManagedRuntimeHost::new()),
+            runtimeStorageHost,
+            runtimeSqliteHost,
+        ),
+    );
+    Ok(LocalCoreProxy::new(application))
+}
+
+#[cfg(not(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_arch = "wasm32"
+)))]
 fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
     Err("operit flutter native runtime bridge is not available for this target".to_string())
 }
@@ -499,6 +544,56 @@ pub unsafe extern "C" fn operit_flutter_bridge_host_descriptor(
 pub unsafe extern "C" fn operit_flutter_bridge_free_string(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct OperitFlutterBridgeWasm {
+    inner: OperitFlutterBridge,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl OperitFlutterBridgeWasm {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<OperitFlutterBridgeWasm, JsValue> {
+        OperitFlutterBridge::new()
+            .map(|inner| OperitFlutterBridgeWasm { inner })
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    pub fn call(&mut self, request: &str) -> String {
+        bridge_call_json(&mut self.inner, request.as_bytes())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn watchSnapshot(&mut self, request: &str) -> String {
+        bridge_watch_snapshot_json(&mut self.inner, request.as_bytes())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn watchStream(&mut self, request: &str) -> String {
+        bridge_watch_stream_json(&mut self.inner, request.as_bytes())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn pollWatchStream(&self, subscriptionId: &str) -> String {
+        match self.inner.pollWatchStream(subscriptionId) {
+            Ok(events) => json_string(&events),
+            Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn closeWatchStream(&self, subscriptionId: &str) -> String {
+        self.inner.closeWatchStream(subscriptionId);
+        "{\"ok\":true}".to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn hostDescriptor(&self) -> String {
+        self.inner.hostDescriptor().to_string()
     }
 }
 

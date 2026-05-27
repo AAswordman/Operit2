@@ -5,6 +5,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../core/chat/OperitChatRuntime.dart';
+import '../../../../l10n/generated/app_localizations.dart';
+import '../../../main/TopBarController.dart';
+import '../../../main/components/TopBarTitleText.dart';
 import '../components/ChatScreenContent.dart';
 
 class AIChatScreen extends StatefulWidget {
@@ -35,6 +38,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
   String? _currentChatId;
   ChatMarkdownStreamState? _activeMarkdownStreamState;
   StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
+  TopBarController? _topBarController;
+  String _currentChatTitle = '';
+  String? _currentCharacterCardName;
+  String? _activeCharacterCardName;
 
   @override
   void initState() {
@@ -44,7 +51,19 @@ class _AIChatScreenState extends State<AIChatScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _topBarController = TopBarScope.of(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _updateTopBarTitle();
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    _topBarController?.clearTitleContent();
     _messageController.removeListener(_onInputChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
@@ -74,10 +93,14 @@ class _AIChatScreenState extends State<AIChatScreen> {
         _inputProcessingState = snapshot.inputProcessingState;
         _modelLabel = _resolveModelLabel(snapshot.messages);
         _currentChatId = snapshot.currentChatId;
+        _currentChatTitle = snapshot.currentChatTitle;
+        _currentCharacterCardName = snapshot.currentCharacterCardName;
+        _activeCharacterCardName = snapshot.activeCharacterCardName;
         if (!snapshot.isLoading) {
           _activeMarkdownStreamState = null;
         }
       });
+      _updateTopBarTitle();
       _scheduleScrollToBottom();
       return snapshot;
     } catch (error, stackTrace) {
@@ -290,7 +313,33 @@ class _AIChatScreenState extends State<AIChatScreen> {
             : message.modelName;
       }
     }
-    return 'Model';
+    return AppLocalizations.of(context)!.model;
+  }
+
+  void _updateTopBarTitle() {
+    final controller = _topBarController;
+    if (controller == null) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final characterCardName = _currentCharacterCardName?.trim();
+    final activeCharacterCardName = _activeCharacterCardName?.trim();
+    final primaryText =
+        characterCardName != null && characterCardName.isNotEmpty
+        ? characterCardName
+        : activeCharacterCardName != null && activeCharacterCardName.isNotEmpty
+        ? activeCharacterCardName
+        : l10n.aiChat;
+    final secondaryText = _currentChatTitle.trim();
+    controller.setTitleContent(
+      TopBarTitleContent((context) {
+        return TopBarTitleText(
+          primaryText: primaryText,
+          secondaryText: secondaryText,
+          contentColor: Theme.of(context).colorScheme.onPrimary,
+        );
+      }),
+    );
   }
 
   @override

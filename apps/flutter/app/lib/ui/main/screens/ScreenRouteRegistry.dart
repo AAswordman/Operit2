@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../l10n/generated/app_localizations.dart';
 import '../navigation/AppNavigationModels.dart';
 import 'OperitScreens.dart';
 
@@ -16,17 +17,19 @@ class ScreenRouteRegistry {
         for (final screen in _hostScreens) routeIdOf(screen): screen,
       };
 
-  static List<RouteSpec> hostRouteSpecs() {
-    return _hostScreens.map(_hostSpec).toList(growable: false);
+  static List<RouteSpec> hostRouteSpecs(AppLocalizations l10n) {
+    return _hostScreens
+        .map((screen) => _hostSpec(screen, l10n))
+        .toList(growable: false);
   }
 
-  static List<NavigationEntrySpec> mainSidebarEntries() {
+  static List<NavigationEntrySpec> mainSidebarEntries(AppLocalizations l10n) {
     return <NavigationEntrySpec>[
       NavigationEntrySpec(
         entryId: 'main.ai_chat',
         routeId: routeIdOf(aiChat),
         surface: NavigationSurface.mainSidebarAi,
-        title: 'AI Chat',
+        title: l10n.aiChat,
         icon: Icons.chat_bubble_outline,
         order: 10,
       ),
@@ -56,11 +59,11 @@ class ScreenRouteRegistry {
     return screen;
   }
 
-  static RouteSpec _hostSpec(OperitScreen screen) {
+  static RouteSpec _hostSpec(OperitScreen screen, AppLocalizations l10n) {
     return RouteSpec(
       routeId: routeIdOf(screen),
       runtime: RouteRuntime.native,
-      title: screen.title,
+      title: screen is AiChatScreenRoute ? l10n.aiChat : screen.title,
       keepAlive: screen.keepAlive,
     );
   }

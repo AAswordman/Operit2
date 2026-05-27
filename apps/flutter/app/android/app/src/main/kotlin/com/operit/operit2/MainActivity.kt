@@ -1,5 +1,9 @@
 package com.operit.operit2
 
+import android.os.Build
+import android.os.Bundle
+import android.util.Log
+import android.view.Display
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -9,6 +13,16 @@ import java.nio.charset.StandardCharsets
 
 class MainActivity : FlutterActivity() {
     private var runtimeHandle: Long = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestHighestRefreshRate()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        requestHighestRefreshRate()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -97,6 +111,46 @@ class MainActivity : FlutterActivity() {
             throw IllegalStateException(OperitRuntimeNative.createError())
         }
         return runtimeHandle
+    }
+
+    private fun requestHighestRefreshRate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return
+        }
+        val display = currentDisplay() ?: return
+        val currentMode = display.mode ?: return
+        val preferredMode =
+            display.supportedModes
+                .filter {
+                    it.physicalWidth == currentMode.physicalWidth &&
+                        it.physicalHeight == currentMode.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate }
+                ?: return
+
+        if (preferredMode.modeId == currentMode.modeId) {
+            return
+        }
+
+        val attributes = window.attributes
+        if (attributes.preferredDisplayModeId == preferredMode.modeId) {
+            return
+        }
+        attributes.preferredDisplayModeId = preferredMode.modeId
+        window.attributes = attributes
+        Log.i(
+            "OperitMainActivity",
+            "Requested display mode ${preferredMode.physicalWidth}x${preferredMode.physicalHeight}@${preferredMode.refreshRate}Hz",
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentDisplay(): Display? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display
+        } else {
+            windowManager.defaultDisplay
+        }
     }
 }
 

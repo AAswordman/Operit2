@@ -9,12 +9,12 @@ import 'package:http/http.dart' as http;
 import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
-import 'MethodChannelCoreProxy.dart';
 import 'OperitRuntimeBridge.dart';
+import 'PlatformCoreProxy.dart';
 
 class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
   const ProxyCoreRuntimeBridge({
-    this.coreProxy = const MethodChannelCoreProxy(),
+    this.coreProxy = platformCoreProxy,
   });
 
   final CoreProxy coreProxy;

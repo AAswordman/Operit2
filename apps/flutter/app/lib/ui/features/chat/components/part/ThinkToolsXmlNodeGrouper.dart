@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import '../../../../../core/chat/OperitChatRuntime.dart';
+import '../../../../../util/ChatMarkupRegex.dart';
 
 sealed class MarkdownGroupedItem {
   const MarkdownGroupedItem();
@@ -125,15 +126,6 @@ List<MarkdownGroupedItem> groupThinkToolsXmlNodes(
 }
 
 String? extractXmlTagName(String xml) {
-  final tag = RegExp(
-    r'^<([a-zA-Z_][\w:-]*)\b',
-  ).firstMatch(xml.trim())?.group(1);
-  if (tag == null) {
-    return null;
-  }
-  final lower = tag.toLowerCase();
-  if (lower == 'tool-result') {
-    return 'tool_result';
-  }
-  return lower;
+  final tag = ChatMarkupRegex.extractOpeningTagName(xml);
+  return ChatMarkupRegex.normalizeToolLikeTagName(tag)?.toLowerCase();
 }

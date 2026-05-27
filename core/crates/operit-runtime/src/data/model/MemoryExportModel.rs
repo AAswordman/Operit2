@@ -21,6 +21,7 @@ pub struct SerializableMemory {
 pub struct SerializableLink {
     pub sourceUuid: String,
     pub targetUuid: String,
+    #[serde(rename = "type")]
     pub type_: String,
     pub weight: f32,
     pub description: String,

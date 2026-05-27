@@ -2,8 +2,10 @@
 
 import 'package:flutter/material.dart';
 
+import '../TopBarController.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/OperitScreens.dart';
+import 'TopBarTitleText.dart';
 
 class AppContent extends StatefulWidget {
   const AppContent({
@@ -11,9 +13,14 @@ class AppContent extends StatefulWidget {
     required this.routerState,
     required this.currentScreen,
     required this.currentRouteEntry,
+    required this.currentRouteTitle,
     required this.useTabletLayout,
     required this.isTabletSidebarExpanded,
     required this.canGoBack,
+    required this.enableNavigationAnimation,
+    required this.navigationTransitionSource,
+    required this.isNavigatingBack,
+    required this.topBarController,
     required this.onGoBack,
     required this.onNavigationButtonPressed,
   });
@@ -21,9 +28,14 @@ class AppContent extends StatefulWidget {
   final AppRouterState routerState;
   final OperitScreen currentScreen;
   final RouteEntry currentRouteEntry;
+  final String currentRouteTitle;
   final bool useTabletLayout;
   final bool isTabletSidebarExpanded;
   final bool canGoBack;
+  final bool enableNavigationAnimation;
+  final NavigationTransitionSource navigationTransitionSource;
+  final bool isNavigatingBack;
+  final TopBarController topBarController;
   final VoidCallback onGoBack;
   final VoidCallback onNavigationButtonPressed;
 
@@ -32,9 +44,19 @@ class AppContent extends StatefulWidget {
 }
 
 class _AppContentState extends State<AppContent> {
-  static const Duration _pageTransitionDuration = Duration(milliseconds: 260);
-  static const double _pageTransitionOffset = 42;
-  static const double _topBarHeight = 64;
+  static const Duration _enabledPageTransitionDuration = Duration(
+    milliseconds: 280,
+  );
+  static const Duration _disabledPageTransitionDuration = Duration(
+    milliseconds: 400,
+  );
+  static const Duration _drawerRelayTransitionDuration = Duration(
+    milliseconds: 320,
+  );
+  static const double _phonePageTransitionOffset = 20;
+  static const double _tabletPageTransitionOffset = 28;
+  static const double _phoneDrawerNavigationOffset = 30;
+  static const double _topBarHeight = 56;
   static const double _navigationIconStartPadding = 4;
   static const double _navigationIconSize = 48;
 
@@ -47,24 +69,18 @@ class _AppContentState extends State<AppContent> {
   String? _pendingRemovalKey;
   bool _isTransitioning = false;
   bool _transitionAllowsCrossfade = true;
-  bool _isNavigatingBack = false;
-  int _lastBackStackLength = 0;
 
   @override
   void initState() {
     super.initState();
     _lastObservedCurrentKey = _currentScreenKey;
     _lastObservedScreen = widget.currentScreen;
-    _lastBackStackLength = widget.routerState.backStack.length;
     _ensureScreenCached(_currentScreenKey, widget.currentScreen);
   }
 
   @override
   void didUpdateWidget(covariant AppContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final currentBackStackLength = widget.routerState.backStack.length;
-    _isNavigatingBack = currentBackStackLength < _lastBackStackLength;
-    _lastBackStackLength = currentBackStackLength;
     final currentScreenKey = _currentScreenKey;
     _ensureScreenCached(currentScreenKey, widget.currentScreen);
     _updateTransition(currentScreenKey, widget.currentScreen);
@@ -93,7 +109,7 @@ class _AppContentState extends State<AppContent> {
 
     _transitionAllowsCrossfade = canCrossfade;
     _transitionFromKey = canCrossfade ? fromKey : null;
-    _pendingRemovalKey = _isNavigatingBack ? fromKey : null;
+    _pendingRemovalKey = widget.isNavigatingBack ? fromKey : null;
     _isTransitioning = canCrossfade;
     _lastObservedCurrentKey = currentScreenKey;
     _lastObservedScreen = currentScreen;
@@ -103,7 +119,7 @@ class _AppContentState extends State<AppContent> {
       return;
     }
 
-    Future<void>.delayed(_pageTransitionDuration, () {
+    Future<void>.delayed(_activeTransitionDuration, () {
       if (!mounted) {
         return;
       }
@@ -114,6 +130,26 @@ class _AppContentState extends State<AppContent> {
         _removePendingScreen(_currentScreenKey);
       });
     });
+  }
+
+  bool get _isDrawerRelayTransition {
+    return !widget.useTabletLayout &&
+        widget.navigationTransitionSource ==
+            NavigationTransitionSource.drawer &&
+        !widget.isNavigatingBack &&
+        _transitionAllowsCrossfade;
+  }
+
+  Duration get _pageTransitionDuration {
+    return widget.enableNavigationAnimation
+        ? _enabledPageTransitionDuration
+        : _disabledPageTransitionDuration;
+  }
+
+  Duration get _activeTransitionDuration {
+    return _isDrawerRelayTransition
+        ? _drawerRelayTransitionDuration
+        : _pageTransitionDuration;
   }
 
   void _removePendingScreen(String currentScreenKey) {
@@ -151,54 +187,75 @@ class _AppContentState extends State<AppContent> {
     return SizedBox.expand(
       child: Column(
         children: <Widget>[
-          Material(
-            color: theme.colorScheme.primary,
-            child: SizedBox(
-              height: topPadding + _topBarHeight,
-              child: Padding(
-                padding: EdgeInsets.only(top: topPadding),
-                child: Row(
-                  children: <Widget>[
-                    const SizedBox(width: _navigationIconStartPadding),
-                    SizedBox(
-                      width: _navigationIconSize,
-                      height: _navigationIconSize,
-                      child: IconButton(
-                        onPressed: widget.canGoBack
-                            ? widget.onGoBack
-                            : widget.onNavigationButtonPressed,
-                        icon: Icon(
-                          widget.canGoBack
-                              ? Icons.arrow_back
-                              : widget.useTabletLayout &&
-                                    widget.isTabletSidebarExpanded
-                              ? Icons.chevron_left
-                              : Icons.menu,
-                          color: appBarContentColor,
+          AnimatedBuilder(
+            animation: widget.topBarController,
+            builder: (context, _) {
+              final titleContent = widget.topBarController.titleContent;
+              final actions = widget.topBarController.actions;
+              final navigationIcon = widget.canGoBack
+                  ? Icons.arrow_back
+                  : widget.useTabletLayout && widget.isTabletSidebarExpanded
+                  ? Icons.chevron_left
+                  : Icons.segment;
+              final navigationIconWidget = Icon(
+                navigationIcon,
+                color: appBarContentColor,
+              );
+              final shouldFlipNavigationIcon =
+                  !widget.canGoBack &&
+                  !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
+              return Material(
+                color: theme.colorScheme.primary,
+                child: SizedBox(
+                  height: topPadding + _topBarHeight,
+                  child: Padding(
+                    padding: EdgeInsets.only(top: topPadding),
+                    child: Row(
+                      children: <Widget>[
+                        const SizedBox(width: _navigationIconStartPadding),
+                        SizedBox(
+                          width: _navigationIconSize,
+                          height: _navigationIconSize,
+                          child: IconButton(
+                            onPressed: widget.canGoBack
+                                ? widget.onGoBack
+                                : widget.onNavigationButtonPressed,
+                            icon: shouldFlipNavigationIcon
+                                ? Transform(
+                                    alignment: Alignment.center,
+                                    transform: Matrix4.identity()
+                                      ..scaleByDouble(
+                                        -1.0,
+                                        1.0,
+                                        1.0,
+                                        1.0,
+                                      ),
+                                    child: navigationIconWidget,
+                                  )
+                                : navigationIconWidget,
+                            tooltip: widget.canGoBack
+                                ? 'Back'
+                                : widget.useTabletLayout &&
+                                      widget.isTabletSidebarExpanded
+                                ? 'Collapse sidebar'
+                                : 'Navigation',
+                          ),
                         ),
-                        tooltip: widget.canGoBack
-                            ? 'Back'
-                            : widget.useTabletLayout &&
-                                  widget.isTabletSidebarExpanded
-                            ? 'Collapse sidebar'
-                            : 'Navigation',
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        widget.currentScreen.title ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: appBarContentColor,
-                          fontWeight: FontWeight.w600,
+                        Expanded(
+                          child:
+                              titleContent?.content(context) ??
+                              TopBarTitleText(
+                                primaryText: widget.currentRouteTitle,
+                                contentColor: appBarContentColor,
+                              ),
                         ),
-                      ),
+                        if (actions != null) ...actions(context),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
           Expanded(
             child: ColoredBox(
@@ -210,10 +267,16 @@ class _AppContentState extends State<AppContent> {
                       key: ValueKey<String>(screenKey),
                       screenKey: screenKey,
                       isCurrentScreen: screenKey == currentScreenKey,
-                      isNavigatingBack: _isNavigatingBack,
+                      isNavigatingBack: widget.isNavigatingBack,
+                      enableNavigationAnimation:
+                          widget.enableNavigationAnimation,
+                      isDrawerRelayTransition: _isDrawerRelayTransition,
                       allowCrossfade: _transitionAllowsCrossfade,
-                      duration: _pageTransitionDuration,
-                      offset: _pageTransitionOffset,
+                      duration: _activeTransitionDuration,
+                      pageOffset: widget.useTabletLayout
+                          ? _tabletPageTransitionOffset
+                          : _phonePageTransitionOffset,
+                      drawerNavigationOffset: _phoneDrawerNavigationOffset,
                       child: _screenCache[screenKey]!,
                     ),
                 ],
@@ -226,56 +289,160 @@ class _AppContentState extends State<AppContent> {
   }
 }
 
-class _AnimatedScreenSlot extends StatelessWidget {
+class _AnimatedScreenSlot extends StatefulWidget {
   const _AnimatedScreenSlot({
     super.key,
     required this.screenKey,
     required this.isCurrentScreen,
     required this.isNavigatingBack,
+    required this.enableNavigationAnimation,
+    required this.isDrawerRelayTransition,
     required this.allowCrossfade,
     required this.duration,
-    required this.offset,
+    required this.pageOffset,
+    required this.drawerNavigationOffset,
     required this.child,
   });
 
   final String screenKey;
   final bool isCurrentScreen;
   final bool isNavigatingBack;
+  final bool enableNavigationAnimation;
+  final bool isDrawerRelayTransition;
   final bool allowCrossfade;
   final Duration duration;
-  final double offset;
+  final double pageOffset;
+  final double drawerNavigationOffset;
   final Widget child;
 
   @override
+  State<_AnimatedScreenSlot> createState() => _AnimatedScreenSlotState();
+}
+
+class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _visible = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _visible = widget.isCurrentScreen;
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnimatedScreenSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isCurrentScreen != widget.isCurrentScreen) {
+      _visible = widget.isCurrentScreen;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final targetOpacity = !allowCrossfade || isCurrentScreen ? 1.0 : 0.0;
-    final targetScale = !allowCrossfade || isCurrentScreen ? 1.0 : 0.992;
-    final targetOffset = !allowCrossfade || isCurrentScreen
-        ? Offset.zero
-        : Offset(isNavigatingBack ? offset * 0.45 : -offset * 0.45, 0);
+    final targetOpacity = _targetOpacity;
+    final targetScale = _targetScale;
+    final targetTranslationX = _targetTranslationX;
 
     return Positioned.fill(
       child: IgnorePointer(
-        ignoring: !isCurrentScreen,
+        ignoring: !widget.isCurrentScreen,
         child: AnimatedOpacity(
           opacity: targetOpacity,
-          duration: duration,
-          curve: isCurrentScreen
-              ? Curves.linearToEaseOut
-              : Curves.easeInToLinear,
-          child: AnimatedSlide(
-            offset: Offset(targetOffset.dx / 400, 0),
-            duration: duration,
+          duration: widget.duration,
+          curve: widget.isDrawerRelayTransition
+              ? _alphaCurve
+              : widget.enableNavigationAnimation
+              ? _alphaCurve
+              : Curves.fastOutSlowIn,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(end: targetTranslationX),
+            duration: widget.duration,
             curve: Curves.fastOutSlowIn,
-            child: AnimatedScale(
-              scale: targetScale,
-              duration: duration,
+            builder: (context, translationX, child) {
+              return Transform.translate(
+                offset: Offset(translationX, 0),
+                child: child,
+              );
+            },
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: targetScale),
+              duration: widget.duration,
               curve: Curves.fastOutSlowIn,
-              child: child,
+              builder: (context, scale, child) {
+                return Transform.scale(scale: scale, child: child);
+              },
+              child: widget.child,
             ),
           ),
         ),
       ),
     );
+  }
+
+  Curve get _alphaCurve {
+    return _visible ? Curves.linearToEaseOut : Curves.easeInToLinear;
+  }
+
+  double get _targetOpacity {
+    if (!widget.allowCrossfade) {
+      return 1.0;
+    }
+    return _visible ? 1.0 : 0.0;
+  }
+
+  double get _targetTranslationX {
+    if (!widget.allowCrossfade) {
+      return 0.0;
+    }
+    if (widget.isDrawerRelayTransition) {
+      if (_visible) {
+        return 0.0;
+      }
+      if (widget.isCurrentScreen) {
+        return -widget.drawerNavigationOffset;
+      }
+      return widget.drawerNavigationOffset * 0.18;
+    }
+    if (!widget.enableNavigationAnimation) {
+      return 0.0;
+    }
+    if (_visible) {
+      return 0.0;
+    }
+    if (widget.isCurrentScreen) {
+      return widget.isNavigatingBack ? -widget.pageOffset : widget.pageOffset;
+    }
+    return widget.isNavigatingBack
+        ? widget.pageOffset * 0.45
+        : -widget.pageOffset * 0.45;
+  }
+
+  double get _targetScale {
+    if (!widget.allowCrossfade) {
+      return 1.0;
+    }
+    if (widget.isDrawerRelayTransition) {
+      if (_visible) {
+        return 1.0;
+      }
+      if (widget.isCurrentScreen) {
+        return 0.975;
+      }
+      return 0.995;
+    }
+    if (!widget.enableNavigationAnimation) {
+      return 1.0;
+    }
+    if (_visible) {
+      return 1.0;
+    }
+    return widget.isCurrentScreen ? 0.985 : 0.992;
   }
 }

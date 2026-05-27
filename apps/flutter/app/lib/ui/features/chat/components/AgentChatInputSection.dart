@@ -3,10 +3,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/chat/OperitChatRuntime.dart';
+import '../../../../l10n/generated/app_localizations.dart';
+import 'ChatLayoutMetrics.dart';
 
 class AgentChatInputSection extends StatelessWidget {
-  static const double _maxInputWidth = 860;
-
   const AgentChatInputSection({
     super.key,
     required this.controller,
@@ -36,12 +36,14 @@ class AgentChatInputSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final l10n = AppLocalizations.of(context)!;
     final processing = isLoading || inputState.isProcessing;
     final hasDraftText = controller.text.trim().isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
+    final processingStatus = _inputProcessingStatus(l10n, inputState);
     final showProcessingStatus =
-        inputState.isProcessing && inputState.displayMessage.isNotEmpty;
+        inputState.isProcessing && processingStatus.isNotEmpty;
     final inputCardShape = const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     );
@@ -51,7 +53,7 @@ class AgentChatInputSection extends StatelessWidget {
       child: Align(
         alignment: Alignment.bottomCenter,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: _maxInputWidth),
+          constraints: const BoxConstraints(maxWidth: chatContentMaxWidth),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -61,7 +63,7 @@ class AgentChatInputSection extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      inputState.displayMessage,
+                      processingStatus,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurface.withValues(alpha: 0.8),
                       ),
@@ -109,7 +111,7 @@ class AgentChatInputSection extends StatelessWidget {
                           height: 20 / 14,
                         ),
                         decoration: InputDecoration(
-                          hintText: '向 Operit 提问',
+                          hintText: l10n.askOperitHint,
                           hintStyle: theme.textTheme.bodyMedium?.copyWith(
                             color: colorScheme.onSurfaceVariant,
                             fontSize: 14,
@@ -118,7 +120,7 @@ class AgentChatInputSection extends StatelessWidget {
                             onPressed: () {},
                             icon: const Icon(Icons.fullscreen),
                             color: colorScheme.onSurfaceVariant,
-                            tooltip: 'Fullscreen input',
+                            tooltip: l10n.fullscreenInput,
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -189,7 +191,7 @@ class AgentChatInputSection extends StatelessWidget {
                             icon: Icons.tune_outlined,
                             color: colorScheme.onSurfaceVariant,
                             onTap: onSettings,
-                            tooltip: 'Settings',
+                            tooltip: l10n.settings,
                           ),
                           const SizedBox(width: 8),
                           _IconTapTarget(
@@ -199,11 +201,11 @@ class AgentChatInputSection extends StatelessWidget {
                             ),
                             onTap: onAttach,
                             size: 24,
-                            tooltip: 'Add attachment',
+                            tooltip: l10n.addAttachment,
                           ),
                           const SizedBox(width: 6),
                           _ActionButton(
-                            processing: showProcessingStatus,
+                            processing: processing,
                             progress: _progressFor(inputState),
                             background: _actionBackground(
                               colorScheme,
@@ -222,6 +224,9 @@ class AgentChatInputSection extends StatelessWidget {
                               showQueueAction: showQueueAction,
                               canSend: hasDraftText,
                             ),
+                            tooltip: showCancelAction
+                                ? l10n.cancel
+                                : (hasDraftText ? l10n.send : ''),
                             onPressed: () {
                               if (showCancelAction) {
                                 onCancelMessage();
@@ -242,6 +247,56 @@ class AgentChatInputSection extends StatelessWidget {
       ),
     );
   }
+}
+
+String _inputProcessingStatus(
+  AppLocalizations l10n,
+  ChatInputProcessingState state,
+) {
+  final message = _inputProcessingMessage(l10n, state.message);
+  if (message.isNotEmpty) {
+    return message;
+  }
+  return switch (state.kind) {
+    'Processing' => l10n.processingMessage,
+    'Connecting' => l10n.connectingAiService,
+    'Receiving' => l10n.receivingAiResponse,
+    'Summarizing' => l10n.summarizingMemories,
+    'ExecutingPlan' => l10n.executingPlan,
+    'ExecutingTool' => l10n.executingTool(state.toolName),
+    'ProcessingToolResult' => l10n.processingToolResult(state.toolName),
+    'ToolProgress' => _toolProgressStatus(l10n, state),
+    _ => '',
+  };
+}
+
+String _toolProgressStatus(
+  AppLocalizations l10n,
+  ChatInputProcessingState state,
+) {
+  final message = _inputProcessingMessage(l10n, state.message);
+  if (message.isNotEmpty) {
+    return state.toolName.isEmpty
+        ? message
+        : l10n.toolStatusWithName(state.toolName, message);
+  }
+  if (state.toolName.isEmpty) {
+    return l10n.toolRunning;
+  }
+  return l10n.toolRunningWithName(state.toolName);
+}
+
+String _inputProcessingMessage(AppLocalizations l10n, String key) {
+  return switch (key) {
+    'enhanced_processing_input' => l10n.processingInput,
+    'enhanced_processing_message' => l10n.processingMessage,
+    'enhanced_connecting_service' => l10n.connectingAiService,
+    'enhanced_receiving_response' => l10n.receivingAiResponse,
+    'enhanced_receiving_tool_result' => l10n.receivingToolResultAiResponse,
+    'message_processing' => l10n.processingMessage,
+    'message_summarizing' => l10n.summarizingMemories,
+    _ => key,
+  };
 }
 
 class _IconTapTarget extends StatelessWidget {
@@ -283,6 +338,7 @@ class _ActionButton extends StatelessWidget {
     required this.background,
     required this.foreground,
     required this.icon,
+    required this.tooltip,
     required this.onPressed,
   });
 
@@ -291,23 +347,17 @@ class _ActionButton extends StatelessWidget {
   final Color background;
   final Color foreground;
   final IconData icon;
+  final String tooltip;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 40,
-      height: 40,
+    final button = SizedBox(
+      width: 44,
+      height: 44,
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[
-          if (processing)
-            CircularProgressIndicator(
-              value: progress,
-              strokeWidth: 2,
-              color: background,
-              backgroundColor: background.withValues(alpha: 0.2),
-            ),
           Material(
             color: background,
             shape: const CircleBorder(),
@@ -321,9 +371,24 @@ class _ActionButton extends StatelessWidget {
               ),
             ),
           ),
+          if (processing)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 2.4,
+                  color: foreground.withValues(alpha: 0.9),
+                  backgroundColor: foreground.withValues(alpha: 0.24),
+                ),
+              ),
+            ),
         ],
       ),
     );
+    if (tooltip.isEmpty) {
+      return button;
+    }
+    return Tooltip(message: tooltip, child: button);
   }
 }
 

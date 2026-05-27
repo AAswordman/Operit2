@@ -1440,6 +1440,7 @@ dependencies = [
  "operit-core-proxy",
  "operit-host-android-native",
  "operit-host-linux-native",
+ "operit-host-web",
  "operit-host-windows-native",
  "operit-link",
  "operit-runtime",
@@ -1447,6 +1448,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1471,6 +1473,15 @@ dependencies = [
  "serde_json",
  "tungstenite",
  "zip",
+]
+
+[[package]]
+name = "operit-host-web"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "operit-host-api",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1513,6 +1524,8 @@ dependencies = [
  "boa_engine",
  "chrono",
  "futures-util",
+ "getrandom 0.2.17",
+ "js-sys",
  "json5",
  "operit-host-api",
  "operit-store",
@@ -1524,6 +1537,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
  "zip",
 ]
 

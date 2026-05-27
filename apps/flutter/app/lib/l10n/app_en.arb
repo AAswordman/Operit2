@@ -1,0 +1,54 @@
+{
+  "@@locale": "en",
+  "askOperitHint": "Ask Operit",
+  "aiChat": "AI Chat",
+  "fullscreenInput": "Fullscreen input",
+  "settings": "Settings",
+  "addAttachment": "Add attachment",
+  "cancel": "Cancel",
+  "send": "Send",
+  "model": "Model",
+  "processingInput": "Processing input...",
+  "processingMessage": "Processing message...",
+  "connectingAiService": "Connecting to AI service...",
+  "receivingAiResponse": "Receiving AI response...",
+  "receivingToolResultAiResponse": "Receiving AI response after tool execution...",
+  "summarizingMemories": "Summarizing memories...",
+  "executingPlan": "Executing plan...",
+  "executingTool": "Executing tool: {toolName}",
+  "@executingTool": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "processingToolResult": "Processing tool result: {toolName}",
+  "@processingToolResult": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolRunning": "Tool running...",
+  "toolRunningWithName": "{toolName}: Tool running...",
+  "@toolRunningWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolStatusWithName": "{toolName}: {message}",
+  "@toolStatusWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  }
+}

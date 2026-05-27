@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/chat/OperitChatRuntime.dart';
+import 'ChatLayoutMetrics.dart';
 import 'style/cursor/CursorStyleChatMessage.dart';
 
 class ChatArea extends StatelessWidget {
@@ -38,19 +39,21 @@ class ChatArea extends StatelessWidget {
         return const SizedBox(height: 8);
       },
       itemBuilder: (context, index) {
+        late final Widget child;
         if (index < messages.length) {
-          return CursorStyleChatMessage(
+          child = CursorStyleChatMessage(
             message: messages[index],
             isStreaming: _isStreamingMessage(index),
           );
+        } else if (errorMessage != null) {
+          child = _StatusMessage(text: errorMessage!, isError: true);
+        } else {
+          child = const Padding(
+            padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
+            child: LoadingDotsIndicator(),
+          );
         }
-        if (errorMessage != null) {
-          return _StatusMessage(text: errorMessage!, isError: true);
-        }
-        return const Padding(
-          padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
-          child: LoadingDotsIndicator(),
-        );
+        return _ChatAreaContentColumn(child: child);
       },
     );
   }
@@ -77,6 +80,23 @@ class ChatArea extends StatelessWidget {
       }
     }
     return false;
+  }
+}
+
+class _ChatAreaContentColumn extends StatelessWidget {
+  const _ChatAreaContentColumn({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: chatContentMaxWidth),
+        child: SizedBox(width: double.infinity, child: child),
+      ),
+    );
   }
 }
 

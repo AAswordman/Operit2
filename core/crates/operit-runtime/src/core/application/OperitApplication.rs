@@ -4,6 +4,10 @@ use crate::api::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::data::backup::RawSnapshotBackupManager::{
+    RawSnapshotBackupManager, RawSnapshotManifest,
+};
+use crate::data::db::AppDatabase::AppDatabase;
 use crate::data::mcp::plugins::MCPStarter::MCPStarter;
 use crate::data::model::Memory::{Memory, MemoryLink};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -13,7 +17,9 @@ use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
-use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+use operit_store::RuntimeStorageHost::{
+    defaultRuntimeStorageHost, setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
+};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
@@ -191,6 +197,22 @@ impl OperitApplication {
             applied += 1;
         }
         Ok(serde_json::json!({ "applied": applied }))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportRawSnapshot(&self) -> Result<Vec<u8>, String> {
+        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).exportSnapshot()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importRawSnapshot(&self, bytes: Vec<u8>) -> Result<(), String> {
+        AppDatabase::closeDatabase();
+        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).restoreSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn inspectRawSnapshot(&self, bytes: Vec<u8>) -> Result<RawSnapshotManifest, String> {
+        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).inspectSnapshot(bytes)
     }
 
     #[allow(non_snake_case)]

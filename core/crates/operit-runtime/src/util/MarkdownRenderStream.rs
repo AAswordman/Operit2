@@ -16,6 +16,7 @@ pub struct MarkdownStreamEvent {
     pub blockId: Option<u64>,
     pub inlineId: Option<u64>,
     pub nodeType: Option<String>,
+    pub headerLevel: Option<usize>,
 }
 
 pub struct MarkdownRenderEventStream {
@@ -53,6 +54,7 @@ impl MarkdownStreamEvent {
             blockId: None,
             inlineId: None,
             nodeType: None,
+            headerLevel: None,
         }
     }
 
@@ -65,6 +67,7 @@ impl MarkdownStreamEvent {
             blockId: None,
             inlineId: None,
             nodeType: None,
+            headerLevel: None,
         }
     }
 }
@@ -95,6 +98,7 @@ impl MarkdownRenderEventStream {
             blockId: None,
             inlineId: None,
             nodeType: None,
+            headerLevel: None,
         }];
 
         let segments = self.block.push(chunk);
@@ -131,6 +135,7 @@ impl MarkdownRenderEventStream {
                     blockId: Some(self.nextBlockId),
                     inlineId: None,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
+                    headerLevel: headerLevel(nodeType, &nodeContent),
                 });
             }
 
@@ -145,6 +150,7 @@ impl MarkdownRenderEventStream {
                     blockId: Some(blockId),
                     inlineId: None,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
+                    headerLevel: None,
                 });
             }
         }
@@ -161,6 +167,7 @@ impl MarkdownRenderEventStream {
             blockId: None,
             inlineId: None,
             nodeType: None,
+            headerLevel: None,
         }
     }
 
@@ -202,6 +209,7 @@ impl MarkdownRenderEventStream {
                     blockId: Some(blockId),
                     inlineId: Some(block.nextInlineId),
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
+                    headerLevel: None,
                 });
             }
 
@@ -214,6 +222,7 @@ impl MarkdownRenderEventStream {
                     blockId: Some(blockId),
                     inlineId: Some(activeInline.id),
                     nodeType: markdownTypeLabel(activeInline.nodeType).map(ToString::to_string),
+                    headerLevel: None,
                 });
             }
         }
@@ -291,6 +300,18 @@ fn markdownTypeLabel(nodeType: Option<MarkdownProcessorType>) -> Option<&'static
         Some(MarkdownProcessorType::InlineLatex) => Some("InlineLatex"),
         Some(MarkdownProcessorType::HtmlBreak) => Some("HtmlBreak"),
         Some(MarkdownProcessorType::PlainText) | None => None,
+    }
+}
+
+fn headerLevel(nodeType: Option<MarkdownProcessorType>, content: &str) -> Option<usize> {
+    if nodeType != Some(MarkdownProcessorType::Header) {
+        return None;
+    }
+    let level = content.chars().take_while(|ch| *ch == '#').count();
+    if (1..=6).contains(&level) {
+        Some(level)
+    } else {
+        None
     }
 }
 

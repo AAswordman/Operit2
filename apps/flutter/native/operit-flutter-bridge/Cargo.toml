@@ -15,6 +15,8 @@ operit-runtime = { path = "../../../../core/crates/operit-runtime" }
 operit-store = { path = "../../../../core/crates/operit-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
@@ -26,3 +28,8 @@ operit-host-windows-native = { path = "../../../../hosts/windows" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 operit-host-linux-native = { path = "../../../../hosts/linux" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+operit-host-web = { path = "../../../../hosts/web" }
+tokio = { version = "1", features = ["rt"] }
+wasm-bindgen = "0.2"

@@ -3,6 +3,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../../util/ChatMarkupRegex.dart';
+import 'DetailsTagRenderer.dart';
+import 'FileDiffDisplay.dart';
+import 'FontTagRenderer.dart';
 import 'ToolDisplayComponents.dart';
 import 'ToolResultDisplay.dart';
 
@@ -60,16 +64,36 @@ class CustomXmlRenderer extends StatelessWidget {
         );
       case 'tool_result':
         final result = _extractToolResult(parsed, xmlContent);
-        return ToolResultDisplay(
-          toolName: result.toolName,
-          result: result.resultContent,
-          isSuccess: result.isSuccess,
-          isStreaming: isStreaming,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (final fileDiff in result.fileDiffs)
+              FileDiffDisplay(diff: fileDiff),
+            if (result.fileDiffs.isEmpty)
+              ToolResultDisplay(
+                toolName: result.toolName,
+                result: result.resultContent,
+                isSuccess: result.isSuccess,
+                isStreaming: isStreaming,
+              ),
+          ],
         );
       case 'html':
+        return StreamMarkdownRenderer(
+          content: parsed.body,
+          isStreaming: isStreaming,
+          textColor: textColor,
+          backgroundColor: Theme.of(context).colorScheme.surface,
+        );
       case 'details':
       case 'detail':
+        return DetailsTagRenderer(
+          xmlContent: xmlContent,
+          textColor: textColor,
+          isStreaming: isStreaming,
+        );
       case 'font':
+        return FontTagRenderer(xmlContent: xmlContent, textColor: textColor);
       case 'mood':
         return StreamMarkdownRenderer(
           content: parsed.body,
@@ -174,11 +198,13 @@ class _ToolResultRenderState {
     required this.toolName,
     required this.isSuccess,
     required this.resultContent,
+    required this.fileDiffs,
   });
 
   final String toolName;
   final bool isSuccess;
   final String resultContent;
+  final List<FileDiff> fileDiffs;
 }
 
 class _ThinkPanel extends StatelessWidget {
@@ -221,8 +247,8 @@ class _LabeledPanel extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
@@ -268,8 +294,8 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(
           alpha: 0.55,
@@ -320,7 +346,7 @@ class _ParsedXml {
       return _ParsedXml(tagName: '', attributes: const {}, body: xml);
     }
     final rawTagName = open.group(1)!;
-    final tagName = _normalizeToolLikeTagName(rawTagName);
+    final tagName = ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)!;
     final attributes = _parseAttributes(open.group(2) ?? '');
     final closeTag = '</${rawTagName.toLowerCase()}>';
     final lowerXml = xml.toLowerCase();
@@ -355,14 +381,6 @@ class _ParsedXml {
   }
 }
 
-String _normalizeToolLikeTagName(String tagName) {
-  final lower = tagName.toLowerCase();
-  if (lower == 'tool-result') {
-    return 'tool_result';
-  }
-  return lower;
-}
-
 Map<String, String> _parseAttributes(String source) {
   final result = <String, String>{};
   final pattern = RegExp(
@@ -392,11 +410,11 @@ bool _isXmlFullyClosed(String xml) {
   if (trimmed.endsWith('/>')) {
     return true;
   }
-  return trimmed.contains('</$rawTagName>');
+  return trimmed.toLowerCase().contains('</${rawTagName.toLowerCase()}>');
 }
 
 String? _extractRawXmlTagName(String xml) {
-  return RegExp(r'^<([a-zA-Z_][\w:-]*)\b').firstMatch(xml.trim())?.group(1);
+  return ChatMarkupRegex.extractOpeningTagName(xml);
 }
 
 String _extractContentFromXml(String content, {String? tagName}) {
@@ -404,22 +422,27 @@ String _extractContentFromXml(String content, {String? tagName}) {
   if (rawTagName == null) {
     return content;
   }
-  final effectiveTagName = tagName ?? rawTagName;
-  final startTag = '<$effectiveTagName';
-  final startTagIndex = content.indexOf(startTag);
-  if (startTagIndex < 0) {
-    return content;
-  }
-  final startTagEnd = content.indexOf('>', startTagIndex);
-  if (startTagEnd < 0) {
+  final normalizedRawTagName = ChatMarkupRegex.normalizeToolLikeTagName(
+    rawTagName,
+  );
+  final effectiveTagName = tagName != null && normalizedRawTagName != tagName
+      ? tagName
+      : rawTagName;
+  final openMatch = RegExp(
+    '<${RegExp.escape(effectiveTagName)}\\b[^>]*>',
+    caseSensitive: false,
+    dotAll: true,
+  ).firstMatch(content);
+  if (openMatch == null) {
     return content;
   }
   final endTag = '</$effectiveTagName>';
-  final endIndex = content.lastIndexOf(endTag);
-  final contentEndExclusive = endIndex > startTagEnd
+  final lowerContent = content.toLowerCase();
+  final endIndex = lowerContent.lastIndexOf(endTag.toLowerCase());
+  final contentEndExclusive = endIndex > openMatch.end
       ? endIndex
       : content.length;
-  return content.substring(startTagEnd + 1, contentEndExclusive).trim();
+  return content.substring(openMatch.end, contentEndExclusive).trim();
 }
 
 Map<String, String> _extractParamsFromTool(String content) {
@@ -482,9 +505,11 @@ _ToolResultRenderState _extractToolResult(
       toolName: toolName.isEmpty ? 'Unknown tool' : toolName,
       isSuccess: false,
       resultContent: (errorMatch?.group(1) ?? resultContent).trim(),
+      fileDiffs: const <FileDiff>[],
     );
   }
 
+  final fileDiffs = _extractFileDiffs(resultContent);
   final withoutFileDiff = resultContent
       .replaceAll(
         RegExp(r'<file-diff[\s\S]*<\/file-diff>', caseSensitive: false),
@@ -495,5 +520,52 @@ _ToolResultRenderState _extractToolResult(
     toolName: toolName.isEmpty ? 'Unknown tool' : toolName,
     isSuccess: true,
     resultContent: withoutFileDiff,
+    fileDiffs: _isFileDiffTool(toolName) ? fileDiffs : const <FileDiff>[],
   );
+}
+
+bool _isFileDiffTool(String toolName) {
+  return toolName == 'apply_file' ||
+      toolName == 'create_file' ||
+      toolName == 'edit_file';
+}
+
+List<FileDiff> _extractFileDiffs(String resultContent) {
+  return RegExp(
+    r'<file-diff\b([^>]*)>([\s\S]*?)<\/file-diff>',
+    caseSensitive: false,
+  ).allMatches(resultContent).map((match) {
+    final attrs = match.group(1) ?? '';
+    final body = match.group(2) ?? '';
+    final path =
+        RegExp(
+          r'\bpath="([^"]*)"',
+          caseSensitive: false,
+        ).firstMatch(attrs)?.group(1) ??
+        '';
+    final details =
+        RegExp(
+          r'\bdetails="([^"]*)"',
+          caseSensitive: false,
+        ).firstMatch(attrs)?.group(1) ??
+        '';
+    final cdata = RegExp(
+      r'<!\[CDATA\[([\s\S]*?)\]\]>',
+      caseSensitive: false,
+    ).firstMatch(body)?.group(1);
+    return FileDiff(
+      path: path,
+      details: _decodeXmlText(details),
+      diffContent: _decodeXmlText((cdata ?? body).trim()),
+    );
+  }).toList();
+}
+
+String _decodeXmlText(String input) {
+  return input
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'");
 }
