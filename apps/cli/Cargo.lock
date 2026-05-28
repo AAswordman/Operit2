@@ -1704,6 +1704,7 @@ dependencies = [
  "base64",
  "crossterm",
  "image",
+ "operit-command-core",
  "operit-core-proxy",
  "operit-host-linux-native",
  "operit-host-windows-native",
@@ -1719,10 +1720,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-command-core"
+version = "0.1.0"
+dependencies = [
+ "operit-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "operit-command-core",
  "operit-host-api",
  "operit-link",
  "operit-runtime",

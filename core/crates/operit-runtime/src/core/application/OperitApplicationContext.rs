@@ -7,6 +7,8 @@ use operit_host_api::{
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
 
+pub type CoreCommandExecutor = Arc<dyn Fn(Vec<String>) -> Result<String, String> + Send + Sync>;
+
 #[allow(non_snake_case)]
 pub fn setDefaultHttpHost(host: Arc<dyn HttpHost>) {
     let _ = DEFAULT_HTTP_HOST.set(host);
@@ -30,6 +32,7 @@ pub struct OperitApplicationContext {
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
+    pub coreCommandExecutor: Option<CoreCommandExecutor>,
 }
 
 impl OperitApplicationContext {
@@ -43,6 +46,7 @@ impl OperitApplicationContext {
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
+            coreCommandExecutor: None,
         }
     }
 
@@ -58,6 +62,7 @@ impl OperitApplicationContext {
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
+            coreCommandExecutor: None,
         }
     }
 
@@ -76,6 +81,7 @@ impl OperitApplicationContext {
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
+            coreCommandExecutor: None,
         }
     }
 
@@ -95,6 +101,7 @@ impl OperitApplicationContext {
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
+            coreCommandExecutor: None,
         }
     }
 
@@ -118,6 +125,13 @@ impl OperitApplicationContext {
             runtimeStorageHost: Some(runtimeStorageHost),
             runtimeSqliteHost: Some(runtimeSqliteHost),
             hostEnvironment,
+            coreCommandExecutor: None,
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
+        self.coreCommandExecutor = Some(executor);
+        self
     }
 }

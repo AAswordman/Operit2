@@ -30,6 +30,7 @@ use crate::api::chat::llmprovider::QwenAIProvider::QwenAIProvider;
 use crate::api::chat::llmprovider::RateLimitedAIService::RateLimitedAIService;
 use crate::api::chat::llmprovider::RateLimiterRegistry::RateLimiterRegistry;
 use crate::api::chat::llmprovider::RequestConcurrencyRegistry::RequestConcurrencyRegistry;
+use crate::api::chat::llmprovider::ToolPkgJsAiProviderService::ToolPkgJsAiProviderService;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::ModelConfigData::{
     getModelByIndex, getValidModelIndex, ApiProviderType, ModelConfigData,
@@ -352,8 +353,18 @@ impl MultiServiceManager {
     ) -> Result<Box<dyn AIService>, AiServiceError> {
         let actualIndex = getValidModelIndex(&config.modelName, modelIndex);
         let selectedModelName = getModelByIndex(&config.modelName, actualIndex);
-        let providerType = ApiProviderType::fromProviderTypeId(&config.apiProviderTypeId)
-            .expect("apiProviderTypeId must map to ApiProviderType");
+        let providerTypeId = config.apiProviderTypeId.trim().to_string();
+        let toolPkgProviderRegistered =
+            crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::get(
+                &providerTypeId,
+            )
+            .is_some();
+        let providerType = if toolPkgProviderRegistered {
+            config.apiProviderType.clone()
+        } else {
+            ApiProviderType::fromProviderTypeId(&providerTypeId)
+                .expect("apiProviderTypeId must map to ApiProviderType")
+        };
         let requestLimitPerMinute = config.requestLimitPerMinute.max(0);
         let maxConcurrentRequests = config.maxConcurrentRequests.max(0);
         let configId = config.id.clone();
@@ -361,8 +372,8 @@ impl MultiServiceManager {
             config,
             selected_model_name: selectedModelName,
             provider_type: providerType.clone(),
-            provider_type_id: providerType.name().to_string(),
-            tool_pkg_provider_registered: false,
+            provider_type_id: providerTypeId,
+            tool_pkg_provider_registered: toolPkgProviderRegistered,
         })?;
         let rawService = Self::instantiateServiceLocked(inner, spec)?;
 
@@ -712,6 +723,20 @@ impl MultiServiceManager {
             ))),
             ProviderCreateParams::MNNProvider { .. } => Ok(Box::new(MNNProvider)),
             ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
+            ProviderCreateParams::ToolPkgJsAiProviderService {
+                provider_type_id,
+                config_id,
+            } => {
+                let provider = crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::get(&provider_type_id)
+                    .ok_or_else(|| AiServiceError::ProviderNotImplemented(provider_type_id.clone()))?;
+                let config = inner
+                    .modelConfigManager
+                    .getModelConfigFlow(&config_id)
+                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
+                    .first()
+                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+                Ok(Box::new(ToolPkgJsAiProviderService::new(config, provider)))
+            }
             _ => Err(AiServiceError::ProviderNotImplemented(format!(
                 "{:?}",
                 spec.kind

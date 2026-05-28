@@ -327,7 +327,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
+			shellScript = "OPERIT_REPO_ROOT=\"$PROJECT_DIR/../../../..\"\n\"$OPERIT_REPO_ROOT/.venv/bin/python\" \"$OPERIT_REPO_ROOT/plugins/tools/sync_plugin_packages.py\" --source buildin\n\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
 		};
 /* End PBXShellScriptBuildPhase section */
 

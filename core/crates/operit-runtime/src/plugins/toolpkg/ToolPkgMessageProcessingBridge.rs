@@ -1,0 +1,279 @@
+use std::sync::{Arc, Mutex, OnceLock};
+
+use serde_json::Value;
+
+use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
+    MessageProcessingController, MessageProcessingExecution, MessageProcessingHookParams,
+    MessageProcessingPlugin, MessageProcessingPluginRegistry,
+};
+use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
+use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    decodeToolPkgHookResult, ToolPkgMessageProcessingHookRegistration,
+};
+use crate::util::stream::HotStream::MutableSharedStreamImpl;
+
+static MESSAGE_PROCESSING_HOOKS: OnceLock<Mutex<Vec<ToolPkgMessageProcessingHookRegistration>>> =
+    OnceLock::new();
+
+pub struct ToolPkgMessageProcessingBridge;
+
+impl ToolPkgMessageProcessingBridge {
+    pub fn register() {
+        MessageProcessingPluginRegistry::register(Arc::new(MessageProcessingBridge));
+    }
+
+    #[allow(non_snake_case)]
+    pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+        let mut hooks = activeContainers
+            .iter()
+            .flat_map(|container| {
+                container.messageProcessingPlugins.iter().map(|hook| {
+                    ToolPkgMessageProcessingHookRegistration {
+                        containerPackageName: container.packageName.clone(),
+                        pluginId: hook.id.clone(),
+                        functionName: hook.function.clone(),
+                        functionSource: hook.functionSource.clone(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        hooks.sort_by(|left, right| {
+            left.containerPackageName
+                .cmp(&right.containerPackageName)
+                .then(left.pluginId.cmp(&right.pluginId))
+        });
+        *MESSAGE_PROCESSING_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("toolpkg message processing hook mutex poisoned") = hooks;
+    }
+}
+
+struct MessageProcessingBridge;
+
+impl MessageProcessingPlugin for MessageProcessingBridge {
+    fn id(&self) -> &str {
+        "builtin.toolpkg.message-processing-bridge"
+    }
+
+    #[allow(non_snake_case)]
+    fn createExecutionIfMatched(
+        &self,
+        params: &MessageProcessingHookParams,
+    ) -> Option<MessageProcessingExecution<Box<dyn MessageProcessingController + Send + Sync>>>
+    {
+        let hooks = MESSAGE_PROCESSING_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("toolpkg message processing hook mutex poisoned")
+            .clone();
+        let probeEventPayload = buildMessageEventPayload(params, true);
+        for hook in hooks {
+            let probeDecoded = runMessageProcessingHook(&hook, probeEventPayload.clone(), None);
+            let probeResult = parseMessageProcessingResult(probeDecoded.as_ref());
+            let Some(probeResult) = probeResult else {
+                continue;
+            };
+            if !probeResult.matched {
+                continue;
+            }
+
+            let executionId = format!(
+                "toolpkg-msg:{}:{}:{}",
+                hook.containerPackageName,
+                hook.pluginId,
+                operit_host_api::TimeUtils::currentTimeMillis()
+            );
+            let mut eventPayload = buildMessageEventPayload(params, false);
+            if let Value::Object(object) = &mut eventPayload {
+                object.insert(
+                    "executionId".to_string(),
+                    Value::String(executionId.clone()),
+                );
+            }
+            let mut stream = MutableSharedStreamImpl::new(usize::MAX);
+            let stream_for_intermediate = stream.clone();
+            let decoded = runMessageProcessingHook(
+                &hook,
+                eventPayload,
+                Some(Arc::new(move |raw| {
+                    let decoded = decodeToolPkgHookResult(Some(raw));
+                    for chunk in extractMessageChunks(decoded.as_ref()) {
+                        if !chunk.is_empty() {
+                            stream_for_intermediate.emit(chunk);
+                        }
+                    }
+                })),
+            );
+            let parsed = parseMessageProcessingResult(decoded.as_ref());
+            if let Some(parsed) = parsed {
+                if parsed.matched {
+                    for chunk in parsed.chunks {
+                        if !chunk.is_empty() {
+                            stream.emit(chunk);
+                        }
+                    }
+                }
+            }
+            return Some(MessageProcessingExecution {
+                controller: Box::new(RegisteredMessageProcessingController { executionId, hook }),
+                stream,
+            });
+        }
+        None
+    }
+}
+
+#[allow(non_snake_case)]
+fn buildMessageEventPayload(params: &MessageProcessingHookParams, probeOnly: bool) -> Value {
+    let chatHistory = params
+        .chat_history
+        .iter()
+        .map(|turn| {
+            serde_json::json!({
+                "kind": turn.kind,
+                "content": turn.content,
+                "toolName": turn.tool_name,
+                "metadata": turn.metadata,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "chatId": params.chat_id,
+        "messageContent": params.message_content,
+        "chatHistory": chatHistory,
+        "workspacePath": params.workspace_path,
+        "maxTokens": params.max_tokens,
+        "tokenUsageThreshold": params.token_usage_threshold,
+        "probeOnly": probeOnly,
+    })
+}
+
+#[allow(non_snake_case)]
+fn runMessageProcessingHook(
+    hook: &ToolPkgMessageProcessingHookRegistration,
+    eventPayload: Value,
+    onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+) -> Option<Value> {
+    crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
+        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
+    )
+    .getOrCreatePackageManager()
+    .lock()
+    .expect("package manager mutex poisoned")
+    .runToolPkgMainHook(
+        &hook.containerPackageName,
+        &hook.functionName,
+        TOOLPKG_EVENT_MESSAGE_PROCESSING,
+        None,
+        Some(&hook.pluginId),
+        hook.functionSource.as_deref(),
+        eventPayload,
+        None,
+        None,
+        onIntermediateResult,
+    )
+    .ok()
+    .and_then(decodeToolPkgHookResult)
+}
+
+struct ParsedMessageProcessingResult {
+    matched: bool,
+    chunks: Vec<String>,
+}
+
+#[allow(non_snake_case)]
+fn parseMessageProcessingResult(decoded: Option<&Value>) -> Option<ParsedMessageProcessingResult> {
+    match decoded? {
+        Value::Bool(value) => {
+            if *value {
+                Some(ParsedMessageProcessingResult {
+                    matched: true,
+                    chunks: Vec::new(),
+                })
+            } else {
+                None
+            }
+        }
+        Value::String(value) => {
+            if value.is_empty() {
+                None
+            } else {
+                Some(ParsedMessageProcessingResult {
+                    matched: true,
+                    chunks: vec![value.clone()],
+                })
+            }
+        }
+        Value::Object(object) => {
+            let matched = object
+                .get("matched")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            if !matched {
+                return None;
+            }
+            Some(ParsedMessageProcessingResult {
+                matched: true,
+                chunks: extractMessageChunks(decoded),
+            })
+        }
+        _ => None,
+    }
+}
+
+#[allow(non_snake_case)]
+fn extractMessageChunks(decoded: Option<&Value>) -> Vec<String> {
+    let Some(decoded) = decoded else {
+        return Vec::new();
+    };
+    match decoded {
+        Value::String(value) => {
+            if value.is_empty() {
+                Vec::new()
+            } else {
+                vec![value.clone()]
+            }
+        }
+        Value::Object(object) => {
+            let mut chunks = Vec::new();
+            if let Some(value) = object.get("chunk").and_then(Value::as_str) {
+                if !value.is_empty() {
+                    chunks.push(value.to_string());
+                }
+            }
+            if let Some(Value::Array(values)) = object.get("chunks") {
+                for value in values {
+                    if let Some(chunk) = value.as_str() {
+                        if !chunk.is_empty() {
+                            chunks.push(chunk.to_string());
+                        }
+                    }
+                }
+            }
+            if let Some(value) = object.get("text").and_then(Value::as_str) {
+                if !value.is_empty() {
+                    chunks.push(value.to_string());
+                }
+            } else if let Some(value) = object.get("content").and_then(Value::as_str) {
+                if !value.is_empty() {
+                    chunks.push(value.to_string());
+                }
+            }
+            chunks
+        }
+        _ => Vec::new(),
+    }
+}
+
+struct RegisteredMessageProcessingController {
+    executionId: String,
+    hook: ToolPkgMessageProcessingHookRegistration,
+}
+
+impl MessageProcessingController for RegisteredMessageProcessingController {
+    fn cancel(&self) {
+        let _ = (&self.executionId, &self.hook);
+    }
+}

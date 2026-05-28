@@ -266,7 +266,7 @@ impl JsToolManager {
         let runtimeParams = self.buildRuntimeParams(&packageName, params);
         let engine = JsEngine::new(self.toolHandler.clone());
         engine
-            .executeScriptFunction(&script, &functionName, &runtimeParams)
+            .executeScriptFunction(&script, &functionName, &runtimeParams, None)
             .unwrap_or_else(|| "null".to_string())
     }
 
@@ -285,7 +285,7 @@ impl JsToolManager {
         };
 
         let engine = JsEngine::new(self.toolHandler.clone());
-        let result = engine.executeScriptFunction(script, &functionName, &runtimeParams);
+        let result = engine.executeScriptFunction(script, &functionName, &runtimeParams, None);
         if let Some(failure) = extractJsExecutionFailure(result.as_deref()) {
             vec![Self::failureFromJs(&tool.name, failure)]
         } else {

@@ -37,7 +37,6 @@ class _AIChatScreenState extends State<AIChatScreen>
       );
   String _modelLabel = 'Model';
   String? _errorMessage;
-  String? _currentChatId;
   StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
   TopBarController? _topBarController;
@@ -61,7 +60,6 @@ class _AIChatScreenState extends State<AIChatScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _topBarController = TopBarScope.of(context);
-    debugPrint('[TopBarTitleTrace] didChangeDependencies bind controller');
   }
 
   @override
@@ -117,9 +115,6 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   Future<ChatRuntimeSnapshot?> _loadSnapshot({bool showLoading = true}) async {
-    debugPrint(
-      '[TopBarTitleTrace] loadSnapshot begin showLoading=$showLoading',
-    );
     setState(() {
       if (showLoading) {
         _loading = true;
@@ -132,13 +127,6 @@ class _AIChatScreenState extends State<AIChatScreen>
       if (!mounted) {
         return null;
       }
-      debugPrint(
-        '[TopBarTitleTrace] loadSnapshot data '
-        'chatId=${snapshot.currentChatId} '
-        'chatTitle="${snapshot.currentChatTitle}" '
-        'currentCard="${snapshot.currentCharacterCardName}" '
-        'activeCard="${snapshot.activeCharacterCardName}"',
-      );
       setState(() {
         _messages
           ..clear()
@@ -146,7 +134,6 @@ class _AIChatScreenState extends State<AIChatScreen>
         _loading = snapshot.isLoading;
         _inputProcessingState = snapshot.inputProcessingState;
         _modelLabel = _resolveModelLabel(snapshot.messages);
-        _currentChatId = snapshot.currentChatId;
         _currentChatTitle = snapshot.currentChatTitle;
         _currentCharacterCardName = snapshot.currentCharacterCardName;
         _activeCharacterCardName = snapshot.activeCharacterCardName;
@@ -171,14 +158,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isEmpty) {
-      debugPrint('[AIChatScreen] send ignored: empty input');
       return;
     }
 
-    debugPrint(
-      '[AIChatScreen] send tapped textLength=${text.length} '
-      'currentChatId=$_currentChatId',
-    );
     _messageController.clear();
     setState(() {
       _messages.add(
@@ -199,17 +181,10 @@ class _AIChatScreenState extends State<AIChatScreen>
     final request = widget.runtime.sendUserMessage(text);
     request
         .then((_) async {
-          debugPrint('[AIChatScreen] send completed, refreshing snapshot');
           final snapshot = await _loadSnapshot(showLoading: false);
           final chatId = snapshot?.currentChatId;
           if (chatId != null && snapshot?.isLoading == true) {
-            debugPrint('[AIChatScreen] start response stream chatId=$chatId');
             _watchResponseStream(chatId);
-          } else {
-            debugPrint(
-              '[AIChatScreen] response stream skipped: '
-              'chatId=$chatId isLoading=${snapshot?.isLoading}',
-            );
           }
         })
         .catchError((Object error, StackTrace stackTrace) {
@@ -231,16 +206,11 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _watchResponseStream(String chatId) {
-    debugPrint('[AIChatScreen] watch stream subscribe chatId=$chatId');
     _responseStreamSubscription?.cancel();
     _responseStreamSubscription = widget.runtime
         .watchResponseStream(chatId)
         .listen(
           (event) {
-            debugPrint(
-              '[AIChatScreen] stream event chatId=${event.chatId} '
-              'type=${event.type} valueLength=${event.value?.length ?? 0}',
-            );
             if (event.type == 'chunk') {
               final chunk = event.value;
               if (chunk == null) {
@@ -381,17 +351,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   void _updateTopBarTitle() {
     final controller = _topBarController;
     if (controller == null) {
-      debugPrint('[TopBarTitleTrace] update skipped controller=null');
       return;
     }
     final characterCardName = _currentCharacterCardName?.trim();
     final activeCharacterCardName = _activeCharacterCardName?.trim();
-    debugPrint(
-      '[TopBarTitleTrace] update input '
-      'chatTitle="${_currentChatTitle.trim()}" '
-      'currentCard="$characterCardName" '
-      'activeCard="$activeCharacterCardName"',
-    );
     final primaryText =
         characterCardName != null && characterCardName.isNotEmpty
         ? characterCardName
@@ -399,10 +362,6 @@ class _AIChatScreenState extends State<AIChatScreen>
         ? activeCharacterCardName
         : 'Operit';
     final secondaryText = _currentChatTitle.trim();
-    debugPrint(
-      '[TopBarTitleTrace] set titleContent '
-      'primary="$primaryText" secondary="$secondaryText"',
-    );
     controller.setTitleContent(
       TopBarTitleContent((context) {
         return TopBarTitleText(

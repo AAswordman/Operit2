@@ -16,6 +16,7 @@ base64 = "0.22"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["png"] }
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
+operit-command-core = { path = "../../core/crates/operit-command-core" }
 operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
 operit-store = { path = "../../core/crates/operit-store" }

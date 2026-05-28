@@ -158,7 +158,6 @@ class OperitChatRuntime {
         },
       ),
     );
-    debugPrint('[OperitChatRuntime] sendUserMessage ok');
   }
 
   Future<void> cancelCurrentMessage() {

@@ -221,6 +221,12 @@ fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_call(proxy: &mut LocalCoreProxy, request: operit_link::CoreCallRequest) -> Result<serde_json::Value, operit_link::CoreLinkError> {\n");
+    output.push_str("    if request.targetPath.key() == \"application\" && request.methodName == \"runCoreCommand\" {\n");
+    output.push_str("        let mut __core_args = object_args(request.args)?;\n");
+    output.push_str("        let args: Vec<String> = decode_core_arg(&mut __core_args, \"args\")?;\n");
+    output.push_str("        let output = tokio::task::block_in_place(|| operit_command_core::run_core_command(&mut proxy.application, &args)).map_err(|error| operit_link::CoreLinkError::internal(error))?;\n");
+    output.push_str("        return to_core_value(output);\n");
+    output.push_str("    }\n");
     if let Some(application) = objects
         .iter()
         .find(|object| object.access == ObjectAccess::Application)
@@ -484,6 +490,11 @@ fn render_generated_proxy(objects: &[SourceObject]) -> String {
     output.push_str("    }\n\n");
     output.push_str("    pub fn clientMut(&mut self) -> &mut C {\n");
     output.push_str("        &mut self.client\n");
+    output.push_str("    }\n\n");
+    output.push_str("    pub async fn runCoreCommand(&mut self, args: &[String]) -> Result<operit_command_core::CoreCommandOutput, operit_link::CoreLinkError> {\n");
+    output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), operit_link::CoreObjectPath::parse(\"application\"), \"runCoreCommand\", serde_json::json!({ \"args\": args }))).await;\n");
+    output.push_str("        let value = response.result?;\n");
+    output.push_str("        serde_json::from_value(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
     output.push_str("    }\n\n");
     for object in objects {
         let proxy_type = proxy_object_type_name(object);

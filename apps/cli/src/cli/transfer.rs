@@ -3,7 +3,7 @@ use std::path::Path;
 
 use operit_runtime::data::model::ImportStrategy;
 
-use super::core::CliCore;
+use crate::core_proxy::CliCore;
 use super::*;
 
 pub(super) async fn run_export_command(core: &mut CliCore, args: &[String]) -> Result<(), String> {

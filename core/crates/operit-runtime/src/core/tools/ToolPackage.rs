@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
@@ -9,9 +10,37 @@ use crate::core::tools::javascript::JsToolManager::JsToolManager;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct LocalizedText {
     pub values: HashMap<String, String>,
+}
+
+impl<'de> Deserialize<'de> for LocalizedText {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        if let Some(text) = value.as_str() {
+            return Ok(LocalizedText {
+                values: HashMap::from([("default".to_string(), text.to_string())]),
+            });
+        }
+        if let Some(object) = value.as_object() {
+            let source = object
+                .get("values")
+                .and_then(Value::as_object)
+                .unwrap_or(object);
+            let values = source
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|text| (key.clone(), text.to_string()))
+                })
+                .collect::<HashMap<_, _>>();
+            return Ok(LocalizedText { values });
+        }
+        Ok(LocalizedText::default())
+    }
 }
 
 impl LocalizedText {
@@ -23,6 +52,19 @@ impl LocalizedText {
             .or_else(|| self.values.values().next())
             .cloned()
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalizedText;
+
+    #[test]
+    fn parses_operit1_locale_object() {
+        let text: LocalizedText =
+            serde_json::from_str(r#"{"zh":"思考引导","en":"Thinking Guidance"}"#).unwrap();
+        assert_eq!(text.resolve(false), "思考引导");
+        assert_eq!(text.resolve(true), "Thinking Guidance");
     }
 }
 

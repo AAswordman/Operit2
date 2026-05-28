@@ -8,12 +8,13 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 operit-host-api = { path = "../operit-host-api" }
+operit-command-core = { path = "../operit-command-core" }
 operit-link = { path = "../operit-link" }
 operit-runtime = { path = "../operit-runtime" }
 operit-store = { path = "../operit-store" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 
 [build-dependencies]
 quote = "1"

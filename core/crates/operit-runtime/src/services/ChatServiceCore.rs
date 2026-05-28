@@ -211,6 +211,20 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
     }
 
+    #[allow(non_snake_case)]
+    pub fn updateChatOrderAndGroup(
+        &mut self,
+        reorderedHistories: Vec<crate::data::model::ChatHistory::ChatHistory>,
+        movedItem: crate::data::model::ChatHistory::ChatHistory,
+        targetGroup: Option<String>,
+    ) {
+        self.chatHistoryDelegate.updateChatOrderAndGroup(
+            reorderedHistories,
+            movedItem,
+            targetGroup,
+        );
+    }
+
     pub fn clearCurrentChat(&mut self) {
         self.chatHistoryDelegate.clearCurrentChat();
     }

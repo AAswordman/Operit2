@@ -27,7 +27,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         NativeRuntimeStorageHost::defaultRoot(),
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    OperitApplication::newWithContext(
+    let context =
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
@@ -36,8 +36,15 @@ pub(crate) fn create_cli_application() -> OperitApplication {
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
-        ),
-    )
+        );
+    let commandContext = context.clone();
+    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
+        let output = operit_command_core::run_core_command_with_context(
+            commandContext.clone(),
+            &args,
+        )?;
+        Ok(output.stdout)
+    })))
 }
 
 pub(crate) fn create_local_core() -> LocalCoreProxy {

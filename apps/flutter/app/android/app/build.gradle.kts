@@ -49,14 +49,35 @@ flutter {
 val operitBridgeCrate = project.layout.projectDirectory
     .dir("../../../native/operit-flutter-bridge")
     .asFile
+val operitRepoRoot = project.layout.projectDirectory
+    .dir("../../../../..")
+    .asFile
+val operitPluginSyncScript = operitRepoRoot
+    .resolve("plugins/tools/sync_plugin_packages.py")
+val operitPluginSyncPython = if (System.getProperty("os.name").lowercase().contains("windows")) {
+    operitRepoRoot.resolve(".venv/Scripts/python.exe")
+} else {
+    operitRepoRoot.resolve(".venv/bin/python")
+}
 val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
 val operitRustTargets = listOf(
     Triple("arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
     Triple("x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
 )
 
+val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
+    workingDir = operitRepoRoot
+    commandLine(
+        operitPluginSyncPython.absolutePath,
+        operitPluginSyncScript.absolutePath,
+        "--source",
+        "buildin",
+    )
+}
+
 val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarget, envTarget) ->
     tasks.register<Exec>("cargoBuildOperitFlutterBridge${abi.replace("-", "").replace("_", "")}") {
+        dependsOn(syncOperitPlugins)
         val clangPrefix = rustTarget
         val apiLevel = 23
         val ndkToolchain = android.ndkDirectory
@@ -94,5 +115,6 @@ val cargoBuildOperitFlutterBridge = tasks.register("cargoBuildOperitFlutterBridg
 }
 
 tasks.named("preBuild") {
+    dependsOn(syncOperitPlugins)
     dependsOn(cargoBuildOperitFlutterBridge)
 }

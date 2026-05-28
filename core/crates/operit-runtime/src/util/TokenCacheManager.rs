@@ -62,16 +62,6 @@ impl TokenCacheManager {
         let common_prefix_length =
             find_common_prefix_length(&history_with_tools, &self.previous_chat_history);
 
-        AppLogger::d(
-            "TokenCacheManager",
-            &format!(
-                "history compare: current={}, previous={}, common={}",
-                history_with_tools.len(),
-                self.previous_chat_history.len(),
-                common_prefix_length
-            ),
-        );
-
         let (cached_tokens, new_tokens) = if common_prefix_length > 0 {
             let cached_tokens = if common_prefix_length == self.previous_chat_history.len() {
                 self.previous_history_token_count

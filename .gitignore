@@ -25,6 +25,7 @@ desktop.ini
 .history/
 
 # Local environment and secrets
+.venv/
 .env
 .env.*
 !.env.example
@@ -113,6 +114,8 @@ coverage.out
 node_modules/
 **/node_modules/
 **/dist/
+!plugins/buildin/**/dist/
+!plugins/buildin/**/dist/**
 **/.turbo/
 **/.vite/
 **/.rollup.cache/
@@ -131,11 +134,14 @@ cache/
 tmp/
 
 # Plugin packaging outputs
+plugins/**/*.toolpkg
+core/crates/operit-runtime/assets/plugins/**/*.toolpkg
 plugins/**/build/
 plugins/**/out/
 plugins/**/.cache/
 plugins/**/.temp/
 plugins/**/*.pack.log
+plugins/**/.sync_state.json
 
 # Archives generated during local packaging
 *.zip

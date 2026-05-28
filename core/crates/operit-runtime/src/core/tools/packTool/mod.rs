@@ -25,6 +25,12 @@ pub mod ToolPkgHookModels;
 #[path = "ToolPkgMainRegistrationScriptParser.rs"]
 pub mod ToolPkgMainRegistrationScriptParser;
 
+#[path = "ToolPkgLoader.rs"]
+pub mod ToolPkgLoader;
+
+#[path = "ToolPkgManager.rs"]
+pub mod ToolPkgManager;
+
 #[path = "ToolPkgParser.rs"]
 pub mod ToolPkgParser;
 

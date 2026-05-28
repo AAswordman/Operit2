@@ -5,6 +5,15 @@ import 'package:hooks/hooks.dart';
 void main(List<String> args) async {
   await build(args, (input, output) async {
     final packageRoot = Directory.fromUri(input.packageRoot);
+    final repoRoot = Directory.fromUri(input.packageRoot.resolve('../../../'));
+    final pluginsRoot = Directory.fromUri(
+      input.packageRoot.resolve('../../../plugins/'),
+    );
+    final syncScript = File.fromUri(
+      input.packageRoot.resolve(
+        '../../../plugins/tools/sync_plugin_packages.py',
+      ),
+    );
     final bridgeCrate = Directory.fromUri(
       input.packageRoot.resolve('../native/operit-flutter-bridge/'),
     );
@@ -27,6 +36,14 @@ void main(List<String> args) async {
       depsDir.uri.resolve('node_modules/sql.js/dist/'),
     );
 
+    await _addDirectoryFileDependencies(output, pluginsRoot, {
+      '.js',
+      '.json',
+      '.hjson',
+      '.ts',
+      '.d.ts',
+      '.py',
+    });
     await _addRustDependencies(output, bridgeCrate);
     await _addRustDependencies(output, coreRoot);
     await _addRustDependencies(output, webHostRoot);
@@ -34,6 +51,12 @@ void main(List<String> args) async {
       packageRoot.uri.resolve('web/operit_runtime_bridge.js'),
     );
     output.dependencies.add(packageRoot.uri.resolve('web/index.html'));
+
+    await _run(_pythonExecutable(repoRoot), [
+      syncScript.path,
+      '--source',
+      'buildin',
+    ], workingDirectory: repoRoot.path);
 
     await _run(
       'cargo',
@@ -69,6 +92,30 @@ void main(List<String> args) async {
       sqlDist.uri.resolve('sql-wasm.wasm'),
     ).copy(File.fromUri(webDir.uri.resolve('sql-wasm.wasm')).path);
   });
+}
+
+Future<void> _addDirectoryFileDependencies(
+  BuildOutputBuilder output,
+  Directory root,
+  Set<String> extensions,
+) async {
+  if (!root.existsSync()) {
+    throw StateError('Dependency root does not exist: ${root.path}');
+  }
+  await for (final entity in root.list(recursive: true, followLinks: false)) {
+    if (entity is! File) {
+      continue;
+    }
+    final path = entity.path;
+    if (path.contains(
+      '${Platform.pathSeparator}node_modules${Platform.pathSeparator}',
+    )) {
+      continue;
+    }
+    if (extensions.any(path.endsWith)) {
+      output.dependencies.add(entity.uri);
+    }
+  }
 }
 
 Future<void> _addRustDependencies(
@@ -125,4 +172,11 @@ String _command(String executable) {
     return '$executable.cmd';
   }
   return executable;
+}
+
+String _pythonExecutable(Directory repoRoot) {
+  if (Platform.isWindows) {
+    return File.fromUri(repoRoot.uri.resolve('.venv/Scripts/python.exe')).path;
+  }
+  return File.fromUri(repoRoot.uri.resolve('.venv/bin/python')).path;
 }

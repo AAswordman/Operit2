@@ -30,6 +30,7 @@ use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
+use crate::data::preferences::EnvPreferences::EnvPreferences;
 use operit_host_api::FileSystemHost;
 
 #[allow(non_snake_case)]
@@ -201,6 +202,28 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
         "package_proxy".to_string(),
         Box::new(PackageProxyToolExecutor {
             handler: handler.clone(),
+        }),
+    );
+    handler.registerInternalTool(
+        "execute_cli_command".to_string(),
+        Box::new(ExecuteCliCommandToolExecutor {
+            handler: handler.clone(),
+        }),
+    );
+    handler.registerInternalTool(
+        "read_environment_variable".to_string(),
+        Box::new(FnToolExecutor {
+            name: "read_environment_variable".to_string(),
+            validate: validateEnvironmentVariableKey,
+            invoke: executeReadEnvironmentVariable,
+        }),
+    );
+    handler.registerInternalTool(
+        "write_environment_variable".to_string(),
+        Box::new(FnToolExecutor {
+            name: "write_environment_variable".to_string(),
+            validate: validateEnvironmentVariableKey,
+            invoke: executeWriteEnvironmentVariable,
         }),
     );
 }
@@ -534,6 +557,10 @@ struct PackageProxyToolExecutor {
     handler: AIToolHandler,
 }
 
+struct ExecuteCliCommandToolExecutor {
+    handler: AIToolHandler,
+}
+
 struct ProxyToolExecutor {
     handler: AIToolHandler,
 }
@@ -596,6 +623,16 @@ impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for PackagePr
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         vec![executePackageProxy(&self.handler, tool)]
+    }
+}
+
+impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for ExecuteCliCommandToolExecutor {
+    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
+        validateExecuteCliCommand(tool)
+    }
+
+    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+        vec![executeCliCommand(&self.handler, tool)]
     }
 }
 
@@ -1022,12 +1059,148 @@ fn invalidToolValidation(message: &str) -> ToolValidationResult {
     }
 }
 
+fn validateEnvironmentVariableKey(tool: &AITool) -> ToolValidationResult {
+    if requiredParameterValue(tool, "key").trim().is_empty() {
+        return invalidToolValidation("Missing required parameter: key");
+    }
+    ToolValidationResult {
+        valid: true,
+        errorMessage: String::new(),
+    }
+}
+
+#[allow(non_snake_case)]
+fn executeReadEnvironmentVariable(tool: &AITool) -> ToolResult {
+    let key = requiredParameterValue(tool, "key");
+    let envPreferences = EnvPreferences::getInstance();
+    match envPreferences.getEnv(&key) {
+        Ok(value) => ToolResult {
+            toolName: tool.name.clone(),
+            success: true,
+            result: serde_json::json!({
+                "key": key,
+                "value": value,
+                "exists": value.is_some()
+            })
+            .to_string(),
+            error: None,
+        },
+        Err(error) => ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: serde_json::json!({
+                "key": key,
+                "value": null,
+                "exists": false
+            })
+            .to_string(),
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+#[allow(non_snake_case)]
+fn executeWriteEnvironmentVariable(tool: &AITool) -> ToolResult {
+    let key = requiredParameterValue(tool, "key");
+    let value = tool
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "value")
+        .map(|parameter| parameter.value.clone())
+        .unwrap_or_default();
+    let envPreferences = EnvPreferences::getInstance();
+    let writeResult = if value.trim().is_empty() {
+        envPreferences.removeEnv(&key)
+    } else {
+        envPreferences.setEnv(&key, value.trim())
+    };
+    if let Err(error) = writeResult {
+        return ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: serde_json::json!({
+                "key": key,
+                "requestedValue": value,
+                "value": null,
+                "exists": false,
+                "cleared": value.trim().is_empty()
+            })
+            .to_string(),
+            error: Some(error.to_string()),
+        };
+    }
+
+    match envPreferences.getEnv(&key) {
+        Ok(current) => ToolResult {
+            toolName: tool.name.clone(),
+            success: true,
+            result: serde_json::json!({
+                "key": key,
+                "requestedValue": value,
+                "value": current,
+                "exists": current.is_some(),
+                "cleared": value.trim().is_empty()
+            })
+            .to_string(),
+            error: None,
+        },
+        Err(error) => ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: serde_json::json!({
+                "key": key,
+                "requestedValue": value,
+                "value": null,
+                "exists": false,
+                "cleared": value.trim().is_empty()
+            })
+            .to_string(),
+            error: Some(error.to_string()),
+        },
+    }
+}
+
 fn toolErrorResult(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
         result: String::new(),
         error: Some(error),
+    }
+}
+
+#[allow(non_snake_case)]
+fn validateExecuteCliCommand(tool: &AITool) -> ToolValidationResult {
+    if requiredParameterValue(tool, "args").trim().is_empty() {
+        return invalidToolValidation("args is required.");
+    }
+    ToolValidationResult {
+        valid: true,
+        errorMessage: String::new(),
+    }
+}
+
+#[allow(non_snake_case)]
+fn executeCliCommand(handler: &AIToolHandler, tool: &AITool) -> ToolResult {
+    let argsRaw = requiredParameterValue(tool, "args");
+    let args = match serde_json::from_str::<Vec<String>>(&argsRaw) {
+        Ok(args) => args,
+        Err(error) => {
+            return toolErrorResult(tool, format!("args must be a JSON string array: {error}"));
+        }
+    };
+    let context = handler.getContext();
+    let Some(executor) = context.coreCommandExecutor else {
+        return toolErrorResult(tool, "Core command executor is not configured.".to_string());
+    };
+    match executor(args) {
+        Ok(output) => ToolResult {
+            toolName: tool.name.clone(),
+            success: true,
+            result: output,
+            error: None,
+        },
+        Err(error) => toolErrorResult(tool, error),
     }
 }
 

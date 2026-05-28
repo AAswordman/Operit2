@@ -37,6 +37,14 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
+set(OPERIT_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../")
+set(OPERIT_PLUGIN_SYNC_PYTHON "${OPERIT_REPO_ROOT}/.venv/Scripts/python.exe")
+set(OPERIT_PLUGIN_SYNC_SCRIPT "${OPERIT_REPO_ROOT}/plugins/tools/sync_plugin_packages.py")
+add_custom_target(sync_operit_plugins ALL
+  COMMAND "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source buildin
+  WORKING_DIRECTORY "${OPERIT_REPO_ROOT}"
+)
+
 set(OPERIT_FLUTTER_BRIDGE_CRATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/operit-flutter-bridge")
 add_custom_target(operit_flutter_bridge ALL
   COMMAND ${CMAKE_COMMAND} -E env
@@ -45,6 +53,7 @@ add_custom_target(operit_flutter_bridge ALL
     cargo build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
   WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
 )
+add_dependencies(operit_flutter_bridge sync_operit_plugins)
 add_dependencies(${BINARY_NAME} operit_flutter_bridge)
 add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different

@@ -28,6 +28,9 @@ zip.workspace = true
 [dev-dependencies]
 rusqlite.workspace = true
 
+[build-dependencies]
+zip.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 js-sys = "0.3"

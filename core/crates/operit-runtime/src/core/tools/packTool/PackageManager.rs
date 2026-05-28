@@ -1,12 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPPackage::MCPPackage;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
+use crate::core::tools::packTool::PackageManagerToolPkgFacade::PackageManagerToolPkgFacade;
+use crate::core::tools::packTool::ToolPkgLoader::ToolPkgLoader;
+use crate::core::tools::packTool::ToolPkgManager::{ToolPkgManager, ToolPkgRuntimeChangeListener};
+use crate::core::tools::packTool::ToolPkgParser::{ToolPkgContainerRuntime, ToolPkgLoadResult};
 use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::ToolPackage::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
@@ -22,12 +27,17 @@ const ENABLED_PACKAGES_KEY: &str = "imported_packages";
 
 pub type CachedMcpToolInfo = crate::data::mcp::MCPLocalServer::CachedToolInfo;
 
+enum PackageLoadItem {
+    ToolPackage(ToolPackage),
+    ToolPkg(ToolPkgLoadResult),
+}
+
 #[derive(Clone)]
 pub struct PackageManager {
     activatedPackages: BTreeSet<String>,
     availablePackages: BTreeMap<String, ToolPackage>,
     cachedMcpTools: BTreeMap<String, Vec<CachedMcpToolInfo>>,
-    toolPkgContainers: BTreeSet<String>,
+    toolPkgManager: ToolPkgManager,
     activePackageStateIds: BTreeMap<String, Option<String>>,
     dataStore: PreferencesDataStore,
     storePaths: RuntimeStorePaths,
@@ -52,7 +62,7 @@ impl PackageManager {
             activatedPackages: BTreeSet::new(),
             availablePackages: BTreeMap::new(),
             cachedMcpTools: BTreeMap::new(),
-            toolPkgContainers: BTreeSet::new(),
+            toolPkgManager: ToolPkgManager::new(),
             activePackageStateIds: BTreeMap::new(),
             dataStore: PreferencesDataStore::new(paths.package_manager_preferences_path()),
             storePaths: paths,
@@ -72,6 +82,11 @@ impl PackageManager {
     pub fn updateContext(&mut self, context: OperitApplicationContext) {
         self.mcpManager = MCPManager::getInstance(context.clone());
         self.context = context;
+    }
+
+    #[allow(non_snake_case)]
+    pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
+        self.toolPkgManager.releaseToolPkgExecutionEngine(contextKey);
     }
 
     pub fn isPackageActivated(&self, packageName: &str) -> bool {
@@ -215,6 +230,7 @@ impl PackageManager {
                 normalizedPackageName, error
             );
         }
+        self.notifyToolPkgRuntimeChangeListeners();
         format!("Successfully enabled package: {}", normalizedPackageName)
     }
 
@@ -231,15 +247,113 @@ impl PackageManager {
                     normalizedPackageName, error
                 );
             }
+            self.notifyToolPkgRuntimeChangeListeners();
             return format!("Successfully disabled package: {}", normalizedPackageName);
         }
         format!("Package is already disabled: {}", normalizedPackageName)
     }
 
     #[allow(non_snake_case)]
+    pub fn enableToolPkgContainer(&mut self, containerPackageName: &str) -> String {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let Some(runtime) = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)
+        else {
+            return format!(
+                "ToolPkg container not found: {}",
+                normalizedContainerPackageName
+            );
+        };
+        let mut enabledPackageNames = BTreeSet::from_iter(self.getEnabledPackageNames());
+        let mut changed = enabledPackageNames.insert(runtime.packageName.clone());
+        for subpackage in runtime.subpackages {
+            changed |= enabledPackageNames.insert(subpackage.packageName);
+        }
+        if !changed {
+            return format!(
+                "ToolPkg container is already enabled: {}",
+                normalizedContainerPackageName
+            );
+        }
+        let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
+        if let Err(error) = self.saveEnabledPackageNames(&names) {
+            return format!(
+                "Failed to enable ToolPkg container '{}': {}",
+                normalizedContainerPackageName, error
+            );
+        }
+        self.notifyToolPkgRuntimeChangeListeners();
+        format!(
+            "Successfully enabled ToolPkg container: {}",
+            normalizedContainerPackageName
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn disableToolPkgContainer(&mut self, containerPackageName: &str) -> String {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let Some(runtime) = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)
+        else {
+            return format!(
+                "ToolPkg container not found: {}",
+                normalizedContainerPackageName
+            );
+        };
+        let mut enabledPackageNames = BTreeSet::from_iter(self.getEnabledPackageNames());
+        let mut changed = enabledPackageNames.remove(&runtime.packageName);
+        for subpackage in runtime.subpackages {
+            self.activatedPackages.remove(&subpackage.packageName);
+            changed |= enabledPackageNames.remove(&subpackage.packageName);
+        }
+        if !changed {
+            return format!(
+                "ToolPkg container is already disabled: {}",
+                normalizedContainerPackageName
+            );
+        }
+        let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
+        if let Err(error) = self.saveEnabledPackageNames(&names) {
+            return format!(
+                "Failed to disable ToolPkg container '{}': {}",
+                normalizedContainerPackageName, error
+            );
+        }
+        self.notifyToolPkgRuntimeChangeListeners();
+        format!(
+            "Successfully disabled ToolPkg container: {}",
+            normalizedContainerPackageName
+        )
+    }
+
+    #[allow(non_snake_case)]
     pub fn isToolPkgContainer(&self, packageName: &str) -> bool {
         let normalizedPackageName = self.normalizePackageName(packageName);
-        self.toolPkgContainers.contains(&normalizedPackageName)
+        self.toolPkgManager
+            .isToolPkgContainer(&normalizedPackageName)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getEnabledToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
+        self.toolPkgManager
+            .getEnabledToolPkgContainerRuntimes(&self.getEnabledPackageNames())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
+        self.toolPkgManager.getToolPkgContainerRuntimes()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgContainerRuntime(
+        &self,
+        containerPackageName: &str,
+    ) -> Option<ToolPkgContainerRuntime> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        self.toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)
     }
 
     #[allow(non_snake_case)]
@@ -298,12 +412,42 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
+    pub fn registerToolPkg(&mut self, loadResult: ToolPkgLoadResult) -> bool {
+        if !self
+            .toolPkgManager
+            .canRegisterToolPkg(&loadResult, &self.availablePackages)
+        {
+            return false;
+        }
+
+        for subpackage in self.toolPkgManager.registerToolPkg(loadResult) {
+            self.availablePackages
+                .insert(subpackage.name.clone(), subpackage);
+        }
+        self.notifyToolPkgRuntimeChangeListeners();
+        true
+    }
+
+    #[allow(non_snake_case)]
+    pub fn addToolPkgRuntimeChangeListener(&self, listener: ToolPkgRuntimeChangeListener) {
+        self.toolPkgManager
+            .addToolPkgRuntimeChangeListener(listener, self.getEnabledToolPkgContainerRuntimes());
+    }
+
+    #[allow(non_snake_case)]
+    fn notifyToolPkgRuntimeChangeListeners(&self) {
+        self.toolPkgManager
+            .notifyToolPkgRuntimeChangeListeners(self.getEnabledToolPkgContainerRuntimes());
+    }
+
+    #[allow(non_snake_case)]
     pub fn getExternalPackagesPath(&self) -> String {
         self.storePaths.packages_dir().to_string_lossy().to_string()
     }
 
     #[allow(non_snake_case)]
     pub fn loadAvailablePackages(&mut self) {
+        self.loadBuiltInPackageAssets();
         let packagesDir = self.storePaths.packages_dir();
         if let Err(_) = fs::create_dir_all(&packagesDir) {
             return;
@@ -319,15 +463,67 @@ impl PackageManager {
             let lowerPath = path.to_string_lossy().to_ascii_lowercase();
             let package = if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
                 self.loadPackageFromJsFile(&path)
+                    .map(PackageLoadItem::ToolPackage)
             } else if lowerPath.ends_with(".hjson") {
                 fs::read_to_string(&path)
                     .ok()
                     .and_then(|content| self.parsePackageMetadata(&content, "").ok())
+                    .map(PackageLoadItem::ToolPackage)
+            } else if lowerPath.ends_with(".toolpkg") {
+                self.loadToolPkgFromExternalFile(&path)
+                    .ok()
+                    .map(PackageLoadItem::ToolPkg)
             } else {
                 None
             };
-            if let Some(package) = package {
-                self.availablePackages.insert(package.name.clone(), package);
+            if let Some(loadItem) = package {
+                match loadItem {
+                    PackageLoadItem::ToolPackage(package) => {
+                        self.availablePackages.insert(package.name.clone(), package);
+                    }
+                    PackageLoadItem::ToolPkg(loadResult) => {
+                        self.registerToolPkg(loadResult);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn loadBuiltInPackageAssets(&mut self) {
+        for asset in crate::plugins::BuiltinPluginAssets::BUILTIN_PLUGIN_ASSETS {
+            let lowerName = asset.name.to_ascii_lowercase();
+            if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
+                let script = String::from_utf8(asset.bytes.to_vec())
+                    .expect("built-in package script must be UTF-8");
+                let package = self
+                    .parseJsPackage(&script)
+                    .expect("built-in JavaScript package metadata must parse");
+                self.availablePackages.insert(
+                    package.name.clone(),
+                    ToolPackage {
+                        is_built_in: true,
+                        ..package
+                    },
+                );
+            } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
+                let content = String::from_utf8(asset.bytes.to_vec())
+                    .expect("built-in package metadata must be UTF-8");
+                let package = self
+                    .parsePackageMetadata(&content, "")
+                    .expect("built-in package metadata must parse");
+                self.availablePackages.insert(
+                    package.name.clone(),
+                    ToolPackage {
+                        is_built_in: true,
+                        ..package
+                    },
+                );
+            } else if lowerName.ends_with(".toolpkg") {
+                let loadResult = self
+                    .loadToolPkgFromBuiltInAsset(asset.name, asset.bytes)
+                    .expect("built-in ToolPkg package must parse");
+                self.registerToolPkg(loadResult);
             }
         }
     }
@@ -342,9 +538,54 @@ impl PackageManager {
         let lowerPath = filePath.to_ascii_lowercase();
         let isJsLike = lowerPath.ends_with(".js") || lowerPath.ends_with(".ts");
         let isHjson = lowerPath.ends_with(".hjson");
-        if !isJsLike && !isHjson {
-            return "Only HJSON, JavaScript (.js) and TypeScript (.ts) package files are supported"
+        let isToolPkg = lowerPath.ends_with(".toolpkg");
+        if !isJsLike && !isHjson && !isToolPkg {
+            return "Only HJSON, JavaScript (.js), TypeScript (.ts) and ToolPkg (.toolpkg) package files are supported"
                 .to_string();
+        }
+
+        if isToolPkg {
+            let loadResult = match self.loadToolPkgFromExternalFile(&file) {
+                Ok(value) => value,
+                Err(error) => return format!("Error importing package: {error}"),
+            };
+            let packageName = loadResult.containerPackage.name.clone();
+            if !self
+                .toolPkgManager
+                .canRegisterToolPkg(&loadResult, &self.availablePackages)
+            {
+                return format!(
+                    "A package with name '{}' already exists in available packages",
+                    packageName
+                );
+            }
+            if let Err(error) = self.storePaths.ensure_packages_dir() {
+                return format!("Error importing package: {error}");
+            }
+            let Some(fileName) = file.file_name() else {
+                return "Error importing package: invalid file name".to_string();
+            };
+            let destinationFile = self.storePaths.packages_dir().join(fileName);
+            if file != destinationFile {
+                if let Err(error) = fs::copy(&file, &destinationFile) {
+                    return format!("Error importing package: {error}");
+                }
+            }
+            let importedLoadResult = match self.loadToolPkgFromExternalFile(&destinationFile) {
+                Ok(value) => value,
+                Err(error) => return format!("Error importing package: {error}"),
+            };
+            if !self.registerToolPkg(importedLoadResult) {
+                return format!(
+                    "A package with name '{}' already exists in available packages",
+                    packageName
+                );
+            }
+            return format!(
+                "Successfully imported package: {}\nStored at: {}",
+                packageName,
+                destinationFile.to_string_lossy()
+            );
         }
 
         let packageMetadata = if isHjson {
@@ -372,7 +613,12 @@ impl PackageManager {
             }
         };
 
-        if self.availablePackages.contains_key(&packageMetadata.name) {
+        if self.availablePackages.contains_key(&packageMetadata.name)
+            || self
+                .toolPkgManager
+                .isToolPkgContainer(&packageMetadata.name)
+            || self.toolPkgManager.hasSubpackage(&packageMetadata.name)
+        {
             return format!(
                 "A package with name '{}' already exists in available packages",
                 packageMetadata.name
@@ -411,7 +657,11 @@ impl PackageManager {
         &self,
         packageNames: &[String],
     ) -> Result<(), PreferencesDataStoreError> {
-        self.saveEnabledPackageNames(packageNames)
+        let result = self.saveEnabledPackageNames(packageNames);
+        if result.is_ok() {
+            self.notifyToolPkgRuntimeChangeListeners();
+        }
+        result
     }
 
     #[allow(non_snake_case)]
@@ -422,6 +672,60 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn setCachedMcpTools(&mut self, serverName: String, tools: Vec<CachedMcpToolInfo>) {
         self.cachedMcpTools.insert(serverName, tools);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgMainScriptInternal(&self, containerPackageName: &str) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        self.toolPkgManager.getToolPkgMainScriptInternal(
+            &normalizedContainerPackageName,
+            &self.getEnabledPackageNames(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn readToolPkgTextResource(
+        &self,
+        packageNameOrSubpackageId: &str,
+        resourcePath: &str,
+    ) -> Option<String> {
+        let normalizedPackageName = self.normalizePackageName(packageNameOrSubpackageId);
+        self.toolPkgManager.readToolPkgTextResource(
+            &normalizedPackageName,
+            resourcePath,
+            &self.getEnabledPackageNames(),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn runToolPkgMainHook(
+        &self,
+        containerPackageName: &str,
+        functionName: &str,
+        event: &str,
+        eventName: Option<&str>,
+        pluginId: Option<&str>,
+        inlineFunctionSource: Option<&str>,
+        eventPayload: serde_json::Value,
+        executionContextKey: Option<&str>,
+        runtimeKind: Option<&str>,
+        onIntermediateResult: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> Result<Option<String>, String> {
+        PackageManagerToolPkgFacade::runToolPkgMainHook(
+            &self.toolPkgManager,
+            &self.context,
+            &self.getEnabledPackageNames(),
+            containerPackageName,
+            functionName,
+            event,
+            eventName,
+            pluginId,
+            inlineFunctionSource,
+            eventPayload,
+            executionContextKey,
+            runtimeKind,
+            onIntermediateResult,
+        )
     }
 
     #[allow(non_snake_case)]
@@ -558,6 +862,22 @@ impl PackageManager {
     fn loadPackageFromJsFile(&self, file: &Path) -> Option<ToolPackage> {
         let jsContent = fs::read_to_string(file).ok()?;
         self.parseJsPackage(&jsContent).ok()
+    }
+
+    #[allow(non_snake_case)]
+    fn loadToolPkgFromExternalFile(&self, file: &Path) -> Result<ToolPkgLoadResult, String> {
+        ToolPkgLoader::loadToolPkgFromExternalFile(file, |jsContent| self.parseJsPackage(jsContent))
+    }
+
+    #[allow(non_snake_case)]
+    fn loadToolPkgFromBuiltInAsset(
+        &self,
+        assetName: &str,
+        bytes: &'static [u8],
+    ) -> Result<ToolPkgLoadResult, String> {
+        ToolPkgLoader::loadToolPkgFromBuiltInAsset(assetName, bytes, |jsContent| {
+            self.parseJsPackage(jsContent)
+        })
     }
 
     #[allow(non_snake_case)]

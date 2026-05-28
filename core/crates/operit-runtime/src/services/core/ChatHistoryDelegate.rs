@@ -1099,15 +1099,29 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn updateChatOrderAndGroup(
         &mut self,
-        chatId: String,
-        displayOrder: i64,
-        group: Option<String>,
+        reorderedHistories: Vec<ChatHistory>,
+        movedItem: ChatHistory,
+        targetGroup: Option<String>,
     ) {
-        if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            chat.displayOrder = displayOrder;
-            chat.group = group;
-            self.emitChatHistoriesState();
-        }
+        let updatedList = reorderedHistories
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut history)| {
+                let mut newGroup = history.group.clone();
+                if history.id == movedItem.id && targetGroup.is_some() {
+                    newGroup = targetGroup.clone();
+                }
+                history.displayOrder = index as i64;
+                history.group = newGroup;
+                history
+            })
+            .collect::<Vec<_>>();
+
+        self.chatHistories = updatedList.clone();
+        self.chatHistoriesFlow.set_value(updatedList.clone());
+        self.chatHistoryManager
+            .updateChatOrderAndGroup(updatedList)
+            .expect("ChatHistoryManager.updateChatOrderAndGroup must succeed");
     }
 
     #[allow(non_snake_case)]

@@ -251,7 +251,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build";
+			shellScript = "OPERIT_REPO_ROOT=\"$PROJECT_DIR/../../../..\"\n\"$OPERIT_REPO_ROOT/.venv/bin/python\" \"$OPERIT_REPO_ROOT/plugins/tools/sync_plugin_packages.py\" --source buildin\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build";
 		};
 /* End PBXShellScriptBuildPhase section */
 

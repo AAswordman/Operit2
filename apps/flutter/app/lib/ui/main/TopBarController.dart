@@ -33,7 +33,6 @@ class TopBarController extends ChangeNotifier {
   }
 
   void setTitleContent(TopBarTitleContent titleContent, {Object? owner}) {
-    debugPrint('[TopBarTitleTrace] controller setTitleContent');
     _titleContent = titleContent;
     _titleContentOwner = owner;
     _notifySafely();
@@ -43,17 +42,14 @@ class TopBarController extends ChangeNotifier {
     if (owner != null &&
         _titleContentOwner != null &&
         !identical(owner, _titleContentOwner)) {
-      debugPrint('[TopBarTitleTrace] controller clearTitleContent ignored');
       return;
     }
-    debugPrint('[TopBarTitleTrace] controller clearTitleContent');
     _titleContent = null;
     _titleContentOwner = null;
     _notifySafely();
   }
 
   void clear() {
-    debugPrint('[TopBarTitleTrace] controller clear');
     _actions = null;
     _titleContent = null;
     _titleContentOwner = null;

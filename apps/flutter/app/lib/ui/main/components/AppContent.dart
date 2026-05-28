@@ -67,7 +67,6 @@ class _AppContentState extends State<AppContent> {
   OperitScreen? _lastObservedScreen;
   String? _transitionFromKey;
   String? _pendingRemovalKey;
-  String? _lastTopBarTitleLogKey;
   bool _isTransitioning = false;
   bool _transitionAllowsCrossfade = true;
 
@@ -195,17 +194,6 @@ class _AppContentState extends State<AppContent> {
             builder: (context, _) {
               final titleContent = widget.topBarController.titleContent;
               final actions = widget.topBarController.actions;
-              final titleLogKey =
-                  '${titleContent == null}|${widget.currentRouteTitle}|${widget.currentRouteEntry.routeId}';
-              if (_lastTopBarTitleLogKey != titleLogKey) {
-                _lastTopBarTitleLogKey = titleLogKey;
-                debugPrint(
-                  '[TopBarTitleTrace] AppContent render '
-                  'hasTitleContent=${titleContent != null} '
-                  'routeTitle="${widget.currentRouteTitle}" '
-                  'routeId=${widget.currentRouteEntry.routeId}',
-                );
-              }
               final navigationIcon = widget.canGoBack
                   ? Icons.arrow_back
                   : widget.useTabletLayout && widget.isTabletSidebarExpanded

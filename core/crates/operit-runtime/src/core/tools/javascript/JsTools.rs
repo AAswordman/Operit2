@@ -224,21 +224,10 @@ pub fn getJsToolsDefinition() -> &'static str {
                         value: value !== undefined && value !== null ? String(value) : ""
                     });
                 },
-                listModelConfigs: function() { return toolCall("list_model_configs", {}); },
-                updateModelConfig: function(configId, updates) {
-                    var params = Object.assign({}, updates || {}, { config_id: String(configId === null || configId === undefined ? "" : configId) });
-                    if (params.custom_parameters !== undefined && typeof params.custom_parameters === 'object') params.custom_parameters = JSON.stringify(params.custom_parameters);
-                    if (params.custom_headers !== undefined && typeof params.custom_headers === 'object') params.custom_headers = JSON.stringify(params.custom_headers);
-                    return toolCall("update_model_config", params);
-                },
-                listFunctionModelConfigs: function() { return toolCall("list_function_model_configs", {}); },
-                getFunctionModelConfig: function(functionType) {
-                    return toolCall("get_function_model_config", { function_type: String(functionType === null || functionType === undefined ? "" : functionType) });
-                },
-                setFunctionModelConfig: function(functionType, configId, modelIndex) {
-                    var params = { function_type: String(functionType || ""), config_id: String(configId || "") };
-                    if (modelIndex !== undefined && modelIndex !== null) params.model_index = String(modelIndex);
-                    return toolCall("set_function_model_config", params);
+                exec: function(args) {
+                    return toolCall("execute_cli_command", {
+                        args: JSON.stringify(args)
+                    });
                 }
             },
             Memory: {

@@ -45,43 +45,12 @@ use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordina
 use operit_runtime::util::stream::Stream::Stream;
 use sha2::{Digest, Sha256};
 
-use crate::bootstrap::create_local_core;
-
-mod access;
-mod chat;
-mod core;
-mod host;
 pub(crate) mod link;
-mod market;
-mod mcp;
-mod memory;
-mod model;
-mod package;
-mod people;
-mod prefs;
-mod skill;
-mod tag;
 mod transfer;
 
-pub(crate) use chat::{
-    build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
-    ShellArgs,
-};
-
-use access::{run_approval_command, run_tool_command};
-use chat::{run_chat_command, run_chat_command_with_core, run_shell_command};
-use core::{cli_core, local_cli_core};
-use host::run_host_command;
+use crate::core_proxy::{cli_core, local_cli_core};
 use link::{load_link_session, run_link_command};
-use market::run_market_command;
-use mcp::run_mcp_command;
-use memory::run_memory_command;
-use model::run_model_command;
-use package::run_package_command;
-use people::{run_active_prompt_command, run_character_command, run_group_command};
-use prefs::run_prefs_command;
-use skill::{read_skill_content_arg, run_skill_command};
-use tag::run_tag_command;
+use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use transfer::{run_backup_command, run_export_command, run_import_command};
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
@@ -104,30 +73,30 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     let mut core = local_cli_core()?;
 
     let result = match args[0].as_str() {
-        "model" => run_model_command(&mut core, &args[1..]).await,
+        "model" => run_core_command_and_print(&mut core, &args).await,
         "version" => run_version_core_command(&mut core).await,
-        "prefs" => run_prefs_command(&mut core, &args[1..]).await,
-        "host" => run_host_command(&mut core, &args[1..]).await,
-        "memory" => run_memory_command(&mut core, &args[1..]).await,
+        "prefs" => run_core_command_and_print(&mut core, &args).await,
+        "host" => run_core_command_and_print(&mut core, &args).await,
+        "memory" => run_core_command_and_print(&mut core, &args).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
-        "chat" => run_chat_command_with_core(&mut core, &args[1..]).await,
-        "shell" => {
-            let mut shell_args = vec!["shell".to_string()];
-            shell_args.extend_from_slice(&args[1..]);
-            run_chat_command_with_core(&mut core, &shell_args).await
+        "chat" if args.get(1).map(String::as_str) == Some("shell") => {
+            run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
-        "tag" => run_tag_command(&mut core, &args[1..]).await,
-        "character" => run_character_command(&mut core, &args[1..]).await,
-        "group" => run_group_command(&mut core, &args[1..]).await,
-        "active-prompt" => run_active_prompt_command(&mut core, &args[1..]).await,
-        "approval" => run_approval_command(&mut core, &args[1..]).await,
-        "tool" => run_tool_command(&mut core, &args[1..]).await,
-        "market" => run_market_command(&mut core, &args[1..]).await,
-        "skill" => run_skill_command(&mut core, &args[1..]).await,
-        "package" => run_package_command(&mut core, &args[1..]).await,
-        "mcp" => run_mcp_command(&mut core, &args[1..]).await,
+        "chat" => run_core_command_and_print(&mut core, &args).await,
+        "shell" => run_shell_command(&args[1..]).await,
+        "tag" => run_core_command_and_print(&mut core, &args).await,
+        "character" => run_core_command_and_print(&mut core, &args).await,
+        "group" => run_core_command_and_print(&mut core, &args).await,
+        "active-prompt" => run_core_command_and_print(&mut core, &args).await,
+        "approval" => run_core_command_and_print(&mut core, &args).await,
+        "tool" => run_core_command_and_print(&mut core, &args).await,
+        "market" => run_core_command_and_print(&mut core, &args).await,
+        "skill" => run_core_command_and_print(&mut core, &args).await,
+        "package" => run_core_command_and_print(&mut core, &args).await,
+        "plugin" => run_core_command_and_print(&mut core, &args).await,
+        "mcp" => run_core_command_and_print(&mut core, &args).await,
         _ => {
             print_cli_usage();
             Ok(())
@@ -144,30 +113,34 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
     let session = load_link_session(session_name)?;
     let mut core = cli_core(session);
     let result = match args[0].as_str() {
-        "model" => run_model_command(&mut core, &args[1..]).await,
+        "model" => run_core_command_and_print(&mut core, &args).await,
         "version" => run_version_core_command(&mut core).await,
-        "prefs" => run_prefs_command(&mut core, &args[1..]).await,
-        "host" => run_host_command(&mut core, &args[1..]).await,
-        "memory" => run_memory_command(&mut core, &args[1..]).await,
+        "prefs" => run_core_command_and_print(&mut core, &args).await,
+        "host" => run_core_command_and_print(&mut core, &args).await,
+        "memory" => run_core_command_and_print(&mut core, &args).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
-        "chat" => run_chat_command_with_core(&mut core, &args[1..]).await,
+        "chat" if args.get(1).map(String::as_str) == Some("shell") => {
+            run_chat_shell_command_with_core(&mut core, &args[2..]).await
+        }
+        "chat" => run_core_command_and_print(&mut core, &args).await,
         "shell" => {
             let mut shell_args = vec!["shell".to_string()];
             shell_args.extend_from_slice(&args[1..]);
-            run_chat_command_with_core(&mut core, &shell_args).await
+            run_chat_shell_command_with_core(&mut core, &shell_args[1..]).await
         }
-        "tag" => run_tag_command(&mut core, &args[1..]).await,
-        "character" => run_character_command(&mut core, &args[1..]).await,
-        "group" => run_group_command(&mut core, &args[1..]).await,
-        "active-prompt" => run_active_prompt_command(&mut core, &args[1..]).await,
-        "approval" => run_approval_command(&mut core, &args[1..]).await,
-        "tool" => run_tool_command(&mut core, &args[1..]).await,
-        "market" => run_market_command(&mut core, &args[1..]).await,
-        "skill" => run_skill_command(&mut core, &args[1..]).await,
-        "package" => run_package_command(&mut core, &args[1..]).await,
-        "mcp" => run_mcp_command(&mut core, &args[1..]).await,
+        "tag" => run_core_command_and_print(&mut core, &args).await,
+        "character" => run_core_command_and_print(&mut core, &args).await,
+        "group" => run_core_command_and_print(&mut core, &args).await,
+        "active-prompt" => run_core_command_and_print(&mut core, &args).await,
+        "approval" => run_core_command_and_print(&mut core, &args).await,
+        "tool" => run_core_command_and_print(&mut core, &args).await,
+        "market" => run_core_command_and_print(&mut core, &args).await,
+        "skill" => run_core_command_and_print(&mut core, &args).await,
+        "package" => run_core_command_and_print(&mut core, &args).await,
+        "plugin" => run_core_command_and_print(&mut core, &args).await,
+        "mcp" => run_core_command_and_print(&mut core, &args).await,
         _ => {
             print_cli_link_usage();
             Ok(())
@@ -177,10 +150,34 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
 }
 
 fn rewrite_cli_usage_message(message: String) -> String {
-    message.replace("usage: operit2 ", "usage: operit2 cli ")
+    if message.contains("operit2 cli ") {
+        return message;
+    }
+    message.replace("operit2 ", "operit2 cli ")
 }
 
-async fn run_version_core_command(core: &mut core::CliCore) -> Result<(), String> {
+async fn run_core_command_and_print(
+    core: &mut crate::core_proxy::CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    let output = core
+        .runCoreCommand(args)
+        .await
+        .map_err(|error| rewrite_core_command_usage_message(error.message))?;
+    if !output.stdout.is_empty() {
+        print!("{}", rewrite_core_command_usage_message(output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", rewrite_core_command_usage_message(output.stderr));
+    }
+    Ok(())
+}
+
+fn rewrite_core_command_usage_message(message: String) -> String {
+    rewrite_cli_usage_message(message)
+}
+
+async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
     println!("cliVersion={}", env!("CARGO_PKG_VERSION"));
     println!(
         "coreVersion={}",
@@ -199,8 +196,8 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|link|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|link|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -226,6 +223,7 @@ fn print_cli_usage() {
     );
     println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <dir|list|show|import|enable|disable|use|exec>");
+    println!("operit2 cli plugin <list|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|enable|disable|start|cached|export>");
     println!(
         "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
@@ -254,7 +252,7 @@ fn print_cli_usage() {
 }
 
 fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|mcp|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
     println!("operit2 cli link run <session> <version|chat>");
 }
 
@@ -404,7 +402,7 @@ fn print_approval_usage() {
 }
 
 fn print_tool_usage() {
-    println!("operit2 cli tool list [public|internal|all]");
+    println!("operit2 cli tool list <public|internal|all>");
     println!("operit2 cli tool show <tool-name>");
     println!("operit2 cli tool exec <tool-name> <params-json>");
 }
@@ -439,11 +437,19 @@ fn print_package_usage() {
     println!("operit2 cli package dir");
     println!("operit2 cli package list");
     println!("operit2 cli package show <name>");
-    println!("operit2 cli package import <js-ts-hjson-path>");
+    println!("operit2 cli package import <js-ts-hjson-toolpkg-path>");
     println!("operit2 cli package enable <name>");
     println!("operit2 cli package disable <name>");
     println!("operit2 cli package use <name>");
     println!("operit2 cli package exec <package:tool> <params-json>");
+}
+
+fn print_plugin_usage() {
+    println!("operit2 cli plugin list");
+    println!("operit2 cli plugin show <name>");
+    println!("operit2 cli plugin import <toolpkg-path>");
+    println!("operit2 cli plugin enable <name>");
+    println!("operit2 cli plugin disable <name>");
 }
 
 fn print_mcp_usage() {

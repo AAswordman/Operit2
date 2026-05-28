@@ -15,6 +15,7 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
+use crate::plugins::PluginRegistry::PluginRegistry;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
@@ -75,6 +76,7 @@ impl OperitApplication {
         self.chatRuntimeHolder = ChatRuntimeHolder::new();
         let mut toolHandler = AIToolHandler::getInstance(self.applicationContext.clone());
         toolHandler.registerDefaultTools();
+        PluginRegistry::initializeBuiltins();
         self.initMcpPlugins();
         self.initialized = true;
         Ok(())

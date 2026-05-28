@@ -438,20 +438,39 @@ fn dart_encode_expr(value: &str, dart_type: &str) -> String {
         return value.to_string();
     }
     if let Some(inner) = dart_type.strip_suffix('?') {
-        if inner == "Object?"
-            || matches!(inner, "bool" | "int" | "double" | "String" | "void")
-            || list_inner(inner).is_some()
-            || map_inner(inner).is_some()
-        {
+        if inner == "Object?" || matches!(inner, "bool" | "int" | "double" | "String" | "void") {
             return value.to_string();
+        }
+        if let Some(list_inner) = list_inner(inner) {
+            return format!(
+                "{value}?.map((item) => {}).toList(growable: false)",
+                dart_encode_expr("item", list_inner)
+            );
+        }
+        if let Some((key, value_type)) = map_inner(inner) {
+            return format!(
+                "{value}?.map((key, value) => MapEntry({}, {}))",
+                dart_encode_expr("key", key),
+                dart_encode_expr("value", value_type)
+            );
         }
         return format!("{value}?.toJson()");
     }
     if matches!(dart_type, "bool" | "int" | "double" | "String" | "void") {
         return value.to_string();
     }
-    if list_inner(dart_type).is_some() || map_inner(dart_type).is_some() {
-        return value.to_string();
+    if let Some(inner) = list_inner(dart_type) {
+        return format!(
+            "{value}.map((item) => {}).toList(growable: false)",
+            dart_encode_expr("item", inner)
+        );
+    }
+    if let Some((key, value_type)) = map_inner(dart_type) {
+        return format!(
+            "{value}.map((key, value) => MapEntry({}, {}))",
+            dart_encode_expr("key", key),
+            dart_encode_expr("value", value_type)
+        );
     }
     format!("{value}.toJson()")
 }

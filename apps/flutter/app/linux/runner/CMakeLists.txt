@@ -27,9 +27,18 @@ target_link_libraries(${BINARY_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
+set(OPERIT_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../")
+set(OPERIT_PLUGIN_SYNC_PYTHON "${OPERIT_REPO_ROOT}/.venv/bin/python")
+set(OPERIT_PLUGIN_SYNC_SCRIPT "${OPERIT_REPO_ROOT}/plugins/tools/sync_plugin_packages.py")
+add_custom_target(sync_operit_plugins ALL
+  COMMAND "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source buildin
+  WORKING_DIRECTORY "${OPERIT_REPO_ROOT}"
+)
+
 set(OPERIT_FLUTTER_BRIDGE_CRATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/operit-flutter-bridge")
 add_custom_target(operit_flutter_bridge ALL
   COMMAND cargo build --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
   WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
 )
+add_dependencies(operit_flutter_bridge sync_operit_plugins)
 add_dependencies(${BINARY_NAME} operit_flutter_bridge)

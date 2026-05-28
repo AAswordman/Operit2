@@ -6,7 +6,7 @@ import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import 'ChatLayoutMetrics.dart';
-import 'style/input/agent/AgentExtraSettingsPopup.dart';
+import 'style/input/agent/AgentInputMenuPopup.dart';
 import 'style/input/agent/AgentModelSelectorPopup.dart';
 
 class AgentChatInputSection extends StatefulWidget {
@@ -45,27 +45,27 @@ class AgentChatInputSection extends StatefulWidget {
 
 class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   final LayerLink _modelPopupLink = LayerLink();
-  final LayerLink _extraPopupLink = LayerLink();
+  final LayerLink _inputMenuPopupLink = LayerLink();
   OverlayEntry? _modelPopupEntry;
-  OverlayEntry? _extraPopupEntry;
+  OverlayEntry? _inputMenuPopupEntry;
 
   void _toggleSettingsPopup() {
     widget.onModelSelector?.call();
     if (_modelPopupEntry == null) {
-      _dismissExtraSettingsPopup();
+      _dismissInputMenuPopup();
       _showModelSettingsPopup();
     } else {
       _dismissModelSettingsPopup();
     }
   }
 
-  void _openSettingsPopup() {
+  void _openInputMenuPopup() {
     widget.onSettings?.call();
-    if (_extraPopupEntry == null) {
+    if (_inputMenuPopupEntry == null) {
       _dismissModelSettingsPopup();
-      _showExtraSettingsPopup();
+      _showInputMenuPopup();
     } else {
-      _dismissExtraSettingsPopup();
+      _dismissInputMenuPopup();
     }
   }
 
@@ -105,21 +105,21 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     overlay.insert(_modelPopupEntry!);
   }
 
-  void _showExtraSettingsPopup() {
+  void _showInputMenuPopup() {
     final overlay = Overlay.of(context);
-    _extraPopupEntry = OverlayEntry(
+    _inputMenuPopupEntry = OverlayEntry(
       builder: (context) {
         return Stack(
           children: <Widget>[
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
-                onTap: _dismissExtraSettingsPopup,
+                onTap: _dismissInputMenuPopup,
                 child: const SizedBox.expand(),
               ),
             ),
             CompositedTransformFollower(
-              link: _extraPopupLink,
+              link: _inputMenuPopupLink,
               showWhenUnlinked: false,
               targetAnchor: Alignment.topRight,
               followerAnchor: Alignment.bottomRight,
@@ -127,9 +127,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: AgentExtraSettingsPopup(
+                child: AgentInputMenuPopup(
                   bridge: widget.bridge,
-                  onDismiss: _dismissExtraSettingsPopup,
+                  onDismiss: _dismissInputMenuPopup,
                 ),
               ),
             ),
@@ -137,7 +137,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
         );
       },
     );
-    overlay.insert(_extraPopupEntry!);
+    overlay.insert(_inputMenuPopupEntry!);
   }
 
   void _dismissModelSettingsPopup() {
@@ -145,15 +145,15 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     _modelPopupEntry = null;
   }
 
-  void _dismissExtraSettingsPopup() {
-    _extraPopupEntry?.remove();
-    _extraPopupEntry = null;
+  void _dismissInputMenuPopup() {
+    _inputMenuPopupEntry?.remove();
+    _inputMenuPopupEntry = null;
   }
 
   @override
   void dispose() {
     _dismissModelSettingsPopup();
-    _dismissExtraSettingsPopup();
+    _dismissInputMenuPopup();
     super.dispose();
   }
 
@@ -227,7 +227,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     inputState: widget.inputState,
                     modelLabel: widget.modelLabel,
                     modelSelectorLink: _modelPopupLink,
-                    settingsLink: _extraPopupLink,
+                    settingsLink: _inputMenuPopupLink,
                     processing: processing,
                     hasDraftText: hasDraftText,
                     showCancelAction: showCancelAction,
@@ -235,7 +235,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     onSendMessage: widget.onSendMessage,
                     onCancelMessage: widget.onCancelMessage,
                     onAttach: widget.onAttach,
-                    onSettings: _openSettingsPopup,
+                    onSettings: _openInputMenuPopup,
                     onModelSelector: _toggleSettingsPopup,
                   ),
                 ),

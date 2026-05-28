@@ -2,14 +2,16 @@ use std::env;
 use std::process::ExitCode;
 
 mod bootstrap;
+mod chat_runtime;
 mod cli;
+mod core_proxy;
 mod tui;
 
-pub(crate) use bootstrap::create_local_core;
-pub(crate) use cli::{
+pub(crate) use chat_runtime::{
     build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
     ShellArgs,
 };
+pub(crate) use bootstrap::create_local_core;
 
 #[tokio::main]
 async fn main() -> ExitCode {
