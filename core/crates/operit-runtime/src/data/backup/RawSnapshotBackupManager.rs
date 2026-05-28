@@ -159,5 +159,6 @@ fn validateSnapshotPath(path: &str) -> Result<(), String> {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
-
+fn currentTimeMillis() -> i64 {
+    operit_host_api::TimeUtils::currentTimeMillis()
+}

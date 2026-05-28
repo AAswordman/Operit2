@@ -1408,15 +1408,6 @@ impl OpenAIProvider {
     }
 }
 
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OpenAIProvider {
@@ -1664,11 +1655,7 @@ impl OpenAIProvider {
                             }
                         }
                     });
-                    if let Err(error) = result {
-                        let error_chunk =
-                            format!("<error>{}</error>", xml_escape(&error.to_string()));
-                        let _ = tx.send(error_chunk);
-                    }
+                    let _ = result;
                     worker_event_channel.close();
                 });
                 while let Ok(chunk) = rx.recv() {

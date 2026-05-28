@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-
 pub const TOOL_TAG_SUFFIX_REGEX_SOURCE: &str = "[A-Za-z0-9_]+";
 pub const TOOL_TAG_NAME_REGEX_SOURCE: &str = "tool(?:_(?!result(?:_|$))[A-Za-z0-9_]+)?";
 pub const TOOL_RESULT_TAG_NAME_REGEX_SOURCE: &str = "tool_result(?:_[A-Za-z0-9_]+)?";
@@ -371,5 +370,3 @@ fn is_tag_boundary(byte: u8) -> bool {
 fn is_attr_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
-
-

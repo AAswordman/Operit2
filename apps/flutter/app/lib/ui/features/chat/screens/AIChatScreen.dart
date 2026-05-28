@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../core/chat/OperitChatRuntime.dart';
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
@@ -37,10 +38,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   String _modelLabel = 'Model';
   String? _errorMessage;
   String? _currentChatId;
-  ChatMarkdownStreamState? _activeMarkdownStreamState;
   StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
   TopBarController? _topBarController;
+  final Object _topBarTitleOwner = Object();
   String _currentChatTitle = '';
   String? _currentCharacterCardName;
   String? _activeCharacterCardName;
@@ -60,17 +61,12 @@ class _AIChatScreenState extends State<AIChatScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _topBarController = TopBarScope.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _updateTopBarTitle();
-      }
-    });
+    debugPrint('[TopBarTitleTrace] didChangeDependencies bind controller');
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _topBarController?.clearTitleContent();
     _messageController.removeListener(_onInputChanged);
     _inputFocusNode.removeListener(_onInputFocusChanged);
     _messageController.dispose();
@@ -121,6 +117,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   Future<ChatRuntimeSnapshot?> _loadSnapshot({bool showLoading = true}) async {
+    debugPrint(
+      '[TopBarTitleTrace] loadSnapshot begin showLoading=$showLoading',
+    );
     setState(() {
       if (showLoading) {
         _loading = true;
@@ -133,6 +132,13 @@ class _AIChatScreenState extends State<AIChatScreen>
       if (!mounted) {
         return null;
       }
+      debugPrint(
+        '[TopBarTitleTrace] loadSnapshot data '
+        'chatId=${snapshot.currentChatId} '
+        'chatTitle="${snapshot.currentChatTitle}" '
+        'currentCard="${snapshot.currentCharacterCardName}" '
+        'activeCard="${snapshot.activeCharacterCardName}"',
+      );
       setState(() {
         _messages
           ..clear()
@@ -144,10 +150,8 @@ class _AIChatScreenState extends State<AIChatScreen>
         _currentChatTitle = snapshot.currentChatTitle;
         _currentCharacterCardName = snapshot.currentCharacterCardName;
         _activeCharacterCardName = snapshot.activeCharacterCardName;
-        if (!snapshot.isLoading) {
-          _activeMarkdownStreamState = null;
-        }
       });
+      _refreshCurrentModelLabel();
       _updateTopBarTitle();
       _scheduleScrollToBottom();
       return snapshot;
@@ -188,7 +192,6 @@ class _AIChatScreenState extends State<AIChatScreen>
         ),
       );
       _loading = true;
-      _activeMarkdownStreamState = ChatMarkdownStreamState();
       _errorMessage = null;
     });
     _scheduleScrollToBottom();
@@ -244,8 +247,6 @@ class _AIChatScreenState extends State<AIChatScreen>
                 return;
               }
               _appendAiStreamChunk(chunk);
-            } else if (event.isMarkdownEvent) {
-              _applyAiMarkdownStreamEvent(event);
             } else if (event.type == 'completed') {
               _loadSnapshotAfterStreamCompleted();
             }
@@ -286,39 +287,8 @@ class _AIChatScreenState extends State<AIChatScreen>
             roleName: 'Operit',
             provider: '',
             modelName: '',
-            markdownStreamState: _activeMarkdownStreamState,
           ),
         );
-      }
-      _loading = true;
-    });
-    _scheduleScrollToBottom();
-  }
-
-  void _applyAiMarkdownStreamEvent(ChatResponseStreamEvent event) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      final streamState = _activeMarkdownStreamState ??=
-          ChatMarkdownStreamState();
-      streamState.apply(event);
-      final lastAiIndex = _messages.lastIndexWhere(
-        (message) => message.sender == 'ai',
-      );
-      if (lastAiIndex >= 0) {
-        final message = _messages[lastAiIndex];
-        if (message.markdownStreamState == null) {
-          _messages[lastAiIndex] = ChatRuntimeMessage(
-            sender: message.sender,
-            content: message.content,
-            timestamp: message.timestamp,
-            roleName: message.roleName,
-            provider: message.provider,
-            modelName: message.modelName,
-            markdownStreamState: streamState,
-          );
-        }
       }
       _loading = true;
     });
@@ -385,21 +355,54 @@ class _AIChatScreenState extends State<AIChatScreen>
     return AppLocalizations.of(context)!.model;
   }
 
+  Future<void> _refreshCurrentModelLabel() async {
+    final clients = GeneratedCoreProxyClients(widget.runtime.bridge);
+    final mapping = await clients.preferencesFunctionalConfigManager
+        .getConfigMappingForFunction(functionType: 'CHAT');
+    final modelName = await clients.preferencesModelConfigManager
+        .getModelNameByIndex(
+          configId: mapping.configId,
+          modelIndex: mapping.modelIndex,
+        );
+    if (!mounted) {
+      return;
+    }
+    _setModelLabel(modelName);
+  }
+
+  void _setModelLabel(String modelName) {
+    setState(() {
+      _modelLabel = modelName.length > 26
+          ? '${modelName.substring(0, 26)}...'
+          : modelName;
+    });
+  }
+
   void _updateTopBarTitle() {
     final controller = _topBarController;
     if (controller == null) {
+      debugPrint('[TopBarTitleTrace] update skipped controller=null');
       return;
     }
-    final l10n = AppLocalizations.of(context)!;
     final characterCardName = _currentCharacterCardName?.trim();
     final activeCharacterCardName = _activeCharacterCardName?.trim();
+    debugPrint(
+      '[TopBarTitleTrace] update input '
+      'chatTitle="${_currentChatTitle.trim()}" '
+      'currentCard="$characterCardName" '
+      'activeCard="$activeCharacterCardName"',
+    );
     final primaryText =
         characterCardName != null && characterCardName.isNotEmpty
         ? characterCardName
         : activeCharacterCardName != null && activeCharacterCardName.isNotEmpty
         ? activeCharacterCardName
-        : l10n.aiChat;
+        : 'Operit';
     final secondaryText = _currentChatTitle.trim();
+    debugPrint(
+      '[TopBarTitleTrace] set titleContent '
+      'primary="$primaryText" secondary="$secondaryText"',
+    );
     controller.setTitleContent(
       TopBarTitleContent((context) {
         return TopBarTitleText(
@@ -408,6 +411,7 @@ class _AIChatScreenState extends State<AIChatScreen>
           contentColor: Theme.of(context).colorScheme.onSurface,
         );
       }),
+      owner: _topBarTitleOwner,
     );
   }
 
@@ -422,8 +426,10 @@ class _AIChatScreenState extends State<AIChatScreen>
       scrollController: _scrollController,
       inputProcessingState: _inputProcessingState,
       modelLabel: _modelLabel,
+      bridge: widget.runtime.bridge,
       onSendMessage: _sendMessage,
       onCancelMessage: _cancelMessage,
+      onModelChanged: _setModelLabel,
       toastMessage: _toastMessage,
       onDismissToast: _dismissToast,
     );

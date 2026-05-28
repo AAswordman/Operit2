@@ -6,6 +6,7 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
+use crate::data::repository::ChatHistoryManager::ChatImportResult;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
@@ -189,8 +190,58 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.deleteMessage(index);
     }
 
+    pub fn createBranch(&mut self, upToMessageTimestamp: Option<i64>) {
+        self.chatHistoryDelegate.createBranch(upToMessageTimestamp);
+        self.syncTokenStatisticsForCurrentChat();
+        self.messageProcessingDelegate.scrollToBottom();
+    }
+
+    pub fn getBranches(
+        &self,
+        parentChatId: String,
+    ) -> Vec<crate::data::model::ChatHistory::ChatHistory> {
+        self.chatHistoryDelegate.getBranches(parentChatId)
+    }
+
+    pub fn updateChatLocked(&mut self, chatId: String, locked: bool) {
+        self.chatHistoryDelegate.updateChatLocked(chatId, locked);
+    }
+
+    pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
+        self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
+    }
+
     pub fn clearCurrentChat(&mut self) {
         self.chatHistoryDelegate.clearCurrentChat();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportChatHistoriesToJson(&self) -> Result<String, String> {
+        self.chatHistoryDelegate
+            .chatHistoryManager
+            .exportChatHistoriesToJson()
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importChatHistoriesFromJson(
+        &mut self,
+        jsonString: String,
+    ) -> Result<ChatImportResult, String> {
+        let result = self
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .importChatHistoriesFromJson(jsonString)
+            .map_err(|error| error.to_string())?;
+        self.chatHistoryDelegate.chatHistories = self
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .chatHistoriesFlow
+            .value();
+        self.chatHistoryDelegate
+            .chatHistoriesFlow
+            .set_value(self.chatHistoryDelegate.chatHistories.clone());
+        Ok(result)
     }
 
     pub fn updateChatTitle(&mut self, chatId: String, title: String) {

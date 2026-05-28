@@ -3,7 +3,6 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../host/HostEnvironmentDescriptor.dart';
@@ -13,9 +12,7 @@ import 'OperitRuntimeBridge.dart';
 import 'PlatformCoreProxy.dart';
 
 class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
-  const ProxyCoreRuntimeBridge({
-    this.coreProxy = platformCoreProxy,
-  });
+  const ProxyCoreRuntimeBridge({this.coreProxy = platformCoreProxy});
 
   final CoreProxy coreProxy;
 
@@ -50,35 +47,21 @@ class RemoteCoreProxy extends CoreProxy {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     final body = jsonEncode({'request': request.toJson()});
-    debugPrint(
-      '[OperitRemoteCore] call -> ${request.targetPath.key}.${request.methodName} '
-      'id=${request.requestId} url=${session.uri('/link/call')}',
-    );
     final response = await client.post(
       session.uri('/link/call'),
       headers: session.signedHeaders(body),
       body: body,
-    );
-    debugPrint(
-      '[OperitRemoteCore] call http <- status=${response.statusCode} '
-      'id=${request.requestId} bytes=${response.body.length}',
     );
     _throwIfRemoteError(response);
 
     final json = jsonDecode(response.body) as Map<String, Object?>;
     final result = json['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
-      debugPrint(
-        '[OperitRemoteCore] call <- ok ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId}',
-      );
       return result['Ok'];
     }
     if (result.containsKey('Err')) {
-      final error = CoreLinkError.fromJson(result['Err'] as Map<String, Object?>);
-      debugPrint(
-        '[OperitRemoteCore] call <- err ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId} $error',
+      final error = CoreLinkError.fromJson(
+        result['Err'] as Map<String, Object?>,
       );
       throw error;
     }
@@ -91,18 +74,10 @@ class RemoteCoreProxy extends CoreProxy {
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     final body = jsonEncode({'request': request.toJson()});
-    debugPrint(
-      '[OperitRemoteCore] watchSnapshot -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId}',
-    );
     final response = await client.post(
       session.uri('/link/watch/snapshot'),
       headers: session.signedHeaders(body),
       body: body,
-    );
-    debugPrint(
-      '[OperitRemoteCore] watchSnapshot http <- status=${response.statusCode} '
-      'id=${request.requestId} bytes=${response.body.length}',
     );
     _throwIfRemoteError(response);
     return CoreEvent.fromJson(
@@ -113,18 +88,10 @@ class RemoteCoreProxy extends CoreProxy {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
     final body = jsonEncode({'request': request.toJson()});
-    debugPrint(
-      '[OperitRemoteCore] watchStream -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId}',
-    );
     final httpRequest = http.Request('POST', session.uri('/link/watch/stream'))
       ..headers.addAll(session.signedHeaders(body))
       ..body = body;
     final response = await client.send(httpRequest);
-    debugPrint(
-      '[OperitRemoteCore] watchStream http <- status=${response.statusCode} '
-      'id=${request.requestId}',
-    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final bodyText = await response.stream.bytesToString();
       _throwRemoteErrorBody(response.statusCode, bodyText);
@@ -137,10 +104,6 @@ class RemoteCoreProxy extends CoreProxy {
         final line = buffer.substring(0, index).trim();
         buffer = buffer.substring(index + 1);
         if (line.isNotEmpty) {
-          debugPrint(
-            '[OperitRemoteCore] watchStream event lineBytes=${line.length} '
-            'id=${request.requestId}',
-          );
           yield CoreEvent.fromJson(jsonDecode(line) as Map<String, Object?>);
         }
         index = buffer.indexOf('\n');

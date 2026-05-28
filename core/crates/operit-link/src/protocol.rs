@@ -218,7 +218,10 @@ impl CoreLinkError {
     }
 
     pub fn watchNotFound(key: &str) -> Self {
-        Self::new("WATCH_NOT_FOUND", format!("core watch target not found: {key}"))
+        Self::new(
+            "WATCH_NOT_FOUND",
+            format!("core watch target not found: {key}"),
+        )
     }
 
     pub fn internal(message: impl Into<String>) -> Self {

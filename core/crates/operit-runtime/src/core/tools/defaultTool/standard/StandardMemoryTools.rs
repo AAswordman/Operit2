@@ -841,4 +841,3 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.clone())
 }
-

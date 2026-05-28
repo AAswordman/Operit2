@@ -86,17 +86,17 @@ pub(super) async fn run_tool_command(core: &mut CliCore, args: &[String]) -> Res
             let scope = args.get(1).map(String::as_str).unwrap_or("public");
             let names = match scope {
                 "public" => core
-                    .permissions_a_itool_handler()
+                    .permissions_ai_tool_handler()
                     .getPublicToolNames()
                     .await
                     .map_err(|error| error.to_string())?,
                 "internal" => core
-                    .permissions_a_itool_handler()
+                    .permissions_ai_tool_handler()
                     .getInternalToolNames()
                     .await
                     .map_err(|error| error.to_string())?,
                 "all" => core
-                    .permissions_a_itool_handler()
+                    .permissions_ai_tool_handler()
                     .getAllToolNames()
                     .await
                     .map_err(|error| error.to_string())?,
@@ -104,7 +104,7 @@ pub(super) async fn run_tool_command(core: &mut CliCore, args: &[String]) -> Res
             };
             for name in names {
                 let visibility = match core
-                    .permissions_a_itool_handler()
+                    .permissions_ai_tool_handler()
                     .getToolVisibility(&name)
                     .await
                     .map_err(|error| error.to_string())?
@@ -122,13 +122,13 @@ pub(super) async fn run_tool_command(core: &mut CliCore, args: &[String]) -> Res
             println!("name={toolName}");
             println!(
                 "registered={}",
-                core.permissions_a_itool_handler()
+                core.permissions_ai_tool_handler()
                     .hasToolExecutor(toolName)
                     .await
                     .map_err(|error| error.to_string())?
             );
             match core
-                .permissions_a_itool_handler()
+                .permissions_ai_tool_handler()
                 .getToolVisibility(toolName)
                 .await
                 .map_err(|error| error.to_string())?
@@ -164,7 +164,7 @@ pub(super) async fn run_tool_command(core: &mut CliCore, args: &[String]) -> Res
                 parameters: parse_tool_parameters_json(paramsJson)?,
             };
             let result = core
-                .permissions_a_itool_handler()
+                .permissions_ai_tool_handler()
                 .executeTool(tool)
                 .await
                 .map_err(|error| error.to_string())?;

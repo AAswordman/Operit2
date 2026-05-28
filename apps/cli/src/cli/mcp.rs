@@ -11,14 +11,14 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
         "dir" => {
             println!(
                 "configDir={}",
-                core.mcp_m_cplocal_server()
+                core.mcp_local_server()
                     .getConfigDirectory()
                     .await
                     .map_err(|error| error.to_string())?
             );
             println!(
                 "configFile={}",
-                core.mcp_m_cplocal_server()
+                core.mcp_local_server()
                     .getConfigFilePath()
                     .await
                     .map_err(|error| error.to_string())?
@@ -26,17 +26,17 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
         }
         "list" => {
             let servers = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getAllMCPServers()
                 .await
                 .map_err(|error| error.to_string())?;
             let metadata = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getAllPluginMetadata()
                 .await
                 .map_err(|error| error.to_string())?;
             let status = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getAllServerStatus()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -46,7 +46,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 println!(
                     "{}\tenabled={}\tcommand={}\targs={}\tname={}\ttoolsCached={}",
                     serverId,
-                    core.mcp_m_cplocal_server()
+                    core.mcp_local_server()
                         .isServerEnabled(&serverId)
                         .await
                         .map_err(|error| error.to_string())?,
@@ -64,7 +64,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                     println!(
                         "{}\tenabled={}\tremote={}\tname={}",
                         pluginId,
-                        core.mcp_m_cplocal_server()
+                        core.mcp_local_server()
                             .isServerEnabled(&pluginId)
                             .await
                             .map_err(|error| error.to_string())?,
@@ -79,7 +79,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 .get(1)
                 .ok_or_else(|| "usage: operit2 mcp show <name>".to_string())?;
             if let Some(serverConfig) = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getMCPServer(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -87,7 +87,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 println!("id={name}");
                 println!(
                     "enabled={}",
-                    core.mcp_m_cplocal_server()
+                    core.mcp_local_server()
                         .isServerEnabled(name)
                         .await
                         .map_err(|error| error.to_string())?
@@ -106,7 +106,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 println!("autoApprove={}", serverConfig.autoApprove.join(","));
             }
             if let Some(metadata) = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getPluginMetadata(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -122,7 +122,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 );
             }
             if let Some(status) = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getServerStatus(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -146,7 +146,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 .ok_or_else(|| "usage: operit2 mcp import <json-or-@file>".to_string())?;
             let configJson = read_skill_content_arg(configArg)?;
             let count = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .mergeConfigFromJson(&configJson)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -156,7 +156,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 mcp enable <name>".to_string())?;
-            core.mcp_m_cplocal_server()
+            core.mcp_local_server()
                 .setServerEnabled(name, true)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -166,7 +166,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 mcp disable <name>".to_string())?;
-            core.mcp_m_cplocal_server()
+            core.mcp_local_server()
                 .setServerEnabled(name, false)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -189,7 +189,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
                 .get(1)
                 .ok_or_else(|| "usage: operit2 mcp cached <name>".to_string())?;
             for tool in core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .getCachedTools(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -201,7 +201,7 @@ pub(super) async fn run_mcp_command(core: &mut CliCore, args: &[String]) -> Resu
         "export" => {
             println!(
                 "{}",
-                core.mcp_m_cplocal_server()
+                core.mcp_local_server()
                     .exportConfigAsJson()
                     .await
                     .map_err(|error| error.to_string())?

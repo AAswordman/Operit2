@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-
 use serde::{Deserialize, Serialize};
 
 use crate::util::AppLogger::AppLogger;
@@ -417,5 +416,3 @@ fn base64_value(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
-
-

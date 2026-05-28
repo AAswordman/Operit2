@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../part/ThinkToolsXmlNodeGrouper.dart';
 
 class AiMessageComposable extends StatelessWidget {
   const AiMessageComposable({
@@ -20,6 +21,7 @@ class AiMessageComposable extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final detailText = _detailText(message);
+    const nodeGrouper = ThinkToolsXmlNodeGrouper(showThinkingProcess: true);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -53,9 +55,9 @@ class AiMessageComposable extends StatelessWidget {
             child: StreamMarkdownRenderer(
               content: message.content,
               isStreaming: isStreaming,
-              streamState: isStreaming ? message.markdownStreamState : null,
               textColor: colorScheme.onSurface,
               backgroundColor: colorScheme.surface,
+              nodeGrouper: nodeGrouper,
             ),
           ),
         ],

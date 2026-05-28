@@ -1025,7 +1025,6 @@ impl MessageProcessingDelegate {
                 .lock()
                 .map(|tracker| tracker.current_content())
                 .unwrap_or_else(|_| workerAiMessage.content.clone());
-            let streamErrorMessage = stream_error_message(&finalContent);
             let providerModel = workerService.getLastProviderModel().unwrap_or_default();
             let (provider, modelName) = split_provider_model(&providerModel);
             let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(
@@ -1057,47 +1056,38 @@ impl MessageProcessingDelegate {
                 workerChatHistoryDelegate
                     .addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
             }
-            if let Some(message) = streamErrorMessage {
-                workerMessageProcessingDelegate.setInputProcessingStateForChat(
-                    workerChatId.clone(),
-                    InputProcessingState::Error { message },
-                );
-                workerMessageProcessingDelegate
-                    .cleanupRuntimeAfterSend(workerChatId, workerTurnOptions);
-            } else {
-                let nextWindowSize = workerCalculateNextWindowSize(
-                    &mut workerService,
-                    &workerChatHistoryDelegate,
-                    workerChatId.clone(),
-                );
-                if let Some(windowSize) = nextWindowSize {
-                    let previousTokens = workerChatHistoryDelegate
-                        .chatHistoriesFlow()
-                        .value()
-                        .into_iter()
-                        .find(|history| history.id == workerChatId)
-                        .map(|history| (history.inputTokens, history.outputTokens));
-                    let (inputTokens, outputTokens) = match previousTokens {
-                        Some((inputTokens, outputTokens)) => (
-                            inputTokens + workerAiMessage.inputTokens,
-                            outputTokens + workerAiMessage.outputTokens,
-                        ),
-                        None => (workerAiMessage.inputTokens, workerAiMessage.outputTokens),
-                    };
-                    workerChatHistoryDelegate.saveCurrentChat(
-                        inputTokens,
-                        outputTokens,
-                        windowSize,
-                        Some(workerChatId.clone()),
-                    );
-                }
-                workerMessageProcessingDelegate.finalizeMessageAndNotify(
-                    workerChatId,
-                    finalMessage,
-                    nextWindowSize,
-                    workerTurnOptions,
+            let nextWindowSize = workerCalculateNextWindowSize(
+                &mut workerService,
+                &workerChatHistoryDelegate,
+                workerChatId.clone(),
+            );
+            if let Some(windowSize) = nextWindowSize {
+                let previousTokens = workerChatHistoryDelegate
+                    .chatHistoriesFlow()
+                    .value()
+                    .into_iter()
+                    .find(|history| history.id == workerChatId)
+                    .map(|history| (history.inputTokens, history.outputTokens));
+                let (inputTokens, outputTokens) = match previousTokens {
+                    Some((inputTokens, outputTokens)) => (
+                        inputTokens + workerAiMessage.inputTokens,
+                        outputTokens + workerAiMessage.outputTokens,
+                    ),
+                    None => (workerAiMessage.inputTokens, workerAiMessage.outputTokens),
+                };
+                workerChatHistoryDelegate.saveCurrentChat(
+                    inputTokens,
+                    outputTokens,
+                    windowSize,
+                    Some(workerChatId.clone()),
                 );
             }
+            workerMessageProcessingDelegate.finalizeMessageAndNotify(
+                workerChatId,
+                finalMessage,
+                nextWindowSize,
+                workerTurnOptions,
+            );
         });
         Ok(SendUserMessageProcessingResult {
             aiMessage,
@@ -1216,26 +1206,6 @@ impl Default for MessageProcessingDelegate {
             ModelConfigManager::new(rootDir),
         )
     }
-}
-
-fn stream_error_message(content: &str) -> Option<String> {
-    let trimmed = content.trim();
-    if !(trimmed.starts_with("<error>") && trimmed.ends_with("</error>")) {
-        return None;
-    }
-    let body = trimmed
-        .trim_start_matches("<error>")
-        .trim_end_matches("</error>");
-    Some(xml_unescape(body))
-}
-
-fn xml_unescape(value: &str) -> String {
-    value
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
 }
 
 fn split_provider_model(providerModel: &str) -> (String, String) {

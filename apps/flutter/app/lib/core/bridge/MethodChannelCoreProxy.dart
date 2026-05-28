@@ -2,7 +2,6 @@
 
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../host/HostEnvironmentDescriptor.dart';
@@ -19,13 +18,11 @@ class MethodChannelCoreProxy extends CoreProxy {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     final requestText = jsonEncode(request.toJson());
-    debugPrint(
-      '[OperitCoreProxy] call -> ${request.targetPath.key}.${request.methodName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
+    final responseText = await _channel.invokeMethod<String>(
+      'call',
+      requestText,
     );
-    final responseText = await _channel.invokeMethod<String>('call', requestText);
     if (responseText == null) {
-      debugPrint('[OperitCoreProxy] call <- empty id=${request.requestId}');
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty response',
@@ -34,21 +31,14 @@ class MethodChannelCoreProxy extends CoreProxy {
     final response = jsonDecode(responseText) as Map<String, Object?>;
     final result = response['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
-      debugPrint(
-        '[OperitCoreProxy] call <- ok ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId} type=${result['Ok'].runtimeType}',
-      );
       return result['Ok'];
     }
     if (result.containsKey('Err')) {
-      final error = CoreLinkError.fromJson(result['Err'] as Map<String, Object?>);
-      debugPrint(
-        '[OperitCoreProxy] call <- err ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId} $error',
+      final error = CoreLinkError.fromJson(
+        result['Err'] as Map<String, Object?>,
       );
       throw error;
     }
-    debugPrint('[OperitCoreProxy] call <- invalid id=${request.requestId}');
     throw const CoreLinkError(
       code: 'INVALID_RESPONSE',
       message: 'runtime bridge response result is invalid',
@@ -57,16 +47,11 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
-    debugPrint(
-      '[OperitCoreProxy] watchSnapshot -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
-    );
     final responseText = await _channel.invokeMethod<String>(
       'watchSnapshot',
       jsonEncode(request.toJson()),
     );
     if (responseText == null) {
-      debugPrint('[OperitCoreProxy] watchSnapshot <- empty id=${request.requestId}');
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty watch response',
@@ -75,29 +60,15 @@ class MethodChannelCoreProxy extends CoreProxy {
     final response = jsonDecode(responseText) as Map<String, Object?>;
     if (response.containsKey('code') && response.containsKey('message')) {
       final error = CoreLinkError.fromJson(response);
-      debugPrint(
-        '[OperitCoreProxy] watchSnapshot <- err ${request.targetPath.key}.${request.propertyName} '
-        'id=${request.requestId} $error',
-      );
       throw error;
     }
-    final event = CoreEvent.fromJson(response);
-    debugPrint(
-      '[OperitCoreProxy] watchSnapshot <- ${event.kind} '
-      '${request.targetPath.key}.${request.propertyName} id=${request.requestId}',
-    );
-    return event;
+    return CoreEvent.fromJson(response);
   }
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
-    debugPrint(
-      '[OperitCoreProxy] watchStream -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
-    );
     final subscriptionText = await _invokeWatchStream(_channel, request);
     if (subscriptionText == null) {
-      debugPrint('[OperitCoreProxy] watchStream <- empty id=${request.requestId}');
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty stream subscription',
@@ -108,17 +79,9 @@ class MethodChannelCoreProxy extends CoreProxy {
     if (subscriptionJson.containsKey('code') &&
         subscriptionJson.containsKey('message')) {
       final error = CoreLinkError.fromJson(subscriptionJson);
-      debugPrint(
-        '[OperitCoreProxy] watchStream <- err ${request.targetPath.key}.${request.propertyName} '
-        'id=${request.requestId} $error',
-      );
       throw error;
     }
     final subscriptionId = subscriptionJson['subscriptionId'] as String;
-    debugPrint(
-      '[OperitCoreProxy] watchStream subscribed id=${request.requestId} '
-      'subscription=$subscriptionId',
-    );
     var completed = false;
     try {
       while (!completed) {
@@ -140,12 +103,6 @@ class MethodChannelCoreProxy extends CoreProxy {
           throw CoreLinkError.fromJson(decodedEvents);
         }
         final eventsJson = decodedEvents as List<Object?>;
-        if (eventsJson.isNotEmpty) {
-          debugPrint(
-            '[OperitCoreProxy] watchStream poll subscription=$subscriptionId '
-            'events=${eventsJson.length}',
-          );
-        }
         for (final eventJson in eventsJson.cast<Map<String, Object?>>()) {
           final event = CoreEvent.fromJson(eventJson);
           yield event;
@@ -156,7 +113,6 @@ class MethodChannelCoreProxy extends CoreProxy {
       }
     } finally {
       await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
-      debugPrint('[OperitCoreProxy] watchStream closed subscription=$subscriptionId');
     }
   }
 
@@ -184,19 +140,7 @@ Future<String?> _invokeWatchStream(
       'watchStream',
       jsonEncode(request.toJson()),
     );
-  } on MissingPluginException catch (error) {
-    debugPrint(
-      '[OperitCoreProxy] watchStream missing native method. '
-      'The current Flutter runner was built without operit/runtime.watchStream. '
-      'A full native rebuild/restart is required. $error',
-    );
+  } on MissingPluginException {
     rethrow;
   }
-}
-
-String _argKeys(Object? args) {
-  if (args is Map<String, Object?>) {
-    return args.keys.join(',');
-  }
-  return args.runtimeType.toString();
 }

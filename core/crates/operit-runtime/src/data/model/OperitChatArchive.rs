@@ -60,7 +60,7 @@ impl OperitArchivedChat {
             characterCardName: history.characterCardName,
             characterGroupId: history.characterGroupId,
             locked: history.locked,
-            pinned: false,
+            pinned: history.pinned,
         })
     }
 
@@ -87,6 +87,7 @@ impl OperitArchivedChat {
             characterCardName: self.characterCardName.clone(),
             characterGroupId: self.characterGroupId.clone(),
             locked: self.locked,
+            pinned: self.pinned,
         })
     }
 }

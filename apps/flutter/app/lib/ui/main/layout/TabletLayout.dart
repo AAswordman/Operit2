@@ -14,23 +14,21 @@ class TabletLayout extends StatefulWidget {
     required this.content,
     required this.navigationEntries,
     required this.selectedRouteId,
-    required this.isNetworkAvailable,
-    required this.networkType,
     required this.isTabletSidebarExpanded,
     required this.tabletSidebarWidth,
     required this.collapsedTabletSidebarWidth,
     required this.onNavigationEntrySelected,
+    required this.onConversationActivated,
   });
 
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
   final String selectedRouteId;
-  final bool isNetworkAvailable;
-  final String networkType;
   final bool isTabletSidebarExpanded;
   final double tabletSidebarWidth;
   final double collapsedTabletSidebarWidth;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
+  final VoidCallback onConversationActivated;
 
   @override
   State<TabletLayout> createState() => _TabletLayoutState();
@@ -131,18 +129,17 @@ class _TabletLayoutState extends State<TabletLayout> {
                     key: const ValueKey<String>('expandedSidebarContent'),
                     navigationEntries: widget.navigationEntries,
                     selectedRouteId: widget.selectedRouteId,
-                    isNetworkAvailable: widget.isNetworkAvailable,
-                    networkType: widget.networkType,
                     appearance: appearance,
                     onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                    onConversationActivated: widget.onConversationActivated,
                   )
                 : CollapsedDrawerContent(
                     key: const ValueKey<String>('collapsedSidebarContent'),
                     navigationEntries: widget.navigationEntries,
                     selectedRouteId: widget.selectedRouteId,
-                    isNetworkAvailable: widget.isNetworkAvailable,
                     appearance: appearance,
                     onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                    onConversationActivated: widget.onConversationActivated,
                   ),
           ),
         ),

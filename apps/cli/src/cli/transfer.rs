@@ -31,7 +31,7 @@ pub(super) async fn run_export_command(core: &mut CliCore, args: &[String]) -> R
                 .get(1)
                 .ok_or_else(|| "usage: operit2 export chat <path>".to_string())?;
             let content = core
-                .repository_chat_history_manager()
+                .chat_runtime_holder_main()
                 .exportChatHistoriesToJson()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -78,7 +78,7 @@ pub(super) async fn run_import_command(core: &mut CliCore, args: &[String]) -> R
                 .ok_or_else(|| "usage: operit2 import chat <path>".to_string())?;
             let content = read_text(path)?;
             let result = core
-                .repository_chat_history_manager()
+                .chat_runtime_holder_main()
                 .importChatHistoriesFromJson(content)
                 .await
                 .map_err(|error| error.to_string())?;

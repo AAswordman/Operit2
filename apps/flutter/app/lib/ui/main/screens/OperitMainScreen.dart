@@ -64,7 +64,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _navigationTransitionSource = source == RouteEntrySource.drawer
         ? NavigationTransitionSource.drawer
         : NavigationTransitionSource.defaultSource;
-    _topBarController.clear();
+    if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
+      _topBarController.clear();
+    }
     _routerState.navigate(
       routeId: routeId,
       args: args,
@@ -85,10 +87,28 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _navigationTransitionSource = source == RouteEntrySource.drawer
         ? NavigationTransitionSource.drawer
         : NavigationTransitionSource.defaultSource;
-    _topBarController.clear();
+    if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
+      _topBarController.clear();
+    }
     _routerState.resetTo(
       RouteEntry(routeId: routeId, args: args, source: source),
     );
+  }
+
+  bool _shouldPreserveTopBarTitle(
+    String nextRouteId,
+    Map<String, Object?> nextArgs,
+    RouteEntrySource nextSource,
+  ) {
+    final currentScreen = AppRouteCatalog.resolveScreen(
+      _navigationModel,
+      _routerState.currentEntry,
+    );
+    final nextScreen = AppRouteCatalog.resolveScreen(
+      _navigationModel,
+      RouteEntry(routeId: nextRouteId, args: nextArgs, source: nextSource),
+    );
+    return currentScreen.preserveTopBarTitleWhenReplacingWith(nextScreen);
   }
 
   void _navigateToNavigationEntry(NavigationEntrySpec entry) {
@@ -103,6 +123,21 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       _navigationTransitionSource = NavigationTransitionSource.drawer;
     });
     _resetToRoute(entry.routeId, entry.routeArgs, RouteEntrySource.drawer);
+  }
+
+  void _activateConversationRoute() {
+    final entry = _navigationModel.navigationEntriesById['main.ai_chat'];
+    if (entry == null) {
+      throw StateError('Unknown navigation entry: main.ai_chat');
+    }
+    setState(() {
+      _drawerOpen = false;
+      _isNavigatingBack = false;
+      _navigationTransitionSource = NavigationTransitionSource.drawer;
+    });
+    _resetToRoute(entry.routeId, <String, Object?>{
+      'conversationActivatedAt': DateTime.now().microsecondsSinceEpoch,
+    }, RouteEntrySource.drawer);
   }
 
   @override
@@ -179,19 +214,16 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                       content: content,
                       navigationEntries: _navigationModel.navigationEntries,
                       selectedRouteId: currentRouteEntry.routeId,
-                      isNetworkAvailable: true,
-                      networkType: 'Network',
                       isTabletSidebarExpanded: _isTabletSidebarExpanded,
                       tabletSidebarWidth: 280,
-                      collapsedTabletSidebarWidth: 64,
+                      collapsedTabletSidebarWidth: 56,
                       onNavigationEntrySelected: _navigateToNavigationEntry,
+                      onConversationActivated: _activateConversationRoute,
                     )
                   : PhoneLayout(
                       content: content,
                       navigationEntries: _navigationModel.navigationEntries,
                       selectedRouteId: currentRouteEntry.routeId,
-                      isNetworkAvailable: true,
-                      networkType: 'Network',
                       drawerWidth: mediaQuery.size.width * 0.75,
                       drawerOpen: _drawerOpen,
                       enableNavigationAnimation: true,
@@ -206,6 +238,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                         });
                       },
                       onNavigationEntrySelected: _navigateToNavigationEntry,
+                      onConversationActivated: _activateConversationRoute,
                     ),
             ),
           ),

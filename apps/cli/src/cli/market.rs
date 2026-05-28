@@ -410,7 +410,7 @@ async fn install_market_skill(core: &mut CliCore, target: &str) -> Result<(), St
     };
     println!(
         "{}",
-        core.skill_skill_repository()
+        core.skill_repository()
             .importSkillFromGitHubRepo(&repoUrl)
             .await
             .map_err(|error| error.to_string())?
@@ -421,7 +421,7 @@ async fn install_market_skill(core: &mut CliCore, target: &str) -> Result<(), St
 async fn install_market_mcp(core: &mut CliCore, target: &str) -> Result<(), String> {
     if target.trim_start().starts_with('{') {
         let count = core
-            .mcp_m_cplocal_server()
+            .mcp_local_server()
             .mergeConfigFromJson(target)
             .await
             .map_err(|error| error.to_string())?;
@@ -513,13 +513,13 @@ async fn install_market_mcp(core: &mut CliCore, target: &str) -> Result<(), Stri
             .trackDownload("mcp", &statsId, &issueUrl)
             .await;
         if !core
-            .mcp_m_cprepository()
+            .mcp_repository()
             .checkConfigNeedsPhysicalInstallation(config)
             .await
             .map_err(|error| error.to_string())?
         {
             let count = core
-                .mcp_m_cplocal_server()
+                .mcp_local_server()
                 .mergeConfigFromJson(config)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -538,7 +538,7 @@ async fn install_market_mcp(core: &mut CliCore, target: &str) -> Result<(), Stri
         .api_market_stats_api_service()
         .trackDownload("mcp", &statsId, &targetUrl)
         .await;
-    core.mcp_m_cplocal_server()
+    core.mcp_local_server()
         .addOrUpdatePluginMetadata(metadata)
         .await
         .map_err(|error| error.to_string())?;

@@ -54,6 +54,7 @@ pub struct OperitFlutterBridge {
     runtime: tokio::runtime::Runtime,
     proxyCore: Mutex<LocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
+    nextWatchStreamId: Mutex<u64>,
 }
 
 impl OperitFlutterBridge {
@@ -82,6 +83,7 @@ impl OperitFlutterBridge {
             runtime,
             proxyCore: Mutex::new(core),
             watchStreams: Mutex::new(HashMap::new()),
+            nextWatchStreamId: Mutex::new(1),
         })
     }
 
@@ -164,10 +166,15 @@ impl OperitFlutterBridge {
         let receiver = proxyCore.watchSync(request)?;
         #[cfg(not(target_arch = "wasm32"))]
         let receiver = self.runtime.block_on(proxyCore.watch(request))?;
+        let mut nextWatchStreamId = self.nextWatchStreamId.lock().map_err(|error| {
+            CoreLinkError::internal(format!("watch stream id lock poisoned: {error}"))
+        })?;
         let subscriptionId = format!(
-            "flutter-watch-{}",
-            operit_host_api::TimeUtils::currentTimeMillisU128()
+            "flutter-watch-{}-{}",
+            operit_host_api::TimeUtils::currentTimeMillisU128(),
+            *nextWatchStreamId
         );
+        *nextWatchStreamId += 1;
         self.watchStreams
             .lock()
             .map_err(|error| {
@@ -338,32 +345,13 @@ fn bridge_call_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> S
     let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("[OperitFlutterBridge] call invalid request: {error}");
             return error_response_string(
                 "flutter-bridge-invalid-request",
                 format!("invalid core request: {error}"),
             );
         }
     };
-    let requestId = request.requestId.0.clone();
-    let target = request.targetPath.key();
-    let method = request.methodName.clone();
-    eprintln!(
-        "[OperitFlutterBridge] call -> {target}.{method} id={requestId} args={}",
-        arg_keys(&request.args)
-    );
     let response = handle.call(request);
-    match &response.result {
-        Ok(value) => {
-            eprintln!(
-                "[OperitFlutterBridge] call <- ok {target}.{method} id={requestId} value={}",
-                value_kind(value)
-            );
-        }
-        Err(error) => {
-            eprintln!("[OperitFlutterBridge] call <- err {target}.{method} id={requestId} {error}");
-        }
-    }
     json_string(&response)
 }
 
@@ -372,32 +360,13 @@ async fn bridge_call_json_async(handle: &OperitFlutterBridge, request_bytes: &[u
     let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("[OperitFlutterBridge] call invalid request: {error}");
             return error_response_string(
                 "flutter-bridge-invalid-request",
                 format!("invalid core request: {error}"),
             );
         }
     };
-    let requestId = request.requestId.0.clone();
-    let target = request.targetPath.key();
-    let method = request.methodName.clone();
-    eprintln!(
-        "[OperitFlutterBridge] call -> {target}.{method} id={requestId} args={}",
-        arg_keys(&request.args)
-    );
     let response = handle.call(request).await;
-    match &response.result {
-        Ok(value) => {
-            eprintln!(
-                "[OperitFlutterBridge] call <- ok {target}.{method} id={requestId} value={}",
-                value_kind(value)
-            );
-        }
-        Err(error) => {
-            eprintln!("[OperitFlutterBridge] call <- err {target}.{method} id={requestId} {error}");
-        }
-    }
     json_string(&response)
 }
 
@@ -453,33 +422,15 @@ fn bridge_watch_stream_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) 
     let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("[OperitFlutterBridge] watchStream invalid request: {error}");
             return serde_json::to_string(&CoreLinkError::internal(format!(
                 "invalid core watch request: {error}"
             )))
             .expect("CoreLinkError must serialize");
         }
     };
-    let requestId = request.requestId.0.clone();
-    let target = request.targetPath.key();
-    let property = request.propertyName.clone();
-    eprintln!(
-        "[OperitFlutterBridge] watchStream -> {target}.{property} id={requestId} args={}",
-        arg_keys(&request.args)
-    );
     match handle.watchStream(request) {
-        Ok(subscriptionId) => {
-            eprintln!(
-                "[OperitFlutterBridge] watchStream <- subscribed {target}.{property} id={requestId} subscription={subscriptionId}"
-            );
-            serde_json::json!({ "subscriptionId": subscriptionId }).to_string()
-        }
-        Err(error) => {
-            eprintln!(
-                "[OperitFlutterBridge] watchStream <- err {target}.{property} id={requestId} {error}"
-            );
-            serde_json::to_string(&error).expect("CoreLinkError must serialize")
-        }
+        Ok(subscriptionId) => serde_json::json!({ "subscriptionId": subscriptionId }).to_string(),
+        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
     }
 }
 
@@ -554,33 +505,15 @@ fn bridge_watch_snapshot_json(handle: &OperitFlutterBridge, request_bytes: &[u8]
     let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("[OperitFlutterBridge] watchSnapshot invalid request: {error}");
             return serde_json::to_string(&CoreLinkError::internal(format!(
                 "invalid core watch request: {error}"
             )))
             .expect("CoreLinkError must serialize");
         }
     };
-    let requestId = request.requestId.0.clone();
-    let target = request.targetPath.key();
-    let property = request.propertyName.clone();
-    eprintln!(
-        "[OperitFlutterBridge] watchSnapshot -> {target}.{property} id={requestId} args={}",
-        arg_keys(&request.args)
-    );
     match handle.watchSnapshot(request) {
-        Ok(event) => {
-            eprintln!(
-                "[OperitFlutterBridge] watchSnapshot <- ok {target}.{property} id={requestId}"
-            );
-            json_string(&event)
-        }
-        Err(error) => {
-            eprintln!(
-                "[OperitFlutterBridge] watchSnapshot <- err {target}.{property} id={requestId} {error}"
-            );
-            serde_json::to_string(&error).expect("CoreLinkError must serialize")
-        }
+        Ok(event) => json_string(&event),
+        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
     }
 }
 
@@ -679,24 +612,6 @@ fn json_string(value: &impl serde::Serialize) -> String {
             "{{\"requestId\":\"flutter-bridge-serialize\",\"result\":{{\"Err\":{{\"code\":\"INTERNAL_ERROR\",\"message\":\"{error}\"}}}}}}"
         )
     })
-}
-
-fn arg_keys(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Object(object) => object.keys().cloned().collect::<Vec<_>>().join(","),
-        other => value_kind(other).to_string(),
-    }
-}
-
-fn value_kind(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "bool",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
 }
 
 fn string_to_ptr(value: impl Into<String>) -> *mut c_char {

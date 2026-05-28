@@ -15,27 +15,25 @@ class PhoneLayout extends StatefulWidget {
     required this.content,
     required this.navigationEntries,
     required this.selectedRouteId,
-    required this.isNetworkAvailable,
-    required this.networkType,
     required this.drawerWidth,
     required this.drawerOpen,
     required this.enableNavigationAnimation,
     required this.onOpenDrawer,
     required this.onCloseDrawer,
     required this.onNavigationEntrySelected,
+    required this.onConversationActivated,
   });
 
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
   final String selectedRouteId;
-  final bool isNetworkAvailable;
-  final String networkType;
   final double drawerWidth;
   final bool drawerOpen;
   final bool enableNavigationAnimation;
   final VoidCallback onOpenDrawer;
   final VoidCallback onCloseDrawer;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
+  final VoidCallback onConversationActivated;
 
   @override
   State<PhoneLayout> createState() => _PhoneLayoutState();
@@ -232,11 +230,10 @@ class _PhoneLayoutState extends State<PhoneLayout>
                       child: DrawerContent(
                         navigationEntries: widget.navigationEntries,
                         selectedRouteId: widget.selectedRouteId,
-                        isNetworkAvailable: widget.isNetworkAvailable,
-                        networkType: widget.networkType,
                         appearance: appearance,
                         onNavigationEntrySelected:
                             widget.onNavigationEntrySelected,
+                        onConversationActivated: widget.onConversationActivated,
                       ),
                     ),
                   ),

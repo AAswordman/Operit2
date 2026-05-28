@@ -57,8 +57,12 @@ impl HostEnvironmentDescriptor {
         Self {
             id: "windows".to_string(),
             displayName: "Windows".to_string(),
-            pathStyleDescriptionEn: "Use absolute Windows paths such as C:/Users/Name/Documents or D:/Code/project.".to_string(),
-            pathStyleDescriptionCn: "使用 Windows 绝对路径，例如 C:/Users/Name/Documents 或 D:/Code/project。".to_string(),
+            pathStyleDescriptionEn:
+                "Use absolute Windows paths such as C:/Users/Name/Documents or D:/Code/project."
+                    .to_string(),
+            pathStyleDescriptionCn:
+                "使用 Windows 绝对路径，例如 C:/Users/Name/Documents 或 D:/Code/project。"
+                    .to_string(),
             examplePaths: vec![
                 "C:/Users/Name/Documents".to_string(),
                 "D:/Code/project".to_string(),
@@ -87,12 +91,11 @@ impl HostEnvironmentDescriptor {
         Self {
             id: "linux".to_string(),
             displayName: "Linux".to_string(),
-            pathStyleDescriptionEn: "Use absolute Linux paths such as /home/user/project or /tmp/work.".to_string(),
-            pathStyleDescriptionCn: "使用 Linux 绝对路径，例如 /home/user/project 或 /tmp/work。".to_string(),
-            examplePaths: vec![
-                "/home/user/project".to_string(),
-                "/tmp/work".to_string(),
-            ],
+            pathStyleDescriptionEn:
+                "Use absolute Linux paths such as /home/user/project or /tmp/work.".to_string(),
+            pathStyleDescriptionCn: "使用 Linux 绝对路径，例如 /home/user/project 或 /tmp/work。"
+                .to_string(),
+            examplePaths: vec!["/home/user/project".to_string(), "/tmp/work".to_string()],
             usesEnvironmentParameter: false,
             environmentParameterDescriptionEn: String::new(),
             environmentParameterDescriptionCn: String::new(),
@@ -358,7 +361,8 @@ pub trait ManagedRuntimeHost: Send + Sync {
         &self,
         request: RuntimeProcessRequest,
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>>;
-    fn runRuntimeCommand(&self, request: RuntimeProcessRequest) -> HostResult<RuntimeCommandOutput>;
+    fn runRuntimeCommand(&self, request: RuntimeProcessRequest)
+        -> HostResult<RuntimeCommandOutput>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -390,7 +394,9 @@ impl SqliteValue {
     pub fn asI64(&self) -> HostResult<i64> {
         match self {
             SqliteValue::Integer(value) => Ok(*value),
-            other => Err(HostError::new(format!("expected sqlite integer, got {other:?}"))),
+            other => Err(HostError::new(format!(
+                "expected sqlite integer, got {other:?}"
+            ))),
         }
     }
 
@@ -398,14 +404,18 @@ impl SqliteValue {
         match self {
             SqliteValue::Real(value) => Ok(*value),
             SqliteValue::Integer(value) => Ok(*value as f64),
-            other => Err(HostError::new(format!("expected sqlite real, got {other:?}"))),
+            other => Err(HostError::new(format!(
+                "expected sqlite real, got {other:?}"
+            ))),
         }
     }
 
     pub fn asString(&self) -> HostResult<String> {
         match self {
             SqliteValue::Text(value) => Ok(value.clone()),
-            other => Err(HostError::new(format!("expected sqlite text, got {other:?}"))),
+            other => Err(HostError::new(format!(
+                "expected sqlite text, got {other:?}"
+            ))),
         }
     }
 

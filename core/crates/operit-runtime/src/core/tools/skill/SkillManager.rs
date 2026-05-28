@@ -441,7 +441,9 @@ fn currentUseTime() -> String {
 }
 
 #[allow(non_snake_case)]
-fn currentTimeMillis() -> u128 { operit_host_api::TimeUtils::currentTimeMillisU128() }
+fn currentTimeMillis() -> u128 {
+    operit_host_api::TimeUtils::currentTimeMillisU128()
+}
 
 #[allow(non_snake_case)]
 fn unzipToDirectory(zipFile: &Path, destinationDir: &Path) -> Result<(), String> {
@@ -560,4 +562,3 @@ fn copyDirectoryRecursively(source: &Path, destination: &Path) -> io::Result<()>
     }
     Ok(())
 }
-

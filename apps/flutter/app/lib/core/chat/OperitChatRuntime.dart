@@ -39,11 +39,10 @@ class OperitChatRuntime {
         args: const {},
       ),
     );
-    final messages = await Future.wait(
-      (chatHistory.value as List<Object?>).cast<Map<String, Object?>>().map(
-        (json) => _messageFromSnapshotJson(json),
-      ),
-    );
+    final messages = (chatHistory.value as List<Object?>)
+        .cast<Map<String, Object?>>()
+        .map(ChatRuntimeMessage.fromJson)
+        .toList();
     final currentChatMetadata = _currentChatMetadataFromSnapshot(
       currentChatId.value as String?,
       (chatHistories.value as List<Object?>).cast<Map<String, Object?>>(),
@@ -101,34 +100,6 @@ class OperitChatRuntime {
       ),
     );
     return (card as Map<String, Object?>)['name'] as String;
-  }
-
-  Future<ChatRuntimeMessage> _messageFromSnapshotJson(
-    Map<String, Object?> json,
-  ) async {
-    final message = ChatRuntimeMessage.fromJson(json);
-    if (message.sender != 'ai' || message.content.isEmpty) {
-      return message;
-    }
-    final state = await splitMarkdownContent(message.content);
-    return message.copyWithMarkdownStreamState(state);
-  }
-
-  Future<void> createNewChat() {
-    return bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse(mainTargetPath),
-        methodName: 'createNewChat',
-        args: const {
-          'characterCardName': null,
-          'group': null,
-          'inheritGroupFromCurrent': true,
-          'setAsCurrentChat': true,
-          'characterGroupId': null,
-        },
-      ),
-    );
   }
 
   Future<void> sendUserMessage(String text) {
@@ -228,20 +199,6 @@ class OperitChatRuntime {
     );
   }
 
-  Future<ChatMarkdownStreamState> splitMarkdownContent(String content) async {
-    final value = await bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse(mainTargetPath),
-        methodName: 'splitMarkdownContent',
-        args: {'content': content},
-      ),
-    );
-    return ChatMarkdownStreamState.fromJsonEvents(
-      (value as List<Object?>).cast<Map<String, Object?>>(),
-    );
-  }
-
   String _requestId() {
     return 'flutter-${DateTime.now().microsecondsSinceEpoch}';
   }
@@ -285,7 +242,6 @@ class ChatRuntimeMessage {
     required this.roleName,
     required this.provider,
     required this.modelName,
-    this.markdownStreamState,
   });
 
   factory ChatRuntimeMessage.fromJson(Map<String, Object?> json) {
@@ -307,21 +263,6 @@ class ChatRuntimeMessage {
       roleName: roleName,
       provider: provider,
       modelName: modelName,
-      markdownStreamState: markdownStreamState,
-    );
-  }
-
-  ChatRuntimeMessage copyWithMarkdownStreamState(
-    ChatMarkdownStreamState streamState,
-  ) {
-    return ChatRuntimeMessage(
-      sender: sender,
-      content: content,
-      timestamp: timestamp,
-      roleName: roleName,
-      provider: provider,
-      modelName: modelName,
-      markdownStreamState: streamState,
     );
   }
 
@@ -331,116 +272,6 @@ class ChatRuntimeMessage {
   final String roleName;
   final String provider;
   final String modelName;
-  final ChatMarkdownStreamState? markdownStreamState;
-}
-
-class ChatMarkdownStreamState {
-  ChatMarkdownStreamState();
-
-  factory ChatMarkdownStreamState.fromJsonEvents(
-    List<Map<String, Object?>> events,
-  ) {
-    final state = ChatMarkdownStreamState();
-    for (final eventJson in events) {
-      final event = ChatResponseStreamEvent.fromJson(eventJson);
-      if (event.isMarkdownEvent) {
-        state.apply(event);
-      }
-    }
-    return state;
-  }
-
-  final List<ChatMarkdownBlockNode> blocks = <ChatMarkdownBlockNode>[];
-
-  void apply(ChatResponseStreamEvent event) {
-    switch (event.type) {
-      case 'markdownBlockStart':
-        final blockId = event.blockId;
-        if (blockId == null) {
-          return;
-        }
-        blocks.add(
-          ChatMarkdownBlockNode(
-            id: blockId,
-            nodeType: event.nodeType,
-            headerLevel: event.headerLevel,
-          ),
-        );
-      case 'markdownBlockChunk':
-        final block = _blockById(event.blockId);
-        final value = event.value;
-        if (block == null || value == null) {
-          return;
-        }
-        block.content.write(value);
-      case 'markdownInlineStart':
-        final block = _blockById(event.blockId);
-        final inlineId = event.inlineId;
-        if (block == null || inlineId == null) {
-          return;
-        }
-        block.children.add(
-          ChatMarkdownInlineNode(id: inlineId, nodeType: event.nodeType),
-        );
-      case 'markdownInlineChunk':
-        final block = _blockById(event.blockId);
-        final child = block?._inlineById(event.inlineId);
-        final value = event.value;
-        if (block == null || child == null || value == null) {
-          return;
-        }
-        block.content.write(value);
-        child.content.write(value);
-    }
-  }
-
-  ChatMarkdownBlockNode? _blockById(int? id) {
-    if (id == null) {
-      return null;
-    }
-    for (final block in blocks.reversed) {
-      if (block.id == id) {
-        return block;
-      }
-    }
-    return null;
-  }
-}
-
-class ChatMarkdownBlockNode {
-  ChatMarkdownBlockNode({
-    required this.id,
-    required this.nodeType,
-    required this.headerLevel,
-  });
-
-  final int id;
-  final String? nodeType;
-  final int? headerLevel;
-  final StringBuffer content = StringBuffer();
-  final List<ChatMarkdownInlineNode> children = <ChatMarkdownInlineNode>[];
-}
-
-class ChatMarkdownInlineNode {
-  ChatMarkdownInlineNode({required this.id, required this.nodeType});
-
-  final int id;
-  final String? nodeType;
-  final StringBuffer content = StringBuffer();
-}
-
-extension on ChatMarkdownBlockNode {
-  ChatMarkdownInlineNode? _inlineById(int? id) {
-    if (id == null) {
-      return null;
-    }
-    for (final child in children.reversed) {
-      if (child.id == id) {
-        return child;
-      }
-    }
-    return null;
-  }
 }
 
 class ChatInputProcessingState {
@@ -553,11 +384,4 @@ class ChatResponseStreamEvent {
   final int? inlineId;
   final String? nodeType;
   final int? headerLevel;
-
-  bool get isMarkdownEvent {
-    return type == 'markdownBlockStart' ||
-        type == 'markdownBlockChunk' ||
-        type == 'markdownInlineStart' ||
-        type == 'markdownInlineChunk';
-  }
 }

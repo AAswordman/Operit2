@@ -31,6 +31,7 @@ class ChatMarkupRegex {
     r'<proxy_sender\s+name="([^"]+)"\s*/>',
     caseSensitive: false,
   );
+  static final nameAttr = RegExp(r'name\s*=\s*"([^"]+)"', caseSensitive: false);
   static final replyToTag = RegExp(
     r'<reply_to\s+sender="([^"]+)"\s+timestamp="([^"]+)">([^<]*)</reply_to>',
   );

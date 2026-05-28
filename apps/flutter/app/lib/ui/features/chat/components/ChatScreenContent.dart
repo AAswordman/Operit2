@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/chat/OperitChatRuntime.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
@@ -18,8 +19,10 @@ class ChatScreenContent extends StatelessWidget {
     required this.scrollController,
     required this.inputProcessingState,
     required this.modelLabel,
+    required this.bridge,
     required this.onSendMessage,
     required this.onCancelMessage,
+    required this.onModelChanged,
     required this.toastMessage,
     required this.onDismissToast,
   });
@@ -32,8 +35,10 @@ class ChatScreenContent extends StatelessWidget {
   final ScrollController scrollController;
   final ChatInputProcessingState inputProcessingState;
   final String modelLabel;
+  final OperitRuntimeBridge bridge;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
+  final ValueChanged<String> onModelChanged;
   final String? toastMessage;
   final VoidCallback onDismissToast;
 
@@ -58,8 +63,10 @@ class ChatScreenContent extends StatelessWidget {
               isLoading: loading,
               inputState: inputProcessingState,
               modelLabel: modelLabel,
+              bridge: bridge,
               onSendMessage: onSendMessage,
               onCancelMessage: onCancelMessage,
+              onModelChanged: onModelChanged,
             ),
           ],
         ),

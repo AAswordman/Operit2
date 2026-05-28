@@ -20,4 +20,5 @@ pub struct ChatHistory {
     pub characterCardName: Option<String>,
     pub characterGroupId: Option<String>,
     pub locked: bool,
+    pub pinned: bool,
 }

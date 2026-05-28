@@ -5,7 +5,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-
 pub const VERBOSE: i32 = 2;
 pub const DEBUG: i32 = 3;
 pub const INFO: i32 = 4;
@@ -301,5 +300,3 @@ fn error_chain(error: &(dyn std::error::Error)) -> String {
     }
     out
 }
-
-

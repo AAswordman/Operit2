@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_store::SqliteStore::{SqliteStore, SqliteStoreError};
+use operit_store::SqliteStore::{SqliteRowGet, SqliteStore, SqliteStoreError};
 use thiserror::Error;
 
 use crate::data::dao::ChatDao::ChatDao;
 use crate::data::dao::MessageDao::MessageDao;
 use crate::data::dao::MessageVariantDao::MessageVariantDao;
 
-pub const DATABASE_VERSION: i32 = 20;
+pub const DATABASE_VERSION: i32 = 21;
 
 #[derive(Debug, Error)]
 pub enum AppDatabaseError {
@@ -108,6 +108,7 @@ impl AppDatabase {
             17 => MIGRATION_17_18(self)?,
             18 => MIGRATION_18_19(self)?,
             19 => MIGRATION_19_20(self)?,
+            20 => MIGRATION_20_21(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -344,6 +345,44 @@ fn MIGRATION_19_20(database: &AppDatabase) -> Result<(), SqliteStoreError> {
     database.store.setUserVersion(20)
 }
 
+#[allow(non_snake_case)]
+fn MIGRATION_20_21(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    addColumnIfMissing(
+        &database.store,
+        "chats",
+        "pinned",
+        "ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    )?;
+    addColumnIfMissing(
+        &database.store,
+        "sync_sql_chat_rows",
+        "pinned",
+        "ALTER TABLE sync_sql_chat_rows ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    )?;
+    database.store.setUserVersion(21)
+}
+
+#[allow(non_snake_case)]
+fn addColumnIfMissing(
+    store: &SqliteStore,
+    tableName: &str,
+    columnName: &str,
+    alterSql: &str,
+) -> Result<(), SqliteStoreError> {
+    let pragma = format!("PRAGMA table_info(\"{}\")", tableName.replace('"', "\"\""));
+    let hasColumn = store
+        .queryRows(&pragma, Vec::new())?
+        .into_iter()
+        .any(|row| {
+            let name: Result<String, SqliteStoreError> = row.get("name");
+            name.map(|name| name == columnName).unwrap_or(false)
+        });
+    if !hasColumn {
+        store.execute(alterSql, Vec::new())?;
+    }
+    Ok(())
+}
+
 pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
     store.executeBatch(
         r#"
@@ -362,7 +401,8 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             parentChatId TEXT,
             characterCardName TEXT,
             characterGroupId TEXT,
-            locked INTEGER NOT NULL DEFAULT 0
+            locked INTEGER NOT NULL DEFAULT 0,
+            pinned INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE messages (
@@ -461,6 +501,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             characterCardName TEXT,
             characterGroupId TEXT,
             locked INTEGER NOT NULL,
+            pinned INTEGER NOT NULL,
             PRIMARY KEY(opId, id),
             FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
         );

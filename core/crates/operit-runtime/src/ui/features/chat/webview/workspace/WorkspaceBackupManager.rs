@@ -1092,7 +1092,9 @@ fn parseLastModifiedToMillis(lastModified: &str) -> Option<i64> {
     None
 }
 
-fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+fn currentTimeMillis() -> i64 {
+    operit_host_api::TimeUtils::currentTimeMillis()
+}
 
 fn normalizeTextLinesForDiff(text: &str) -> Vec<String> {
     if text.is_empty() {
@@ -1188,4 +1190,3 @@ fn isTextBasedFileName(fileName: &str) -> bool {
             | "lock"
     ) || !lower.contains('.')
 }
-

@@ -10,7 +10,10 @@ pub trait CoreLinkClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse;
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError>;
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError>;
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
 }
@@ -26,7 +29,10 @@ where
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         self.as_mut().watchSnapshot(request).await
     }
 
@@ -46,7 +52,10 @@ where
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         self.as_mut().watchSnapshot(request).await
     }
 

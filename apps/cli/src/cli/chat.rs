@@ -26,14 +26,23 @@ pub(super) async fn run_chat_command_with_core(
         "show" => show_chat_with_core(core, &args[1..]).await,
         "current" => show_current_chat_with_core(core).await,
         "switch" => switch_chat_command_with_core(core, &args[1..]).await,
+        "delete" => delete_chat_with_core(core, &args[1..]).await,
+        "delete-message" => delete_chat_message_with_core(core, &args[1..]).await,
+        "clear" => clear_current_chat_with_core(core).await,
+        "rollback" => rollback_chat_with_core(core, &args[1..]).await,
+        "branch" => create_chat_branch_with_core(core, &args[1..]).await,
+        "branches" => list_chat_branches_with_core(core, &args[1..]).await,
+        "lock" => update_chat_locked_with_core(core, &args[1..]).await,
+        "pin" => update_chat_pinned_with_core(core, &args[1..]).await,
         "shell" => run_shell_command_with_core(core, &args[1..]).await,
         "send" => {
             let sendArgs = parse_chat_send_args(&args[1..])?;
             send_chat_message_with_core(core, sendArgs).await
         }
-        "stats" | "bind-character" | "bind-group" | "set-group" => {
-            Err("this chat command is not exposed by the generated core proxy yet".to_string())
-        }
+        "stats" => show_chat_stats(),
+        "bind-character" => bind_chat_character(&args[1..]),
+        "bind-group" => bind_chat_group_card(&args[1..]),
+        "set-group" => set_chat_group(&args[1..]),
         _ => {
             print_chat_usage();
             Ok(())
@@ -49,7 +58,7 @@ async fn list_chats_with_core(core: &mut CliCore) -> Result<(), String> {
         .map_err(|error| error.to_string())?
     {
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             chat.id,
             chat.title,
             chat.createdAt,
@@ -58,7 +67,9 @@ async fn list_chats_with_core(core: &mut CliCore) -> Result<(), String> {
             chat.inputTokens,
             chat.outputTokens,
             chat.characterCardName.clone().unwrap_or_default(),
-            chat.characterGroupId.clone().unwrap_or_default()
+            chat.characterGroupId.clone().unwrap_or_default(),
+            chat.locked,
+            chat.pinned
         );
     }
     Ok(())
@@ -89,6 +100,121 @@ async fn show_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), 
     {
         print_chat_message(&message);
     }
+    Ok(())
+}
+
+async fn delete_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let chatId = args
+        .get(0)
+        .ok_or_else(|| "usage: operit2 chat delete <chat-id>".to_string())?
+        .clone();
+    core.chat_runtime_holder_main()
+        .deleteChatHistory(chatId.clone())
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("chat deleted: {chatId}");
+    Ok(())
+}
+
+async fn delete_chat_message_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let index = args
+        .get(0)
+        .ok_or_else(|| "usage: operit2 chat delete-message <index>".to_string())?
+        .parse::<usize>()
+        .map_err(|error| error.to_string())?;
+    core.chat_runtime_holder_main()
+        .deleteMessage(index)
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("message deleted: {index}");
+    Ok(())
+}
+
+async fn clear_current_chat_with_core(core: &mut CliCore) -> Result<(), String> {
+    core.chat_runtime_holder_main()
+        .clearCurrentChat()
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("current chat cleared");
+    Ok(())
+}
+
+async fn rollback_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let index = args
+        .get(0)
+        .ok_or_else(|| "usage: operit2 chat rollback <message-index>".to_string())?
+        .parse::<usize>()
+        .map_err(|error| error.to_string())?;
+    let rolledBack = core
+        .chat_runtime_holder_main()
+        .rollbackToMessage(index)
+        .await
+        .map_err(|error| error.to_string())?;
+    if rolledBack {
+        println!("rolled back to message: {index}");
+    } else {
+        println!("rollback skipped: message must exist and be a user message");
+    }
+    Ok(())
+}
+
+async fn create_chat_branch_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let upToMessageTimestamp = parse_branch_args(args)?;
+    core.chat_runtime_holder_main()
+        .createBranch(upToMessageTimestamp)
+        .await
+        .map_err(|error| error.to_string())?;
+    let chatId = core
+        .chat_runtime_holder_main()
+        .currentChatIdFlowSnapshot()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "core did not create branch".to_string())?;
+    println!("{chatId}");
+    Ok(())
+}
+
+async fn list_chat_branches_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let parentChatId = match args.get(0) {
+        Some(chatId) => chatId.clone(),
+        None => core
+            .chat_runtime_holder_main()
+            .currentChatIdFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "usage: operit2 chat branches [parent-chat-id]".to_string())?,
+    };
+    for chat in core
+        .chat_runtime_holder_main()
+        .getBranches(parentChatId)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.locked, chat.pinned
+        );
+    }
+    Ok(())
+}
+
+async fn update_chat_locked_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let (chatId, locked) = parse_chat_bool_update_args(args, "lock")?;
+    core.chat_runtime_holder_main()
+        .updateChatLocked(chatId.clone(), locked)
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("chat locked={locked}: {chatId}");
+    Ok(())
+}
+
+async fn update_chat_pinned_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    let (chatId, pinned) = parse_chat_bool_update_args(args, "pin")?;
+    core.chat_runtime_holder_main()
+        .updateChatPinned(chatId.clone(), pinned)
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("chat pinned={pinned}: {chatId}");
     Ok(())
 }
 
@@ -259,6 +385,41 @@ fn parse_chat_new_args(
         index += 1;
     }
     Ok((characterCardName, characterGroupId, group))
+}
+
+fn parse_branch_args(args: &[String]) -> Result<Option<i64>, String> {
+    let usage = "usage: operit2 chat branch [--up-to <message-timestamp>]";
+    let mut upToMessageTimestamp = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--up-to" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| usage.to_string())?;
+                upToMessageTimestamp =
+                    Some(value.parse::<i64>().map_err(|error| error.to_string())?);
+            }
+            _ => return Err(usage.to_string()),
+        }
+        index += 1;
+    }
+    Ok(upToMessageTimestamp)
+}
+
+fn parse_chat_bool_update_args(args: &[String], command: &str) -> Result<(String, bool), String> {
+    let usage = format!("usage: operit2 chat {command} <chat-id> <true|false>");
+    let chatId = args.get(0).ok_or_else(|| usage.clone())?.clone();
+    let value = args.get(1).ok_or_else(|| usage.clone())?;
+    let parsed = parse_bool_arg(value).ok_or(usage)?;
+    Ok((chatId, parsed))
+}
+
+fn parse_bool_arg(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" | "lock" | "locked" | "pin" | "pinned" => Some(true),
+        "false" | "0" | "no" | "off" | "unlock" | "unlocked" | "unpin" | "unpinned" => Some(false),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

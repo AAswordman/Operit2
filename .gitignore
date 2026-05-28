@@ -86,6 +86,10 @@ DerivedData/
 # Rust
 target/
 
+# Generated core proxy artifacts
+core/generated/
+apps/flutter/app/lib/core/proxy/generated/
+
 # Flutter web generated runtime bridge artifacts
 apps/flutter/app/web/operit_flutter_bridge.js
 apps/flutter/app/web/operit_flutter_bridge.d.ts

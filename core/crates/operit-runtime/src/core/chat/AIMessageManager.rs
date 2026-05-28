@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
-
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::api::chat::EnhancedAIService::{
@@ -1078,5 +1077,3 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
     output.push_str(&text[cursor..]);
     output
 }
-
-

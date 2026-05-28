@@ -157,7 +157,7 @@ pub(super) async fn run_package_command(core: &mut CliCore, args: &[String]) -> 
                 parameters,
             };
             let result = core
-                .permissions_a_itool_handler()
+                .permissions_ai_tool_handler()
                 .executeTool(tool)
                 .await
                 .map_err(|error| error.to_string())?;

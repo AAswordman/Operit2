@@ -66,5 +66,3 @@ impl SlidingWindowRateLimiter {
 fn now_ms() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
 }
-
-

@@ -2,11 +2,14 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import 'ChatLayoutMetrics.dart';
+import 'style/input/agent/AgentExtraSettingsPopup.dart';
+import 'style/input/agent/AgentModelSelectorPopup.dart';
 
-class AgentChatInputSection extends StatelessWidget {
+class AgentChatInputSection extends StatefulWidget {
   const AgentChatInputSection({
     super.key,
     required this.controller,
@@ -14,8 +17,10 @@ class AgentChatInputSection extends StatelessWidget {
     required this.isLoading,
     required this.inputState,
     required this.modelLabel,
+    required this.bridge,
     required this.onSendMessage,
     required this.onCancelMessage,
+    required this.onModelChanged,
     this.onAttach,
     this.onSettings,
     this.onModelSelector,
@@ -26,24 +31,144 @@ class AgentChatInputSection extends StatelessWidget {
   final bool isLoading;
   final ChatInputProcessingState inputState;
   final String modelLabel;
+  final OperitRuntimeBridge bridge;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
+  final ValueChanged<String> onModelChanged;
   final VoidCallback? onAttach;
   final VoidCallback? onSettings;
   final VoidCallback? onModelSelector;
+
+  @override
+  State<AgentChatInputSection> createState() => _AgentChatInputSectionState();
+}
+
+class _AgentChatInputSectionState extends State<AgentChatInputSection> {
+  final LayerLink _modelPopupLink = LayerLink();
+  final LayerLink _extraPopupLink = LayerLink();
+  OverlayEntry? _modelPopupEntry;
+  OverlayEntry? _extraPopupEntry;
+
+  void _toggleSettingsPopup() {
+    widget.onModelSelector?.call();
+    if (_modelPopupEntry == null) {
+      _dismissExtraSettingsPopup();
+      _showModelSettingsPopup();
+    } else {
+      _dismissModelSettingsPopup();
+    }
+  }
+
+  void _openSettingsPopup() {
+    widget.onSettings?.call();
+    if (_extraPopupEntry == null) {
+      _dismissModelSettingsPopup();
+      _showExtraSettingsPopup();
+    } else {
+      _dismissExtraSettingsPopup();
+    }
+  }
+
+  void _showModelSettingsPopup() {
+    final overlay = Overlay.of(context);
+    _modelPopupEntry = OverlayEntry(
+      builder: (context) {
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissModelSettingsPopup,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            CompositedTransformFollower(
+              link: _modelPopupLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.topLeft,
+              followerAnchor: Alignment.bottomLeft,
+              offset: const Offset(0, -8),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {},
+                child: AgentModelSelectorPopup(
+                  bridge: widget.bridge,
+                  onDismiss: _dismissModelSettingsPopup,
+                  onModelChanged: widget.onModelChanged,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_modelPopupEntry!);
+  }
+
+  void _showExtraSettingsPopup() {
+    final overlay = Overlay.of(context);
+    _extraPopupEntry = OverlayEntry(
+      builder: (context) {
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissExtraSettingsPopup,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            CompositedTransformFollower(
+              link: _extraPopupLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.topRight,
+              followerAnchor: Alignment.bottomRight,
+              offset: const Offset(0, -8),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {},
+                child: AgentExtraSettingsPopup(
+                  bridge: widget.bridge,
+                  onDismiss: _dismissExtraSettingsPopup,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_extraPopupEntry!);
+  }
+
+  void _dismissModelSettingsPopup() {
+    _modelPopupEntry?.remove();
+    _modelPopupEntry = null;
+  }
+
+  void _dismissExtraSettingsPopup() {
+    _extraPopupEntry?.remove();
+    _extraPopupEntry = null;
+  }
+
+  @override
+  void dispose() {
+    _dismissModelSettingsPopup();
+    _dismissExtraSettingsPopup();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final processing = isLoading || inputState.isProcessing;
-    final hasDraftText = controller.text.trim().isNotEmpty;
+    final processing = widget.isLoading || widget.inputState.isProcessing;
+    final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
-    final processingStatus = _inputProcessingStatus(l10n, inputState);
+    final processingStatus = _inputProcessingStatus(l10n, widget.inputState);
     final showProcessingStatus =
-        inputState.isProcessing && processingStatus.isNotEmpty;
+        widget.inputState.isProcessing && processingStatus.isNotEmpty;
     final inputCardShape = const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     );
@@ -74,7 +199,7 @@ class AgentChatInputSection extends StatelessWidget {
                 width: double.infinity,
                 margin: const EdgeInsets.only(top: 4),
                 decoration: ShapeDecoration(
-                  color: colorScheme.surfaceContainerLow,
+                  color: colorScheme.surfaceContainer,
                   shape: inputCardShape,
                   shadows: <BoxShadow>[
                     BoxShadow(
@@ -96,152 +221,22 @@ class AgentChatInputSection extends StatelessWidget {
                     horizontal: 12,
                     vertical: 8,
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        minLines: 1,
-                        maxLines: 6,
-                        enabled: true,
-                        textInputAction: TextInputAction.newline,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 14,
-                          height: 20 / 14,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: l10n.askOperitHint,
-                          hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 14,
-                          ),
-                          suffixIcon: IconButton(
-                            onPressed: () {},
-                            icon: const Icon(Icons.fullscreen),
-                            color: colorScheme.onSurfaceVariant,
-                            tooltip: l10n.fullscreenInput,
-                          ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: const EdgeInsets.fromLTRB(
-                            16,
-                            10,
-                            8,
-                            8,
-                          ),
-                        ),
-                        onSubmitted: (_) {
-                          if (hasDraftText && !processing) {
-                            onSendMessage();
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: onModelSelector,
-                                child: Container(
-                                  constraints: const BoxConstraints(
-                                    maxWidth: 220,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: colorScheme.outline.withValues(
-                                        alpha: 0.2,
-                                      ),
-                                    ),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: <Widget>[
-                                      Flexible(
-                                        child: Text(
-                                          modelLabel,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodyMedium
-                                              ?.copyWith(
-                                                color: colorScheme.onSurface,
-                                              ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Icon(
-                                        Icons.keyboard_arrow_down,
-                                        size: 18,
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          _IconTapTarget(
-                            icon: Icons.tune_outlined,
-                            color: colorScheme.onSurfaceVariant,
-                            onTap: onSettings,
-                            targetSize: 34,
-                            tooltip: l10n.settings,
-                          ),
-                          const SizedBox(width: 8),
-                          _IconTapTarget(
-                            icon: Icons.add,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.9,
-                            ),
-                            onTap: onAttach,
-                            size: 24,
-                            tooltip: l10n.addAttachment,
-                          ),
-                          const SizedBox(width: 6),
-                          _ActionButton(
-                            processing: processing,
-                            progress: _progressFor(inputState),
-                            background: _actionBackground(
-                              colorScheme,
-                              showCancelAction: showCancelAction,
-                              showQueueAction: showQueueAction,
-                              canSend: hasDraftText,
-                            ),
-                            foreground: _actionForeground(
-                              colorScheme,
-                              showCancelAction: showCancelAction,
-                              showQueueAction: showQueueAction,
-                              canSend: hasDraftText,
-                            ),
-                            icon: _actionIcon(
-                              showCancelAction: showCancelAction,
-                              showQueueAction: showQueueAction,
-                              canSend: hasDraftText,
-                            ),
-                            tooltip: showCancelAction
-                                ? l10n.cancel
-                                : (hasDraftText ? l10n.send : ''),
-                            onPressed: () {
-                              if (showCancelAction) {
-                                onCancelMessage();
-                              } else if (hasDraftText) {
-                                onSendMessage();
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
+                  child: _InputBody(
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    inputState: widget.inputState,
+                    modelLabel: widget.modelLabel,
+                    modelSelectorLink: _modelPopupLink,
+                    settingsLink: _extraPopupLink,
+                    processing: processing,
+                    hasDraftText: hasDraftText,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    onSendMessage: widget.onSendMessage,
+                    onCancelMessage: widget.onCancelMessage,
+                    onAttach: widget.onAttach,
+                    onSettings: _openSettingsPopup,
+                    onModelSelector: _toggleSettingsPopup,
                   ),
                 ),
               ),
@@ -249,6 +244,190 @@ class AgentChatInputSection extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _InputBody extends StatelessWidget {
+  const _InputBody({
+    required this.controller,
+    required this.focusNode,
+    required this.inputState,
+    required this.modelLabel,
+    required this.modelSelectorLink,
+    required this.settingsLink,
+    required this.processing,
+    required this.hasDraftText,
+    required this.showCancelAction,
+    required this.showQueueAction,
+    required this.onSendMessage,
+    required this.onCancelMessage,
+    required this.onAttach,
+    required this.onSettings,
+    required this.onModelSelector,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ChatInputProcessingState inputState;
+  final String modelLabel;
+  final LayerLink modelSelectorLink;
+  final LayerLink settingsLink;
+  final bool processing;
+  final bool hasDraftText;
+  final bool showCancelAction;
+  final bool showQueueAction;
+  final VoidCallback onSendMessage;
+  final VoidCallback onCancelMessage;
+  final VoidCallback? onAttach;
+  final VoidCallback? onSettings;
+  final VoidCallback? onModelSelector;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final l10n = AppLocalizations.of(context)!;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        TextField(
+          controller: controller,
+          focusNode: focusNode,
+          minLines: 1,
+          maxLines: 6,
+          enabled: true,
+          textInputAction: TextInputAction.newline,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontSize: 14,
+            height: 20 / 14,
+          ),
+          decoration: InputDecoration(
+            hintText: l10n.askOperitHint,
+            hintStyle: theme.textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 14,
+            ),
+            suffixIcon: IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.fullscreen),
+              color: colorScheme.onSurfaceVariant,
+              tooltip: l10n.fullscreenInput,
+            ),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+          ),
+          onSubmitted: (_) {
+            if (hasDraftText && !processing) {
+              onSendMessage();
+            }
+          },
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: CompositedTransformTarget(
+                  link: modelSelectorLink,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: onModelSelector,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 220),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: colorScheme.outline.withValues(alpha: 0.2),
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Flexible(
+                            child: Text(
+                              modelLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.keyboard_arrow_down,
+                            size: 18,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            CompositedTransformTarget(
+              link: settingsLink,
+              child: _IconTapTarget(
+                icon: Icons.tune_outlined,
+                color: colorScheme.onSurfaceVariant,
+                onTap: onSettings,
+                targetSize: 34,
+                tooltip: l10n.settings,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _IconTapTarget(
+              icon: Icons.add,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+              onTap: onAttach,
+              size: 24,
+              tooltip: l10n.addAttachment,
+            ),
+            const SizedBox(width: 6),
+            _ActionButton(
+              processing: processing,
+              progress: _progressFor(inputState),
+              background: _actionBackground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: hasDraftText,
+              ),
+              foreground: _actionForeground(
+                colorScheme,
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: hasDraftText,
+              ),
+              icon: _actionIcon(
+                showCancelAction: showCancelAction,
+                showQueueAction: showQueueAction,
+                canSend: hasDraftText,
+              ),
+              tooltip: showCancelAction
+                  ? l10n.cancel
+                  : (hasDraftText ? l10n.send : ''),
+              onPressed: () {
+                if (showCancelAction) {
+                  onCancelMessage();
+                } else if (hasDraftText) {
+                  onSendMessage();
+                }
+              },
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

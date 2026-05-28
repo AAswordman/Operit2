@@ -21,11 +21,20 @@ abstract class OperitScreen {
     return null;
   }
 
+  bool preserveTopBarTitleWhenReplacingWith(OperitScreen nextScreen) {
+    return false;
+  }
+
   Widget build(BuildContext context);
 }
 
 class AiChatScreenRoute extends OperitScreen {
   const AiChatScreenRoute() : super(routeTypeName: 'AiChat', title: 'AI Chat');
+
+  @override
+  bool preserveTopBarTitleWhenReplacingWith(OperitScreen nextScreen) {
+    return nextScreen is AiChatScreenRoute;
+  }
 
   @override
   Widget build(BuildContext context) {

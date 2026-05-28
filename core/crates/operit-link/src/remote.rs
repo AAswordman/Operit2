@@ -4,15 +4,15 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use axum::body::Bytes;
+use async_trait::async_trait;
 use axum::body::Body;
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Json, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use futures_util::StreamExt;
@@ -681,7 +681,10 @@ impl CoreLinkClient for PairedRemoteSession {
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         PairedRemoteSession::watchSnapshot(self, request)
             .await
             .map_err(CoreLinkError::internal)
@@ -719,11 +722,18 @@ async fn pair_start(
         Ok(value) => value,
         Err(error) => return bad_request(error),
     };
-    let sharedSecret = state.keySecret.diffie_hellman(&clientPublic).as_bytes().to_vec();
+    let sharedSecret = state
+        .keySecret
+        .diffie_hellman(&clientPublic)
+        .as_bytes()
+        .to_vec();
     let pairingId = Uuid::new_v4().to_string();
     let pairingCode = pairing_code();
     let serverNonce = Uuid::new_v4().to_string();
-    eprintln!("operit link pairing code for {}: {}", request.clientDeviceId, pairingCode);
+    eprintln!(
+        "operit link pairing code for {}: {}",
+        request.clientDeviceId, pairingCode
+    );
     state.pairings.lock().await.insert(
         pairingId.clone(),
         PendingPairing {
@@ -817,11 +827,7 @@ async fn session_info(
     .into_response()
 }
 
-async fn call(
-    State(state): State<RemoteLinkState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: Bytes) -> Response {
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
@@ -931,10 +937,7 @@ async fn host_interaction_respond(
     }
 }
 
-async fn ws(
-    State(state): State<RemoteLinkState>,
-    upgrade: WebSocketUpgrade,
-) -> Response {
+async fn ws(State(state): State<RemoteLinkState>, upgrade: WebSocketUpgrade) -> Response {
     upgrade
         .on_upgrade(move |socket| handle_ws(socket, state))
         .into_response()
@@ -945,9 +948,7 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
         match message {
             Message::Text(text) => {
                 let response = handle_ws_text(&state, text).await;
-                let _ = socket
-                    .send(Message::Text(response))
-                    .await;
+                let _ = socket.send(Message::Text(response)).await;
             }
             Message::Close(frame) => {
                 let _ = socket.send(Message::Close(frame)).await;
@@ -961,10 +962,7 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
 async fn handle_ws_text(state: &RemoteLinkState, text: String) -> String {
     let response = match serde_json::from_str::<RemoteWsEnvelope>(&text) {
         Ok(envelope) => handle_ws_envelope(state, envelope).await,
-        Err(error) => RemoteWsResponse::Error(CoreLinkError::new(
-            "BAD_REQUEST",
-            error.to_string(),
-        )),
+        Err(error) => RemoteWsResponse::Error(CoreLinkError::new("BAD_REQUEST", error.to_string())),
     };
     serde_json::to_string(&response).expect("RemoteWsResponse must serialize")
 }

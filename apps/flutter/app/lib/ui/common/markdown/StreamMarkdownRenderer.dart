@@ -2,62 +2,70 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../core/chat/OperitChatRuntime.dart';
 import '../../../util/ChatMarkupRegex.dart';
 import 'EnhancedCodeBlock.dart';
 import 'EnhancedTableBlock.dart';
+import 'MarkdownNodeGrouper.dart';
 import 'MarkdownBlockQuote.dart';
 import 'MarkdownImageRenderer.dart';
 import 'MarkdownInlineSpannable.dart';
 import 'MarkdownLatexBlock.dart';
 import '../../features/chat/components/part/CustomXmlRenderer.dart';
-import '../../features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
 
 class StreamMarkdownRenderer extends StatelessWidget {
   const StreamMarkdownRenderer({
     super.key,
     required this.content,
     required this.isStreaming,
-    this.streamState,
     required this.textColor,
     required this.backgroundColor,
+    this.nodeGrouper = const NoopMarkdownNodeGrouper(),
   });
 
   final String content;
   final bool isStreaming;
-  final ChatMarkdownStreamState? streamState;
   final Color textColor;
   final Color backgroundColor;
+  final MarkdownNodeGrouper nodeGrouper;
 
   @override
   Widget build(BuildContext context) {
-    final state = streamState;
-    if (state != null && state.blocks.isNotEmpty) {
-      return _GroupedMarkdown(
-        streamState: state,
-        isStreaming: isStreaming,
+    final nodes = parseMarkdownNodes(content, isStreaming: isStreaming);
+    final rendererId = 'flutter-markdown-${identityHashCode(this)}';
+    final groupedItems = nodeGrouper.group(nodes, rendererId);
+
+    Widget renderNodeAt(int index) {
+      final node = nodes[index];
+      if (node.type == MarkdownNodeType.xmlBlock) {
+        return CustomXmlRenderer(
+          xmlContent: node.content,
+          isStreaming: node.isStreaming,
+          textColor: textColor,
+        );
+      }
+      return _MarkdownText(
+        text: node.content,
         textColor: textColor,
         backgroundColor: backgroundColor,
+        isStreaming: node.isStreaming,
       );
     }
 
-    final nodes = _parseMarkdownNodes(content, isStreaming: isStreaming);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (final node in nodes)
-          if (node.xmlContent != null)
-            CustomXmlRenderer(
-              xmlContent: node.xmlContent!,
-              isStreaming: node.isStreaming,
+        for (final item in groupedItems)
+          if (item is MarkdownSingleItem)
+            renderNodeAt(item.index)
+          else if (item is MarkdownGroupItem)
+            nodeGrouper.renderGroup(
+              group: item,
+              nodes: nodes,
+              rendererId: rendererId,
+              isVisible: true,
+              isLastNode: item.endIndexInclusive == nodes.length - 1,
               textColor: textColor,
-            )
-          else
-            _MarkdownText(
-              text: node.text,
-              textColor: textColor,
-              backgroundColor: backgroundColor,
-              isStreaming: node.isStreaming,
+              renderNodeAt: renderNodeAt,
             ),
       ],
     );
@@ -68,258 +76,11 @@ const double _markdownParagraphBreakHeight = 4;
 const double _markdownLineBlockBottomPadding = 3;
 const double _markdownCanvasLineHeightMultiplier = 1.3;
 
-class _GroupedMarkdown extends StatelessWidget {
-  const _GroupedMarkdown({
-    required this.streamState,
-    required this.isStreaming,
-    required this.textColor,
-    required this.backgroundColor,
-  });
-
-  final ChatMarkdownStreamState streamState;
-  final bool isStreaming;
-  final Color textColor;
-  final Color backgroundColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final groupedItems = groupThinkToolsXmlNodes(streamState.blocks);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final item in groupedItems)
-          if (item is MarkdownSingleItem)
-            _GroupedMarkdownBlock(
-              block: streamState.blocks[item.index],
-              isStreaming: isStreaming,
-              textColor: textColor,
-              backgroundColor: backgroundColor,
-            )
-          else if (item is MarkdownGroupItem)
-            _GroupedMarkdownGroup(
-              item: item,
-              blocks: streamState.blocks,
-              isStreaming: isStreaming,
-              textColor: textColor,
-              backgroundColor: backgroundColor,
-            ),
-        if (isStreaming)
-          const Padding(
-            padding: EdgeInsets.only(top: 2),
-            child: StreamingCursor(),
-          ),
-      ],
-    );
-  }
-}
-
-class _GroupedMarkdownGroup extends StatefulWidget {
-  const _GroupedMarkdownGroup({
-    required this.item,
-    required this.blocks,
-    required this.isStreaming,
-    required this.textColor,
-    required this.backgroundColor,
-  });
-
-  final MarkdownGroupItem item;
-  final List<ChatMarkdownBlockNode> blocks;
-  final bool isStreaming;
-  final Color textColor;
-  final Color backgroundColor;
-
-  @override
-  State<_GroupedMarkdownGroup> createState() => _GroupedMarkdownGroupState();
-}
-
-class _GroupedMarkdownGroupState extends State<_GroupedMarkdownGroup> {
-  bool expanded = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final end = widget.item.endIndexInclusive < widget.blocks.length
-        ? widget.item.endIndexInclusive
-        : widget.blocks.length - 1;
-    final slice = widget.blocks.sublist(widget.item.startIndex, end + 1);
-    final toolCount = slice.where((block) {
-      return block.nodeType == 'XmlBlock' &&
-          extractXmlTagName(block.content.toString()) == 'tool';
-    }).length;
-    final title = widget.item.stableKey.startsWith('tools-only-')
-        ? 'Tools ($toolCount)'
-        : 'Thinking & tools ($toolCount)';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          InkWell(
-            onTap: () {
-              setState(() {
-                expanded = !expanded;
-              });
-            },
-            borderRadius: BorderRadius.circular(6),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: <Widget>[
-                  AnimatedRotation(
-                    turns: expanded ? 0.25 : 0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Icon(
-                      Icons.keyboard_arrow_right,
-                      size: 18,
-                      color: widget.textColor.withValues(alpha: 0.7),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    title,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: widget.textColor.withValues(alpha: 0.7),
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox.shrink(),
-            secondChild: Padding(
-              padding: const EdgeInsets.only(left: 24, top: 4, bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  for (final block in slice)
-                    _GroupedMarkdownBlock(
-                      block: block,
-                      isStreaming: widget.isStreaming,
-                      textColor: widget.textColor,
-                      backgroundColor: widget.backgroundColor,
-                    ),
-                ],
-              ),
-            ),
-            crossFadeState: expanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 200),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GroupedMarkdownBlock extends StatelessWidget {
-  const _GroupedMarkdownBlock({
-    required this.block,
-    required this.isStreaming,
-    required this.textColor,
-    required this.backgroundColor,
-  });
-
-  final ChatMarkdownBlockNode block;
-  final bool isStreaming;
-  final Color textColor;
-  final Color backgroundColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final type = block.nodeType;
-    final text = block.content.toString();
-    if (type == 'XmlBlock') {
-      return CustomXmlRenderer(
-        xmlContent: text,
-        isStreaming: isStreaming,
-        textColor: textColor,
-      );
-    }
-    if (type == 'HtmlBreak') {
-      return const SizedBox(height: _markdownParagraphBreakHeight);
-    }
-    if (type == 'HorizontalRule') {
-      return const MarkdownHorizontalRule();
-    }
-    if (type == 'BlockQuote') {
-      return MarkdownBlockQuote(
-        content: text,
-        textColor: textColor,
-        backgroundColor: backgroundColor,
-        isStreaming: isStreaming,
-      );
-    }
-    if (type == 'BlockLatex') {
-      return MarkdownLatexBlock(content: text, textColor: textColor);
-    }
-    if (type == 'Image') {
-      return MarkdownImageRenderer(imageMarkdown: text, textColor: textColor);
-    }
-    if (type == 'Table') {
-      return EnhancedTableBlock(tableText: text, textColor: textColor);
-    }
-    if (type == 'CodeBlock') {
-      final parsed = _parseCodeBlock(text);
-      return EnhancedCodeBlock(code: parsed.code, language: parsed.language);
-    }
-    if (type == 'Header') {
-      return _MarkdownHeading(
-        text: text,
-        color: textColor,
-        level: block.headerLevel,
-      );
-    }
-    if (block.children.isNotEmpty) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: _markdownLineBlockBottomPadding),
-        child: Text.rich(
-          buildMarkdownInlineSpannableFromChildren(
-            context: context,
-            textColor: textColor,
-            children: <MarkdownInlineSegment>[
-              for (final child in block.children)
-                MarkdownInlineSegment(
-                  text: child.content.toString(),
-                  nodeType: child.nodeType,
-                ),
-            ],
-          ),
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: textColor, height: 1.3),
-        ),
-      );
-    }
-    return _MarkdownText(
-      text: text,
-      textColor: textColor,
-      backgroundColor: backgroundColor,
-      isStreaming: false,
-    );
-  }
-}
-
-class _MarkdownNode {
-  const _MarkdownNode.text(this.text, {required this.isStreaming})
-    : xmlContent = null;
-
-  const _MarkdownNode.xml(this.xmlContent, {required this.isStreaming})
-    : text = '';
-
-  final String text;
-  final String? xmlContent;
-  final bool isStreaming;
-}
-
-List<_MarkdownNode> _parseMarkdownNodes(
+List<MarkdownNodeStable> parseMarkdownNodes(
   String content, {
   required bool isStreaming,
 }) {
-  final nodes = <_MarkdownNode>[];
+  final nodes = <MarkdownNodeStable>[];
   final openTagPattern = ChatMarkupRegex.xmlBlockStartTag;
   var cursor = 0;
 
@@ -348,24 +109,36 @@ List<_MarkdownNode> _parseMarkdownNodes(
         : content.length;
     final xmlContent = content.substring(start, xmlEnd);
     nodes.add(
-      _MarkdownNode.xml(xmlContent, isStreaming: isStreaming && closeIndex < 0),
+      MarkdownNodeStable(
+        type: MarkdownNodeType.xmlBlock,
+        content: xmlContent,
+        isStreaming: isStreaming && closeIndex < 0,
+      ),
     );
     cursor = xmlEnd;
   }
 
   if (nodes.isNotEmpty && isStreaming) {
     final last = nodes.last;
-    nodes[nodes.length - 1] = last.xmlContent == null
-        ? _MarkdownNode.text(last.text, isStreaming: true)
-        : _MarkdownNode.xml(last.xmlContent, isStreaming: true);
+    nodes[nodes.length - 1] = MarkdownNodeStable(
+      type: last.type,
+      content: last.content,
+      isStreaming: true,
+    );
   }
   return nodes;
 }
 
-void _addTextNode(List<_MarkdownNode> nodes, String text) {
+void _addTextNode(List<MarkdownNodeStable> nodes, String text) {
   final cleaned = text.trim();
   if (cleaned.isNotEmpty) {
-    nodes.add(_MarkdownNode.text(cleaned, isStreaming: false));
+    nodes.add(
+      MarkdownNodeStable(
+        type: MarkdownNodeType.plainText,
+        content: cleaned,
+        isStreaming: false,
+      ),
+    );
   }
 }
 
@@ -626,16 +399,15 @@ class _MarkdownLine extends StatelessWidget {
 }
 
 class _MarkdownHeading extends StatelessWidget {
-  const _MarkdownHeading({required this.text, required this.color, this.level});
+  const _MarkdownHeading({required this.text, required this.color});
 
   final String text;
   final Color color;
-  final int? level;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final effectiveLevel = level ?? _determineHeaderLevel(text);
+    final effectiveLevel = _determineHeaderLevel(text);
     final headingText = _markdownHeaderText(text);
     final style = _markdownHeaderStyle(theme, effectiveLevel)?.copyWith(
       color: color,
@@ -810,26 +582,6 @@ bool _isBlockLatexEnd(String startLine, String line) {
     return trimmed.endsWith(r'$$') && trimmed.length > 2;
   }
   return trimmed.endsWith(r'\]');
-}
-
-_ParsedCodeBlock _parseCodeBlock(String text) {
-  final lines = text.trim().split('\n');
-  if (lines.isNotEmpty && lines.first.trimLeft().startsWith('```')) {
-    final language = lines.first.trimLeft().substring(3).trim();
-    final body = lines
-        .skip(1)
-        .takeWhile((line) => !line.trimRight().endsWith('```'))
-        .join('\n');
-    return _ParsedCodeBlock(code: body, language: language);
-  }
-  return _ParsedCodeBlock(code: text, language: '');
-}
-
-class _ParsedCodeBlock {
-  const _ParsedCodeBlock({required this.code, required this.language});
-
-  final String code;
-  final String language;
 }
 
 class MarkdownHorizontalRule extends StatelessWidget {

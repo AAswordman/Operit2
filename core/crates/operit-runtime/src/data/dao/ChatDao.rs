@@ -20,7 +20,7 @@ impl ChatDao {
 
     pub fn getAllChats(&self) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
         self.observeChats(
-            "SELECT * FROM chats ORDER BY displayOrder ASC".to_string(),
+            "SELECT * FROM chats ORDER BY pinned DESC, displayOrder ASC".to_string(),
             Vec::new(),
         )
     }
@@ -32,7 +32,7 @@ impl ChatDao {
 
     pub fn getAllChatsDirectly(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChats(
-            "SELECT * FROM chats ORDER BY displayOrder ASC",
+            "SELECT * FROM chats ORDER BY pinned DESC, displayOrder ASC",
             sqliteParams![],
         )
     }
@@ -50,9 +50,9 @@ impl ChatDao {
                 INSERT OR REPLACE INTO chats (
                     id, title, createdAt, updatedAt, inputTokens, outputTokens,
                     currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
-                    parentChatId, characterCardName, characterGroupId, locked
+                    parentChatId, characterCardName, characterGroupId, locked, pinned
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                 "#,
             sqliteParams![
                 chat.id,
@@ -70,6 +70,7 @@ impl ChatDao {
                 chat.characterCardName,
                 chat.characterGroupId,
                 chat.locked,
+                chat.pinned,
             ],
         )?;
         self.store.notifyInvalidated()
@@ -194,6 +195,18 @@ impl ChatDao {
         )
     }
 
+    pub fn updateChatPinned(
+        &self,
+        chatId: &str,
+        pinned: bool,
+        timestamp: i64,
+    ) -> Result<(), SqliteStoreError> {
+        self.execute(
+            "UPDATE chats SET pinned = ?2, updatedAt = ?3 WHERE id = ?1",
+            sqliteParams![chatId, pinned, timestamp],
+        )
+    }
+
     pub fn updateChatOrderAndGroup(
         &self,
         chatId: &str,
@@ -302,7 +315,7 @@ impl ChatDao {
         parentChatId: &str,
     ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChatsWithOne(
-            "SELECT * FROM chats WHERE parentChatId = ?1 ORDER BY displayOrder ASC",
+            "SELECT * FROM chats WHERE parentChatId = ?1 ORDER BY pinned DESC, displayOrder ASC",
             parentChatId,
         )
     }
@@ -312,21 +325,23 @@ impl ChatDao {
         parentChatId: &str,
     ) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
         self.observeChats(
-            "SELECT * FROM chats WHERE parentChatId = ?1 ORDER BY displayOrder ASC".to_string(),
+            "SELECT * FROM chats WHERE parentChatId = ?1 ORDER BY pinned DESC, displayOrder ASC"
+                .to_string(),
             vec![parentChatId.to_string()],
         )
     }
 
     pub fn getMainChats(&self) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChats(
-            "SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC",
+            "SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY pinned DESC, displayOrder ASC",
             sqliteParams![],
         )
     }
 
     pub fn getMainChatsFlow(&self) -> Result<StateFlow<Vec<ChatEntity>>, SqliteStoreError> {
         self.observeChats(
-            "SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY displayOrder ASC".to_string(),
+            "SELECT * FROM chats WHERE parentChatId IS NULL ORDER BY pinned DESC, displayOrder ASC"
+                .to_string(),
             Vec::new(),
         )
     }
@@ -336,7 +351,7 @@ impl ChatDao {
         characterCardName: &str,
     ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChatsWithOne(
-            "SELECT * FROM chats WHERE characterCardName = ?1 AND characterGroupId IS NULL ORDER BY displayOrder ASC",
+            "SELECT * FROM chats WHERE characterCardName = ?1 AND characterGroupId IS NULL ORDER BY pinned DESC, displayOrder ASC",
             characterCardName,
         )
     }
@@ -346,7 +361,7 @@ impl ChatDao {
         characterGroupId: &str,
     ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChatsWithOne(
-            "SELECT * FROM chats WHERE characterGroupId = ?1 ORDER BY displayOrder ASC",
+            "SELECT * FROM chats WHERE characterGroupId = ?1 ORDER BY pinned DESC, displayOrder ASC",
             characterGroupId,
         )
     }
@@ -356,7 +371,7 @@ impl ChatDao {
         characterCardName: &str,
     ) -> Result<Vec<ChatEntity>, SqliteStoreError> {
         self.selectChatsWithOne(
-            "SELECT * FROM chats WHERE characterCardName = ?1 OR (characterCardName IS NULL AND characterGroupId IS NULL) ORDER BY displayOrder ASC",
+            "SELECT * FROM chats WHERE characterCardName = ?1 OR (characterCardName IS NULL AND characterGroupId IS NULL) ORDER BY pinned DESC, displayOrder ASC",
             characterCardName,
         )
     }
@@ -651,5 +666,6 @@ pub fn mapChatEntity(row: &SqliteRow) -> Result<ChatEntity, SqliteStoreError> {
         characterCardName: row.get("characterCardName")?,
         characterGroupId: row.get("characterGroupId")?,
         locked: row.get("locked")?,
+        pinned: row.get("pinned")?,
     })
 }

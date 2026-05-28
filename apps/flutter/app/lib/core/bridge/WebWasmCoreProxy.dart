@@ -5,8 +5,6 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
-import 'package:flutter/foundation.dart';
-
 import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
@@ -17,25 +15,15 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     final requestText = jsonEncode(request.toJson());
-    debugPrint(
-      '[OperitWebWasmCore] call -> ${request.targetPath.key}.${request.methodName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
-    );
     final responseText = await _invokeString('call', <Object?>[requestText]);
     final response = jsonDecode(responseText) as Map<String, Object?>;
     final result = response['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
-      debugPrint(
-        '[OperitWebWasmCore] call <- ok ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId} type=${result['Ok'].runtimeType}',
-      );
       return result['Ok'];
     }
     if (result.containsKey('Err')) {
-      final error = CoreLinkError.fromJson(result['Err'] as Map<String, Object?>);
-      debugPrint(
-        '[OperitWebWasmCore] call <- err ${request.targetPath.key}.${request.methodName} '
-        'id=${request.requestId} $error',
+      final error = CoreLinkError.fromJson(
+        result['Err'] as Map<String, Object?>,
       );
       throw error;
     }
@@ -47,41 +35,22 @@ class WebWasmCoreProxy extends CoreProxy {
 
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
-    debugPrint(
-      '[OperitWebWasmCore] watchSnapshot -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
-    );
-    final responseText = await _invokeString(
-      'watchSnapshot',
-      <Object?>[jsonEncode(request.toJson())],
-    );
+    final responseText = await _invokeString('watchSnapshot', <Object?>[
+      jsonEncode(request.toJson()),
+    ]);
     final response = jsonDecode(responseText) as Map<String, Object?>;
     if (response.containsKey('code') && response.containsKey('message')) {
       final error = CoreLinkError.fromJson(response);
-      debugPrint(
-        '[OperitWebWasmCore] watchSnapshot <- err ${request.targetPath.key}.${request.propertyName} '
-        'id=${request.requestId} $error',
-      );
       throw error;
     }
-    final event = CoreEvent.fromJson(response);
-    debugPrint(
-      '[OperitWebWasmCore] watchSnapshot <- ${event.kind} '
-      '${request.targetPath.key}.${request.propertyName} id=${request.requestId}',
-    );
-    return event;
+    return CoreEvent.fromJson(response);
   }
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
-    debugPrint(
-      '[OperitWebWasmCore] watchStream -> ${request.targetPath.key}.${request.propertyName} '
-      'id=${request.requestId} args=${_argKeys(request.args)}',
-    );
-    final subscriptionText = await _invokeString(
-      'watchStream',
-      <Object?>[jsonEncode(request.toJson())],
-    );
+    final subscriptionText = await _invokeString('watchStream', <Object?>[
+      jsonEncode(request.toJson()),
+    ]);
     final subscriptionJson =
         jsonDecode(subscriptionText) as Map<String, Object?>;
     if (subscriptionJson.containsKey('code') &&
@@ -93,10 +62,9 @@ class WebWasmCoreProxy extends CoreProxy {
     try {
       while (!completed) {
         await Future<void>.delayed(const Duration(milliseconds: 24));
-        final eventsText = await _invokeString(
-          'pollWatchStream',
-          <Object?>[subscriptionId],
-        );
+        final eventsText = await _invokeString('pollWatchStream', <Object?>[
+          subscriptionId,
+        ]);
         final decodedEvents = jsonDecode(eventsText);
         if (decodedEvents is Map<String, Object?> &&
             decodedEvents.containsKey('code') &&
@@ -114,13 +82,15 @@ class WebWasmCoreProxy extends CoreProxy {
       }
     } finally {
       await _invokeString('closeWatchStream', <Object?>[subscriptionId]);
-      debugPrint('[OperitWebWasmCore] watchStream closed subscription=$subscriptionId');
     }
   }
 
   @override
   Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    final responseText = await _invokeString('hostDescriptor', const <Object?>[]);
+    final responseText = await _invokeString(
+      'hostDescriptor',
+      const <Object?>[],
+    );
     return HostEnvironmentDescriptor.fromJson(
       jsonDecode(responseText) as Map<String, Object?>,
     );
@@ -166,11 +136,4 @@ JSAny? _toJsValue(Object? value) {
     return value.toJS;
   }
   return value.jsify();
-}
-
-String _argKeys(Object? args) {
-  if (args is Map<String, Object?>) {
-    return args.keys.join(',');
-  }
-  return args.runtimeType.toString();
 }

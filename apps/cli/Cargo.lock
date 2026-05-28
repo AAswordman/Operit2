@@ -1723,6 +1723,7 @@ name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "operit-host-api",
  "operit-link",
  "operit-runtime",
  "operit-store",
@@ -1731,11 +1732,15 @@ dependencies = [
  "serde_json",
  "syn",
  "tokio",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
 name = "operit-host-api"
 version = "0.1.0"
+dependencies = [
+ "js-sys",
+]
 
 [[package]]
 name = "operit-host-linux-native"
@@ -1743,6 +1748,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "regex",
+ "reqwest",
  "rusqlite",
  "serde_json",
  "tungstenite",
@@ -1755,6 +1761,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "regex",
+ "reqwest",
  "rusqlite",
  "serde_json",
  "tungstenite",
@@ -1790,6 +1797,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "getrandom 0.2.17",
+ "js-sys",
  "json5",
  "operit-host-api",
  "operit-store",
@@ -1800,7 +1808,10 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "url",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
  "zip",
 ]
 
@@ -1808,6 +1819,7 @@ dependencies = [
 name = "operit-store"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "operit-host-api",
  "serde",
  "serde_json",

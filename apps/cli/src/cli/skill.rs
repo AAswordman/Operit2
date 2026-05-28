@@ -11,7 +11,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
         "dir" => {
             println!(
                 "{}",
-                core.skill_skill_repository()
+                core.skill_repository()
                     .getSkillsDirectoryPath()
                     .await
                     .map_err(|error| error.to_string())?
@@ -19,13 +19,13 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
         }
         "list" => {
             let skills = core
-                .skill_skill_repository()
+                .skill_repository()
                 .getAvailableSkillPackages()
                 .await
                 .map_err(|error| error.to_string())?;
             for (name, skill) in skills {
                 let visible = core
-                    .skill_skill_repository()
+                    .skill_repository()
                     .isSkillVisibleToAi(&name)
                     .await
                     .map_err(|error| error.to_string())?;
@@ -38,7 +38,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
                 );
             }
             let errors = core
-                .skill_skill_repository()
+                .skill_repository()
                 .getSkillLoadErrors()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -51,7 +51,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill show <name>".to_string())?;
             let skills = core
-                .skill_skill_repository()
+                .skill_repository()
                 .getAvailableSkillPackages()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -64,14 +64,14 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
             println!("skillFile={}", skill.skillFile.to_string_lossy());
             println!(
                 "visible={}",
-                core.skill_skill_repository()
+                core.skill_repository()
                     .isSkillVisibleToAi(name)
                     .await
                     .map_err(|error| error.to_string())?
             );
             println!();
             if let Some(content) = core
-                .skill_skill_repository()
+                .skill_repository()
                 .readSkillContent(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -93,7 +93,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
             let attachmentPaths = args[4..].iter().map(PathBuf::from).collect::<Vec<_>>();
             println!(
                 "{}",
-                core.skill_skill_repository()
+                core.skill_repository()
                     .importSkillFromDirectInput(skillId, description, &content, &attachmentPaths)
                     .await
                     .map_err(|error| error.to_string())?
@@ -106,12 +106,12 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
             let subDir = args.get(2).map(String::as_str);
             let result = match subDir {
                 Some(subDir) => {
-                    core.skill_skill_repository()
+                    core.skill_repository()
                         .importSkillFromZipWithSubDir(Path::new(zipPath), Some(subDir))
                         .await
                 }
                 None => {
-                    core.skill_skill_repository()
+                    core.skill_repository()
                         .importSkillFromZip(Path::new(zipPath))
                         .await
                 }
@@ -124,7 +124,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill delete <name>".to_string())?;
             if core
-                .skill_skill_repository()
+                .skill_repository()
                 .deleteSkill(name)
                 .await
                 .map_err(|error| error.to_string())?
@@ -141,7 +141,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
             if args.len() == 2 {
                 println!(
                     "{}",
-                    core.skill_skill_repository()
+                    core.skill_repository()
                         .isSkillVisibleToAi(name)
                         .await
                         .map_err(|error| error.to_string())?
@@ -151,7 +151,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
                     args.get(2),
                     "usage: operit2 skill visible <name> [true|false]",
                 )?;
-                core.skill_skill_repository()
+                core.skill_repository()
                     .setSkillVisibleToAi(name, visible)
                     .await
                     .map_err(|error| error.to_string())?;
@@ -160,7 +160,7 @@ pub(super) async fn run_skill_command(core: &mut CliCore, args: &[String]) -> Re
         }
         "errors" => {
             for (name, error) in core
-                .skill_skill_repository()
+                .skill_repository()
                 .getSkillLoadErrors()
                 .await
                 .map_err(|error| error.to_string())?

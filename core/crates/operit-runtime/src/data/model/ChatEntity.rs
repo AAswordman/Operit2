@@ -21,6 +21,7 @@ pub struct ChatEntity {
     pub characterCardName: Option<String>,
     pub characterGroupId: Option<String>,
     pub locked: bool,
+    pub pinned: bool,
 }
 
 impl ChatEntity {
@@ -41,6 +42,7 @@ impl ChatEntity {
             characterCardName: None,
             characterGroupId: None,
             locked: false,
+            pinned: false,
         }
     }
 
@@ -67,6 +69,7 @@ impl ChatEntity {
             characterCardName: self.characterCardName.clone(),
             characterGroupId: self.characterGroupId.clone(),
             locked: self.locked,
+            pinned: self.pinned,
         }
     }
 
@@ -93,9 +96,11 @@ impl ChatEntity {
             characterCardName: chatHistory.characterCardName.clone(),
             characterGroupId: chatHistory.characterGroupId.clone(),
             locked: chatHistory.locked,
+            pinned: chatHistory.pinned,
         }
     }
 }
 
-fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
-
+fn currentTimeMillis() -> i64 {
+    operit_host_api::TimeUtils::currentTimeMillis()
+}

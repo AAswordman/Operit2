@@ -444,6 +444,13 @@ impl ChatHistoryManager {
         Ok(())
     }
 
+    pub fn updateChatPinned(&self, chatId: String, pinned: bool) -> ChatHistoryManagerResult<()> {
+        self.chatDao
+            .updateChatPinned(&chatId, pinned, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
+        Ok(())
+    }
+
     fn persistMessageLocked(
         &self,
         chatId: &str,
@@ -1009,6 +1016,7 @@ impl ChatHistoryManager {
             characterCardName,
             characterGroupId,
             locked: false,
+            pinned: false,
         };
         self.chatDao.insertChat(chatEntity.clone())?;
         let history = chatEntity.toChatHistory(Vec::new());
@@ -1124,6 +1132,7 @@ impl ChatHistoryManager {
             characterCardName: parentChat.characterCardName,
             characterGroupId: parentChat.characterGroupId,
             locked: false,
+            pinned: false,
         };
         self.chatDao.insertChat(branchEntity.clone())?;
         let copiedMessageCount = self
@@ -1587,5 +1596,6 @@ impl ChatImportResult {
     }
 }
 
-fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
-
+fn currentTimeMillis() -> i64 {
+    operit_host_api::TimeUtils::currentTimeMillis()
+}

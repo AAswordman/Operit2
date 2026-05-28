@@ -399,7 +399,7 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
             r#"
             SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
                 currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
-                parentChatId, characterCardName, characterGroupId, locked
+                parentChatId, characterCardName, characterGroupId, locked, pinned
             FROM sync_sql_chat_rows
             WHERE opId = ?1
             ORDER BY id
@@ -424,6 +424,7 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
                 characterCardName: row.get(12)?,
                 characterGroupId: row.get(13)?,
                 locked: row.get(14)?,
+                pinned: row.get(15)?,
             })
         })
         .collect()
@@ -604,9 +605,9 @@ fn insertChatSyncRow(
         INSERT INTO sync_sql_chat_rows (
             opId, id, title, createdAt, updatedAt, inputTokens, outputTokens,
             currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
-            parentChatId, characterCardName, characterGroupId, locked
+            parentChatId, characterCardName, characterGroupId, locked, pinned
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         "#,
         sqliteParams![
             opId,
@@ -625,6 +626,7 @@ fn insertChatSyncRow(
             chat.characterCardName,
             chat.characterGroupId,
             chat.locked,
+            chat.pinned,
         ],
     )?;
     Ok(())
@@ -801,9 +803,9 @@ fn upsertChat(
         INSERT INTO chats (
             id, title, createdAt, updatedAt, inputTokens, outputTokens,
             currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
-            parentChatId, characterCardName, characterGroupId, locked
+            parentChatId, characterCardName, characterGroupId, locked, pinned
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             createdAt = excluded.createdAt,
@@ -818,7 +820,8 @@ fn upsertChat(
             parentChatId = excluded.parentChatId,
             characterCardName = excluded.characterCardName,
             characterGroupId = excluded.characterGroupId,
-            locked = excluded.locked
+            locked = excluded.locked,
+            pinned = excluded.pinned
         "#,
         sqliteParams![
             chat.id,
@@ -836,6 +839,7 @@ fn upsertChat(
             chat.characterCardName,
             chat.characterGroupId,
             chat.locked,
+            chat.pinned,
         ],
     )?;
     Ok(())
@@ -1037,7 +1041,9 @@ fn requiredVariantIndex(deletion: &ChatSyncDeletion) -> Result<i32, SqliteStoreE
     })
 }
 
-fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> { operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(SqlChatSyncStoreError::Message) }
+fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> {
+    operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(SqlChatSyncStoreError::Message)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1766,4 +1772,3 @@ mod tests {
         AppDatabase::closeDatabase();
     }
 }
-

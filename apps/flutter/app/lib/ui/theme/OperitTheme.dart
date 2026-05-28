@@ -18,7 +18,7 @@ class OperitTheme extends StatelessWidget {
         final lightColorScheme = lightDynamic ?? _lightColorScheme;
         final darkColorScheme = darkDynamic ?? _darkColorScheme;
         return MaterialApp(
-          title: 'Operit',
+          title: 'Operit2',
           debugShowCheckedModeBanner: false,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
@@ -35,18 +35,20 @@ class OperitTheme extends StatelessWidget {
 ThemeData _themeData(ColorScheme colorScheme) {
   return ThemeData(
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: colorScheme.surfaceContainerLow,
-    canvasColor: colorScheme.surfaceContainerLow,
+    scaffoldBackgroundColor: colorScheme.surface,
+    canvasColor: colorScheme.surface,
     fontFamily: _fontFamily,
     fontFamilyFallback: _fontFamilyFallback,
     useMaterial3: true,
   );
 }
 
-const String _fontFamily = 'Microsoft YaHei UI';
+const String _fontFamily = 'Aptos';
 
 const List<String> _fontFamilyFallback = <String>[
+  'Calibri',
   'Segoe UI',
+  'Microsoft YaHei UI',
   'Microsoft YaHei',
   'SimHei',
   'Noto Sans CJK SC',

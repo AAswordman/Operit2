@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-
 use serde::{Deserialize, Serialize};
 
 use crate::util::AppLogger::AppLogger;
@@ -221,5 +220,3 @@ fn new_id() -> String {
     let millis = operit_host_api::TimeUtils::currentTimeMillisU128();
     format!("{millis:x}")
 }
-
-

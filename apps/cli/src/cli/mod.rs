@@ -231,12 +231,20 @@ fn print_cli_usage() {
         "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
     );
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat <new|list|show|current|switch|stats|bind-character|bind-group|set-group|shell|send>");
+    println!("operit2 cli chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat list");
     println!("operit2 cli chat show <chat-id> [--runtime]");
     println!("operit2 cli chat current");
     println!("operit2 cli chat switch <chat-id>");
+    println!("operit2 cli chat delete <chat-id>");
+    println!("operit2 cli chat delete-message <index>");
+    println!("operit2 cli chat clear");
+    println!("operit2 cli chat rollback <message-index>");
+    println!("operit2 cli chat branch [--up-to <message-timestamp>]");
+    println!("operit2 cli chat branches [parent-chat-id]");
+    println!("operit2 cli chat lock <chat-id> <true|false>");
+    println!("operit2 cli chat pin <chat-id> <true|false>");
     println!("operit2 cli chat stats");
     println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
     println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
@@ -329,6 +337,14 @@ fn print_chat_usage() {
     println!("operit2 cli chat show <chat-id> [--runtime]");
     println!("operit2 cli chat current");
     println!("operit2 cli chat switch <chat-id>");
+    println!("operit2 cli chat delete <chat-id>");
+    println!("operit2 cli chat delete-message <index>");
+    println!("operit2 cli chat clear");
+    println!("operit2 cli chat rollback <message-index>");
+    println!("operit2 cli chat branch [--up-to <message-timestamp>]");
+    println!("operit2 cli chat branches [parent-chat-id]");
+    println!("operit2 cli chat lock <chat-id> <true|false>");
+    println!("operit2 cli chat pin <chat-id> <true|false>");
     println!("operit2 cli chat stats");
     println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
     println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
@@ -470,6 +486,7 @@ fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::Ch
         chat.characterGroupId.clone().unwrap_or_default()
     );
     println!("locked={}", chat.locked);
+    println!("pinned={}", chat.pinned);
 }
 
 fn print_chat_message(message: &operit_runtime::data::model::ChatMessage::ChatMessage) {

@@ -37,6 +37,7 @@ impl ChatMessageTimestampAllocator {
         }
     }
 
-    pub fn currentTimeMillis() -> i64 { operit_host_api::TimeUtils::currentTimeMillis() }
+    pub fn currentTimeMillis() -> i64 {
+        operit_host_api::TimeUtils::currentTimeMillis()
+    }
 }
-
