@@ -53,6 +53,7 @@ async function onInputMenuToggle(event) {
             preferredLanguage(event) === "en"
               ? "Injects <think> guidance for non-reasoning models. Not recommended for native reasoning models."
               : "为非思考模型注入 <think> 思考引导；不建议对原生思考模型开启。",
+          icon: "psychology",
           isChecked: enabled,
           slot: "thinking" as const,
         },

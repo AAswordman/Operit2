@@ -104,7 +104,10 @@ fn show_plugin(
         "messageProcessingPlugins={}",
         plugin.messageProcessingPlugins.len()
     ));
-    output.push_stdout_line(format!("xmlRenderPlugins={}", plugin.xmlRenderPlugins.len()));
+    output.push_stdout_line(format!(
+        "xmlRenderPlugins={}",
+        plugin.xmlRenderPlugins.len()
+    ));
     output.push_stdout_line(format!(
         "inputMenuTogglePlugins={}",
         plugin.inputMenuTogglePlugins.len()
@@ -115,7 +118,10 @@ fn show_plugin(
         "toolLifecycleHooks={}",
         plugin.toolLifecycleHooks.len()
     ));
-    output.push_stdout_line(format!("promptInputHooks={}", plugin.promptInputHooks.len()));
+    output.push_stdout_line(format!(
+        "promptInputHooks={}",
+        plugin.promptInputHooks.len()
+    ));
     output.push_stdout_line(format!(
         "promptHistoryHooks={}",
         plugin.promptHistoryHooks.len()
@@ -186,8 +192,9 @@ fn enabled_plugin_names_from_manager(
 
 fn package_manager(
     context: &OperitApplicationContext,
-) -> std::sync::Arc<std::sync::Mutex<operit_runtime::core::tools::packTool::PackageManager::PackageManager>>
-{
+) -> std::sync::Arc<
+    std::sync::Mutex<operit_runtime::core::tools::packTool::PackageManager::PackageManager>,
+> {
     AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
 }
 

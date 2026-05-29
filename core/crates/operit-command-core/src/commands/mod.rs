@@ -13,6 +13,7 @@ mod skill;
 mod tag;
 mod tool;
 mod util;
+mod workspace;
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
@@ -44,6 +45,7 @@ pub fn run_core_command(
         "active-prompt" => people::run_active_prompt_command(application.applicationContext.clone(), &args[1..], output),
         "model" => model::run_model_command(application.applicationContext.clone(), &args[1..], output),
         "chat" => chat::run_chat_command(application, &args[1..], output),
+        "workspace" => workspace::run_workspace_command(application, &args[1..], output),
         _ => {
             print_core_usage(output);
             Ok(())
@@ -52,7 +54,7 @@ pub fn run_core_command(
 }
 
 fn print_core_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|prefs|approval|tag|memory|character|group|active-prompt|model|chat>");
+    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace>");
     output.push_stdout_line("operit2 tool <list|show|exec>");
     output.push_stdout_line("operit2 package <dir|list|show|import|enable|disable|use|exec>");
     output.push_stdout_line("operit2 plugin <list|show|import|enable|disable>");
@@ -69,4 +71,5 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
     output.push_stdout_line("operit2 model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     output.push_stdout_line("operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|send>");
+    output.push_stdout_line("operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>");
 }

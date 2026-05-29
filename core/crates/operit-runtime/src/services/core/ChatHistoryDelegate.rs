@@ -1,6 +1,7 @@
 use crate::data::model::ActivePrompt::ActivePrompt;
 use crate::data::model::ChatHistory::ChatHistory;
 use crate::data::model::ChatMessage::ChatMessage;
+use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
@@ -19,13 +20,6 @@ pub struct CurrentChatWindowLoadResult {
     pub messages: Vec<ChatMessage>,
     pub hasOlderPersistedHistory: bool,
     pub hasNewerPersistedHistory: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChatMessageLocatorPreview {
-    pub timestamp: i64,
-    pub sender: String,
-    pub contentPreview: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -388,15 +382,14 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn loadChatMessageLocatorPreviews(&self, chatId: String) -> Vec<ChatMessageLocatorPreview> {
-        self.getChatHistory(chatId)
-            .into_iter()
-            .map(|message| ChatMessageLocatorPreview {
-                timestamp: message.timestamp,
-                sender: message.sender,
-                contentPreview: message.content.chars().take(80).collect(),
-            })
-            .collect()
+    pub fn loadChatMessageLocatorPreviews(
+        &self,
+        chatId: String,
+        query: String,
+    ) -> Vec<ChatMessageLocatorPreview> {
+        self.chatHistoryManager
+            .loadChatMessageLocatorPreviews(chatId, query)
+            .expect("load chat message locator previews")
     }
 
     #[allow(non_snake_case)]

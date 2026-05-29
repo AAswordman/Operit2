@@ -366,6 +366,101 @@ pub trait ManagedRuntimeHost: Send + Sync {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSessionInfo {
+    pub sessionId: String,
+    pub sessionName: String,
+    pub terminalType: String,
+    pub isNewSession: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalCommandOutput {
+    pub command: String,
+    pub output: String,
+    pub exitCode: i32,
+    pub sessionId: String,
+    pub terminalType: String,
+    pub timedOut: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HiddenTerminalCommandOutput {
+    pub command: String,
+    pub output: String,
+    pub exitCode: i32,
+    pub executorKey: String,
+    pub terminalType: String,
+    pub timedOut: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalInputOutput {
+    pub sessionId: String,
+    pub acceptedChars: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalCloseOutput {
+    pub sessionId: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalScreenOutput {
+    pub sessionId: String,
+    pub terminalType: String,
+    pub rows: usize,
+    pub cols: usize,
+    pub content: String,
+    pub commandRunning: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalTypeInfo {
+    pub terminalType: String,
+    pub available: bool,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalInfo {
+    pub platform: String,
+    pub defaultType: String,
+    pub types: Vec<TerminalTypeInfo>,
+}
+
+pub trait TerminalHost: Send + Sync {
+    fn terminalInfo(&self) -> HostResult<TerminalInfo>;
+    fn createOrGetSession(
+        &self,
+        sessionName: &str,
+        terminalType: &str,
+    ) -> HostResult<TerminalSessionInfo>;
+    fn executeInSession(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+    ) -> HostResult<TerminalCommandOutput>;
+    fn executeHiddenCommand(
+        &self,
+        command: &str,
+        terminalType: &str,
+        executorKey: &str,
+        timeoutMs: u64,
+    ) -> HostResult<HiddenTerminalCommandOutput>;
+    fn inputInSession(
+        &self,
+        sessionId: &str,
+        input: Option<&str>,
+        control: Option<&str>,
+    ) -> HostResult<TerminalInputOutput>;
+    fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput>;
+    fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeStorageEntry {
     pub path: String,
     pub isDirectory: bool,

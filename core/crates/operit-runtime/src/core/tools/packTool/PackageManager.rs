@@ -5,13 +5,16 @@ use std::sync::Arc;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::javascript::JsEngine::JsEngine;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPPackage::MCPPackage;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::core::tools::packTool::PackageManagerToolPkgFacade::PackageManagerToolPkgFacade;
 use crate::core::tools::packTool::ToolPkgLoader::ToolPkgLoader;
 use crate::core::tools::packTool::ToolPkgManager::{ToolPkgManager, ToolPkgRuntimeChangeListener};
-use crate::core::tools::packTool::ToolPkgParser::{ToolPkgContainerRuntime, ToolPkgLoadResult};
+use crate::core::tools::packTool::ToolPkgParser::{
+    ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSubpackageRuntime,
+};
 use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::ToolPackage::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
@@ -86,7 +89,14 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
-        self.toolPkgManager.releaseToolPkgExecutionEngine(contextKey);
+        self.toolPkgManager
+            .releaseToolPkgExecutionEngine(contextKey);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> JsEngine {
+        self.toolPkgManager
+            .getToolPkgExecutionEngine(&self.context, contextKey)
     }
 
     pub fn isPackageActivated(&self, packageName: &str) -> bool {
@@ -354,6 +364,16 @@ impl PackageManager {
         let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
         self.toolPkgManager
             .getToolPkgContainerRuntime(&normalizedContainerPackageName)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn resolveToolPkgSubpackageRuntimeInternal(
+        &self,
+        packageName: &str,
+    ) -> Option<ToolPkgSubpackageRuntime> {
+        let normalizedPackageName = self.normalizePackageName(packageName);
+        self.toolPkgManager
+            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
     }
 
     #[allow(non_snake_case)]

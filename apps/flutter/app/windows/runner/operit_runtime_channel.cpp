@@ -21,6 +21,8 @@ using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePollWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
+using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
+using BridgeHandlePermissionResult = char* (*)(BridgeHandle, const char*);
 using BridgeFreeString = void (*)(char*);
 
 class OperitRuntimeLibrary {
@@ -65,12 +67,17 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_close_watch_stream"));
       host_descriptor_ = reinterpret_cast<BridgeHostDescriptor>(
           GetProcAddress(library_, "operit_flutter_bridge_host_descriptor"));
+      current_permission_request_ = reinterpret_cast<BridgeCurrentPermissionRequest>(
+          GetProcAddress(library_, "operit_flutter_bridge_current_permission_request"));
+      handle_permission_result_ = reinterpret_cast<BridgeHandlePermissionResult>(
+          GetProcAddress(library_, "operit_flutter_bridge_handle_permission_result"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           poll_watch_stream_ == nullptr || close_watch_stream_ == nullptr ||
-          host_descriptor_ == nullptr || free_string_ == nullptr) {
+          host_descriptor_ == nullptr || current_permission_request_ == nullptr ||
+          handle_permission_result_ == nullptr || free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
@@ -142,6 +149,23 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  bool CurrentPermissionRequest(std::string* response, std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = current_permission_request_(handle_);
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool HandlePermissionResult(const std::string& permission_result,
+                              std::string* response, std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = handle_permission_result_(handle_, permission_result.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
  private:
   static void AssignError(std::string* target, const std::string& value) {
     if (target != nullptr) {
@@ -185,6 +209,8 @@ class OperitRuntimeLibrary {
   BridgePollWatchStream poll_watch_stream_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeHostDescriptor host_descriptor_ = nullptr;
+  BridgeCurrentPermissionRequest current_permission_request_ = nullptr;
+  BridgeHandlePermissionResult handle_permission_result_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
@@ -289,6 +315,28 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
         }
         if (method_call.method_name().compare("hostDescriptor") == 0) {
           if (g_operit_runtime_library->HostDescriptor(&response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("currentPermissionRequest") == 0) {
+          if (g_operit_runtime_library->CurrentPermissionRequest(&response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("handlePermissionResult") == 0) {
+          const std::string* permission_result = StringArgument(method_call);
+          if (permission_result == nullptr) {
+            result->Error("INVALID_ARGS", "handlePermissionResult expects a result string");
+            return;
+          }
+          if (g_operit_runtime_library->HandlePermissionResult(
+                  *permission_result, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);

@@ -2,14 +2,14 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
+import '../../../viewmodel/ChatViewModel.dart';
 
 class UserMessageComposable extends StatefulWidget {
   const UserMessageComposable({super.key, required this.message});
 
-  final ChatRuntimeMessage message;
+  final ChatUiMessage message;
 
   @override
   State<UserMessageComposable> createState() => _UserMessageComposableState();

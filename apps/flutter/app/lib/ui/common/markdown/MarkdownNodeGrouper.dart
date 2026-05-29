@@ -24,18 +24,26 @@ class MarkdownGroupItem extends MarkdownGroupedItem {
   final String stableKey;
 }
 
-enum MarkdownNodeType { plainText, xmlBlock }
+enum MarkdownNodeType {
+  plainText,
+  header,
+  orderedList,
+  unorderedList,
+  xmlBlock,
+}
 
 class MarkdownNodeStable {
   const MarkdownNodeStable({
     required this.type,
     required this.content,
     required this.isStreaming,
+    this.stableKey = '',
   });
 
   final MarkdownNodeType type;
   final String content;
   final bool isStreaming;
+  final String stableKey;
 }
 
 abstract class MarkdownNodeGrouper {

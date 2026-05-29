@@ -48,6 +48,12 @@ impl MessageDao {
             .queryRows(
                 r#"
                 SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM messages AS earlier
+                        WHERE earlier.chatId = messages.chatId
+                            AND earlier.timestamp < messages.timestamp
+                    ) AS messageIndex,
                     timestamp AS timestamp,
                     sender AS sender,
                     CASE
@@ -69,12 +75,62 @@ impl MessageDao {
             .into_iter()
             .map(|row| {
                 Ok(ChatMessageLocatorPreview {
-                    timestamp: row.get(0)?,
-                    sender: row.get(1)?,
-                    previewContent: row.get(2)?,
-                    contentLength: row.get(3)?,
-                    displayMode: row.get(4)?,
-                    isFavorite: row.get(5)?,
+                    messageIndex: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    sender: row.get(2)?,
+                    previewContent: row.get(3)?,
+                    contentLength: row.get(4)?,
+                    displayMode: row.get(5)?,
+                    isFavorite: row.get(6)?,
+                })
+            })
+            .collect()
+    }
+
+    pub fn searchLocatorPreviewsForChat(
+        &self,
+        chatId: &str,
+        query: &str,
+        previewCharCount: i32,
+    ) -> Result<Vec<ChatMessageLocatorPreview>, SqliteStoreError> {
+        self.store
+            .queryRows(
+                r#"
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM messages AS earlier
+                        WHERE earlier.chatId = messages.chatId
+                            AND earlier.timestamp < messages.timestamp
+                    ) AS messageIndex,
+                    timestamp AS timestamp,
+                    sender AS sender,
+                    SUBSTR(
+                        content,
+                        MAX(1, INSTR(LOWER(content), LOWER(?2)) - (?3 / 2)),
+                        ?3
+                    ) AS previewContent,
+                    LENGTH(content) AS contentLength,
+                    displayMode AS displayMode,
+                    isFavorite AS isFavorite
+                FROM messages
+                WHERE chatId = ?1
+                    AND NOT (sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER')
+                    AND INSTR(LOWER(content), LOWER(?2)) > 0
+                ORDER BY timestamp ASC
+                "#,
+                sqliteParams![chatId, query, previewCharCount],
+            )?
+            .into_iter()
+            .map(|row| {
+                Ok(ChatMessageLocatorPreview {
+                    messageIndex: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    sender: row.get(2)?,
+                    previewContent: row.get(3)?,
+                    contentLength: row.get(4)?,
+                    displayMode: row.get(5)?,
+                    isFavorite: row.get(6)?,
                 })
             })
             .collect()

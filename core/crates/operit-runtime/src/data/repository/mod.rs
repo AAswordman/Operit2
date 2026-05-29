@@ -14,6 +14,8 @@ pub mod MemoryRepository;
 pub mod UIHierarchyManager;
 #[path = "WorkflowRepository.rs"]
 pub mod WorkflowRepository;
+#[path = "WorkspaceService.rs"]
+pub mod WorkspaceService;
 
 pub use AvatarRepository::*;
 pub use ChatHistoryManager::*;
@@ -22,3 +24,4 @@ pub use MemoryAutoSaveCandidateRepository::*;
 pub use MemoryRepository::*;
 pub use UIHierarchyManager::*;
 pub use WorkflowRepository::*;
+pub use WorkspaceService::*;

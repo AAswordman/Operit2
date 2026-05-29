@@ -5,6 +5,7 @@ import 'package:dynamic_color/dynamic_color.dart';
 
 import 'Color.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../permissions/ToolApprovalHost.dart';
 
 class OperitTheme extends StatelessWidget {
   const OperitTheme({super.key, required this.child});
@@ -25,7 +26,7 @@ class OperitTheme extends StatelessWidget {
           theme: _themeData(lightColorScheme),
           darkTheme: _themeData(darkColorScheme),
           themeMode: ThemeMode.system,
-          home: child,
+          home: ToolApprovalHost(child: child),
         );
       },
     );

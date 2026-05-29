@@ -63,23 +63,19 @@ pub fn run_model_command(
         "init" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             core.preferences_functional_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             println!("initialized");
         }
         "list" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             for summary in core
                 .preferences_model_config_manager()
                 .getAllConfigSummaries()
-                
                 .map_err(|error| error.to_string())?
             {
                 println!(
@@ -95,7 +91,6 @@ pub fn run_model_command(
         "show" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(1).map(String::as_str) {
                 Some(value) => value,
@@ -104,7 +99,6 @@ pub fn run_model_command(
             let config = core
                 .preferences_model_config_manager()
                 .getModelConfig(configId)
-                
                 .map_err(|error| error.to_string())?;
             println!("id={}", config.id);
             println!("name={}", config.name);
@@ -184,7 +178,6 @@ pub fn run_model_command(
         "set-key" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let apiKey = args
                 .get(1)
@@ -196,14 +189,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateApiKey(configId, apiKey)
-                
                 .map_err(|error| error.to_string())?;
             println!("api key updated: {configId}");
         }
         "set" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let endpoint = args
                 .get(1)
@@ -224,18 +215,15 @@ pub fn run_model_command(
             let current = core
                 .preferences_model_config_manager()
                 .getModelConfig(configId)
-                
                 .map_err(|error| error.to_string())?;
             core.preferences_model_config_manager()
                 .updateModelConfig(configId, current.apiKey, endpoint, modelName)
-                
                 .map_err(|error| error.to_string())?;
             println!("model updated: {configId}");
         }
         "tool-call" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let enableToolCall = parse_bool_arg(
                 args.get(1),
@@ -247,14 +235,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateToolCall(configId, enableToolCall)
-                
                 .map_err(|error| error.to_string())?;
             println!("tool call updated: {configId}\t{enableToolCall}");
         }
         "api-settings-full" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let apiKey = args
                 .get(1)
@@ -310,14 +296,12 @@ pub fn run_model_command(
                     enableGoogleSearch,
                     enableToolCall,
                 )
-                
                 .map_err(|error| error.to_string())?;
             println!("api settings full updated: {configId}");
         }
         "custom-headers" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let customHeaders = args
                 .get(1)
@@ -332,14 +316,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateCustomHeaders(configId, customHeaders)
-                
                 .map_err(|error| error.to_string())?;
             println!("custom headers updated: {configId}");
         }
         "request-queue" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let requestLimitPerMinute = parse_i32_arg(args.get(1), "usage: operit2 model request-queue <request-limit-per-minute> <max-concurrent-requests> [config-id]")?;
             let maxConcurrentRequests = parse_i32_arg(args.get(2), "usage: operit2 model request-queue <request-limit-per-minute> <max-concurrent-requests> [config-id]")?;
@@ -349,14 +331,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateRequestQueueSettings(configId, requestLimitPerMinute, maxConcurrentRequests)
-                
                 .map_err(|error| error.to_string())?;
             println!("request queue updated: {configId}");
         }
         "api-key-pool" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let useMultipleApiKeys = parse_bool_arg(args.get(1), "usage: operit2 model api-key-pool <use-multiple-api-keys> <api-key-pool-json> [config-id]")?;
             let apiKeyPoolJson = args
@@ -370,14 +350,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateApiKeyPoolSettings(configId, useMultipleApiKeys, apiKeyPool)
-                
                 .map_err(|error| error.to_string())?;
             println!("api key pool updated: {configId}");
         }
         "custom-parameters" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let parametersJson = args
                 .get(1)
@@ -392,14 +370,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateCustomParameters(configId, parametersJson)
-                
                 .map_err(|error| error.to_string())?;
             println!("custom parameters updated: {configId}");
         }
         "parameters" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let parametersJson = args.get(1).ok_or_else(|| {
                 "usage: operit2 model parameters <parameters-json> [config-id]".to_string()
@@ -413,14 +389,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateParameters(configId, parameters)
-                
                 .map_err(|error| error.to_string())?;
             println!("parameters updated: {configId}");
         }
         "direct-image" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let enableDirectImageProcessing = parse_bool_arg(
                 args.get(1),
@@ -432,14 +406,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateDirectImageProcessing(configId, enableDirectImageProcessing)
-                
                 .map_err(|error| error.to_string())?;
             println!("direct image processing updated: {configId}\t{enableDirectImageProcessing}");
         }
         "direct-audio" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let enableDirectAudioProcessing = parse_bool_arg(
                 args.get(1),
@@ -451,14 +423,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateDirectAudioProcessing(configId, enableDirectAudioProcessing)
-                
                 .map_err(|error| error.to_string())?;
             println!("direct audio processing updated: {configId}\t{enableDirectAudioProcessing}");
         }
         "direct-video" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let enableDirectVideoProcessing = parse_bool_arg(
                 args.get(1),
@@ -470,14 +440,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateDirectVideoProcessing(configId, enableDirectVideoProcessing)
-                
                 .map_err(|error| error.to_string())?;
             println!("direct video processing updated: {configId}\t{enableDirectVideoProcessing}");
         }
         "google-search" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let enableGoogleSearch = parse_bool_arg(
                 args.get(1),
@@ -489,14 +457,12 @@ pub fn run_model_command(
             };
             core.preferences_model_config_manager()
                 .updateGoogleSearch(configId, enableGoogleSearch)
-                
                 .map_err(|error| error.to_string())?;
             println!("google search updated: {configId}\t{enableGoogleSearch}");
         }
         "params" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(1).map(String::as_str) {
                 Some(value) => value,
@@ -505,7 +471,6 @@ pub fn run_model_command(
             let params = core
                 .preferences_model_config_manager()
                 .getModelParametersForConfig(configId)
-                
                 .map_err(|error| error.to_string())?;
             for param in params {
                 println!(
@@ -517,7 +482,6 @@ pub fn run_model_command(
         "context-show" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(1).map(String::as_str) {
                 Some(value) => value,
@@ -526,7 +490,6 @@ pub fn run_model_command(
             let config = core
                 .preferences_model_config_manager()
                 .getModelConfig(configId)
-                
                 .map_err(|error| error.to_string())?;
             println!("id={}", config.id);
             println!("contextLength={}", config.contextLength);
@@ -544,7 +507,6 @@ pub fn run_model_command(
         "context-set" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(4).map(String::as_str) {
                 Some(value) => value,
@@ -560,14 +522,12 @@ pub fn run_model_command(
                     maxContextLength,
                     enableMaxContextMode,
                 )
-                
                 .map_err(|error| error.to_string())?;
             println!("context settings updated: {configId}");
         }
         "summary-show" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(1).map(String::as_str) {
                 Some(value) => value,
@@ -576,7 +536,6 @@ pub fn run_model_command(
             let config = core
                 .preferences_model_config_manager()
                 .getModelConfig(configId)
-                
                 .map_err(|error| error.to_string())?;
             println!("id={}", config.id);
             println!("enableSummary={}", config.enableSummary);
@@ -593,7 +552,6 @@ pub fn run_model_command(
         "summary-set" => {
             core.preferences_model_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let configId = match args.get(5).map(String::as_str) {
                 Some(value) => value,
@@ -611,14 +569,12 @@ pub fn run_model_command(
                     enableSummaryByMessageCount,
                     summaryMessageCountThreshold,
                 )
-                
                 .map_err(|error| error.to_string())?;
             println!("summary settings updated: {configId}");
         }
         "function-list" => {
             core.preferences_functional_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let mut mappings = core
                 .preferences_functional_config_manager()
@@ -642,7 +598,6 @@ pub fn run_model_command(
         "function-show" => {
             core.preferences_functional_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let functionType = parseFunctionType(
                 args.get(1)
@@ -654,7 +609,6 @@ pub fn run_model_command(
             let mapping = core
                 .preferences_functional_config_manager()
                 .getConfigMappingForFunction(functionType.clone())
-                
                 .map_err(|error| error.to_string())?;
             println!("functionType={}", functionTypeName(&functionType));
             println!("configId={}", mapping.configId);
@@ -663,7 +617,6 @@ pub fn run_model_command(
         "function-set" => {
             core.preferences_functional_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             let functionType = parseFunctionType(
                 args.get(1)
@@ -685,7 +638,6 @@ pub fn run_model_command(
                 .unwrap_or(0);
             core.preferences_functional_config_manager()
                 .setConfigForFunctionWithIndex(functionType.clone(), configId.clone(), modelIndex)
-                
                 .map_err(|error| error.to_string())?;
             println!(
                 "function mapping updated: {}\t{}\t{}",
@@ -697,13 +649,11 @@ pub fn run_model_command(
         "function-reset" => {
             core.preferences_functional_config_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             if let Some(functionTypeValue) = args.get(1) {
                 let functionType = parseFunctionType(functionTypeValue)?;
                 core.preferences_functional_config_manager()
                     .resetFunctionConfig(functionType.clone())
-                    
                     .map_err(|error| error.to_string())?;
                 println!(
                     "function mapping reset: {}",
@@ -712,7 +662,6 @@ pub fn run_model_command(
             } else {
                 core.preferences_functional_config_manager()
                     .resetAllFunctionConfigs()
-                    
                     .map_err(|error| error.to_string())?;
                 println!("all function mappings reset");
             }
@@ -786,4 +735,3 @@ fn print_model_usage() {
     println!("operit2 model function-set <function-type> <config-id> [model-index]");
     println!("operit2 model function-reset [function-type]");
 }
-

@@ -221,9 +221,50 @@ impl ChatDao {
     }
 
     pub fn updateChats(&self, chats: Vec<ChatEntity>) -> Result<(), SqliteStoreError> {
-        for chat in chats {
-            self.insertChat(chat)?;
-        }
+        self.store.transaction(|transaction| {
+            for chat in chats {
+                transaction.execute(
+                    r#"
+                    UPDATE chats
+                    SET title = ?2,
+                        createdAt = ?3,
+                        updatedAt = ?4,
+                        inputTokens = ?5,
+                        outputTokens = ?6,
+                        currentWindowSize = ?7,
+                        "group" = ?8,
+                        displayOrder = ?9,
+                        workspace = ?10,
+                        workspaceEnv = ?11,
+                        parentChatId = ?12,
+                        characterCardName = ?13,
+                        characterGroupId = ?14,
+                        locked = ?15,
+                        pinned = ?16
+                    WHERE id = ?1
+                    "#,
+                    sqliteParams![
+                        chat.id,
+                        chat.title,
+                        chat.createdAt,
+                        chat.updatedAt,
+                        chat.inputTokens,
+                        chat.outputTokens,
+                        chat.currentWindowSize,
+                        chat.group,
+                        chat.displayOrder,
+                        chat.workspace,
+                        chat.workspaceEnv,
+                        chat.parentChatId,
+                        chat.characterCardName,
+                        chat.characterGroupId,
+                        chat.locked,
+                        chat.pinned,
+                    ],
+                )?;
+            }
+            Ok(())
+        })?;
         self.store.notifyInvalidated()
     }
 

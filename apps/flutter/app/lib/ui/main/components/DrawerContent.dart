@@ -10,6 +10,8 @@ import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../navigation/AppNavigationModels.dart';
+import 'CollapsedDrawerContent.dart';
+import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class DrawerContent extends StatefulWidget {
@@ -191,32 +193,12 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _showCreateGroupDialog() async {
-    final controller = TextEditingController();
     final groupName = await showDialog<String>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('新建分组'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '分组名称'),
-            onSubmitted: (value) => Navigator.of(context).pop(value),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: const Text('创建'),
-            ),
-          ],
-        );
+        return const CreateGroupDialog();
       },
     );
-    controller.dispose();
     final normalizedGroupName = groupName?.trim();
     if (normalizedGroupName == null || normalizedGroupName.isEmpty) {
       return;
@@ -317,7 +299,7 @@ class _DrawerContentState extends State<DrawerContent> {
       context: context,
       useRootNavigator: true,
       builder: (context) {
-        return _RenameConversationDialog(history: history);
+        return RenameConversationDialog(history: history);
       },
     );
     if (!mounted || title == null) {
@@ -337,7 +319,7 @@ class _DrawerContentState extends State<DrawerContent> {
       context: context,
       useRootNavigator: true,
       builder: (context) {
-        return _DeleteConversationDialog(history: history);
+        return DeleteConversationDialog(history: history);
       },
     );
     if (!mounted || confirmed != true) {
@@ -350,11 +332,11 @@ class _DrawerContentState extends State<DrawerContent> {
     core_proxy.ChatHistory history,
   ) async {
     final index = _histories.indexWhere((item) => item.id == history.id);
-    final action = await showDialog<_ConversationAction>(
+    final action = await showDialog<ConversationAction>(
       context: context,
       useRootNavigator: true,
       builder: (context) {
-        return _ConversationActionDialog(
+        return ConversationActionDialog(
           history: history,
           canMoveUp: index > 0,
           canMoveDown: index >= 0 && index < _histories.length - 1,
@@ -365,17 +347,17 @@ class _DrawerContentState extends State<DrawerContent> {
       return;
     }
     switch (action) {
-      case _ConversationAction.rename:
+      case ConversationAction.rename:
         await _showRenameConversationDialog(history);
-      case _ConversationAction.moveUp:
+      case ConversationAction.moveUp:
         await _moveConversationRelative(history, -1);
-      case _ConversationAction.moveDown:
+      case ConversationAction.moveDown:
         await _moveConversationRelative(history, 1);
-      case _ConversationAction.togglePinned:
+      case ConversationAction.togglePinned:
         await _updateConversationPinned(history);
-      case _ConversationAction.toggleLocked:
+      case ConversationAction.toggleLocked:
         await _updateConversationLocked(history);
-      case _ConversationAction.delete:
+      case ConversationAction.delete:
         await _showDeleteConversationDialog(history);
     }
   }
@@ -585,7 +567,7 @@ class _DrawerContentState extends State<DrawerContent> {
     for (final history in histories) {
       final sectionKey = _characterSectionKey(history);
       final sectionIndex = sectionIndexes[sectionKey];
-      final groupKey = _groupSectionKey(history);
+      final groupKey = _groupSectionKey(sectionKey, history);
       final groupLabel = _groupLabel(history);
       if (sectionIndex == null) {
         sectionIndexes[sectionKey] = sections.length;
@@ -636,9 +618,10 @@ class _DrawerContentState extends State<DrawerContent> {
     return name == null || name.isEmpty ? '未绑定' : name;
   }
 
-  String _groupSectionKey(core_proxy.ChatHistory history) {
+  String _groupSectionKey(String sectionKey, core_proxy.ChatHistory history) {
     final group = history.group?.trim();
-    return group == null || group.isEmpty ? 'group:ungrouped' : 'group:$group';
+    final groupPart = group == null || group.isEmpty ? 'ungrouped' : group;
+    return 'group::$sectionKey::$groupPart';
   }
 
   String _groupLabel(core_proxy.ChatHistory history) {
@@ -723,7 +706,7 @@ class _DrawerContentState extends State<DrawerContent> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    _SidebarInfoCard(
+                    SidebarInfoCard(
                       brandName: 'Operit',
                       appearance: widget.appearance,
                     ),
@@ -769,7 +752,7 @@ class _DrawerContentState extends State<DrawerContent> {
                         end: 0,
                         bottom: 8,
                       ),
-                      child: _NewConversationButton(
+                      child: NewConversationButton(
                         appearance: widget.appearance,
                         onClick: _createConversation,
                         onCreateGroup: _showCreateGroupDialog,
@@ -785,7 +768,7 @@ class _DrawerContentState extends State<DrawerContent> {
                                 end: 0,
                                 bottom: 12,
                               ),
-                              child: _ConversationSearchField(
+                              child: ConversationSearchField(
                                 controller: _searchController,
                                 appearance: widget.appearance,
                               ),
@@ -793,7 +776,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           : const SizedBox.shrink(),
                     ),
                     if (_errorMessage != null)
-                      _SidebarStatusText(
+                      SidebarStatusText(
                         text: _errorMessage!,
                         appearance: widget.appearance,
                       ),
@@ -864,7 +847,7 @@ class _DrawerContentState extends State<DrawerContent> {
           child: Row(
             children: <Widget>[
               Expanded(
-                child: _BottomSidebarAction(
+                child: BottomSidebarAction(
                   icon: Icons.inventory_2_outlined,
                   label: '包管理',
                   appearance: widget.appearance,
@@ -873,7 +856,7 @@ class _DrawerContentState extends State<DrawerContent> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _BottomSidebarAction(
+                child: BottomSidebarAction(
                   icon: Icons.settings_outlined,
                   label: '设置',
                   appearance: widget.appearance,
@@ -920,15 +903,6 @@ class _HistoryGroupSection {
   final List<core_proxy.ChatHistory> histories;
 }
 
-enum _ConversationAction {
-  rename,
-  moveUp,
-  moveDown,
-  togglePinned,
-  toggleLocked,
-  delete,
-}
-
 class _ChatBindingForCreate {
   const _ChatBindingForCreate({
     required this.characterCardName,
@@ -937,264 +911,6 @@ class _ChatBindingForCreate {
 
   final String? characterCardName;
   final String? characterGroupId;
-}
-
-class CollapsedDrawerContent extends StatelessWidget {
-  const CollapsedDrawerContent({
-    super.key,
-    required this.navigationEntries,
-    required this.selectedRouteId,
-    required this.appearance,
-    required this.onNavigationEntrySelected,
-    required this.onConversationActivated,
-    this.bridge = const ProxyCoreRuntimeBridge(),
-  });
-
-  final List<NavigationEntrySpec> navigationEntries;
-  final String selectedRouteId;
-  final NavigationDrawerAppearance appearance;
-  final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
-  final VoidCallback onConversationActivated;
-  final OperitRuntimeBridge bridge;
-  static const double _topBarHeight = 64;
-  static const String _operitLogoAsset =
-      'assets/images/operit_logo_transparent.png';
-
-  Future<void> _createConversation() async {
-    await GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain.createNewChat(
-      characterCardName: null,
-      group: null,
-      inheritGroupFromCurrent: true,
-      setAsCurrentChat: true,
-      characterGroupId: null,
-    );
-    onConversationActivated();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final topPadding = MediaQuery.paddingOf(context).top;
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
-      children: <Widget>[
-        SizedBox(
-          height: topPadding + _topBarHeight,
-          child: Padding(
-            padding: EdgeInsets.only(top: topPadding),
-            child: Center(
-              child: Image.asset(
-                _operitLogoAsset,
-                width: 34,
-                height: 34,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Center(
-            child: _RoundDrawerButton(
-              selected: selectedRouteId == navigationEntries.first.routeId,
-              appearance: appearance,
-              icon: Icons.chat_bubble_outline,
-              onClick: onConversationActivated,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Center(
-            child: _RoundDrawerButton(
-              selected: false,
-              appearance: appearance,
-              icon: Icons.add_comment_outlined,
-              onClick: _createConversation,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Center(
-          child: _RoundDrawerButton(
-            selected: false,
-            appearance: appearance,
-            icon: Icons.inventory_2_outlined,
-            onClick: () {},
-          ),
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: _RoundDrawerButton(
-            selected: false,
-            appearance: appearance,
-            icon: Icons.settings_outlined,
-            onClick: () {},
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SidebarInfoCard extends StatelessWidget {
-  const _SidebarInfoCard({required this.brandName, required this.appearance});
-
-  final String brandName;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            brandName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              letterSpacing: 0,
-              color: appearance.titleColor,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NewConversationButton extends StatelessWidget {
-  const _NewConversationButton({
-    required this.appearance,
-    required this.onClick,
-    required this.onCreateGroup,
-  });
-
-  final NavigationDrawerAppearance appearance;
-  final VoidCallback onClick;
-  final VoidCallback onCreateGroup;
-
-  @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(16);
-    return Row(
-      children: <Widget>[
-        Expanded(
-          child: Material(
-            color: appearance.selectedContainerColor.withValues(alpha: 0.30),
-            borderRadius: shape,
-            child: InkWell(
-              borderRadius: shape,
-              onTap: onClick,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.add, size: 21, color: appearance.itemColor),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '新建对话',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: appearance.itemColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 44,
-          height: 44,
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(22),
-            child: IconButton(
-              onPressed: onCreateGroup,
-              icon: Icon(
-                Icons.add_circle_outline,
-                size: 24,
-                color: appearance.titleColor,
-              ),
-              tooltip: '新建分组',
-              style: IconButton.styleFrom(
-                shape: const CircleBorder(),
-                backgroundColor: Colors.transparent,
-                foregroundColor: appearance.titleColor,
-                overlayColor: appearance.selectedContainerColor.withValues(
-                  alpha: 0.20,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ConversationSearchField extends StatelessWidget {
-  const _ConversationSearchField({
-    required this.controller,
-    required this.appearance,
-  });
-
-  final TextEditingController controller;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(14);
-    return TextField(
-      controller: controller,
-      minLines: 1,
-      maxLines: 1,
-      style: Theme.of(
-        context,
-      ).textTheme.bodyMedium?.copyWith(color: appearance.titleColor),
-      decoration: InputDecoration(
-        isDense: true,
-        hintText: '搜索对话',
-        hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: appearance.itemColor.withValues(alpha: 0.62),
-        ),
-        prefixIcon: Icon(
-          Icons.search,
-          size: 20,
-          color: appearance.itemColor.withValues(alpha: 0.72),
-        ),
-        filled: true,
-        fillColor: appearance.selectedContainerColor.withValues(alpha: 0.16),
-        border: OutlineInputBorder(
-          borderRadius: shape,
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: shape,
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: shape,
-          borderSide: BorderSide(color: appearance.selectedContainerColor),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
-        ),
-      ),
-    );
-  }
 }
 
 class _CharacterHistorySectionView extends StatelessWidget {
@@ -1259,7 +975,7 @@ class _CharacterHistorySectionView extends StatelessWidget {
         }
         for (final history in group.histories) {
           children.add(
-            _ConversationDrawerItem(
+            ConversationDrawerItem(
               history: history,
               title: history.title,
               selected: selectedChatId == history.id,
@@ -1438,7 +1154,7 @@ class _GroupSectionHeader extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          _HistoryRail(height: 30, appearance: appearance),
+          HistoryRail(height: 30, appearance: appearance),
           Expanded(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -1514,31 +1230,6 @@ class _GroupSectionHeader extends StatelessWidget {
   }
 }
 
-class _HistoryRail extends StatelessWidget {
-  const _HistoryRail({required this.height, required this.appearance});
-
-  final double height;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 24,
-      height: height,
-      child: Center(
-        child: Container(
-          width: 2,
-          height: height,
-          decoration: BoxDecoration(
-            color: appearance.selectedContainerColor.withValues(alpha: 0.36),
-            borderRadius: BorderRadius.circular(1),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ExpandSectionButton extends StatelessWidget {
   const _ExpandSectionButton({
     super.key,
@@ -1575,667 +1266,6 @@ class _ExpandSectionButton extends StatelessWidget {
           textStyle: Theme.of(
             context,
           ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConversationDrawerItem extends StatelessWidget {
-  const _ConversationDrawerItem({
-    required this.history,
-    required this.title,
-    required this.selected,
-    required this.appearance,
-    required this.onClick,
-    required this.onRename,
-    required this.onDelete,
-    required this.onLongPress,
-    required this.onMoveTo,
-    this.nested = false,
-  });
-
-  final core_proxy.ChatHistory history;
-  final String title;
-  final bool selected;
-  final NavigationDrawerAppearance appearance;
-  final VoidCallback onClick;
-  final VoidCallback onRename;
-  final VoidCallback onDelete;
-  final VoidCallback onLongPress;
-  final ValueChanged<core_proxy.ChatHistory> onMoveTo;
-  final bool nested;
-
-  @override
-  Widget build(BuildContext context) {
-    final itemShape = BorderRadius.circular(12);
-    return DragTarget<core_proxy.ChatHistory>(
-      onWillAcceptWithDetails: (details) => details.data.id != history.id,
-      onAcceptWithDetails: (details) => onMoveTo(details.data),
-      builder: (context, candidateData, rejectedData) {
-        final dragHovering = candidateData.isNotEmpty;
-        return Padding(
-          padding: EdgeInsetsDirectional.only(
-            start: nested ? 22 : 12,
-            end: 0,
-            bottom: 3,
-          ),
-          child: Row(
-            children: <Widget>[
-              if (nested) _HistoryRail(height: 34, appearance: appearance),
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: itemShape,
-                    border: dragHovering
-                        ? Border.all(
-                            color: appearance.selectedContentColor.withValues(
-                              alpha: 0.55,
-                            ),
-                          )
-                        : null,
-                  ),
-                  child: Dismissible(
-                    key: ValueKey<String>('conversation-${history.id}'),
-                    confirmDismiss: (direction) async {
-                      if (direction == DismissDirection.startToEnd) {
-                        onRename();
-                      } else {
-                        onDelete();
-                      }
-                      return false;
-                    },
-                    background: _SwipeActionBackground(
-                      alignment: AlignmentDirectional.centerStart,
-                      color: Theme.of(context).colorScheme.primary,
-                      icon: Icons.edit,
-                      label: '重命名',
-                    ),
-                    secondaryBackground: _SwipeActionBackground(
-                      alignment: AlignmentDirectional.centerEnd,
-                      color: Theme.of(context).colorScheme.error,
-                      icon: Icons.delete,
-                      label: '删除',
-                    ),
-                    child: Material(
-                      color: selected
-                          ? appearance.selectedContainerColor
-                          : Colors.transparent,
-                      borderRadius: itemShape,
-                      child: InkWell(
-                        borderRadius: itemShape,
-                        onTap: onClick,
-                        onLongPress: onLongPress,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 5,
-                          ),
-                          child: Row(
-                            children: <Widget>[
-                              Draggable<core_proxy.ChatHistory>(
-                                data: history,
-                                dragAnchorStrategy: pointerDragAnchorStrategy,
-                                feedback: Material(
-                                  color: Colors.transparent,
-                                  child: ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 280,
-                                    ),
-                                    child: _DraggingConversationItem(
-                                      history: history,
-                                      title: title,
-                                      appearance: appearance,
-                                    ),
-                                  ),
-                                ),
-                                childWhenDragging: Opacity(
-                                  opacity: 0.35,
-                                  child: _HistoryDragHandle(
-                                    selected: selected,
-                                    appearance: appearance,
-                                  ),
-                                ),
-                                child: _HistoryDragHandle(
-                                  selected: selected,
-                                  appearance: appearance,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: selected
-                                            ? appearance.selectedContentColor
-                                            : appearance.itemColor,
-                                        fontWeight: selected
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                      ),
-                                ),
-                              ),
-                              if (history.pinned) ...<Widget>[
-                                const SizedBox(width: 6),
-                                Icon(
-                                  Icons.push_pin,
-                                  size: 13,
-                                  color:
-                                      (selected
-                                              ? appearance.selectedContentColor
-                                              : appearance.itemColor)
-                                          .withValues(alpha: 0.65),
-                                ),
-                              ],
-                              if (history.locked) ...<Widget>[
-                                const SizedBox(width: 6),
-                                Icon(
-                                  Icons.lock,
-                                  size: 13,
-                                  color:
-                                      (selected
-                                              ? appearance.selectedContentColor
-                                              : appearance.itemColor)
-                                          .withValues(alpha: 0.65),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RenameConversationDialog extends StatefulWidget {
-  const _RenameConversationDialog({required this.history});
-
-  final core_proxy.ChatHistory history;
-
-  @override
-  State<_RenameConversationDialog> createState() =>
-      _RenameConversationDialogState();
-}
-
-class _RenameConversationDialogState extends State<_RenameConversationDialog> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.history.title,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('编辑标题'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: '新标题'),
-        textInputAction: TextInputAction.done,
-        onSubmitted: (value) => Navigator.of(context).pop(value),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: const Text('保存'),
-        ),
-      ],
-    );
-  }
-}
-
-class _DeleteConversationDialog extends StatelessWidget {
-  const _DeleteConversationDialog({required this.history});
-
-  final core_proxy.ChatHistory history;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('确认删除对话'),
-      content: Text('删除 “${history.title}”？'),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: TextButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
-          ),
-          child: const Text('删除'),
-        ),
-      ],
-    );
-  }
-}
-
-class _ConversationActionDialog extends StatelessWidget {
-  const _ConversationActionDialog({
-    required this.history,
-    required this.canMoveUp,
-    required this.canMoveDown,
-  });
-
-  final core_proxy.ChatHistory history;
-  final bool canMoveUp;
-  final bool canMoveDown;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    children: <Widget>[
-                      Text(
-                        '聊天记录',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        history.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _ConversationActionTile(
-                  icon: Icons.edit,
-                  label: '编辑标题',
-                  onTap: () =>
-                      Navigator.of(context).pop(_ConversationAction.rename),
-                ),
-                _ConversationActionTile(
-                  icon: Icons.keyboard_arrow_up,
-                  label: '上移',
-                  onTap: canMoveUp
-                      ? () => Navigator.of(
-                          context,
-                        ).pop(_ConversationAction.moveUp)
-                      : null,
-                ),
-                _ConversationActionTile(
-                  icon: Icons.keyboard_arrow_down,
-                  label: '下移',
-                  onTap: canMoveDown
-                      ? () => Navigator.of(
-                          context,
-                        ).pop(_ConversationAction.moveDown)
-                      : null,
-                ),
-                _ConversationActionTile(
-                  icon: Icons.push_pin,
-                  label: history.pinned ? '取消置顶' : '置顶',
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pop(_ConversationAction.togglePinned),
-                ),
-                _ConversationActionTile(
-                  icon: history.locked ? Icons.lock_open : Icons.lock,
-                  label: history.locked ? '解锁' : '锁定',
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pop(_ConversationAction.toggleLocked),
-                ),
-                _ConversationActionTile(
-                  icon: Icons.delete_outline,
-                  label: '删除',
-                  danger: true,
-                  onTap: () =>
-                      Navigator.of(context).pop(_ConversationAction.delete),
-                ),
-                Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('取消'),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConversationActionTile extends StatelessWidget {
-  const _ConversationActionTile({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = danger
-        ? Theme.of(context).colorScheme.error
-        : Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Material(
-        color: danger
-            ? Theme.of(
-                context,
-              ).colorScheme.errorContainer.withValues(alpha: 0.5)
-            : Theme.of(
-                context,
-              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        child: ListTile(
-          enabled: onTap != null,
-          dense: true,
-          leading: Icon(icon, color: color),
-          title: Text(label),
-          onTap: onTap,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HistoryDragHandle extends StatelessWidget {
-  const _HistoryDragHandle({required this.selected, required this.appearance});
-
-  final bool selected;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    final color =
-        (selected ? appearance.selectedContentColor : appearance.itemColor)
-            .withValues(alpha: 0.72);
-    return SizedBox(
-      width: 28,
-      height: 28,
-      child: Tooltip(
-        message: '拖动对话',
-        child: Material(
-          color: Colors.transparent,
-          shape: const CircleBorder(),
-          child: InkResponse(
-            onTap: () {},
-            radius: 16,
-            containedInkWell: true,
-            customBorder: const CircleBorder(),
-            child: Icon(Icons.drag_handle, size: 18, color: color),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DraggingConversationItem extends StatelessWidget {
-  const _DraggingConversationItem({
-    required this.history,
-    required this.title,
-    required this.appearance,
-  });
-
-  final core_proxy.ChatHistory history;
-  final String title;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: appearance.selectedContainerColor,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            blurRadius: 18,
-            color: Colors.black.withValues(alpha: 0.18),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(10, 7, 12, 7),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              Icons.drag_handle,
-              size: 20,
-              color: appearance.selectedContentColor.withValues(alpha: 0.72),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: appearance.selectedContentColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            if (history.pinned) ...<Widget>[
-              const SizedBox(width: 6),
-              Icon(
-                Icons.push_pin,
-                size: 13,
-                color: appearance.selectedContentColor.withValues(alpha: 0.65),
-              ),
-            ],
-            if (history.locked) ...<Widget>[
-              const SizedBox(width: 6),
-              Icon(
-                Icons.lock,
-                size: 13,
-                color: appearance.selectedContentColor.withValues(alpha: 0.65),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SwipeActionBackground extends StatelessWidget {
-  const _SwipeActionBackground({
-    required this.alignment,
-    required this.color,
-    required this.icon,
-    required this.label,
-  });
-
-  final AlignmentGeometry alignment;
-  final Color color;
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Align(
-        alignment: alignment,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, color: Colors.white, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SidebarStatusText extends StatelessWidget {
-  const _SidebarStatusText({required this.text, required this.appearance});
-
-  final String text;
-  final NavigationDrawerAppearance appearance;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(28, 6, 16, 10),
-      child: Text(
-        text,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: appearance.itemColor.withValues(alpha: 0.72),
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomSidebarAction extends StatelessWidget {
-  const _BottomSidebarAction({
-    required this.icon,
-    required this.label,
-    required this.appearance,
-    required this.onClick,
-  });
-
-  final IconData icon;
-  final String label;
-  final NavigationDrawerAppearance appearance;
-  final VoidCallback onClick;
-
-  @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(14);
-    return Material(
-      color: appearance.selectedContainerColor.withValues(alpha: 0.18),
-      borderRadius: shape,
-      child: InkWell(
-        borderRadius: shape,
-        onTap: onClick,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(icon, size: 18, color: appearance.itemColor),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: appearance.itemColor,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RoundDrawerButton extends StatelessWidget {
-  const _RoundDrawerButton({
-    required this.selected,
-    required this.appearance,
-    required this.icon,
-    required this.onClick,
-  });
-
-  final bool selected;
-  final NavigationDrawerAppearance appearance;
-  final IconData icon;
-  final VoidCallback onClick;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 40,
-      height: 40,
-      child: Material(
-        color: selected
-            ? appearance.selectedContainerColor
-            : Colors.transparent,
-        shape: const CircleBorder(),
-        child: IconButton(
-          onPressed: onClick,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-          iconSize: 20,
-          icon: Icon(
-            icon,
-            color: selected
-                ? appearance.selectedContentColor
-                : appearance.itemColor,
-          ),
         ),
       ),
     );

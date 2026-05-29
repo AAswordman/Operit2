@@ -1252,7 +1252,16 @@ impl ChatHistoryManager {
     pub fn loadChatMessageLocatorPreviews(
         &self,
         chatId: String,
+        query: String,
     ) -> ChatHistoryManagerResult<Vec<ChatMessageLocatorPreview>> {
+        if !query.trim().is_empty() {
+            return Ok(self.messageDao.searchLocatorPreviewsForChat(
+                &chatId,
+                query.trim(),
+                LOCATOR_PREVIEW_CHAR_COUNT,
+            )?);
+        }
+
         Ok(self
             .messageDao
             .getLocatorPreviewsForChat(&chatId, LOCATOR_PREVIEW_CHAR_COUNT)?)

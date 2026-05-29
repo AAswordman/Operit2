@@ -115,8 +115,14 @@ fn show_package(
         .getPackageTools(name)
         .ok_or_else(|| format!("package not found: {name}"))?;
     output.push_stdout_line(format!("name={}", package.name));
-    output.push_stdout_line(format!("displayName={}", package.display_name.resolve(false)));
-    output.push_stdout_line(format!("description={}", package.description.resolve(false)));
+    output.push_stdout_line(format!(
+        "displayName={}",
+        package.display_name.resolve(false)
+    ));
+    output.push_stdout_line(format!(
+        "description={}",
+        package.description.resolve(false)
+    ));
     output.push_stdout_line(format!("category={}", package.category));
     output.push_stdout_line(format!("enabledByDefault={}", package.enabled_by_default));
     output.push_stdout_line(format!("isBuiltIn={}", package.is_built_in));
@@ -169,8 +175,9 @@ fn set_package_enabled(
 
 fn package_manager(
     context: &OperitApplicationContext,
-) -> std::sync::Arc<std::sync::Mutex<operit_runtime::core::tools::packTool::PackageManager::PackageManager>>
-{
+) -> std::sync::Arc<
+    std::sync::Mutex<operit_runtime::core::tools::packTool::PackageManager::PackageManager>,
+> {
     AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
 }
 

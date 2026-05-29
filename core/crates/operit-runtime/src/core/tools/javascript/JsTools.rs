@@ -195,13 +195,24 @@ pub fn getJsToolsDefinition() -> &'static str {
                 getNotifications: function(limit, includeOngoing) {
                     return toolCall("get_notifications", { limit: parseInt(limit === undefined ? 10 : limit), include_ongoing: !!includeOngoing });
                 },
-                shell: function(command) { return toolCall("execute_shell", { command: command }); },
                 terminal: {
-                    create: function(sessionName) { return toolCall("create_terminal_session", { session_name: sessionName }); },
+                    info: function() { return toolCall("get_terminal_info", {}); },
+                    create: function(sessionName, type) {
+                        var params = { session_name: sessionName };
+                        if (type !== undefined && type !== null) params.type = String(type);
+                        return toolCall("create_terminal_session", params);
+                    },
                     exec: function(sessionId, command, timeoutMs) {
                         var params = { session_id: sessionId, command: command };
                         if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
                         return toolCall("execute_in_terminal_session", params);
+                    },
+                    hiddenExec: function(command, type, executorKey, timeoutMs) {
+                        var params = { command: command };
+                        if (type !== undefined && type !== null) params.type = String(type);
+                        if (executorKey !== undefined && executorKey !== null) params.executor_key = String(executorKey);
+                        if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
+                        return toolCall("execute_hidden_terminal_command", params);
                     },
                     screen: function(sessionId) { return toolCall("get_terminal_session_screen", { session_id: sessionId }); },
                     close: function(sessionId) { return toolCall("close_terminal_session", { session_id: sessionId }); },

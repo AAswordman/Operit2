@@ -41,6 +41,12 @@ dependencies:
   http: ^1.2.2
   dynamic_color: ^1.8.1
   hooks: ^2.0.0
+  printing: ^5.14.3
+  audioplayers: ^6.7.0
+  video_player: ^2.11.1
+  path_provider: ^2.1.5
+  archive: ^4.0.9
+  xml: ^6.6.1
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,11 @@ import 'package:flutter/material.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 
+const Duration _groupFadeDuration = Duration(milliseconds: 800);
+const Duration _contentFadeDuration = Duration(milliseconds: 200);
+const Duration _arrowRotationDuration = Duration(milliseconds: 300);
+const Duration _instantDuration = Duration.zero;
+
 enum ToolCollapseMode { full, readOnly, all }
 
 class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
@@ -219,6 +224,9 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
 
 class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   bool? _userOverride;
+  final Set<String> _appearedItemKeys = <String>{};
+  final Set<String> _visibleItemKeys = <String>{};
+  final Set<String> _scheduledItemKeys = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -257,7 +265,9 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
 
     return AnimatedOpacity(
       opacity: widget.forceExpandGroups || widget.isVisible ? 1 : 0,
-      duration: const Duration(milliseconds: 800),
+      duration: widget.forceExpandGroups
+          ? _instantDuration
+          : _groupFadeDuration,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
         child: Column(
@@ -276,7 +286,9 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                   children: <Widget>[
                     AnimatedRotation(
                       turns: expanded ? 0.25 : 0,
-                      duration: const Duration(milliseconds: 300),
+                      duration: widget.forceExpandGroups
+                          ? _instantDuration
+                          : _arrowRotationDuration,
                       child: Icon(
                         Icons.keyboard_arrow_right,
                         size: 18,
@@ -297,8 +309,13 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
             ),
             AnimatedSwitcher(
               duration: widget.forceExpandGroups
-                  ? Duration.zero
-                  : const Duration(milliseconds: 200),
+                  ? _instantDuration
+                  : _contentFadeDuration,
+              switchInCurve: Curves.linear,
+              switchOutCurve: Curves.linear,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(opacity: animation, child: child);
+              },
               child: expanded
                   ? Padding(
                       key: const ValueKey<String>('expanded'),
@@ -312,9 +329,7 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                         children: <Widget>[
                           for (var idx = 0; idx < slice.length; idx++)
                             if (slice[idx].type == MarkdownNodeType.xmlBlock)
-                              widget.renderNodeAt(
-                                widget.group.startIndex + idx,
-                              ),
+                              _renderXmlItem(widget.group.startIndex + idx),
                         ],
                       ),
                     )
@@ -326,9 +341,48 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     );
   }
 
+  Widget _renderXmlItem(int absoluteIndex) {
+    final child = widget.renderNodeAt(absoluteIndex);
+    if (widget.forceExpandGroups) {
+      return child;
+    }
+
+    final itemKey =
+        'think-tools-${widget.rendererId}-${widget.group.stableKey}-$absoluteIndex';
+    final isVisible = _isXmlItemVisible(itemKey);
+    return AnimatedOpacity(
+      key: ValueKey<String>(itemKey),
+      opacity: isVisible ? 1 : 0,
+      duration: _groupFadeDuration,
+      child: child,
+    );
+  }
+
+  bool _isXmlItemVisible(String itemKey) {
+    if (_appearedItemKeys.contains(itemKey)) {
+      return true;
+    }
+    if (_scheduledItemKeys.add(itemKey)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _visibleItemKeys.add(itemKey);
+          _appearedItemKeys.add(itemKey);
+          _scheduledItemKeys.remove(itemKey);
+        });
+      });
+    }
+    return _visibleItemKeys.contains(itemKey);
+  }
+
   bool _isConformingTailNode(MarkdownNodeStable node) {
     switch (node.type) {
       case MarkdownNodeType.plainText:
+      case MarkdownNodeType.header:
+      case MarkdownNodeType.orderedList:
+      case MarkdownNodeType.unorderedList:
         return node.content.trim().isEmpty;
       case MarkdownNodeType.xmlBlock:
         final tag = _extractXmlTagName(node.content);

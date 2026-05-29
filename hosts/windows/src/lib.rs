@@ -8,3 +8,4 @@ pub use tools::http::WindowsHttpHost;
 pub use tools::runtime::WindowsManagedRuntimeHost;
 pub use tools::storage::WindowsRuntimeStorageHost;
 pub use tools::system::WindowsSystemOperationHost;
+pub use tools::terminal::WindowsTerminalHost;

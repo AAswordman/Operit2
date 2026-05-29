@@ -2,6 +2,7 @@ use crate::core::application::OperitApplicationContext::OperitApplicationContext
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools;
 use crate::core::tools::defaultTool::standard::StandardHttpTools::StandardHttpTools;
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::StandardSystemOperationTools;
+use crate::core::tools::defaultTool::standard::StandardTerminalTools::StandardTerminalTools;
 use crate::core::tools::defaultTool::standard::StandardWebVisitTool::StandardWebVisitTool;
 
 pub struct ToolGetter;
@@ -43,5 +44,10 @@ impl ToolGetter {
         context: &OperitApplicationContext,
     ) -> StandardSystemOperationTools {
         StandardSystemOperationTools::new(context.systemOperationHost.clone())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getTerminalTools(context: &OperitApplicationContext) -> StandardTerminalTools {
+        StandardTerminalTools::new(context.terminalHost.clone())
     }
 }

@@ -41,6 +41,10 @@ class MainActivity : FlutterActivity() {
                     "hostDescriptor" -> runRuntime(result) {
                         OperitRuntimeNative.hostDescriptor(ensureRuntimeHandle())
                     }
+                    "currentPermissionRequest" -> runRuntime(result) {
+                        OperitRuntimeNative.currentPermissionRequest(ensureRuntimeHandle())
+                    }
+                    "handlePermissionResult" -> handlePermissionResult(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -101,6 +105,17 @@ class MainActivity : FlutterActivity() {
         }
         runRuntime(result) {
             OperitRuntimeNative.closeWatchStream(ensureRuntimeHandle(), subscriptionId)
+        }
+    }
+
+    private fun handlePermissionResult(call: MethodCall, result: MethodChannel.Result) {
+        val permissionResult = call.arguments as? String
+        if (permissionResult == null) {
+            result.error("INVALID_ARGS", "handlePermissionResult expects a result string", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.handlePermissionResult(ensureRuntimeHandle(), permissionResult)
         }
     }
 
@@ -194,4 +209,6 @@ object OperitRuntimeNative {
     @JvmStatic external fun pollWatchStream(handle: Long, subscriptionId: String): String
     @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): String
     @JvmStatic external fun hostDescriptor(handle: Long): String
+    @JvmStatic external fun currentPermissionRequest(handle: Long): String
+    @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
 }

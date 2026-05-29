@@ -49,12 +49,10 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
-                    "execute_shell",
-                    "Execute a device shell command.",
+                    "get_terminal_info",
+                    "Get terminal platform info and supported terminal types.",
                     "",
-                    vec![
-                        param("command", "string", "shell command to execute", true, None)
-                    ],
+                    vec![],
                     "",
                     "",
                 ),
@@ -77,7 +75,8 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Create or get a terminal session.",
                     "",
                     vec![
-                        param("session_name", "string", "terminal session name", true, None)
+                        param("session_name", "string", "terminal session name", true, None),
+                        param("type", "string", "optional terminal type. Linux host supports linux. Windows host supports bash and powershell.", false, None)
                     ],
                     "",
                     "",
@@ -95,11 +94,24 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
+                    "execute_in_terminal_session_streaming",
+                    "Execute a command in a terminal session and stream output.",
+                    "",
+                    vec![
+                        param("session_id", "string", "terminal session id", true, None),
+                        param("command", "string", "command to execute", true, None),
+                        param("timeout_ms", "integer", "optional, command timeout in milliseconds", false, Some("1800000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "execute_hidden_terminal_command",
                     "Execute a command in a hidden non-PTY terminal executor. Commands using the same executor_key reuse the same hidden login context and are not shown in the visible terminal UI.",
                     "",
                     vec![
                         param("command", "string", "command to execute", true, None),
+                        param("type", "string", "optional terminal type. Linux host supports linux. Windows host supports bash and powershell.", false, None),
                         param("executor_key", "string", "optional, hidden executor key used to reuse the same background shell context", false, Some("default".to_string())),
                         param("timeout_ms", "integer", "optional, command timeout in milliseconds", false, Some("120000".to_string()))
                     ],
@@ -1644,12 +1656,10 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
-                    "execute_shell",
-                    "执行设备 Shell 命令。",
+                    "get_terminal_info",
+                    "获取终端平台信息和支持的终端类型。",
                     "",
-                    vec![
-                        param("command", "string", "要执行的命令", true, None)
-                    ],
+                    vec![],
                     "",
                     "",
                 ),
@@ -1672,7 +1682,8 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "创建或获取终端会话。",
                     "",
                     vec![
-                        param("session_name", "string", "终端会话名称", true, None)
+                        param("session_name", "string", "终端会话名称", true, None),
+                        param("type", "string", "可选终端类型。Linux host 支持 linux。Windows host 支持 bash 和 powershell。", false, None)
                     ],
                     "",
                     "",
@@ -1690,11 +1701,24 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
+                    "execute_in_terminal_session_streaming",
+                    "在终端会话中执行命令，并流式返回输出。",
+                    "",
+                    vec![
+                        param("session_id", "string", "终端会话 ID", true, None),
+                        param("command", "string", "要执行的命令", true, None),
+                        param("timeout_ms", "integer", "可选，超时时间（毫秒）", false, Some("1800000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "execute_hidden_terminal_command",
                     "在隐藏的非 PTY 终端执行器中执行命令。使用相同 executor_key 的命令会复用同一个后台登录上下文，且不会显示在可见终端 UI 中。",
                     "",
                     vec![
                         param("command", "string", "要执行的命令", true, None),
+                        param("type", "string", "可选终端类型。Linux host 支持 linux。Windows host 支持 bash 和 powershell。", false, None),
                         param("executor_key", "string", "可选，用于复用同一个后台 shell 上下文的隐藏执行器 key", false, Some("default".to_string())),
                         param("timeout_ms", "integer", "可选，超时时间（毫秒）", false, Some("120000".to_string()))
                     ],

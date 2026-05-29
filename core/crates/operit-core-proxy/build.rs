@@ -135,6 +135,11 @@ fn object_specs(runtime_src: &Path) -> Vec<ObjectSpec> {
         "core/tools",
         "permissions",
     ));
+    specs.extend(discover_constructible_objects_recursive(
+        runtime_src,
+        "plugins",
+        "plugins",
+    ));
     specs.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
     specs
 }

@@ -568,5 +568,11 @@
     async hostDescriptor() {
       return (await bridge()).hostDescriptor();
     },
+    async currentPermissionRequest() {
+      return (await bridge()).currentPermissionRequest();
+    },
+    async handlePermissionResult(result) {
+      return (await bridge()).handlePermissionResult(result);
+    },
   };
 })();

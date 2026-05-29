@@ -55,7 +55,10 @@ pub fn run_chat_command(
     }
 }
 
-fn list_chats(application: &mut OperitApplication, output: &mut CoreCommandOutput) -> Result<(), String> {
+fn list_chats(
+    application: &mut OperitApplication,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     for chat in application
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)

@@ -1,0 +1,587 @@
+use std::collections::{BTreeMap, VecDeque};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use operit_host_api::{
+    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
+    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
+    TerminalTypeInfo,
+};
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Default)]
+pub struct WindowsTerminalHost {
+    state: Arc<Mutex<TerminalState>>,
+}
+
+#[derive(Default)]
+struct TerminalState {
+    sessions: BTreeMap<String, TerminalSession>,
+    sessionNameToId: BTreeMap<String, String>,
+    hiddenExecutorKeyToSessionId: BTreeMap<String, String>,
+}
+
+struct TerminalSession {
+    id: String,
+    name: String,
+    terminalType: String,
+    kind: TerminalKind,
+    child: Child,
+    stdin: ChildStdin,
+    stdoutRx: Receiver<String>,
+    stderrLines: Arc<Mutex<VecDeque<String>>>,
+    screenLines: VecDeque<String>,
+    commandRunning: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalKind {
+    Bash,
+    PowerShell,
+}
+
+impl WindowsTerminalHost {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl TerminalHost for WindowsTerminalHost {
+    fn terminalInfo(&self) -> HostResult<TerminalInfo> {
+        Ok(TerminalInfo {
+            platform: "windows".to_string(),
+            defaultType: "bash".to_string(),
+            types: vec![
+                TerminalTypeInfo {
+                    terminalType: "bash".to_string(),
+                    available: commandStarts("bash", &["--version"]),
+                    description: "Windows bash terminal".to_string(),
+                },
+                TerminalTypeInfo {
+                    terminalType: "powershell".to_string(),
+                    available: commandStarts("powershell.exe", &["-NoProfile", "-Command", "$PSVersionTable.PSVersion"]),
+                    description: "Windows PowerShell terminal".to_string(),
+                },
+            ],
+        })
+    }
+
+    fn createOrGetSession(
+        &self,
+        sessionName: &str,
+        terminalType: &str,
+    ) -> HostResult<TerminalSessionInfo> {
+        let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
+        let key = sessionKey(&normalizedTerminalType, &normalizedSessionName);
+        let mut state = self.lockState()?;
+        if let Some(sessionId) = state.sessionNameToId.get(&key).cloned() {
+            if state.sessions.contains_key(&sessionId) {
+                return Ok(TerminalSessionInfo {
+                    sessionId,
+                    sessionName: normalizedSessionName,
+                    terminalType: normalizedTerminalType,
+                    isNewSession: false,
+                });
+            }
+            state.sessionNameToId.remove(&key);
+        }
+
+        let session = createShellSession(normalizedSessionName.clone(), normalizedTerminalType.clone(), kind)?;
+        let sessionId = session.id.clone();
+        state.sessionNameToId.insert(key, sessionId.clone());
+        state.sessions.insert(sessionId.clone(), session);
+        Ok(TerminalSessionInfo {
+            sessionId,
+            sessionName: normalizedSessionName,
+            terminalType: normalizedTerminalType,
+            isNewSession: true,
+        })
+    }
+
+    fn executeInSession(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+    ) -> HostResult<TerminalCommandOutput> {
+        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
+        let normalizedCommand = nonBlank(command, "command")?;
+        let mut state = self.lockState()?;
+        let session = state
+            .sessions
+            .get_mut(&normalizedSessionId)
+            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+        Ok(TerminalCommandOutput {
+            command: normalizedCommand,
+            output: result.output,
+            exitCode: result.exitCode,
+            sessionId: normalizedSessionId,
+            terminalType: session.terminalType.clone(),
+            timedOut: result.timedOut,
+        })
+    }
+
+    fn executeHiddenCommand(
+        &self,
+        command: &str,
+        terminalType: &str,
+        executorKey: &str,
+        timeoutMs: u64,
+    ) -> HostResult<HiddenTerminalCommandOutput> {
+        let normalizedCommand = nonBlank(command, "command")?;
+        let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
+        let normalizedExecutorKey = match executorKey.trim() {
+            "" => "default".to_string(),
+            value => value.to_string(),
+        };
+        let key = sessionKey(&normalizedTerminalType, &normalizedExecutorKey);
+        let mut state = self.lockState()?;
+        let sessionId = match state.hiddenExecutorKeyToSessionId.get(&key).cloned() {
+            Some(sessionId) if state.sessions.contains_key(&sessionId) => sessionId,
+            Some(sessionId) => {
+                state.hiddenExecutorKeyToSessionId.remove(&key);
+                let _ = sessionId;
+                let session = createShellSession(
+                    format!("hidden:{normalizedExecutorKey}"),
+                    normalizedTerminalType.clone(),
+                    kind,
+                )?;
+                let sessionId = session.id.clone();
+                state.hiddenExecutorKeyToSessionId.insert(key.clone(), sessionId.clone());
+                state.sessions.insert(sessionId.clone(), session);
+                sessionId
+            }
+            None => {
+                let session = createShellSession(
+                    format!("hidden:{normalizedExecutorKey}"),
+                    normalizedTerminalType.clone(),
+                    kind,
+                )?;
+                let sessionId = session.id.clone();
+                state.hiddenExecutorKeyToSessionId.insert(key, sessionId.clone());
+                state.sessions.insert(sessionId.clone(), session);
+                sessionId
+            }
+        };
+        let session = state
+            .sessions
+            .get_mut(&sessionId)
+            .ok_or_else(|| HostError::new(format!("Hidden terminal session missing: {sessionId}")))?;
+        let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+        Ok(HiddenTerminalCommandOutput {
+            command: normalizedCommand,
+            output: result.output,
+            exitCode: result.exitCode,
+            executorKey: normalizedExecutorKey,
+            terminalType: normalizedTerminalType,
+            timedOut: result.timedOut,
+        })
+    }
+
+    fn inputInSession(
+        &self,
+        sessionId: &str,
+        input: Option<&str>,
+        control: Option<&str>,
+    ) -> HostResult<TerminalInputOutput> {
+        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
+        if input.is_none() && control.and_then(normalizeControl).is_none() {
+            return Err(HostError::new("At least one of input or control is required"));
+        }
+        let mut state = self.lockState()?;
+        let session = state
+            .sessions
+            .get_mut(&normalizedSessionId)
+            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let acceptedChars = applyTerminalInput(session, input, control.and_then(normalizeControl))?;
+        Ok(TerminalInputOutput {
+            sessionId: normalizedSessionId,
+            acceptedChars,
+        })
+    }
+
+    fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
+        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
+        let mut state = self.lockState()?;
+        let mut session = state
+            .sessions
+            .remove(&normalizedSessionId)
+            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let _ = session.child.kill();
+        state.sessionNameToId.retain(|_, value| value != &normalizedSessionId);
+        state
+            .hiddenExecutorKeyToSessionId
+            .retain(|_, value| value != &normalizedSessionId);
+        Ok(TerminalCloseOutput {
+            sessionId: normalizedSessionId.clone(),
+            success: true,
+            message: format!("Terminal session closed: {normalizedSessionId}"),
+        })
+    }
+
+    fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
+        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
+        let state = self.lockState()?;
+        let session = state
+            .sessions
+            .get(&normalizedSessionId)
+            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let content = session.screenLines.iter().cloned().collect::<Vec<_>>().join("\n");
+        let rows = session.screenLines.len();
+        let cols = session
+            .screenLines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        Ok(TerminalScreenOutput {
+            sessionId: normalizedSessionId,
+            terminalType: session.terminalType.clone(),
+            rows,
+            cols,
+            content,
+            commandRunning: session.commandRunning,
+        })
+    }
+}
+
+impl WindowsTerminalHost {
+    #[allow(non_snake_case)]
+    fn lockState(&self) -> HostResult<std::sync::MutexGuard<'_, TerminalState>> {
+        self.state
+            .lock()
+            .map_err(|_| HostError::new("terminal state mutex poisoned"))
+    }
+}
+
+struct SessionCommandResult {
+    output: String,
+    exitCode: i32,
+    timedOut: bool,
+}
+
+#[allow(non_snake_case)]
+fn createShellSession(
+    name: String,
+    terminalType: String,
+    kind: TerminalKind,
+) -> HostResult<TerminalSession> {
+    let mut command = match kind {
+        TerminalKind::Bash => {
+            let mut command = Command::new("bash");
+            command
+        }
+        TerminalKind::PowerShell => {
+            let mut command = Command::new("powershell.exe");
+            command
+                .arg("-NoLogo")
+                .arg("-NoProfile")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-NoExit")
+                .arg("-Command")
+                .arg("-");
+            command
+        }
+    };
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| HostError::new("terminal shell has no stdin"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| HostError::new("terminal shell has no stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| HostError::new("terminal shell has no stderr"))?;
+    let (stdoutTx, stdoutRx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().flatten() {
+            let _ = stdoutTx.send(line);
+        }
+    });
+    let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
+    let stderrLinesForThread = stderrLines.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().flatten() {
+            if let Ok(mut lines) = stderrLinesForThread.lock() {
+                lines.push_back(line);
+                while lines.len() > 400 {
+                    lines.pop_front();
+                }
+            }
+        }
+    });
+    Ok(TerminalSession {
+        id: nextSessionId(),
+        name,
+        terminalType,
+        kind,
+        child,
+        stdin,
+        stdoutRx,
+        stderrLines,
+        screenLines: VecDeque::new(),
+        commandRunning: false,
+    })
+}
+
+#[allow(non_snake_case)]
+fn executeShellCommandInSession(
+    session: &mut TerminalSession,
+    command: &str,
+    timeoutMs: u64,
+) -> HostResult<SessionCommandResult> {
+    let marker = format!("__OPERIT_TERMINAL_{}__", NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst));
+    let endMarkerPrefix = format!("{marker}_END:");
+    let script = match session.kind {
+        TerminalKind::Bash => format!(
+            "printf '%s\\n' '{marker}_START'\n{{\n{command}\n}}\n__operit_exit_code=$?\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
+        ),
+        TerminalKind::PowerShell => format!(
+            "Write-Output '{marker}_START'\ntry {{\n{command}\n$__operit_exit_code = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}\n}} catch {{ Write-Error $_; $__operit_exit_code = 1 }}\nWrite-Output ('{endMarkerPrefix}' + $__operit_exit_code)\n"
+        ),
+    };
+    session.commandRunning = true;
+    session.stdin.write_all(script.as_bytes())?;
+    session.stdin.flush()?;
+
+    let deadline = Duration::from_millis(timeoutMs);
+    let start = SystemTime::now();
+    let mut outputLines = Vec::new();
+    let mut sawStart = false;
+    loop {
+        let elapsed = start.elapsed().unwrap_or(Duration::from_millis(timeoutMs));
+        if elapsed >= deadline {
+            session.commandRunning = false;
+            let output = joinOutput(outputLines, drainStderr(session)?);
+            appendScreenLines(session, &output);
+            return Ok(SessionCommandResult {
+                output,
+                exitCode: -1,
+                timedOut: true,
+            });
+        }
+        let remaining = deadline - elapsed;
+        let wait = remaining.min(Duration::from_millis(100));
+        match session.stdoutRx.recv_timeout(wait) {
+            Ok(line) => {
+                if line == format!("{marker}_START") {
+                    sawStart = true;
+                    continue;
+                }
+                if sawStart && line.starts_with(&endMarkerPrefix) {
+                    session.commandRunning = false;
+                    let exitCode = line[endMarkerPrefix.len()..].trim().parse::<i32>().unwrap_or(-1);
+                    let output = joinOutput(outputLines, drainStderr(session)?);
+                    appendScreenLines(session, &output);
+                    return Ok(SessionCommandResult {
+                        output,
+                        exitCode,
+                        timedOut: false,
+                    });
+                }
+                if sawStart {
+                    outputLines.push(line);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                session.commandRunning = false;
+                return Err(HostError::new(format!(
+                    "Terminal session '{}' closed while executing command",
+                    session.name
+                )));
+            }
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn drainStderr(session: &TerminalSession) -> HostResult<Vec<String>> {
+    let mut lines = session
+        .stderrLines
+        .lock()
+        .map_err(|_| HostError::new("terminal stderr mutex poisoned"))?;
+    let mut collected = Vec::new();
+    while let Some(line) = lines.pop_front() {
+        collected.push(line);
+    }
+    Ok(collected)
+}
+
+#[allow(non_snake_case)]
+fn joinOutput(mut stdoutLines: Vec<String>, stderrLines: Vec<String>) -> String {
+    stdoutLines.extend(stderrLines);
+    stdoutLines.join("\n")
+}
+
+#[allow(non_snake_case)]
+fn appendScreenLines(session: &mut TerminalSession, output: &str) {
+    for line in output.lines() {
+        session.screenLines.push_back(line.to_string());
+        while session.screenLines.len() > 200 {
+            session.screenLines.pop_front();
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn applyTerminalInput(
+    session: &mut TerminalSession,
+    input: Option<&str>,
+    control: Option<&str>,
+) -> HostResult<usize> {
+    let mut acceptedChars = 0;
+    if let Some(input) = input {
+        session.stdin.write_all(input.as_bytes())?;
+        acceptedChars += input.chars().count();
+    }
+    if let Some(control) = control {
+        let sequence = controlToSequence(control, input)?;
+        session.stdin.write_all(sequence.as_bytes())?;
+        acceptedChars += sequence.chars().count();
+    }
+    session.stdin.flush()?;
+    Ok(acceptedChars)
+}
+
+#[allow(non_snake_case)]
+fn controlToSequence(control: &str, input: Option<&str>) -> HostResult<String> {
+    match control {
+        "enter" => Ok("\n".to_string()),
+        "tab" => Ok("\t".to_string()),
+        "esc" => Ok("\x1b".to_string()),
+        "up" => Ok("\x1b[A".to_string()),
+        "down" => Ok("\x1b[B".to_string()),
+        "right" => Ok("\x1b[C".to_string()),
+        "left" => Ok("\x1b[D".to_string()),
+        "home" => Ok("\x1b[H".to_string()),
+        "end" => Ok("\x1b[F".to_string()),
+        "pageup" => Ok("\x1b[5~".to_string()),
+        "pagedown" => Ok("\x1b[6~".to_string()),
+        "delete" => Ok("\x1b[3~".to_string()),
+        "backspace" => Ok("\x7f".to_string()),
+        "ctrl" | "control" => ctrlSequence(input),
+        "alt" | "meta" | "cmd" => Ok(format!("\x1b{}", input.unwrap_or(""))),
+        "shift" => Ok(input.unwrap_or("").to_uppercase()),
+        other => Err(HostError::new(format!("Unsupported terminal control: {other}"))),
+    }
+}
+
+#[allow(non_snake_case)]
+fn ctrlSequence(input: Option<&str>) -> HostResult<String> {
+    let input = input.ok_or_else(|| HostError::new("ctrl control requires input"))?;
+    let mut chars = input.chars();
+    let value = chars
+        .next()
+        .ok_or_else(|| HostError::new("ctrl control requires input"))?;
+    if chars.next().is_some() {
+        return Err(HostError::new("ctrl control input must be a single character"));
+    }
+    let code = match value.to_ascii_uppercase() {
+        'A'..='Z' => value.to_ascii_uppercase() as u8 - b'A' + 1,
+        '[' => 27,
+        '\\' => 28,
+        ']' => 29,
+        '^' => 30,
+        '_' => 31,
+        '?' => 127,
+        other => {
+            return Err(HostError::new(format!(
+                "Unsupported ctrl control input: {other}"
+            )))
+        }
+    };
+    Ok((code as char).to_string())
+}
+
+#[allow(non_snake_case)]
+fn normalizeControl(rawControl: &str) -> Option<&'static str> {
+    match rawControl.trim().to_ascii_lowercase().as_str() {
+        "" => None,
+        "return" => Some("enter"),
+        "escape" => Some("esc"),
+        "arrowup" => Some("up"),
+        "arrowdown" => Some("down"),
+        "arrowleft" => Some("left"),
+        "arrowright" => Some("right"),
+        "pgup" | "page_up" => Some("pageup"),
+        "pgdn" | "page_down" => Some("pagedown"),
+        "del" => Some("delete"),
+        "enter" => Some("enter"),
+        "tab" => Some("tab"),
+        "esc" => Some("esc"),
+        "up" => Some("up"),
+        "down" => Some("down"),
+        "left" => Some("left"),
+        "right" => Some("right"),
+        "home" => Some("home"),
+        "end" => Some("end"),
+        "pageup" => Some("pageup"),
+        "pagedown" => Some("pagedown"),
+        "delete" => Some("delete"),
+        "backspace" => Some("backspace"),
+        "ctrl" | "control" => Some("ctrl"),
+        "alt" => Some("alt"),
+        "shift" => Some("shift"),
+        "meta" => Some("meta"),
+        "cmd" => Some("cmd"),
+        _ => None,
+    }
+}
+
+#[allow(non_snake_case)]
+fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind)> {
+    match terminalType.trim().to_ascii_lowercase().as_str() {
+        "" | "bash" => Ok(("bash".to_string(), TerminalKind::Bash)),
+        "powershell" | "pwsh" => Ok(("powershell".to_string(), TerminalKind::PowerShell)),
+        value => Err(HostError::new(format!(
+            "Unsupported terminal type for windows host: {value}"
+        ))),
+    }
+}
+
+#[allow(non_snake_case)]
+fn sessionKey(terminalType: &str, name: &str) -> String {
+    format!("{terminalType}:{name}")
+}
+
+#[allow(non_snake_case)]
+fn nonBlank(value: &str, paramName: &str) -> HostResult<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(HostError::new(format!("{paramName} parameter is required")));
+    }
+    Ok(trimmed.to_string())
+}
+
+#[allow(non_snake_case)]
+fn commandStarts(program: &str, args: &[&str]) -> bool {
+    Command::new(program).args(args).output().is_ok()
+}
+
+#[allow(non_snake_case)]
+fn nextSessionId() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_millis(0))
+        .as_millis();
+    let sequence = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    format!("terminal-{millis}-{sequence}")
+}

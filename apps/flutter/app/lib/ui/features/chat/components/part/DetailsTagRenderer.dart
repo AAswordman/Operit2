@@ -48,20 +48,26 @@ class _DetailsTagRendererState extends State<DetailsTagRenderer> {
               });
             },
           ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox.shrink(),
-            secondChild: CanvasIndentedGuide(
-              child: StreamMarkdownRenderer(
-                content: body,
-                isStreaming: widget.isStreaming,
-                textColor: widget.textColor.withValues(alpha: 0.85),
-                backgroundColor: Theme.of(context).colorScheme.surface,
-              ),
-            ),
-            crossFadeState: expanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
+          AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
+            switchInCurve: Curves.linear,
+            switchOutCurve: Curves.linear,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            child: expanded && body.isNotEmpty
+                ? CanvasIndentedGuide(
+                    key: const ValueKey<String>('details-expanded'),
+                    child: StreamMarkdownRenderer(
+                      content: body,
+                      isStreaming: widget.isStreaming,
+                      textColor: widget.textColor.withValues(alpha: 0.85),
+                      backgroundColor: Theme.of(context).colorScheme.surface,
+                    ),
+                  )
+                : const SizedBox.shrink(
+                    key: ValueKey<String>('details-collapsed'),
+                  ),
           ),
         ],
       ),

@@ -1,0 +1,47 @@
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+.directory
+
+# IDE and editors
+.vscode/
+.idea/
+*.sublime-*
+
+# Backup directories
+.backup/
+backup/
+old/
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+cache/
+
+# Output directories (optional, adjust as needed)
+output/
+generated/
+exports/
+
+# Environment files
+.env
+.env.local
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z

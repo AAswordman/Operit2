@@ -3,6 +3,7 @@ use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
+use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
@@ -14,6 +15,7 @@ use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
+use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_store::PreferencesDataStore::StateFlow;
 pub trait ChatServiceUiBridge {}
@@ -274,6 +276,30 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
+    pub fn createAndGetDefaultWorkspace(
+        &mut self,
+        chatId: String,
+        projectType: Option<String>,
+    ) -> String {
+        WorkspaceUtils::createAndGetDefaultWorkspace(chatId, projectType)
+            .expect("WorkspaceUtils.createAndGetDefaultWorkspace must succeed")
+    }
+
+    #[allow(non_snake_case)]
+    pub fn createAndBindDefaultWorkspace(
+        &mut self,
+        chatId: String,
+        projectType: Option<String>,
+    ) -> String {
+        let workspacePath =
+            WorkspaceUtils::createAndGetDefaultWorkspace(chatId.clone(), projectType)
+                .expect("WorkspaceUtils.createAndGetDefaultWorkspace must succeed");
+        self.chatHistoryDelegate
+            .bindChatToWorkspace(chatId, workspacePath.clone(), None);
+        workspacePath
+    }
+
+    #[allow(non_snake_case)]
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
         self.chatHistoryDelegate.unbindChatFromWorkspace(chatId);
     }
@@ -481,6 +507,21 @@ impl ChatServiceCore {
             .contains(&chatId)
     }
 
+    #[allow(non_snake_case)]
+    pub fn hasOlderDisplayHistory(&self) -> bool {
+        self.chatHistoryDelegate.hasOlderDisplayHistory
+    }
+
+    #[allow(non_snake_case)]
+    pub fn hasNewerDisplayHistory(&self) -> bool {
+        self.chatHistoryDelegate.hasNewerDisplayHistory
+    }
+
+    #[allow(non_snake_case)]
+    pub fn isLoadingDisplayWindow(&self) -> bool {
+        self.chatHistoryDelegate.isLoadingDisplayWindow
+    }
+
     pub fn currentTurnToolInvocationCountByChatId(
         &self,
     ) -> &std::collections::HashMap<String, i32> {
@@ -615,6 +656,22 @@ impl ChatServiceCore {
 
     pub fn showLatestMessagesForCurrentChat(&mut self) {
         self.chatHistoryDelegate.showLatestMessagesForCurrentChat();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn loadChatMessageLocatorPreviews(
+        &self,
+        chatId: String,
+        query: String,
+    ) -> Vec<ChatMessageLocatorPreview> {
+        self.chatHistoryDelegate
+            .loadChatMessageLocatorPreviews(chatId, query)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn setMessageFavorite(&mut self, timestamp: i64, isFavorite: bool) {
+        self.chatHistoryDelegate
+            .setMessageFavorite(timestamp, isFavorite);
     }
 }
 

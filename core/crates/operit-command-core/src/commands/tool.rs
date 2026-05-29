@@ -2,9 +2,7 @@ use crate::output::CoreCommandOutput;
 use operit_runtime::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::AIToolHandler::{
-    AIToolHandler, ToolRegistrationVisibility,
-};
+use operit_runtime::core::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
 use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, ToolPermissionSystem};
 
 pub fn run_tool_command(
@@ -78,10 +76,7 @@ fn show_tool(
     output.push_stdout_line(format!("name={tool_name}"));
     output.push_stdout_line(format!("registered={}", handler.hasToolExecutor(tool_name)));
     let visibility: Option<ToolRegistrationVisibility> = handler.getToolVisibility(tool_name);
-    output.push_stdout_line(format!(
-        "visibility={}",
-        format_tool_visibility(visibility)
-    ));
+    output.push_stdout_line(format!("visibility={}", format_tool_visibility(visibility)));
 
     let permission_system = ToolPermissionSystem::getInstance();
     let permission: PermissionLevel = permission_system

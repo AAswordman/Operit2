@@ -76,6 +76,8 @@ fn main() {
     }
     code.push_str("];\n");
     fs::write(generated, code).expect("write builtin plugin asset list");
+
+    generate_workspace_template_assets(&manifest_dir, &out_dir);
 }
 
 fn is_syncable_file(path: &Path) -> bool {
@@ -139,4 +141,33 @@ fn collect_files(base: &Path, current: &Path, files: &mut Vec<(PathBuf, String)>
             files.push((path, relative));
         }
     }
+}
+
+fn generate_workspace_template_assets(manifest_dir: &Path, out_dir: &Path) {
+    let source_dir = manifest_dir.join("assets").join("workspace_templates");
+    println!("cargo:rerun-if-changed={}", source_dir.display());
+
+    let mut files = Vec::new();
+    if source_dir.is_dir() {
+        collect_files(&source_dir, &source_dir, &mut files);
+    }
+    files.sort_by_key(|(_, relative)| relative.clone());
+
+    let generated = out_dir.join("workspace_template_assets.rs");
+    let mut code = String::new();
+    code.push_str("#[derive(Clone, Copy)]\n");
+    code.push_str("pub struct WorkspaceTemplateAsset {\n");
+    code.push_str("    pub path: &'static str,\n");
+    code.push_str("    pub bytes: &'static [u8],\n");
+    code.push_str("}\n\n");
+    code.push_str("pub static WORKSPACE_TEMPLATE_ASSETS: &[WorkspaceTemplateAsset] = &[\n");
+    for (path, relative) in files {
+        code.push_str(&format!(
+            "    WorkspaceTemplateAsset {{ path: {:?}, bytes: include_bytes!({:?}) }},\n",
+            relative.replace('\\', "/"),
+            path.to_string_lossy()
+        ));
+    }
+    code.push_str("];\n");
+    fs::write(generated, code).expect("write workspace template asset list");
 }

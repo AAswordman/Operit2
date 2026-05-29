@@ -64,6 +64,16 @@ impl ToolPkgManager {
     }
 
     #[allow(non_snake_case)]
+    pub fn resolveToolPkgSubpackageRuntimeInternal(
+        &self,
+        packageName: &str,
+    ) -> Option<ToolPkgSubpackageRuntime> {
+        self.subpackageByPackageName
+            .get(packageName.trim())
+            .cloned()
+    }
+
+    #[allow(non_snake_case)]
     pub fn canRegisterToolPkg(
         &self,
         loadResult: &ToolPkgLoadResult,
@@ -112,11 +122,10 @@ impl ToolPkgManager {
             .values()
             .filter(|runtime| {
                 enabledPackageNames.contains(&runtime.packageName)
-                    ||
-                runtime
-                    .subpackages
-                    .iter()
-                    .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName))
+                    || runtime
+                        .subpackages
+                        .iter()
+                        .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName))
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -164,15 +173,12 @@ impl ToolPkgManager {
         let normalizedContainerPackageName = containerPackageName.trim();
         let runtime = self.containers.get(normalizedContainerPackageName)?;
         let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
-        let enabled = runtime
-            .packageName
-            .eq(normalizedContainerPackageName)
+        let enabled = runtime.packageName.eq(normalizedContainerPackageName)
             && enabledPackageNames.contains(&runtime.packageName)
-            ||
-            runtime
-            .subpackages
-            .iter()
-            .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName));
+            || runtime
+                .subpackages
+                .iter()
+                .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName));
         if !enabled || runtime.mainEntry.trim().is_empty() {
             return None;
         }
@@ -193,11 +199,10 @@ impl ToolPkgManager {
             self.containers.get(&subpackage.containerPackageName)
         })?;
         let enabled = enabledPackageNames.contains(&runtime.packageName)
-            ||
-            runtime
-            .subpackages
-            .iter()
-            .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName));
+            || runtime
+                .subpackages
+                .iter()
+                .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName));
         if !enabled {
             return None;
         }

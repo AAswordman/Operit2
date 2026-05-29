@@ -10,5 +10,8 @@ pub mod StandardMemoryTools;
 #[path = "StandardSystemOperationTools.rs"]
 pub mod StandardSystemOperationTools;
 
+#[path = "StandardTerminalTools.rs"]
+pub mod StandardTerminalTools;
+
 #[path = "StandardWebVisitTool.rs"]
 pub mod StandardWebVisitTool;

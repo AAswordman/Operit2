@@ -38,6 +38,6 @@ class AiChatScreenRoute extends OperitScreen {
 
   @override
   Widget build(BuildContext context) {
-    return const AIChatScreen();
+    return AIChatScreen();
   }
 }

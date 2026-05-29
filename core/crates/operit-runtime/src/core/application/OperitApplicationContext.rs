@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
     FileSystemHost, HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost,
-    RuntimeStorageHost, SystemOperationHost, WebVisitHost,
+    RuntimeStorageHost, SystemOperationHost, TerminalHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -29,6 +29,7 @@ pub struct OperitApplicationContext {
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
+    pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
@@ -43,6 +44,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
+            terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
@@ -59,6 +61,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
+            terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
@@ -78,6 +81,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
+            terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
@@ -98,6 +102,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: None,
+            terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
             hostEnvironment,
@@ -122,6 +127,7 @@ impl OperitApplicationContext {
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: Some(managedRuntimeHost),
+            terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
             runtimeSqliteHost: Some(runtimeSqliteHost),
             hostEnvironment,
@@ -132,6 +138,12 @@ impl OperitApplicationContext {
     #[allow(non_snake_case)]
     pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
         self.coreCommandExecutor = Some(executor);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withTerminalHost(mut self, terminalHost: Arc<dyn TerminalHost>) -> Self {
+        self.terminalHost = Some(terminalHost);
         self
     }
 }

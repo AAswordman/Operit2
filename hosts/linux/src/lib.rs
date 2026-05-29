@@ -10,3 +10,4 @@ pub use tools::http::LinuxHttpHost;
 pub use tools::runtime::LinuxManagedRuntimeHost;
 pub use tools::storage::LinuxRuntimeStorageHost;
 pub use tools::system::LinuxSystemOperationHost;
+pub use tools::terminal::LinuxTerminalHost;

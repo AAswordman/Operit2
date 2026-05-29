@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../../../core/chat/OperitChatRuntime.dart';
+import '../../../viewmodel/ChatViewModel.dart';
 import 'AiMessageComposable.dart';
 import 'UserMessageComposable.dart';
 
@@ -13,7 +13,7 @@ class CursorStyleChatMessage extends StatelessWidget {
     required this.isStreaming,
   });
 
-  final ChatRuntimeMessage message;
+  final ChatUiMessage message;
   final bool isStreaming;
 
   @override
@@ -33,7 +33,7 @@ class CursorStyleChatMessage extends StatelessWidget {
 class _SummaryMessageComposable extends StatelessWidget {
   const _SummaryMessageComposable({required this.message});
 
-  final ChatRuntimeMessage message;
+  final ChatUiMessage message;
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +60,7 @@ class _SummaryMessageComposable extends StatelessWidget {
 class _SystemMessageComposable extends StatelessWidget {
   const _SystemMessageComposable({required this.message});
 
-  final ChatRuntimeMessage message;
+  final ChatUiMessage message;
 
   @override
   Widget build(BuildContext context) {

@@ -6,7 +6,8 @@ use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
-    LinuxSystemOperationHost as NativeSystemOperationHost, LinuxWebVisitHost as NativeWebVisitHost,
+    LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
+    LinuxWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
@@ -14,6 +15,7 @@ use operit_host_windows_native::{
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
+    WindowsTerminalHost as NativeTerminalHost,
     WindowsWebVisitHost as NativeWebVisitHost,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
@@ -27,7 +29,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         NativeRuntimeStorageHost::defaultRoot(),
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let context =
+    let mut context =
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
@@ -37,6 +39,10 @@ pub(crate) fn create_cli_application() -> OperitApplication {
             runtimeStorageHost,
             runtimeSqliteHost,
         );
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
+    }
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
         let output = operit_command_core::run_core_command_with_context(

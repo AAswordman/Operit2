@@ -2,10 +2,10 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../core/bridge/OperitRuntimeBridge.dart';
-import '../../../../core/chat/OperitChatRuntime.dart';
+import '../viewmodel/ChatViewModel.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
+import 'ChatScrollNavigator.dart';
 import 'ChatToastHost.dart';
 
 class ChatScreenContent extends StatelessWidget {
@@ -19,7 +19,18 @@ class ChatScreenContent extends StatelessWidget {
     required this.scrollController,
     required this.inputProcessingState,
     required this.modelLabel,
-    required this.bridge,
+    required this.viewModel,
+    required this.currentChatId,
+    required this.autoScrollToBottom,
+    required this.hasOlderDisplayHistory,
+    required this.hasNewerDisplayHistory,
+    required this.isLoadingDisplayWindow,
+    required this.loadLocatorEntries,
+    required this.onAutoScrollToBottomChanged,
+    required this.onLoadOlderDisplayWindow,
+    required this.onLoadNewerDisplayWindow,
+    required this.onShowLatestDisplayWindow,
+    required this.onToggleFavoriteMessage,
     required this.onSendMessage,
     required this.onCancelMessage,
     required this.onModelChanged,
@@ -27,7 +38,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDismissToast,
   });
 
-  final List<ChatRuntimeMessage> messages;
+  final List<ChatUiMessage> messages;
   final bool loading;
   final String? errorMessage;
   final TextEditingController messageController;
@@ -35,7 +46,18 @@ class ChatScreenContent extends StatelessWidget {
   final ScrollController scrollController;
   final ChatInputProcessingState inputProcessingState;
   final String modelLabel;
-  final OperitRuntimeBridge bridge;
+  final ChatViewModel viewModel;
+  final String? currentChatId;
+  final bool autoScrollToBottom;
+  final bool hasOlderDisplayHistory;
+  final bool hasNewerDisplayHistory;
+  final bool isLoadingDisplayWindow;
+  final LoadMessageLocatorEntries loadLocatorEntries;
+  final ValueChanged<bool> onAutoScrollToBottomChanged;
+  final Future<void> Function() onLoadOlderDisplayWindow;
+  final Future<void> Function() onLoadNewerDisplayWindow;
+  final Future<void> Function() onShowLatestDisplayWindow;
+  final ToggleFavoriteMessage onToggleFavoriteMessage;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
   final ValueChanged<String> onModelChanged;
@@ -55,6 +77,17 @@ class ChatScreenContent extends StatelessWidget {
                 isLoading: loading,
                 errorMessage: errorMessage,
                 scrollController: scrollController,
+                currentChatId: currentChatId,
+                autoScrollToBottom: autoScrollToBottom,
+                hasOlderDisplayHistory: hasOlderDisplayHistory,
+                hasNewerDisplayHistory: hasNewerDisplayHistory,
+                isLoadingDisplayWindow: isLoadingDisplayWindow,
+                loadLocatorEntries: loadLocatorEntries,
+                onAutoScrollToBottomChanged: onAutoScrollToBottomChanged,
+                onLoadOlderDisplayWindow: onLoadOlderDisplayWindow,
+                onLoadNewerDisplayWindow: onLoadNewerDisplayWindow,
+                onShowLatestDisplayWindow: onShowLatestDisplayWindow,
+                onToggleFavoriteMessage: onToggleFavoriteMessage,
               ),
             ),
             AgentChatInputSection(
@@ -63,7 +96,8 @@ class ChatScreenContent extends StatelessWidget {
               isLoading: loading,
               inputState: inputProcessingState,
               modelLabel: modelLabel,
-              bridge: bridge,
+              viewModel: viewModel,
+              currentChatId: currentChatId,
               onSendMessage: onSendMessage,
               onCancelMessage: onCancelMessage,
               onModelChanged: onModelChanged,

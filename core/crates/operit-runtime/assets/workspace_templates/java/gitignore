@@ -1,0 +1,58 @@
+# Compiled class files
+*.class
+target/
+out/
+build/
+bin/
+
+# Log files
+*.log
+
+# Package Files (excluding gradle wrapper jar)
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Eclipse
+bin/
+.metadata/
+
+# NetBeans
+nbproject/
+nbbuild/
+dist/
+nbdist/
+
+# Project specific
+*.tmp
+*.temp
+*.bak
+.env

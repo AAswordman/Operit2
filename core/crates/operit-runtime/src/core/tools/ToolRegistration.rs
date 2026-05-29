@@ -24,6 +24,9 @@ use crate::core::tools::defaultTool::standard::StandardMemoryTools::{
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::{
     StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
 };
+use crate::core::tools::defaultTool::standard::StandardTerminalTools::{
+    StandardTerminalTools, TerminalToolExecutor, TerminalToolOperation,
+};
 use crate::core::tools::defaultTool::ToolGetter::ToolGetter;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
@@ -80,6 +83,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
             handler: handler.clone(),
         }),
     );
+    registerTerminalTools(handler, ToolGetter::getTerminalTools(context));
 }
 
 #[allow(non_snake_case)]
@@ -178,6 +182,74 @@ fn registerSystemOperationTool(
         name.to_string(),
         Box::new(SystemOperationToolExecutor {
             tools: systemOperationTools.clone(),
+            operation,
+        }),
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTerminalTools) {
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "get_terminal_info",
+        TerminalToolOperation::GetTerminalInfo,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "create_terminal_session",
+        TerminalToolOperation::CreateSession,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "execute_in_terminal_session",
+        TerminalToolOperation::ExecuteInSession,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "execute_in_terminal_session_streaming",
+        TerminalToolOperation::ExecuteInSessionStreaming,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "execute_hidden_terminal_command",
+        TerminalToolOperation::ExecuteHiddenCommand,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "close_terminal_session",
+        TerminalToolOperation::CloseSession,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "input_in_terminal_session",
+        TerminalToolOperation::InputInSession,
+    );
+    registerTerminalTool(
+        handler,
+        &terminalTools,
+        "get_terminal_session_screen",
+        TerminalToolOperation::GetSessionScreen,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerTerminalTool(
+    handler: &mut AIToolHandler,
+    terminalTools: &StandardTerminalTools,
+    name: &str,
+    operation: TerminalToolOperation,
+) {
+    handler.registerTool(
+        name.to_string(),
+        Box::new(TerminalToolExecutor {
+            tools: terminalTools.clone(),
             operation,
         }),
     );
@@ -626,7 +698,9 @@ impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for PackagePr
     }
 }
 
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for ExecuteCliCommandToolExecutor {
+impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor
+    for ExecuteCliCommandToolExecutor
+{
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
         validateExecuteCliCommand(tool)
     }

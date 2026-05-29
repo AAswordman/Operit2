@@ -26,7 +26,11 @@ impl EnvPreferences {
             return Ok(None);
         }
 
-        let fromPrefs = self.dataStore.data()?.get(&stringPreferencesKey(name)).cloned();
+        let fromPrefs = self
+            .dataStore
+            .data()?
+            .get(&stringPreferencesKey(name))
+            .cloned();
         if fromPrefs.as_ref().is_some_and(|value| !value.is_empty()) {
             return Ok(fromPrefs);
         }

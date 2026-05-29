@@ -1,4 +1,4 @@
-use crate::commands::util::{parse_bool_arg, parse_i64_arg, parseCsvList};
+use crate::commands::util::{parseCsvList, parse_bool_arg, parse_i64_arg};
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_runtime::data::model::Memory::Memory;
@@ -38,13 +38,19 @@ fn run_memory_profile_command(
     let manager = user_preferences_manager()?;
     match args[0].as_str() {
         "list" => {
-            let activeProfileId = manager.activeProfileId().map_err(|error| error.to_string())?;
+            let activeProfileId = manager
+                .activeProfileId()
+                .map_err(|error| error.to_string())?;
             for profileId in manager
                 .profileListFlow()
                 .first()
                 .map_err(|error| error.to_string())?
             {
-                let marker = if profileId == activeProfileId { "*" } else { " " };
+                let marker = if profileId == activeProfileId {
+                    "*"
+                } else {
+                    " "
+                };
                 let profile = manager
                     .getProfile(&profileId)
                     .map_err(|error| error.to_string())?;
@@ -53,7 +59,11 @@ fn run_memory_profile_command(
             Ok(())
         }
         "active" => {
-            output.push_stdout_line(manager.activeProfileId().map_err(|error| error.to_string())?);
+            output.push_stdout_line(
+                manager
+                    .activeProfileId()
+                    .map_err(|error| error.to_string())?,
+            );
             Ok(())
         }
         "show" => {
@@ -170,7 +180,8 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
     match args[0].as_str() {
         "list" => {
             let profileId = memory_profile_arg(args.get(1), &manager)?;
-            for memory in memory_repository(&profileId).searchMemories("*", None, 0.0, None, None)?
+            for memory in
+                memory_repository(&profileId).searchMemories("*", None, 0.0, None, None)?
             {
                 print_memory_item_line(&memory, output);
             }
@@ -181,7 +192,8 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
                 "usage: operit2 memory item search <query> [profile-id]".to_string()
             })?;
             let profileId = memory_profile_arg(args.get(2), &manager)?;
-            for memory in memory_repository(&profileId).searchMemories(query, None, 0.0, None, None)?
+            for memory in
+                memory_repository(&profileId).searchMemories(query, None, 0.0, None, None)?
             {
                 print_memory_item_line(&memory, output);
             }
@@ -393,7 +405,9 @@ fn print_memory_item_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 memory item list [profile-id]");
     output.push_stdout_line("operit2 memory item search <query> [profile-id]");
     output.push_stdout_line("operit2 memory item show <title> [profile-id]");
-    output.push_stdout_line("operit2 memory item create <title> <content> [folder] [tags-csv] [profile-id]");
+    output.push_stdout_line(
+        "operit2 memory item create <title> <content> [folder] [tags-csv] [profile-id]",
+    );
     output.push_stdout_line("operit2 memory item delete <id> [profile-id]");
     output.push_stdout_line("operit2 memory item move <ids-csv> <folder> [profile-id]");
 }

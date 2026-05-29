@@ -415,13 +415,6 @@ impl OperitTui {
                 .add_modifier(Modifier::BOLD)
         };
         let lines = vec![
-            Line::from(Span::styled(
-                "Workspace",
-                Style::default()
-                    .fg(theme::ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
             Line::from("Use current launch folder as the workspace for this chat?"),
             Line::from(""),
             Line::from(Span::styled(

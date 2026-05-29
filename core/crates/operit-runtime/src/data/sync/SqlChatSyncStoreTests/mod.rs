@@ -12,6 +12,7 @@ use operit_host_api::{
 };
 use operit_store::sqliteParams;
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+use operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot;
 use rusqlite::types::Value as RusqliteValue;
 
 static HOSTS: OnceLock<()> = OnceLock::new();
@@ -285,6 +286,7 @@ fn installTestHosts() {
         ));
         fs::create_dir_all(&root).expect("test runtime host root must be created");
         let host = Arc::new(TestRuntimeHost::new(root));
+        setDefaultRuntimeStoreRoot(host.root.clone());
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host);
     });
@@ -384,6 +386,65 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
         createdAt: sequence,
         schemaVersion: 1,
     }
+}
+
+#[test]
+fn chat_dao_update_chats_preserves_child_messages() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, _syncStore) = openTestStore("chat-dao-update");
+    let chatId = "chat-update";
+    insertChatMessage(&database, chatId, 9_000, "kept");
+
+    let mut chat = database
+        .chatDao()
+        .getChatById(chatId)
+        .unwrap()
+        .expect("chat must exist");
+    chat.displayOrder = 42;
+    chat.group = Some("updated-group".to_string());
+    chat.updatedAt = 9_100;
+    database.chatDao().updateChats(vec![chat]).unwrap();
+
+    let updated = database
+        .chatDao()
+        .getChatById(chatId)
+        .unwrap()
+        .expect("chat must remain");
+    assert_eq!(updated.displayOrder, 42);
+    assert_eq!(updated.group.as_deref(), Some("updated-group"));
+    let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "kept");
+    AppDatabase::closeDatabase();
+}
+
+#[test]
+fn message_dao_locator_previews_match_kotlin_projection() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, _syncStore) = openTestStore("message-dao-locator");
+    let chatId = "chat-locator";
+    insertChatMessage(&database, chatId, 10_000, "alpha content");
+    database
+        .messageDao()
+        .insertMessage(message(chatId, 10_100, "beta searchable content"))
+        .unwrap();
+
+    let previews = database
+        .messageDao()
+        .getLocatorPreviewsForChat(chatId, 80)
+        .unwrap();
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].messageIndex, Some(0));
+    assert_eq!(previews[1].messageIndex, Some(1));
+
+    let searchPreviews = database
+        .messageDao()
+        .searchLocatorPreviewsForChat(chatId, "searchable", 80)
+        .unwrap();
+    assert_eq!(searchPreviews.len(), 1);
+    assert_eq!(searchPreviews[0].messageIndex, Some(1));
+    assert_eq!(searchPreviews[0].previewContent, "beta searchable content");
+    AppDatabase::closeDatabase();
 }
 
 #[test]

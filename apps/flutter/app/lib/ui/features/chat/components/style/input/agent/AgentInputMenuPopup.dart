@@ -1,20 +1,25 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../../../../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../common/icons/MaterialIconNameResolver.dart';
+import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
   const AgentInputMenuPopup({
     super.key,
-    required this.bridge,
+    required this.viewModel,
+    required this.currentChatId,
     required this.onDismiss,
   });
 
-  final OperitRuntimeBridge bridge;
+  final ChatViewModel viewModel;
+  final String? currentChatId;
   final VoidCallback onDismiss;
 
   @override
@@ -23,17 +28,55 @@ class AgentInputMenuPopup extends StatefulWidget {
 
 class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   Future<_AgentInputMenuData>? _settingsFuture;
+  Timer? _pluginChangeTimer;
+  int? _observedPluginChangeVersion;
+  bool _checkingPluginChangeVersion = false;
   bool _memoryExpanded = false;
   bool _toolsExpanded = false;
   bool _behaviorExpanded = false;
+  bool _pluginsExpanded = false;
 
-  GeneratedCoreProxyClients get _clients =>
-      GeneratedCoreProxyClients(widget.bridge);
+  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
 
   @override
   void initState() {
     super.initState();
     _settingsFuture = _loadSettings();
+    _startPluginChangeObserver();
+  }
+
+  @override
+  void dispose() {
+    _pluginChangeTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startPluginChangeObserver() {
+    _pluginChangeTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      _checkPluginChangeVersion();
+    });
+  }
+
+  Future<void> _checkPluginChangeVersion() async {
+    if (_checkingPluginChangeVersion) {
+      return;
+    }
+    _checkingPluginChangeVersion = true;
+    final int version;
+    try {
+      version = await _clients.pluginsToolpkgToolPkgInputMenuToggleBridge
+          .changeVersion();
+    } finally {
+      _checkingPluginChangeVersion = false;
+    }
+    if (!mounted) {
+      return;
+    }
+    final observed = _observedPluginChangeVersion;
+    _observedPluginChangeVersion = version;
+    if (observed != null && observed != version) {
+      _reloadSettings();
+    }
   }
 
   Future<_AgentInputMenuData> _loadSettings() async {
@@ -52,6 +95,16 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
         ),
       );
     }
+    _observedPluginChangeVersion = await _clients
+        .pluginsToolpkgToolPkgInputMenuToggleBridge
+        .changeVersion();
+    final pluginToggles = await _clients
+        .pluginsToolpkgToolPkgInputMenuToggleBridge
+        .createToggleDefinitionsForFlutter(
+          chatId: widget.currentChatId,
+          featureStates: const <String, bool>{},
+          runtime: 'main',
+        );
     return _AgentInputMenuData(
       preferenceProfiles: profiles,
       currentProfileId: activeProfileId,
@@ -66,6 +119,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
           .disableStreamOutputFlowSnapshot(),
       disableUserPreferenceDescription: await _clients.preferencesApiPreferences
           .disableUserPreferenceDescriptionFlowSnapshot(),
+      pluginToggles: pluginToggles,
     );
   }
 
@@ -114,6 +168,18 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     await _clients.preferencesApiPreferences.saveDisableStreamOutput(
       isDisabled: !data.disableStreamOutput,
     );
+    _reloadSettings();
+  }
+
+  Future<void> _togglePlugin(
+    core_proxy.InputMenuToggleDefinitionSnapshot toggle,
+  ) async {
+    await _clients.pluginsToolpkgToolPkgInputMenuToggleBridge
+        .triggerToggleForFlutter(
+          toggleId: toggle.id,
+          chatId: widget.currentChatId,
+          runtime: 'main',
+        );
     _reloadSettings();
   }
 
@@ -222,6 +288,29 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                         ),
                       ],
                     ),
+                    if (data.pluginToggles.isNotEmpty)
+                      _MenuSection(
+                        icon: Icons.extension_outlined,
+                        title: '插件',
+                        value: data.pluginSummary,
+                        expanded: _pluginsExpanded,
+                        onTap: () {
+                          setState(() {
+                            _pluginsExpanded = !_pluginsExpanded;
+                          });
+                        },
+                        children: <Widget>[
+                          for (final toggle in data.pluginToggles)
+                            _SwitchRow(
+                              icon: _pluginToggleIcon(toggle),
+                              title: toggle.title ?? toggle.id,
+                              value: toggle.isChecked ? '开' : '关',
+                              checked: toggle.isChecked,
+                              enabled: toggle.isEnabled,
+                              onTap: () => _togglePlugin(toggle),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               );
@@ -242,6 +331,7 @@ class _AgentInputMenuData {
     required this.permissionLevel,
     required this.disableStreamOutput,
     required this.disableUserPreferenceDescription,
+    required this.pluginToggles,
   });
 
   final List<core_proxy.PreferenceProfile> preferenceProfiles;
@@ -251,6 +341,7 @@ class _AgentInputMenuData {
   final String permissionLevel;
   final bool disableStreamOutput;
   final bool disableUserPreferenceDescription;
+  final List<core_proxy.InputMenuToggleDefinitionSnapshot> pluginToggles;
 
   String get currentProfileName {
     return preferenceProfiles
@@ -272,6 +363,19 @@ class _AgentInputMenuData {
       _ => _ToolPermissionMode.ask,
     };
   }
+
+  String get pluginSummary {
+    final enabledCount = pluginToggles
+        .where((toggle) => toggle.isChecked)
+        .length;
+    return '$enabledCount/${pluginToggles.length}';
+  }
+}
+
+IconData _pluginToggleIcon(
+  core_proxy.InputMenuToggleDefinitionSnapshot toggle,
+) {
+  return MaterialIconNameResolver.resolveOrDefault(toggle.icon, Icons.hub);
 }
 
 enum _ToolPermissionMode {
@@ -370,6 +474,7 @@ class _SwitchRow extends StatelessWidget {
     required this.title,
     required this.value,
     required this.checked,
+    this.enabled = true,
     required this.onTap,
   });
 
@@ -377,13 +482,14 @@ class _SwitchRow extends StatelessWidget {
   final String title;
   final String value;
   final bool checked;
+  final bool enabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 36),
         child: Padding(
@@ -393,7 +499,9 @@ class _SwitchRow extends StatelessWidget {
               Icon(
                 icon,
                 size: 16,
-                color: checked
+                color: !enabled
+                    ? colorScheme.onSurfaceVariant.withValues(alpha: 0.45)
+                    : checked
                     ? colorScheme.primary
                     : colorScheme.onSurfaceVariant,
               ),
@@ -403,17 +511,30 @@ class _SwitchRow extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: enabled
+                        ? colorScheme.onSurface
+                        : colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                  ),
                 ),
               ),
               Text(
                 value,
-                style: TextStyle(fontSize: 13, color: colorScheme.primary),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: enabled
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                ),
               ),
               const SizedBox(width: 8),
               Transform.scale(
                 scale: 0.66,
-                child: Switch(value: checked, onChanged: (_) => onTap()),
+                child: Switch(
+                  value: checked,
+                  onChanged: enabled ? (_) => onTap() : null,
+                ),
               ),
             ],
           ),

@@ -4,12 +4,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
+use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, ToolPkgInputMenuToggleHookRegistration,
 };
+use crate::util::AppLogger::AppLogger;
 
 static INPUT_MENU_HOOKS: OnceLock<Mutex<Vec<ToolPkgInputMenuToggleHookRegistration>>> =
     OnceLock::new();
@@ -19,6 +23,7 @@ static HOOK_REGISTRY_VERSION: AtomicI64 = AtomicI64::new(0);
 static LAST_HOOK_REGISTRY_VERSION: AtomicI64 = AtomicI64::new(-1);
 static LAST_PARAMS_CACHE_KEY: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static REFRESH_FLAG: AtomicBool = AtomicBool::new(false);
+const TAG: &str = "ToolPkgInputMenuToggleBridge";
 
 pub const INPUT_MENU_SLOT_THINKING: &str = "thinking";
 pub const INPUT_MENU_SLOT_MEMORY: &str = "memory";
@@ -105,10 +110,12 @@ impl InputMenuTogglePluginRegistry {
 
     #[allow(non_snake_case)]
     pub fn createToggles(params: &InputMenuToggleHookParams) -> Vec<InputMenuToggleDefinition> {
-        INPUT_MENU_PLUGINS
+        let plugins = INPUT_MENU_PLUGINS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .expect("input menu plugin mutex poisoned")
+            .clone();
+        plugins
             .iter()
             .flat_map(|plugin| plugin.createToggles(params))
             .collect()
@@ -118,6 +125,10 @@ impl InputMenuTogglePluginRegistry {
 pub struct ToolPkgInputMenuToggleBridge;
 
 impl ToolPkgInputMenuToggleBridge {
+    pub fn new() -> Self {
+        Self
+    }
+
     pub fn register() {
         static INSTALLED: AtomicBool = AtomicBool::new(false);
         if INSTALLED.swap(true, Ordering::SeqCst) {
@@ -205,6 +216,16 @@ impl ToolPkgInputMenuToggleBridge {
     }
 
     #[allow(non_snake_case)]
+    pub fn createToggleDefinitionsForFlutter(
+        &self,
+        chatId: Option<String>,
+        featureStates: BTreeMap<String, bool>,
+        runtime: Option<String>,
+    ) -> Vec<InputMenuToggleDefinitionSnapshot> {
+        Self::createToggleDefinitions(chatId, featureStates, runtime)
+    }
+
+    #[allow(non_snake_case)]
     pub fn triggerToggle(toggleId: &str, chatId: Option<String>, runtime: Option<String>) -> bool {
         let normalizedToggleId = toggleId.trim();
         if normalizedToggleId.is_empty() {
@@ -224,11 +245,23 @@ impl ToolPkgInputMenuToggleBridge {
         let Some(spec) = specs.into_iter().find(|spec| spec.id == normalizedToggleId) else {
             return false;
         };
-        runInputMenuToggleHook(&spec, &params);
-        let registryVersion = HOOK_REGISTRY_VERSION.load(Ordering::SeqCst);
-        let paramsCacheKey = buildCacheKey(&params);
-        triggerRefresh(&params, registryVersion, &paramsCacheKey);
+        launchToggle(spec, params);
         true
+    }
+
+    #[allow(non_snake_case)]
+    pub fn triggerToggleForFlutter(
+        &self,
+        toggleId: String,
+        chatId: Option<String>,
+        runtime: Option<String>,
+    ) -> bool {
+        Self::triggerToggle(&toggleId, chatId, runtime)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn changeVersion(&self) -> i64 {
+        InputMenuTogglePluginRegistry::changeVersion()
     }
 }
 
@@ -333,10 +366,7 @@ fn buildToggleDefinitions(
                         (paramsForToggle.onToggleFeature)(specForToggle.id.clone());
                         return;
                     }
-                    runInputMenuToggleHook(&specForToggle, &paramsForToggle);
-                    let registryVersion = HOOK_REGISTRY_VERSION.load(Ordering::SeqCst);
-                    let paramsCacheKey = buildCacheKey(&paramsForToggle);
-                    triggerRefresh(&paramsForToggle, registryVersion, &paramsCacheKey);
+                    launchToggle(specForToggle.clone(), paramsForToggle.clone());
                 }),
             }
         })
@@ -365,20 +395,24 @@ fn triggerRefresh(params: &InputMenuToggleHookParams, registryVersion: i64, para
     {
         return;
     }
-    let resolved = loadSpecs(params);
-    *INPUT_MENU_SPECS_CACHE
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .expect("toolpkg input menu specs mutex poisoned") = resolved;
-    HAS_LOADED_ONCE.store(true, Ordering::SeqCst);
-    LAST_HOOK_REGISTRY_VERSION.store(registryVersion, Ordering::SeqCst);
-    *LAST_PARAMS_CACHE_KEY
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .expect("toolpkg input menu params cache mutex poisoned") =
-        Some(paramsCacheKey.to_string());
-    REFRESH_FLAG.store(false, Ordering::SeqCst);
-    InputMenuTogglePluginRegistry::notifyChanged();
+    let paramsForRefresh = params.clone();
+    let paramsCacheKeyForRefresh = paramsCacheKey.to_string();
+    launchTask(move || {
+        let resolved = loadSpecs(&paramsForRefresh);
+        *INPUT_MENU_SPECS_CACHE
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("toolpkg input menu specs mutex poisoned") = resolved;
+        HAS_LOADED_ONCE.store(true, Ordering::SeqCst);
+        LAST_HOOK_REGISTRY_VERSION.store(registryVersion, Ordering::SeqCst);
+        *LAST_PARAMS_CACHE_KEY
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("toolpkg input menu params cache mutex poisoned") =
+            Some(paramsCacheKeyForRefresh);
+        REFRESH_FLAG.store(false, Ordering::SeqCst);
+        InputMenuTogglePluginRegistry::notifyChanged();
+    });
 }
 
 #[allow(non_snake_case)]
@@ -390,13 +424,8 @@ fn loadSpecs(params: &InputMenuToggleHookParams) -> Vec<InputMenuSpec> {
         .clone();
     let mut resolved = Vec::new();
     for hook in registeredHooks {
-        let value = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .runToolPkgMainHook(
+        let manager = packageManager(params);
+        let result = manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,
             TOOLPKG_EVENT_INPUT_MENU_TOGGLE,
@@ -411,9 +440,20 @@ fn loadSpecs(params: &InputMenuToggleHookParams) -> Vec<InputMenuSpec> {
             None,
             None,
             None,
-        )
-        .ok()
-        .and_then(decodeToolPkgHookResult);
+        );
+        let value = match result {
+            Ok(output) => decodeToolPkgHookResult(output),
+            Err(error) => {
+                AppLogger::e(
+                    TAG,
+                    &format!(
+                        "ToolPkg input menu hook failed: {}:{} {}",
+                        hook.containerPackageName, hook.pluginId, error
+                    ),
+                );
+                None
+            }
+        };
         resolved.extend(parseInputMenuDefinitions(
             value.as_ref(),
             &hook.containerPackageName,
@@ -518,13 +558,8 @@ fn inputMenuDefinitionArray(decoded: Option<&Value>) -> Option<Vec<Value>> {
 
 #[allow(non_snake_case)]
 fn runInputMenuToggleHook(spec: &InputMenuSpec, params: &InputMenuToggleHookParams) {
-    let _ = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-    )
-    .getOrCreatePackageManager()
-    .lock()
-    .expect("package manager mutex poisoned")
-    .runToolPkgMainHook(
+    let manager = packageManager(params);
+    if let Err(error) = manager.runToolPkgMainHook(
         &spec.containerPackageName,
         &spec.functionName,
         TOOLPKG_EVENT_INPUT_MENU_TOGGLE,
@@ -540,5 +575,59 @@ fn runInputMenuToggleHook(spec: &InputMenuSpec, params: &InputMenuToggleHookPara
         None,
         None,
         None,
-    );
+    ) {
+        AppLogger::e(
+            TAG,
+            &format!(
+                "ToolPkg input menu toggle hook failed: {}:{} {}",
+                spec.containerPackageName, spec.pluginId, error
+            ),
+        );
+    }
+}
+
+#[allow(non_snake_case)]
+fn launchToggle(spec: InputMenuSpec, params: InputMenuToggleHookParams) {
+    launchTask(move || {
+        runInputMenuToggleHook(&spec, &params);
+        let registryVersion = HOOK_REGISTRY_VERSION.load(Ordering::SeqCst);
+        let paramsCacheKey = buildCacheKey(&params);
+        triggerRefresh(&params, registryVersion, &paramsCacheKey);
+    });
+}
+
+#[allow(non_snake_case)]
+fn packageManager(_params: &InputMenuToggleHookParams) -> PackageManager {
+    let packageManager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
+        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
+    )
+    .getOrCreatePackageManager();
+    let manager = packageManager
+        .lock()
+        .expect("package manager mutex poisoned")
+        .clone();
+    manager
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(non_snake_case)]
+fn launchTask<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::spawn(task);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+fn launchTask<F>(task: F)
+where
+    F: FnOnce() + 'static,
+{
+    let callback = wasm_bindgen::closure::Closure::once_into_js(task);
+    let function: &js_sys::Function = callback.unchecked_ref();
+    web_sys::window()
+        .expect("window must exist for toolpkg input menu task")
+        .set_timeout_with_callback_and_timeout_and_arguments_0(function, 0)
+        .expect("toolpkg input menu task must be scheduled");
 }

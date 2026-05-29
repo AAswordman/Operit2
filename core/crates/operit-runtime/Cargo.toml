@@ -11,7 +11,6 @@ base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 json5.workspace = true
-boa_engine.workspace = true
 operit-host-api = { path = "../operit-host-api" }
 operit-store = { path = "../operit-store" }
 reqwest.workspace = true
@@ -31,9 +30,13 @@ rusqlite.workspace = true
 [build-dependencies]
 zip.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rquickjs.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 js-sys = "0.3"
+quickjs-wasm-rs = "3.1.0"
 uuid = { workspace = true, features = ["js"] }
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["XmlHttpRequest"] }
+web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"] }

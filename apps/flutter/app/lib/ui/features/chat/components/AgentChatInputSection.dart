@@ -2,9 +2,8 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../core/bridge/OperitRuntimeBridge.dart';
-import '../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
 import 'style/input/agent/AgentInputMenuPopup.dart';
 import 'style/input/agent/AgentModelSelectorPopup.dart';
@@ -17,7 +16,8 @@ class AgentChatInputSection extends StatefulWidget {
     required this.isLoading,
     required this.inputState,
     required this.modelLabel,
-    required this.bridge,
+    required this.viewModel,
+    required this.currentChatId,
     required this.onSendMessage,
     required this.onCancelMessage,
     required this.onModelChanged,
@@ -31,7 +31,8 @@ class AgentChatInputSection extends StatefulWidget {
   final bool isLoading;
   final ChatInputProcessingState inputState;
   final String modelLabel;
-  final OperitRuntimeBridge bridge;
+  final ChatViewModel viewModel;
+  final String? currentChatId;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
   final ValueChanged<String> onModelChanged;
@@ -92,7 +93,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
                 child: AgentModelSelectorPopup(
-                  bridge: widget.bridge,
+                  viewModel: widget.viewModel,
                   onDismiss: _dismissModelSettingsPopup,
                   onModelChanged: widget.onModelChanged,
                 ),
@@ -128,7 +129,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
                 child: AgentInputMenuPopup(
-                  bridge: widget.bridge,
+                  viewModel: widget.viewModel,
+                  currentChatId: widget.currentChatId,
                   onDismiss: _dismissInputMenuPopup,
                 ),
               ),

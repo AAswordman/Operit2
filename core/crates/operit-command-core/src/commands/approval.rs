@@ -1,8 +1,6 @@
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::ToolPermissionSystem::{
-    PermissionLevel, ToolPermissionSystem,
-};
+use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, ToolPermissionSystem};
 
 pub fn run_approval_command(
     _context: OperitApplicationContext,
@@ -64,8 +62,7 @@ pub fn run_approval_command(
                     Ok(())
                 }
                 _ => Err(
-                    "usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>"
-                        .to_string(),
+                    "usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>".to_string(),
                 ),
             }
         }

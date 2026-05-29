@@ -2,20 +2,20 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentModelSelectorPopup extends StatefulWidget {
   const AgentModelSelectorPopup({
     super.key,
-    required this.bridge,
+    required this.viewModel,
     required this.onDismiss,
     required this.onModelChanged,
   });
 
-  final OperitRuntimeBridge bridge;
+  final ChatViewModel viewModel;
   final VoidCallback onDismiss;
   final ValueChanged<String> onModelChanged;
 
@@ -30,8 +30,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   String? _infoTitle;
   String? _infoDescription;
 
-  GeneratedCoreProxyClients get _clients =>
-      GeneratedCoreProxyClients(widget.bridge);
+  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
 
   @override
   void initState() {

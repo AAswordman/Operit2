@@ -55,8 +55,12 @@ pub fn run_prefs_command(
             preferences
                 .updateMediaHistorySettings(maxImageHistoryUserTurns, maxMediaHistoryUserTurns)
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("maxImageHistoryUserTurns={maxImageHistoryUserTurns}"));
-            output.push_stdout_line(format!("maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}"));
+            output.push_stdout_line(format!(
+                "maxImageHistoryUserTurns={maxImageHistoryUserTurns}"
+            ));
+            output.push_stdout_line(format!(
+                "maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}"
+            ));
             Ok(())
         }
         _ => {
@@ -96,8 +100,12 @@ fn print_api_preferences(
         "streamOutput={}",
         if disableStreamOutput { "off" } else { "on" }
     ));
-    output.push_stdout_line(format!("maxImageHistoryUserTurns={maxImageHistoryUserTurns}"));
-    output.push_stdout_line(format!("maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}"));
+    output.push_stdout_line(format!(
+        "maxImageHistoryUserTurns={maxImageHistoryUserTurns}"
+    ));
+    output.push_stdout_line(format!(
+        "maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}"
+    ));
     Ok(())
 }
 

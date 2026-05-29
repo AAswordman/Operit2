@@ -71,19 +71,16 @@ pub fn run_character_command(
         "init" => {
             core.preferences_character_card_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             println!("initialized");
         }
         "list" => {
             core.preferences_character_card_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             for card in core
                 .preferences_character_card_manager()
                 .getAllCharacterCards()
-                
                 .map_err(|error| error.to_string())?
             {
                 println!(
@@ -103,7 +100,6 @@ pub fn run_character_command(
             let card = core
                 .preferences_character_card_manager()
                 .getCharacterCard(id)
-                
                 .map_err(|error| error.to_string())?;
             print_character_card(&card);
         }
@@ -141,7 +137,6 @@ pub fn run_character_command(
                     createdAt: now,
                     updatedAt: now,
                 })
-                
                 .map_err(|error| error.to_string())?;
             println!("{id}");
         }
@@ -159,7 +154,6 @@ pub fn run_character_command(
             let mut card = core
                 .preferences_character_card_manager()
                 .getCharacterCard(id)
-                
                 .map_err(|error| error.to_string())?;
             match field.as_str() {
                 "name" => card.name = value,
@@ -189,7 +183,6 @@ pub fn run_character_command(
             }
             core.preferences_character_card_manager()
                 .updateCharacterCard(card)
-                
                 .map_err(|error| error.to_string())?;
             println!("updated: {id}");
         }
@@ -199,7 +192,6 @@ pub fn run_character_command(
                 .ok_or_else(|| "usage: operit2 character delete <id>".to_string())?;
             core.preferences_character_card_manager()
                 .deleteCharacterCard(id)
-                
                 .map_err(|error| error.to_string())?;
             println!("deleted: {id}");
         }
@@ -209,7 +201,6 @@ pub fn run_character_command(
                 .ok_or_else(|| "usage: operit2 character set-active <id>".to_string())?;
             core.preferences_active_prompt_manager()
                 .setActivePrompt(ActivePrompt::CharacterCard { id: id.clone() })
-                
                 .map_err(|error| error.to_string())?;
             println!("active character: {id}");
         }
@@ -225,14 +216,12 @@ pub fn run_character_command(
             let prompt = core
                 .preferences_character_card_manager()
                 .combinePrompts(id, additionalTagIds, promptFunctionType)
-                
                 .map_err(|error| error.to_string())?;
             println!("{prompt}");
         }
         "reset-default" => {
             core.preferences_character_card_manager()
                 .resetDefaultCharacterCard()
-                
                 .map_err(|error| error.to_string())?;
             println!("default character reset");
         }
@@ -257,19 +246,16 @@ pub fn run_group_command(
         "init" => {
             core.preferences_character_group_card_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             println!("initialized");
         }
         "list" => {
             core.preferences_character_group_card_manager()
                 .initializeIfNeeded()
-                
                 .map_err(|error| error.to_string())?;
             for group in core
                 .preferences_character_group_card_manager()
                 .getAllCharacterGroupCards()
-                
                 .map_err(|error| error.to_string())?
             {
                 println!(
@@ -294,7 +280,6 @@ pub fn run_group_command(
             let group = core
                 .preferences_character_group_card_manager()
                 .getCharacterGroupCard(id)
-                
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("group not found: {id}"))?;
             print_character_group_card(&group);
@@ -315,7 +300,6 @@ pub fn run_group_command(
                     createdAt: currentTimeMillis(),
                     updatedAt: currentTimeMillis(),
                 })
-                
                 .map_err(|error| error.to_string())?;
             println!("{id}");
         }
@@ -333,7 +317,6 @@ pub fn run_group_command(
             let mut group = core
                 .preferences_character_group_card_manager()
                 .getCharacterGroupCard(id)
-                
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("group not found: {id}"))?;
             match field.as_str() {
@@ -345,7 +328,6 @@ pub fn run_group_command(
             group.updatedAt = currentTimeMillis();
             core.preferences_character_group_card_manager()
                 .updateCharacterGroupCard(group)
-                
                 .map_err(|error| error.to_string())?;
             println!("updated: {id}");
         }
@@ -355,7 +337,6 @@ pub fn run_group_command(
                 .ok_or_else(|| "usage: operit2 group delete <id>".to_string())?;
             core.preferences_character_group_card_manager()
                 .deleteCharacterGroupCard(id)
-                
                 .map_err(|error| error.to_string())?;
             println!("deleted: {id}");
         }
@@ -365,7 +346,6 @@ pub fn run_group_command(
                 .ok_or_else(|| "usage: operit2 group set-active <id>".to_string())?;
             core.preferences_active_prompt_manager()
                 .setActivePrompt(ActivePrompt::CharacterGroup { id: id.clone() })
-                
                 .map_err(|error| error.to_string())?;
             println!("active group: {id}");
         }
@@ -377,7 +357,6 @@ pub fn run_group_command(
             let newId = core
                 .preferences_character_group_card_manager()
                 .duplicateCharacterGroupCard(id, newName)
-                
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("group not found: {id}"))?;
             println!("{newId}");
@@ -404,7 +383,6 @@ pub fn run_active_prompt_command(
             match core
                 .preferences_active_prompt_manager()
                 .getActivePrompt()
-                
                 .map_err(|error| error.to_string())?
             {
                 ActivePrompt::CharacterCard { id } => println!("character_card\t{id}"),
@@ -417,7 +395,6 @@ pub fn run_active_prompt_command(
                 .ok_or_else(|| "usage: operit2 active-prompt set-card <id>".to_string())?;
             core.preferences_active_prompt_manager()
                 .setActivePrompt(ActivePrompt::CharacterCard { id: id.clone() })
-                
                 .map_err(|error| error.to_string())?;
             println!("active character card: {id}");
         }
@@ -427,7 +404,6 @@ pub fn run_active_prompt_command(
                 .ok_or_else(|| "usage: operit2 active-prompt set-group <id>".to_string())?;
             core.preferences_active_prompt_manager()
                 .setActivePrompt(ActivePrompt::CharacterGroup { id: id.clone() })
-                
                 .map_err(|error| error.to_string())?;
             println!("active character group: {id}");
         }
@@ -436,7 +412,6 @@ pub fn run_active_prompt_command(
             let characterGroupId = args.get(2).cloned().and_then(nonBlankString);
             core.preferences_active_prompt_manager()
                 .activateForChatBinding(characterCardName, characterGroupId)
-                
                 .map_err(|error| error.to_string())?;
             println!("active prompt updated");
         }
@@ -444,7 +419,6 @@ pub fn run_active_prompt_command(
             let id = core
                 .preferences_active_prompt_manager()
                 .resolveActiveCardIdForSend()
-                
                 .map_err(|error| error.to_string())?;
             println!("{id}");
         }
@@ -575,4 +549,3 @@ fn print_active_prompt_usage() {
     println!("operit2 active-prompt activate-for-chat [character-card-name] [character-group-id]");
     println!("operit2 active-prompt resolved-card");
 }
-

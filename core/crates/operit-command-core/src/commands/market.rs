@@ -10,16 +10,16 @@ use std::time::Duration;
 use crate::commands::util::read_content_arg;
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::packTool::PackageManager::PackageManager;
+use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::data::api::MarketStatsApiService::{
     mcpMetadataFromEntry, normalizeMarketArtifactId, parseArtifactMarketMetadata,
     parseMcpMarketMetadata, parseSkillMarketMetadata, resolveMarketEntryId,
     skillRepositoryUrlFromEntry, ArtifactProjectDetailResponse, ArtifactProjectNodeResponse,
     GitHubIssue, MarketRankIssueEntryResponse, MarketStatsApiService,
 };
-use operit_runtime::data::mcp::MCPRepository::MCPRepository;
 use operit_runtime::data::mcp::MCPLocalServer::MCPLocalServer;
+use operit_runtime::data::mcp::MCPRepository::MCPRepository;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use operit_runtime::data::skill::SkillRepository::SkillRepository;
 use sha2::{Digest, Sha256};
@@ -137,7 +137,6 @@ pub fn run_market_command(
             let stats = core
                 .api_market_stats_api_service()
                 .getStats(marketType)
-                
                 .map_err(|error| error.to_string())?;
             println!("updatedAt={}", stats.updatedAt.unwrap_or_default());
             for (id, item) in stats.items {
@@ -161,12 +160,10 @@ pub fn run_market_command(
         }
         "search" => {
             let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market search <skill|mcp|package|script> <query> [page]"
-                    .to_string()
+                "usage: operit2 market search <skill|mcp|package|script> <query> [page]".to_string()
             })?;
             let query = args.get(2).ok_or_else(|| {
-                "usage: operit2 market search <skill|mcp|package|script> <query> [page]"
-                    .to_string()
+                "usage: operit2 market search <skill|mcp|package|script> <query> [page]".to_string()
             })?;
             let page = parse_optional_i32_arg(args.get(3), 1)?;
             search_issue_market(core, marketType, query, page)
@@ -186,7 +183,6 @@ pub fn run_market_command(
             for comment in core
                 .api_market_stats_api_service()
                 .getIssueComments(owner, repo, number, page, 50)
-                
                 .map_err(|error| error.to_string())?
             {
                 println!(
@@ -202,7 +198,10 @@ pub fn run_market_command(
             let marketType = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>".to_string())?;
-            let number = parse_i32_arg(args.get(2), "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>")?;
+            let number = parse_i32_arg(
+                args.get(2),
+                "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>",
+            )?;
             let bodyArg = args
                 .get(3)
                 .ok_or_else(|| "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>".to_string())?;
@@ -212,15 +211,13 @@ pub fn run_market_command(
             let comment = core
                 .api_market_stats_api_service()
                 .createIssueComment(owner, repo, number, &body)
-                
                 .map_err(|error| error.to_string())?;
             println!("created={}", comment.html_url);
             Ok(())
         }
         "reactions" => {
             let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market reactions <skill|mcp|package|script> <number>"
-                    .to_string()
+                "usage: operit2 market reactions <skill|mcp|package|script> <number>".to_string()
             })?;
             let number = parse_i32_arg(
                 args.get(2),
@@ -231,7 +228,6 @@ pub fn run_market_command(
             for reaction in core
                 .api_market_stats_api_service()
                 .getIssueReactions(owner, repo, number)
-                
                 .map_err(|error| error.to_string())?
             {
                 println!(
@@ -254,29 +250,28 @@ pub fn run_market_command(
             let reaction = core
                 .api_market_stats_api_service()
                 .createIssueReaction(owner, repo, number, content)
-                
                 .map_err(|error| error.to_string())?;
             println!("created={} content={}", reaction.id, reaction.content);
             Ok(())
         }
         "show" => {
             let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>"
-                    .to_string()
+                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>".to_string()
             })?;
             let target = args.get(2).ok_or_else(|| {
-                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>"
-                    .to_string()
+                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>".to_string()
             })?;
             show_market_item(core, marketType, target)
         }
         "install" => {
-            let marketType = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]".to_string())?;
-            let target = args
-                .get(2)
-                .ok_or_else(|| "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]".to_string())?;
+            let marketType = args.get(1).ok_or_else(|| {
+                "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]"
+                    .to_string()
+            })?;
+            let target = args.get(2).ok_or_else(|| {
+                "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]"
+                    .to_string()
+            })?;
             install_market_item(core, marketType, target, args.get(3).map(String::as_str))
         }
         _ => {
@@ -292,8 +287,7 @@ fn run_market_auth_command(core: &mut MarketCommand<'_>, args: &[String]) -> Res
             ensure_env_auth_token_saved(core)?;
             println!(
                 "loggedIn={}",
-                core.preferences_git_hub_auth_preferences()
-                    .isLoggedIn()
+                core.preferences_git_hub_auth_preferences().isLoggedIn()
             );
             if let Some(user) = core
                 .preferences_git_hub_auth_preferences()
@@ -309,7 +303,6 @@ fn run_market_auth_command(core: &mut MarketCommand<'_>, args: &[String]) -> Res
                 .ok_or_else(|| "usage: operit2 market auth token <github-token>".to_string())?;
             core.preferences_git_hub_auth_preferences()
                 .updateAccessToken(token, "bearer", None)
-                
                 .map_err(|error| error.to_string())?;
             println!("saved");
             Ok(())
@@ -317,7 +310,6 @@ fn run_market_auth_command(core: &mut MarketCommand<'_>, args: &[String]) -> Res
         Some("logout") => {
             core.preferences_git_hub_auth_preferences()
                 .logout()
-                
                 .map_err(|error| error.to_string())?;
             println!("logged out");
             Ok(())
@@ -327,7 +319,6 @@ fn run_market_auth_command(core: &mut MarketCommand<'_>, args: &[String]) -> Res
             let user = core
                 .api_market_stats_api_service()
                 .getCurrentUser()
-                
                 .map_err(|error| error.to_string())?;
             println!("{}", user.login);
             Ok(())
@@ -376,7 +367,6 @@ fn print_market_rank(
     let rank = core
         .api_market_stats_api_service()
         .getRankPage(marketType, metric, page)
-        
         .map_err(|error| error.to_string())?;
     println!(
         "type={}\tmetric={}\tpage={}\ttotalPages={}\ttotalItems={}",
@@ -398,7 +388,6 @@ fn print_artifact_rank(
     let rank = core
         .api_market_stats_api_service()
         .getArtifactRankPage(marketType, metric, page)
-        
         .map_err(|error| error.to_string())?;
     println!(
         "{} market ({}) - page {}/{} - {} items",
@@ -465,7 +454,6 @@ fn search_issue_market(
     let issues = core
         .api_market_stats_api_service()
         .searchIssues(owner, repo, label, query, page, 50)
-        
         .map_err(|error| error.to_string())?;
     for issue in issues
         .into_iter()
@@ -487,7 +475,6 @@ fn show_market_item(
             let detail = core
                 .api_market_stats_api_service()
                 .getArtifactProject(target)
-                
                 .map_err(|error| error.to_string())?;
             print_artifact_project(&detail);
             Ok(())
@@ -496,8 +483,7 @@ fn show_market_item(
             let number = match target.parse::<i32>() {
                 Ok(number) => number,
                 Err(_) => {
-                    find_issue_rank_entry(core, marketType, target)
-                        ?
+                    find_issue_rank_entry(core, marketType, target)?
                         .issue
                         .number
                 }
@@ -507,7 +493,6 @@ fn show_market_item(
             let issue = core
                 .api_market_stats_api_service()
                 .getIssue(owner, repo, number)
-                
                 .map_err(|error| error.to_string())?;
             print_github_issue(&issue);
             Ok(())
@@ -545,16 +530,14 @@ fn install_market_skill(core: &mut MarketCommand<'_>, target: &str) -> Result<()
         } else {
             repoUrl.as_str()
         };
-        let _ = core
-            .api_market_stats_api_service()
-            .trackDownload("skill", &statsId, downloadTarget)
-            ;
+        let _ =
+            core.api_market_stats_api_service()
+                .trackDownload("skill", &statsId, downloadTarget);
         repoUrl
     };
     println!(
         "{}",
-        core.skill_repository()
-            .importSkillFromGitHubRepo(&repoUrl)
+        core.skill_repository().importSkillFromGitHubRepo(&repoUrl)
     );
     Ok(())
 }
@@ -564,7 +547,6 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
         let count = core
             .mcp_local_server()
             .mergeConfigFromJson(target)
-            
             .map_err(|error| error.to_string())?;
         println!("imported={count}");
         return Ok(());
@@ -651,8 +633,7 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
     {
         let _ = core
             .api_market_stats_api_service()
-            .trackDownload("mcp", &statsId, &issueUrl)
-            ;
+            .trackDownload("mcp", &statsId, &issueUrl);
         if !core
             .mcp_repository()
             .checkConfigNeedsPhysicalInstallation(config)
@@ -660,7 +641,6 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
             let count = core
                 .mcp_local_server()
                 .mergeConfigFromJson(config)
-                
                 .map_err(|error| error.to_string())?;
             println!("imported={count}");
             return Ok(());
@@ -675,11 +655,9 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
     };
     let _ = core
         .api_market_stats_api_service()
-        .trackDownload("mcp", &statsId, &targetUrl)
-        ;
+        .trackDownload("mcp", &statsId, &targetUrl);
     core.mcp_local_server()
         .addOrUpdatePluginMetadata(metadata)
-        
         .map_err(|error| error.to_string())?;
     println!("registered={pluginId}");
     Ok(())
@@ -695,7 +673,6 @@ fn install_market_artifact(
     let detail = core
         .api_market_stats_api_service()
         .getArtifactProject(projectId)
-        
         .map_err(|error| error.to_string())?;
     let node = resolve_artifact_node(&detail.nodes, nodeId.or(Some(&detail.defaultNodeId)))
         .or_else(|| resolve_artifact_node(&detail.nodes, Some(&detail.latestOpenNodeId)))
@@ -712,18 +689,15 @@ fn install_market_artifact(
     {
         return Err(result);
     }
-    let _ = core
-        .api_market_stats_api_service()
-        .trackDownload(
-            marketType,
-            projectId,
-            if node.downloadUrl.trim().is_empty() {
-                node.issue.html_url.as_str()
-            } else {
-                node.downloadUrl.as_str()
-            },
-        )
-        ;
+    let _ = core.api_market_stats_api_service().trackDownload(
+        marketType,
+        projectId,
+        if node.downloadUrl.trim().is_empty() {
+            node.issue.html_url.as_str()
+        } else {
+            node.downloadUrl.as_str()
+        },
+    );
     println!("{result}");
     Ok(())
 }
@@ -1062,7 +1036,6 @@ fn find_issue_rank_entry(
         let rank = core
             .api_market_stats_api_service()
             .getRankPage(marketType, "updated", page)
-            
             .map_err(|error| error.to_string())?;
         if let Some(entry) = rank.items.into_iter().find(|entry| {
             entry.id == target
@@ -1149,7 +1122,6 @@ fn ensure_env_auth_token_saved(core: &mut MarketCommand<'_>) -> Result<(), Strin
         {
             core.preferences_git_hub_auth_preferences()
                 .updateAccessToken(&token, "bearer", None)
-                
                 .map_err(|error| error.to_string())?;
         }
     }
@@ -1303,7 +1275,3 @@ impl CliStringExt for &str {
         }
     }
 }
-
-
-
-

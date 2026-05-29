@@ -43,8 +43,7 @@ pub fn run_mcp_command(
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 mcp start <name>".to_string())?;
-            let packageManager = AIToolHandler::getInstance(context)
-                .getOrCreatePackageManager();
+            let packageManager = AIToolHandler::getInstance(context).getOrCreatePackageManager();
             let mut guard = packageManager
                 .lock()
                 .expect("package manager mutex poisoned");
@@ -89,7 +88,10 @@ fn list_mcp_servers(
             Some(item) => item.name.as_str(),
             None => "",
         };
-        let cachedTools = match status.get(&serverId).and_then(|item| item.cachedTools.as_ref()) {
+        let cachedTools = match status
+            .get(&serverId)
+            .and_then(|item| item.cachedTools.as_ref())
+        {
             Some(tools) => tools.len(),
             None => 0,
         };
@@ -141,7 +143,10 @@ fn show_mcp_server(
                 .collect::<Vec<_>>()
                 .join(",")
         ));
-        output.push_stdout_line(format!("autoApprove={}", serverConfig.autoApprove.join(",")));
+        output.push_stdout_line(format!(
+            "autoApprove={}",
+            serverConfig.autoApprove.join(",")
+        ));
     }
     if let Some(metadata) = server.getPluginMetadata(name) {
         let endpoint = match metadata.endpoint {

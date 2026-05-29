@@ -53,7 +53,9 @@ pub fn run_skill_command(
             })?;
             let repository = skill_repository(&context);
             let result = match args.get(2) {
-                Some(subDir) => repository.importSkillFromZipWithSubDir(Path::new(zipPath), Some(subDir)),
+                Some(subDir) => {
+                    repository.importSkillFromZipWithSubDir(Path::new(zipPath), Some(subDir))
+                }
                 None => repository.importSkillFromZip(Path::new(zipPath)),
             };
             output.push_stdout_line(result);

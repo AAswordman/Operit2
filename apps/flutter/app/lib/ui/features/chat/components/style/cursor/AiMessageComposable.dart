@@ -2,9 +2,9 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../../../../core/chat/OperitChatRuntime.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
+import '../../../viewmodel/ChatViewModel.dart';
 
 class AiMessageComposable extends StatelessWidget {
   const AiMessageComposable({
@@ -13,7 +13,7 @@ class AiMessageComposable extends StatelessWidget {
     required this.isStreaming,
   });
 
-  final ChatRuntimeMessage message;
+  final ChatUiMessage message;
   final bool isStreaming;
 
   @override
@@ -54,10 +54,12 @@ class AiMessageComposable extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: StreamMarkdownRenderer(
               content: message.content,
+              contentStream: message.contentStream,
               isStreaming: isStreaming,
               textColor: colorScheme.onSurface,
               backgroundColor: colorScheme.surface,
               nodeGrouper: nodeGrouper,
+              rendererId: 'ai-message-${message.stableKey}',
             ),
           ),
         ],
@@ -66,7 +68,7 @@ class AiMessageComposable extends StatelessWidget {
   }
 }
 
-String _detailText(ChatRuntimeMessage message) {
+String _detailText(ChatUiMessage message) {
   final parts = <String>[];
   if (message.roleName.isNotEmpty) {
     parts.add(message.roleName);

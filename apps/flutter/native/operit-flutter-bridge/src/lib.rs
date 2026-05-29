@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use operit_core_proxy::LocalCoreProxy;
 use operit_link::{
@@ -11,10 +12,13 @@ use operit_link::{
     CoreRequestId, CoreWatchRequest,
 };
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
+use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
@@ -55,6 +59,118 @@ pub struct OperitFlutterBridge {
     proxyCore: Mutex<LocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
+    approvalBridge: FlutterApprovalBridge,
+}
+
+const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
+
+#[derive(Clone)]
+struct FlutterApprovalBridge {
+    inner: Arc<ApprovalInner>,
+}
+
+struct ApprovalInner {
+    state: Mutex<ApprovalState>,
+    changed: Condvar,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct PendingApproval {
+    tool: AITool,
+    description: String,
+    requestedAtMillis: u64,
+    #[serde(skip)]
+    requestedAt: Instant,
+}
+
+#[derive(Debug)]
+struct ApprovalState {
+    pending: Option<PendingApproval>,
+    response: Option<PermissionRequestResult>,
+}
+
+impl FlutterApprovalBridge {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(ApprovalInner {
+                state: Mutex::new(ApprovalState {
+                    pending: None,
+                    response: None,
+                }),
+                changed: Condvar::new(),
+            }),
+        }
+    }
+
+    fn request(&self, tool: &AITool, description: &str) -> PermissionRequestResult {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("approval state mutex poisoned");
+        state.pending = Some(PendingApproval {
+            tool: tool.clone(),
+            description: description.to_string(),
+            requestedAtMillis: current_time_millis_u64(),
+            requestedAt: Instant::now(),
+        });
+        state.response = None;
+        self.inner.changed.notify_all();
+
+        let timeout = Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS);
+        loop {
+            if let Some(response) = state.response.take() {
+                state.pending = None;
+                self.inner.changed.notify_all();
+                return response;
+            }
+            let pendingStartedAt = state.pending.as_ref().map(|pending| pending.requestedAt);
+            let Some(startedAt) = pendingStartedAt else {
+                return PermissionRequestResult::DENY;
+            };
+            let elapsed = startedAt.elapsed();
+            if elapsed >= timeout {
+                state.pending = None;
+                self.inner.changed.notify_all();
+                return PermissionRequestResult::DENY;
+            }
+            let wait = timeout.saturating_sub(elapsed);
+            let (nextState, result) = self
+                .inner
+                .changed
+                .wait_timeout(state, wait)
+                .expect("approval state mutex poisoned");
+            state = nextState;
+            if result.timed_out() {
+                state.pending = None;
+                self.inner.changed.notify_all();
+                return PermissionRequestResult::DENY;
+            }
+        }
+    }
+
+    fn current(&self) -> Option<PendingApproval> {
+        self.inner
+            .state
+            .lock()
+            .expect("approval state mutex poisoned")
+            .pending
+            .clone()
+    }
+
+    fn respond(&self, response: PermissionRequestResult) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("approval state mutex poisoned");
+        if state.pending.is_some() {
+            state.response = Some(response);
+            self.inner.changed.notify_all();
+            return true;
+        }
+        false
+    }
 }
 
 impl OperitFlutterBridge {
@@ -73,6 +189,8 @@ impl OperitFlutterBridge {
         };
         let mut core = create_local_core(storage_root)?;
         core.localApplicationMut().onCreate()?;
+        let approvalBridge = FlutterApprovalBridge::new();
+        install_permission_requester(&mut core, approvalBridge.clone());
         let mainCore = core
             .localApplicationMut()
             .chatRuntimeHolder
@@ -84,6 +202,7 @@ impl OperitFlutterBridge {
             proxyCore: Mutex::new(core),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
+            approvalBridge,
         })
     }
 
@@ -206,6 +325,34 @@ impl OperitFlutterBridge {
             streams.remove(subscriptionId);
         }
     }
+
+    fn currentPermissionRequest(&self) -> String {
+        json_string(&self.approvalBridge.current())
+    }
+
+    fn handlePermissionResult(&self, result: &str) -> String {
+        let response = match result {
+            "ALLOW" | "allow" => PermissionRequestResult::ALLOW,
+            "DENY" | "deny" => PermissionRequestResult::DENY,
+            "ALWAYS_ALLOW" | "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
+            other => {
+                return serde_json::json!({
+                    "ok": false,
+                    "error": format!("unknown permission result: {other}")
+                })
+                .to_string();
+            }
+        };
+        serde_json::json!({ "ok": self.approvalBridge.respond(response) }).to_string()
+    }
+}
+
+fn install_permission_requester(core: &mut LocalCoreProxy, approvalBridge: FlutterApprovalBridge) {
+    let context = core.localApplicationMut().applicationContext.clone();
+    let handler = AIToolHandler::getInstance(context);
+    handler
+        .getToolPermissionSystem()
+        .setPermissionRequester(move |tool, description| approvalBridge.request(tool, description));
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "android"))]
@@ -533,6 +680,34 @@ pub unsafe extern "C" fn operit_flutter_bridge_host_descriptor(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_current_permission_request(
+    handle: *mut OperitFlutterBridge,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr("null");
+    }
+    string_to_ptr((*handle).currentPermissionRequest())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
+    handle: *mut OperitFlutterBridge,
+    result_ptr: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
+    }
+    if result_ptr.is_null() {
+        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
+    }
+    let result = match CStr::from_ptr(result_ptr).to_str() {
+        Ok(value) => value,
+        Err(_) => return string_to_ptr(serde_json::json!({"ok": false}).to_string()),
+    };
+    string_to_ptr((*handle).handlePermissionResult(result))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn operit_flutter_bridge_free_string(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));
@@ -588,6 +763,16 @@ impl OperitFlutterBridgeWasm {
     pub fn hostDescriptor(&self) -> String {
         self.inner.hostDescriptor().to_string()
     }
+
+    #[allow(non_snake_case)]
+    pub fn currentPermissionRequest(&self) -> String {
+        self.inner.currentPermissionRequest()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn handlePermissionResult(&self, result: &str) -> String {
+        self.inner.handlePermissionResult(result)
+    }
 }
 
 fn error_response(requestId: impl Into<String>, message: impl Into<String>) -> *mut c_char {
@@ -619,6 +804,10 @@ fn string_to_ptr(value: impl Into<String>) -> *mut c_char {
     CString::new(sanitized)
         .expect("sanitized bridge string must not contain nul")
         .into_raw()
+}
+
+fn current_time_millis_u64() -> u64 {
+    operit_host_api::TimeUtils::currentTimeMillisU128().min(u64::MAX as u128) as u64
 }
 
 fn last_create_error() -> &'static Mutex<String> {
@@ -834,6 +1023,37 @@ mod android_jni {
             return new_java_string(env, "{\"error\":\"runtime bridge is not initialized\"}");
         };
         new_java_string(env, &bridge.hostDescriptor().to_string())
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_currentPermissionRequest(
+        env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(env, "null");
+        };
+        new_java_string(env, &bridge.currentPermissionRequest())
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_handlePermissionResult(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        permissionResult: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
+        };
+        let permissionResult = match env.get_string(&permissionResult) {
+            Ok(value) => String::from(value),
+            Err(_) => {
+                return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
+            }
+        };
+        new_java_string(env, &bridge.handlePermissionResult(&permissionResult))
     }
 
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {

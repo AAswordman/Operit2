@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import '../components/AppContent.dart';
+import '../layout/NavigationLayoutMetrics.dart';
 import '../layout/PhoneLayout.dart';
 import '../TopBarController.dart';
 import '../layout/TabletLayout.dart';
@@ -155,7 +156,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             currentScreen.title ??
             '';
         final mediaQuery = MediaQuery.of(context);
-        final useTabletLayout = mediaQuery.size.width >= 600;
+        final useTabletLayout = useTabletLayoutForWidth(mediaQuery.size.width);
         final content = AppContent(
           routerState: _routerState,
           currentScreen: currentScreen,

@@ -43,11 +43,7 @@ impl ToolPkgMainRegistrationScriptParser {
         let capturedResult: Result<
             crate::core::tools::javascript::JsToolPkgRegistration::ToolPkgMainRegistrationCapture,
             String,
-        > = jsEngine.executeToolPkgMainRegistrationFunction(
-            script,
-            "registerToolPkg",
-            &params,
-        );
+        > = jsEngine.executeToolPkgMainRegistrationFunction(script, "registerToolPkg", &params);
         let captured = match capturedResult {
             std::result::Result::Ok(captured) => captured,
             std::result::Result::Err(ref error) => {

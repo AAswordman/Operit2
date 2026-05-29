@@ -1,0 +1,6 @@
+# Operit Python 项目依赖
+# 在此添加您需要的 Python 包
+
+# 示例：
+# requests==2.31.0
+# flask==3.0.0

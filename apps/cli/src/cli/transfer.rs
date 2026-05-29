@@ -3,8 +3,8 @@ use std::path::Path;
 
 use operit_runtime::data::model::ImportStrategy;
 
-use crate::core_proxy::CliCore;
 use super::*;
+use crate::core_proxy::CliCore;
 
 pub(super) async fn run_export_command(core: &mut CliCore, args: &[String]) -> Result<(), String> {
     if args.is_empty() {

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
+use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 use operit_runtime::util::stream::HotStream::SharedStream;
 
 use super::empty_state::render_blue_cat_lines;
@@ -262,6 +263,12 @@ fn append_user_message_card(
 ) {
     let layout = message_layout("user", available_width);
     let block_style = message_block_style("user");
+    let parsed = parse_user_message_content(content);
+    if !parsed.trailing_attachments.is_empty() {
+        for line in render_attachment_chip_lines(&parsed.trailing_attachments, layout) {
+            lines.push(line);
+        }
+    }
     lines.push(style_user_card_line(Line::from(""), block_style, layout));
     lines.push(style_user_card_line(
         Line::from(header_spans),
@@ -269,7 +276,7 @@ fn append_user_message_card(
         layout,
     ));
 
-    let mut rendered_lines = render_markdown_lines(content, layout.content_width);
+    let mut rendered_lines = render_markdown_lines(&parsed.processed_text, layout.content_width);
     trim_blank_edge_lines(&mut rendered_lines);
     if rendered_lines.is_empty() {
         rendered_lines.push(Line::from(""));
@@ -278,6 +285,222 @@ fn append_user_message_card(
         lines.push(style_user_card_line(line, block_style, layout));
     }
     lines.push(style_user_card_line(Line::from(""), block_style, layout));
+}
+
+#[derive(Clone, Debug)]
+struct UserMessageParseResult {
+    processed_text: String,
+    trailing_attachments: Vec<UserAttachmentData>,
+}
+
+#[derive(Clone, Debug)]
+struct UserAttachmentData {
+    file_name: String,
+    mime_type: String,
+    file_size: i64,
+}
+
+fn parse_user_message_content(content: &str) -> UserMessageParseResult {
+    let mut cleaned_content = remove_tag_blocks(content, "memory").trim().to_string();
+    cleaned_content = remove_proxy_sender_tag(&cleaned_content).trim().to_string();
+    cleaned_content = remove_tag_blocks(&cleaned_content, "reply_to")
+        .trim()
+        .to_string();
+
+    let mut trailing_attachments = Vec::new();
+    let workspace_ranges = ChatMarkupRegex::workspace_attachment_ranges(&cleaned_content);
+    if let Some((start, end)) = workspace_ranges.first().copied() {
+        trailing_attachments.push(UserAttachmentData {
+            file_name: "工作区状态".to_string(),
+            mime_type: "application/vnd.workspace-context+xml".to_string(),
+            file_size: (end - start) as i64,
+        });
+        cleaned_content.replace_range(start..end, "");
+        cleaned_content = cleaned_content.trim().to_string();
+    }
+
+    let attachment_ranges = ChatMarkupRegex::attachment_ranges(&cleaned_content);
+    if attachment_ranges.is_empty() {
+        return UserMessageParseResult {
+            processed_text: cleaned_content,
+            trailing_attachments,
+        };
+    }
+
+    let mut attachment_matches = Vec::new();
+    for (start, end) in attachment_ranges {
+        let raw = &cleaned_content[start..end];
+        let file_name = attr_value(raw, "filename").unwrap_or_else(String::new);
+        let mime_type = attr_value(raw, "type").unwrap_or_else(String::new);
+        let file_size = attr_value(raw, "size")
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        attachment_matches.push((
+            start,
+            end,
+            UserAttachmentData {
+                file_name,
+                mime_type,
+                file_size,
+            },
+        ));
+    }
+
+    let mut trailing_indices = HashSet::new();
+    if let Some((last_start, last_end, _)) = attachment_matches.last() {
+        if cleaned_content[*last_end..].trim().is_empty() {
+            trailing_indices.insert(attachment_matches.len() - 1);
+            for index in (0..attachment_matches.len() - 1).rev() {
+                let (_, current_end, _) = attachment_matches[index];
+                let (next_start, _, _) = attachment_matches[index + 1];
+                if cleaned_content[current_end..next_start].trim().is_empty() {
+                    trailing_indices.insert(index);
+                } else {
+                    break;
+                }
+            }
+        } else {
+            let _ = last_start;
+        }
+    }
+
+    let first_trailing_index = trailing_indices.iter().min().copied();
+    let mut message_text = String::new();
+    let mut last_index = 0usize;
+    let mut parsed_trailing = Vec::new();
+    for (index, (start, end, attachment)) in attachment_matches.into_iter().enumerate() {
+        let is_trailing = trailing_indices.contains(&index)
+            || (attachment.mime_type == "text/json" && attachment.file_name == "screen_content.json");
+        if start > last_index {
+            let text_before = &cleaned_content[last_index..start];
+            if !is_trailing || Some(index) == first_trailing_index {
+                message_text.push_str(text_before);
+            }
+        }
+        if is_trailing {
+            parsed_trailing.push(attachment);
+        } else {
+            message_text.push('@');
+            message_text.push_str(&attachment.file_name);
+        }
+        last_index = end;
+    }
+    if last_index < cleaned_content.len() {
+        message_text.push_str(&cleaned_content[last_index..]);
+    }
+
+    trailing_attachments.extend(parsed_trailing);
+    UserMessageParseResult {
+        processed_text: message_text.trim().to_string(),
+        trailing_attachments,
+    }
+}
+
+fn remove_tag_blocks(content: &str, tag_name: &str) -> String {
+    let mut ranges = tag_ranges(content, tag_name);
+    ranges.sort_by_key(|range| range.0);
+    remove_ranges(content, &ranges)
+}
+
+fn remove_proxy_sender_tag(content: &str) -> String {
+    let Some(start) = content.to_ascii_lowercase().find("<proxy_sender") else {
+        return content.to_string();
+    };
+    let Some(relative_end) = content[start..].find("/>") else {
+        return content.to_string();
+    };
+    let end = start + relative_end + 2;
+    remove_ranges(content, &[(start, end)])
+}
+
+fn remove_ranges(content: &str, ranges: &[(usize, usize)]) -> String {
+    if ranges.is_empty() {
+        return content.to_string();
+    }
+    let mut output = String::new();
+    let mut last_index = 0usize;
+    for (start, end) in ranges.iter().copied() {
+        if start > last_index {
+            output.push_str(&content[last_index..start]);
+        }
+        last_index = end;
+    }
+    if last_index < content.len() {
+        output.push_str(&content[last_index..]);
+    }
+    output
+}
+
+fn render_attachment_chip_lines(
+    attachments: &[UserAttachmentData],
+    layout: MessageLayout,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    let mut current_width = 0usize;
+    let content_width = layout.content_width.max(1);
+    for attachment in attachments {
+        let label = attachment_display_label(attachment);
+        let chip = format!("[{}]", label);
+        let chip_width = display_width(&chip);
+        let separator_width = if spans.is_empty() { 0 } else { 1 };
+        if !spans.is_empty() && current_width + separator_width + chip_width > content_width {
+            lines.push(left_aligned_attachment_line(
+                std::mem::take(&mut spans),
+                layout,
+            ));
+            current_width = 0;
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+            current_width += 1;
+        }
+        spans.push(Span::styled(
+            chip,
+            Style::default()
+                .fg(theme::TEXT)
+                .bg(theme::USER_CARD_BG)
+                .add_modifier(Modifier::BOLD),
+        ));
+        current_width += chip_width;
+    }
+    if !spans.is_empty() {
+        lines.push(left_aligned_attachment_line(spans, layout));
+    }
+    lines
+}
+
+fn left_aligned_attachment_line(
+    mut spans: Vec<Span<'static>>,
+    layout: MessageLayout,
+) -> Line<'static> {
+    let padding = layout.outer_indent + layout.inner_padding;
+    if padding > 0 {
+        spans.insert(0, Span::raw(" ".repeat(padding)));
+    }
+    Line::from(spans)
+}
+
+fn attachment_display_label(attachment: &UserAttachmentData) -> String {
+    if attachment.mime_type == "text/json" && attachment.file_name == "screen_content.json" {
+        "屏幕内容".to_string()
+    } else if attachment.mime_type == "application/vnd.workspace-context+xml" {
+        "工作区状态".to_string()
+    } else if attachment.file_size > 0 {
+        format!("{} {}", attachment.file_name, format_file_size(attachment.file_size))
+    } else {
+        attachment.file_name.clone()
+    }
+}
+
+fn format_file_size(size: i64) -> String {
+    if size >= 1024 * 1024 {
+        format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
+    } else if size >= 1024 {
+        format!("{:.1}KB", size as f64 / 1024.0)
+    } else {
+        format!("{}B", size)
+    }
 }
 
 fn style_user_card_line(
@@ -565,6 +788,45 @@ mod tests {
     const PREVIEW_WIDTH: u16 = 70;
     const PREVIEW_HEIGHT: u16 = 22;
     const USER_CARD_BG: Color = theme::USER_CARD_BG;
+
+    #[test]
+    fn user_message_workspace_attachment_is_rendered_as_attachment_chip() {
+        let parsed =
+            parse_user_message_content("你好 <workspace_attachment></workspace_attachment>");
+
+        assert_eq!(parsed.processed_text, "你好");
+        assert_eq!(parsed.trailing_attachments.len(), 1);
+        assert_eq!(parsed.trailing_attachments[0].file_name, "工作区状态");
+        assert_eq!(
+            parsed.trailing_attachments[0].mime_type,
+            "application/vnd.workspace-context+xml"
+        );
+    }
+
+    #[test]
+    fn user_message_workspace_attachment_is_rendered_above_user_card() {
+        let mut user = ChatMessage::new_with_timestamp(
+            "user".to_string(),
+            "你好 <workspace_attachment></workspace_attachment>".to_string(),
+            1,
+        );
+        user.roleName = String::new();
+        let mut typewriter_state = TypewriterState::default();
+        let lines = render_message_lines(
+            &[user],
+            48,
+            false,
+            &InputProcessingState::Idle,
+            &Line::from("thinking"),
+            &mut typewriter_state,
+        );
+        let rendered = dump_logical_lines(&lines);
+
+        let attachment_index = rendered.find("[工作区状态]").expect("attachment chip");
+        let prompt_index = rendered.find("Prompt").expect("prompt header");
+        assert!(attachment_index < prompt_index);
+        assert!(!rendered.contains("<workspace_attachment"));
+    }
 
     #[test]
     #[ignore = "debug-only TUI preview; run with --ignored --nocapture"]

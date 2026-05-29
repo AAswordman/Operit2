@@ -48,9 +48,9 @@ use sha2::{Digest, Sha256};
 pub(crate) mod link;
 mod transfer;
 
+use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
 use link::{load_link_session, run_link_command};
-use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use transfer::{run_backup_command, run_export_command, run_import_command};
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
@@ -85,6 +85,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
             run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
         "chat" => run_core_command_and_print(&mut core, &args).await,
+        "workspace" => run_core_command_and_print(&mut core, &args).await,
         "shell" => run_shell_command(&args[1..]).await,
         "tag" => run_core_command_and_print(&mut core, &args).await,
         "character" => run_core_command_and_print(&mut core, &args).await,
@@ -125,6 +126,7 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
             run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
         "chat" => run_core_command_and_print(&mut core, &args).await,
+        "workspace" => run_core_command_and_print(&mut core, &args).await,
         "shell" => {
             let mut shell_args = vec!["shell".to_string()];
             shell_args.extend_from_slice(&args[1..]);
@@ -196,14 +198,14 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|link|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|link|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
 }
 
 fn print_cli_usage() {
-    println!("operit2 cli --link <session> <version|chat>");
+    println!("operit2 cli --link <session> <version|chat|workspace>");
     println!("operit2 cli version");
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history>");
     println!("operit2 cli host <show|capabilities|paths>");
@@ -249,10 +251,24 @@ fn print_cli_usage() {
     println!("operit2 cli chat set-group <chat-id> <group-name>");
     println!("operit2 cli chat shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat send [--chat <chat-id>] <message>");
+    println!(
+        "operit2 cli workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>"
+    );
+    println!("operit2 cli workspace default-path <chat-id>");
+    println!("operit2 cli workspace create-default <chat-id> [project-type]");
+    println!("operit2 cli workspace bind-default <chat-id> [project-type]");
+    println!("operit2 cli workspace bind <chat-id> <workspace> [workspace-env]");
+    println!("operit2 cli workspace unbind <chat-id>");
+    println!("operit2 cli workspace list");
+    println!("operit2 cli workspace chats <workspace>");
+    println!("operit2 cli workspace commands <chat-id>");
+    println!("operit2 cli workspace commands-path <workspace>");
+    println!("operit2 cli workspace run <chat-id> <command-id>");
+    println!("operit2 cli workspace run-path <workspace> <command-id>");
 }
 
 fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
     println!("operit2 cli link run <session> <version|chat>");
 }
 
