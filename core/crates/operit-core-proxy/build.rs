@@ -673,8 +673,11 @@ fn serializable_struct_type(
             .iter()
             .filter(|field| matches!(field.vis, Visibility::Public(_)))
             .filter_map(|field| {
+                let field_name = field.ident.as_ref()?.to_string();
                 Some(SerializableField {
-                    name: field.ident.as_ref()?.to_string(),
+                    name: field_name.clone(),
+                    json_name: serde_rename(&field.attrs)
+                        .unwrap_or_else(|| field_name.trim_start_matches("r#").to_string()),
                     ty: normalize_type(&field.ty, resolver),
                 })
             })
@@ -712,6 +715,27 @@ fn derives_serde_pair(attrs: &[syn::Attribute]) -> bool {
         has_deserialize |= tokens.contains("Deserialize");
     }
     has_serialize && has_deserialize
+}
+
+fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let mut rename = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                let value = meta.value()?;
+                let literal: syn::LitStr = value.parse()?;
+                rename = Some(literal.value());
+            }
+            Ok(())
+        });
+        if rename.is_some() {
+            return rename;
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
@@ -753,6 +777,7 @@ enum SerializableTypeKind {
 #[derive(Clone, Debug)]
 struct SerializableField {
     name: String,
+    json_name: String,
     ty: String,
 }
 

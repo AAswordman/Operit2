@@ -494,9 +494,12 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
-        self.chatRuntimes
-            .get(&Self::chatKey(Some(chatId)))
-            .and_then(|runtime| runtime.responseStream.clone())
+        let key = Self::chatKey(Some(chatId.clone()));
+        let stream = self
+            .chatRuntimes
+            .get(&key)
+            .and_then(|runtime| runtime.responseStream.clone());
+        stream
     }
 
     #[allow(non_snake_case)]
@@ -710,8 +713,26 @@ impl MessageProcessingDelegate {
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
+        self.resetCurrentTurnToolInvocationCount(chatId.clone());
+        {
+            let runtime = self.runtimeFor(Some(chatId.clone()));
+            runtime.currentTurnOptions = request.turnOptions.clone();
+            runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
+            runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
+            runtime.firstResponseElapsed = None;
+            runtime.isLoading = true;
+            runtime.responseStream = None;
+        }
+        self.updateGlobalLoadingState();
+        self.setInputProcessingStateForChat(
+            chatId.clone(),
+            InputProcessingState::Processing {
+                message: "message_processing".to_string(),
+            },
+        );
+
         let finalMessageContent =
-            self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
+            match self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
                 messageText: originalMessageText.clone(),
                 proxySenderNameOverride: request.proxySenderNameOverride.clone(),
                 attachments: request.attachments.clone(),
@@ -721,7 +742,29 @@ impl MessageProcessingDelegate {
                 chatId: chatId.clone(),
                 roleCardId: request.roleCardId.clone(),
                 chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
-            })?;
+            }) {
+                Ok(content) => content,
+                Err(error) => {
+                    if let Some(runtime) = self
+                        .chatRuntimes
+                        .get_mut(&Self::chatKey(Some(chatId.clone())))
+                    {
+                        runtime.isLoading = false;
+                        runtime.responseStream = None;
+                        runtime.sendJob = None;
+                        runtime.streamCollectionJob = None;
+                        runtime.stateCollectionJob = None;
+                    }
+                    self.updateGlobalLoadingState();
+                    self.setInputProcessingStateForChat(
+                        chatId.clone(),
+                        InputProcessingState::Error {
+                            message: error.to_string(),
+                        },
+                    );
+                    return Err(error);
+                }
+            };
         let shouldAddUserMessageToChat = request.turnOptions.persistTurn
             && !request.suppressUserMessageInHistory
             && !(request.isAutoContinuation
@@ -779,24 +822,6 @@ impl MessageProcessingDelegate {
                 .addMessageToChat(userMessage.clone(), Some(chatId.clone()));
             userMessageAdded = true;
         }
-        self.resetCurrentTurnToolInvocationCount(chatId.clone());
-        {
-            let runtime = self.runtimeFor(Some(chatId.clone()));
-            runtime.currentTurnOptions = request.turnOptions.clone();
-            runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
-            runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
-            runtime.firstResponseElapsed = None;
-            runtime.isLoading = true;
-            runtime.responseStream = None;
-        }
-        self.setInputProcessingStateForChat(
-            chatId.clone(),
-            InputProcessingState::Processing {
-                message: "message_processing".to_string(),
-            },
-        );
-        self.updateGlobalLoadingState();
-
         request
             .enhancedAiService
             .setInputProcessingState(InputProcessingState::Processing {
@@ -1127,9 +1152,12 @@ impl MessageProcessingDelegate {
                 isGroupOrchestrationTurn: false,
                 groupParticipantNamesText: None,
                 proxySenderNameOverride: None,
-                suppressUserMessageInHistory: false,
+                suppressUserMessageInHistory: true,
                 isAutoContinuation: false,
-                turnOptions: ChatTurnOptions::default(),
+                turnOptions: ChatTurnOptions {
+                    persistTurn: false,
+                    ..ChatTurnOptions::default()
+                },
             })
             .await?;
         Ok(ChatMessage {

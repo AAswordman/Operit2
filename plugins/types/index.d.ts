@@ -8,21 +8,6 @@
 // Import types that will be used in global declarations
 import { ToolReturnType, NativeInterface as CoreNativeInterface } from './core';
 import {
-    JavaBridgeApi as JavaBridgeApiType,
-    JavaBridgeClass as JavaBridgeClassType,
-    JavaBridgeInstance as JavaBridgeInstanceType,
-    JavaBridgeHandle as JavaBridgeHandleType,
-    JavaBridgePackage as JavaBridgePackageType,
-    JavaBridgeJsInterfaceMarker as JavaBridgeJsInterfaceMarkerType,
-    JavaBridgeJsInterfaceImpl as JavaBridgeJsInterfaceImplType,
-    JavaBridgeJsMethod as JavaBridgeJsMethodType,
-    JavaBridgeInterfaceRef as JavaBridgeInterfaceRefType,
-    JavaBridgeCallbackResult as JavaBridgeCallbackResultType,
-    JavaBridgeExternalCodeLoadOptions as JavaBridgeExternalCodeLoadOptionsType,
-    JavaBridgeLoadedCodePath as JavaBridgeLoadedCodePathType
-} from './java-bridge';
-import {
-    CalculationResultData as _CalculationResultData,
     SleepResultData as _SleepResultData,
     SystemSettingData as _SystemSettingData,
     SystemSettingResult as _SystemSettingResult,
@@ -80,7 +65,10 @@ import {
 import { Intent as AndroidIntent, IntentFlag as AndroidIntentFlag, IntentAction as AndroidIntentAction, IntentCategory as AndroidIntentCategory } from './android';
 import { UINode as UINodeClass, UI as UINamespace } from './ui';
 import { Android as AndroidClass } from './android';
-import type { MaterialIconsRegistry as MaterialIconsRegistryType } from './material-icons';
+import type {
+    MaterialIconName as MaterialIconNameType,
+    MaterialIconsRegistry as MaterialIconsRegistryType
+} from './material-icons';
 import {
     ComposeDslContext as ComposeDslContextType,
     ComposeDslScreen as ComposeDslScreenType,
@@ -88,6 +76,17 @@ import {
     ComposeCanvasCommand as ComposeCanvasCommandType
 } from './compose-dsl';
 import { ToolPkg as ToolPkgType } from './toolpkg';
+import {
+    OkHttp as OkHttpValue,
+    OkHttpClientBuilder as OkHttpClientBuilderClass,
+    OkHttpClient as OkHttpClientClass,
+    RequestBuilder as RequestBuilderClass,
+    OkHttpConfig as OkHttpConfigType,
+    HttpRequest as OkHttpRequestType,
+    HttpStreamEvent as OkHttpStreamEventType,
+    OkHttpExecuteOptions as OkHttpExecuteOptionsType,
+    OkHttpResponse as OkHttpResponseType
+} from './okhttp';
 
 // Export core interfaces and functions
 export * from './core';
@@ -97,9 +96,9 @@ export * from './results';
 
 // Export tool type definitions
 export * from './tool-types';
-export * from './java-bridge';
 export * from './toolpkg';
 export * from './material-icons';
+export * from './okhttp';
 
 // Export compose-dsl definitions for toolpkg runtime modules
 export * from './compose-dsl';
@@ -110,9 +109,6 @@ import { Net as NetType } from './network';
 import { System as SystemType } from './system';
 import { SoftwareSettings as SoftwareSettingsType } from './software_settings';
 import { UI as UIType } from './ui';
-import { FFmpeg as FFmpegType } from './ffmpeg';
-import { Tasker as TaskerType } from './tasker';
-import { Workflow as WorkflowType } from './workflow';
 import { Chat as ChatType } from './chat';
 import { Memory as MemoryType } from './memory';
 
@@ -120,16 +116,12 @@ export { Net } from './network';
 export { System } from './system';
 export { SoftwareSettings } from './software_settings';
 export { UI, UINode } from './ui';
-export { FFmpegVideoCodec, FFmpegAudioCodec, FFmpegResolution, FFmpegBitrate } from './ffmpeg';
-export { Tasker } from './tasker';
-export { Workflow } from './workflow';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
 export { Memory } from './memory';
 
 // Export Android utilities
 export {
-    AdbExecutor,
     IntentFlag,
     IntentAction,
     IntentCategory,
@@ -152,6 +144,10 @@ declare global {
     const UINode: typeof UINodeClass;
     const Android: typeof AndroidClass;
     const Icons: MaterialIconsRegistryType;
+    const OkHttp: typeof OkHttpValue;
+    const OkHttpClientBuilder: typeof OkHttpClientBuilderClass;
+    const OkHttpClient: typeof OkHttpClientClass;
+    const RequestBuilder: typeof RequestBuilderClass;
 
     // Make classes available as types too
     type UINode = UINodeClass;
@@ -162,21 +158,13 @@ declare global {
     type ComposeDslScreen = ComposeDslScreenType;
     type ComposeNode = ComposeNodeType;
     type ComposeCanvasCommand = ComposeCanvasCommandType;
-    type JavaBridgeApi = JavaBridgeApiType;
-    type JavaBridgeClass = JavaBridgeClassType;
-    type JavaBridgeInstance = JavaBridgeInstanceType;
-    type JavaBridgeHandle = JavaBridgeHandleType;
-    type JavaBridgePackage = JavaBridgePackageType;
-    type JavaBridgeJsInterfaceMarker = JavaBridgeJsInterfaceMarkerType;
-    type JavaBridgeJsInterfaceImpl = JavaBridgeJsInterfaceImplType;
-    type JavaBridgeJsMethod = JavaBridgeJsMethodType;
-    type JavaBridgeInterfaceRef = JavaBridgeInterfaceRefType;
-    type JavaBridgeCallbackResult = JavaBridgeCallbackResultType;
-    type JavaBridgeExternalCodeLoadOptions = JavaBridgeExternalCodeLoadOptionsType;
-    type JavaBridgeLoadedCodePath = JavaBridgeLoadedCodePathType;
+    type OkHttpConfig = OkHttpConfigType;
+    type HttpRequest = OkHttpRequestType;
+    type HttpStreamEvent = OkHttpStreamEventType;
+    type OkHttpExecuteOptions = OkHttpExecuteOptionsType;
+    type OkHttpResponse = OkHttpResponseType;
 
     // Make result types available globally
-    type CalculationResultData = _CalculationResultData;
     type SleepResultData = _SleepResultData;
     type SystemSettingData = _SystemSettingData;
     type SystemSettingResult = _SystemSettingResult;
@@ -230,10 +218,6 @@ declare global {
     type FunctionModelBindingResultData = _FunctionModelBindingResultData;
     type ModelConfigConnectionTestItemResultData = _ModelConfigConnectionTestItemResultData;
     type ModelConfigConnectionTestResultData = _ModelConfigConnectionTestResultData;
-
-    export import Tasker = TaskerType;
-
-    export import Workflow = WorkflowType;
 
     export import ToolPkg = ToolPkgType;
 
@@ -311,20 +295,12 @@ declare global {
         System: typeof SystemType;
         SoftwareSettings: typeof SoftwareSettingsType;
         UI: typeof UIType;
-        FFmpeg: typeof FFmpegType;
-        Tasker: TaskerType.Runtime;
-        Workflow: WorkflowType.Runtime;
         Chat: typeof ChatType;
         Memory: typeof MemoryType;
-        calc: (expression: string) => Promise<CalculationResultData>;
     };
 
     // CommonJS exports
     const exports: Record<string, any>;
-
-    // Java/Kotlin bridge (Rhino-like)
-    const Java: JavaBridgeApiType;
-    const Kotlin: JavaBridgeApiType;
 
     // NativeInterface
     const NativeInterface: typeof CoreNativeInterface;

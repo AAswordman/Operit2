@@ -13,8 +13,9 @@ import {
     BluetoothScanResultData, BluetoothSessionData, BluetoothTransferData, BluetoothReadData,
     BluetoothBleServicesData, BluetoothBleNotificationData,
     UIPageResultData, UIActionResultData, CombinedOperationResultData, AutomationExecutionResultData,
-    CalculationResultData, FFmpegResultData, ADBResultData, IntentResultData, TerminalCommandResultData, HiddenTerminalCommandResultData, TerminalSessionScreenResultData, MusicPlaybackResultData,
-    FilePartContentData, FileApplyResultData, WorkflowListResultData, WorkflowResultData, WorkflowDetailResultData,
+    IntentResultData, TerminalCommandResultData, HiddenTerminalCommandResultData,
+    TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData, MusicPlaybackResultData,
+    FilePartContentData, FileApplyResultData,
     ChatServiceStartResultData, ChatCreationResultData, ChatListResultData, ChatFindResultData, AgentStatusResultData,
     ChatSwitchResultData, ChatTitleUpdateResultData, ChatDeleteResultData, MessageSendResultData, MemoryQueryResultData, MemoryLinkResultData, MemoryLinkQueryResultData, GrepResultData,
     ChatMessagesResultData, CharacterCardListResultData,
@@ -121,7 +122,6 @@ export interface ToolResultMap {
     'read_environment_variable': EnvironmentVariableReadResultData;
     'write_environment_variable': EnvironmentVariableWriteResultData;
     'execute_cli_command': unknown;
-    'trigger_tasker_event': string;
 
     // UI operations
     'get_page_info': UIPageResultData;
@@ -133,29 +133,21 @@ export interface ToolResultMap {
     'combined_operation': CombinedOperationResultData;
     'run_ui_subagent': AutomationExecutionResultData;
 
-    // Calculator operations
-    'calculate': CalculationResultData;
-
     // Package operations
     'use_package': string;
     'query_memory': MemoryQueryResultData;
-
-    // FFmpeg operations
-    'ffmpeg_execute': FFmpegResultData;
-    'ffmpeg_info': FFmpegResultData;
-    'ffmpeg_convert': FFmpegResultData;
-
-    // ADB operations
-    'execute_shell': ADBResultData;
 
     // Intent operations
     'execute_intent': IntentResultData;
     'send_broadcast': IntentResultData;
 
     // Terminal operations
-    'execute_terminal': TerminalCommandResultData;
+    'execute_in_terminal_session': TerminalCommandResultData;
     'execute_in_terminal_session_streaming': TerminalCommandResultData;
     'execute_hidden_terminal_command': HiddenTerminalCommandResultData;
+    'create_terminal_session': TerminalSessionCreationResultData;
+    'close_terminal_session': TerminalSessionCloseResultData;
+    'input_in_terminal_session': StringResultData;
     'get_terminal_session_screen': TerminalSessionScreenResultData;
 
     // Music playback operations
@@ -167,17 +159,9 @@ export interface ToolResultMap {
     'music_set_volume': MusicPlaybackResultData;
     'music_status': MusicPlaybackResultData;
 
-    // Workflow operations
-    'get_all_workflows': WorkflowListResultData;
-    'create_workflow': WorkflowDetailResultData;
-    'get_workflow': WorkflowDetailResultData;
-    'update_workflow': WorkflowDetailResultData;
-    'patch_workflow': WorkflowDetailResultData;
-    'delete_workflow': StringResultData;
-    'trigger_workflow': StringResultData;
-
     // Chat Manager operations
     'start_chat_service': ChatServiceStartResultData;
+    'stop_chat_service': ChatServiceStartResultData;
     'create_new_chat': ChatCreationResultData;
     'list_chats': ChatListResultData;
     'find_chat': ChatFindResultData;
@@ -194,4 +178,5 @@ export interface ToolResultMap {
     // Memory operations
     'link_memories': MemoryLinkResultData;
     'query_memory_links': MemoryLinkQueryResultData;
+    'update_user_preferences': StringResultData;
 } 

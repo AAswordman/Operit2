@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 
 use serde_json::Value;
 
@@ -92,30 +94,38 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                     Value::String(executionId.clone()),
                 );
             }
-            let mut stream = MutableSharedStreamImpl::new(usize::MAX);
+            let stream = MutableSharedStreamImpl::new(usize::MAX);
             let stream_for_intermediate = stream.clone();
-            let decoded = runMessageProcessingHook(
-                &hook,
-                eventPayload,
-                Some(Arc::new(move |raw| {
-                    let decoded = decodeToolPkgHookResult(Some(raw));
-                    for chunk in extractMessageChunks(decoded.as_ref()) {
-                        if !chunk.is_empty() {
-                            stream_for_intermediate.emit(chunk);
+            let stream_for_final = stream.clone();
+            let hook_for_worker = hook.clone();
+            thread::spawn(move || {
+                let emittedAny = Arc::new(AtomicBool::new(false));
+                let emittedAnyForIntermediate = emittedAny.clone();
+                let decoded = runMessageProcessingHook(
+                    &hook_for_worker,
+                    eventPayload,
+                    Some(Arc::new(move |raw| {
+                        let decoded = decodeToolPkgHookResult(Some(raw));
+                        for chunk in extractMessageChunks(decoded.as_ref()) {
+                            if !chunk.is_empty() {
+                                emittedAnyForIntermediate.store(true, Ordering::Relaxed);
+                                stream_for_intermediate.emit(chunk);
+                            }
                         }
-                    }
-                })),
-            );
-            let parsed = parseMessageProcessingResult(decoded.as_ref());
-            if let Some(parsed) = parsed {
-                if parsed.matched {
-                    for chunk in parsed.chunks {
-                        if !chunk.is_empty() {
-                            stream.emit(chunk);
+                    })),
+                );
+                let parsed = parseMessageProcessingResult(decoded.as_ref());
+                if let Some(parsed) = parsed {
+                    if parsed.matched && !emittedAny.load(Ordering::Relaxed) {
+                        for chunk in parsed.chunks {
+                            if !chunk.is_empty() {
+                                stream_for_final.emit(chunk);
+                            }
                         }
                     }
                 }
-            }
+                stream_for_final.close();
+            });
             return Some(MessageProcessingExecution {
                 controller: Box::new(RegisteredMessageProcessingController { executionId, hook }),
                 stream,

@@ -3,10 +3,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 
-class AiMessageComposable extends StatelessWidget {
+class AiMessageComposable extends StatefulWidget {
   const AiMessageComposable({
     super.key,
     required this.message,
@@ -17,10 +18,34 @@ class AiMessageComposable extends StatelessWidget {
   final bool isStreaming;
 
   @override
+  State<AiMessageComposable> createState() => _AiMessageComposableState();
+}
+
+class _AiMessageComposableState extends State<AiMessageComposable> {
+  late StreamMarkdownRendererState _rendererState;
+  late String _messageKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _messageKey = widget.message.stableKey;
+    _rendererState = StreamMarkdownRendererState();
+  }
+
+  @override
+  void didUpdateWidget(covariant AiMessageComposable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.message.stableKey != _messageKey) {
+      _messageKey = widget.message.stableKey;
+      _rendererState = StreamMarkdownRendererState();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final detailText = _detailText(message);
+    final detailText = _detailText(widget.message);
     const nodeGrouper = ThinkToolsXmlNodeGrouper(showThinkingProcess: true);
 
     return Padding(
@@ -53,13 +78,14 @@ class AiMessageComposable extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: StreamMarkdownRenderer(
-              content: message.content,
-              contentStream: message.contentStream,
-              isStreaming: isStreaming,
+              content: widget.message.content,
+              contentStream: widget.message.contentStream,
+              isStreaming: widget.isStreaming,
               textColor: colorScheme.onSurface,
               backgroundColor: colorScheme.surface,
               nodeGrouper: nodeGrouper,
-              rendererId: 'ai-message-${message.stableKey}',
+              rendererId: 'ai-message-${widget.message.stableKey}',
+              state: _rendererState,
             ),
           ),
         ],

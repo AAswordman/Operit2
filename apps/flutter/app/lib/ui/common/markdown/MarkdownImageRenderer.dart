@@ -5,6 +5,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'MarkdownAudioRenderer.dart';
+import 'MarkdownVideoRenderer.dart';
+
 class MarkdownImageRenderer extends StatelessWidget {
   const MarkdownImageRenderer({
     super.key,
@@ -29,6 +32,19 @@ class MarkdownImageRenderer extends StatelessWidget {
     }
     final imageAlt = extractMarkdownImageAlt(imageMarkdown);
     final imageUrl = extractMarkdownImageUrl(imageMarkdown);
+    if (isLikelyVideoUrl(imageUrl)) {
+      return MarkdownVideoRenderer(
+        videoMarkdown: imageMarkdown,
+        textColor: textColor,
+        maxVideoHeight: maxImageHeight,
+      );
+    }
+    if (isLikelyAudioUrl(imageUrl)) {
+      return MarkdownAudioRenderer(
+        audioMarkdown: imageMarkdown,
+        textColor: textColor,
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
       child: ClipRRect(

@@ -200,7 +200,11 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
             builder: (context, snapshot) {
               final data = snapshot.data;
               if (data == null) {
-                return const SizedBox(width: 300, height: 72);
+                return const SizedBox(
+                  width: 300,
+                  height: 96,
+                  child: Center(child: CircularProgressIndicator()),
+                );
               }
               return SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(vertical: 4),

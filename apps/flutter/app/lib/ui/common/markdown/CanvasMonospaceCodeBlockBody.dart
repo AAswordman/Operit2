@@ -9,10 +9,12 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
     super.key,
     required this.lines,
     required this.autoWrapEnabled,
+    this.highlightedLines,
   });
 
   final List<String> lines;
   final bool autoWrapEnabled;
+  final List<InlineSpan>? highlightedLines;
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +26,9 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
             _CodeLine(
               lineNumber: index + 1,
               text: lines[index],
+              span: highlightedLines == null || index >= highlightedLines!.length
+                  ? null
+                  : highlightedLines![index],
               autoWrapEnabled: autoWrapEnabled,
             ),
         ],
@@ -36,11 +41,13 @@ class _CodeLine extends StatelessWidget {
   const _CodeLine({
     required this.lineNumber,
     required this.text,
+    required this.span,
     required this.autoWrapEnabled,
   });
 
   final int lineNumber;
   final String text;
+  final InlineSpan? span;
   final bool autoWrapEnabled;
 
   @override
@@ -69,13 +76,21 @@ class _CodeLine extends StatelessWidget {
           constraints: autoWrapEnabled
               ? const BoxConstraints(maxWidth: 680)
               : const BoxConstraints(),
-          child: Text(
-            text,
-            style: markdownCodeTextStyle(
-              context,
-              color: const Color(0xFFD4D4D4),
-            ),
-          ),
+          child: span == null
+              ? Text(
+                  text,
+                  style: markdownCodeTextStyle(
+                    context,
+                    color: const Color(0xFFD4D4D4),
+                  ),
+                )
+              : Text.rich(
+                  span!,
+                  style: markdownCodeTextStyle(
+                    context,
+                    color: const Color(0xFFD4D4D4),
+                  ),
+                ),
         ),
       ],
     );

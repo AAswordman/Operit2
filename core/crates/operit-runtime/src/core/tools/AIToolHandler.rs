@@ -565,8 +565,8 @@ impl Default for AIToolHandler {
 
 pub struct FnToolExecutor {
     pub name: String,
-    pub invoke: fn(&AITool) -> ToolResult,
-    pub validate: fn(&AITool) -> ToolValidationResult,
+    pub invoke: Arc<dyn Fn(&AITool) -> ToolResult + Send + Sync>,
+    pub validate: Arc<dyn Fn(&AITool) -> ToolValidationResult + Send + Sync>,
 }
 
 impl ToolExecutor for FnToolExecutor {

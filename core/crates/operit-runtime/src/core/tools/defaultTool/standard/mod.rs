@@ -4,6 +4,9 @@ pub mod StandardFileSystemTools;
 #[path = "StandardHttpTools.rs"]
 pub mod StandardHttpTools;
 
+#[path = "StandardChatManagerTool.rs"]
+pub mod StandardChatManagerTool;
+
 #[path = "StandardMemoryTools.rs"]
 pub mod StandardMemoryTools;
 

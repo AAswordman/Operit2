@@ -1,9 +1,11 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 
 import 'MarkdownCodeTypeface.dart';
 import 'MarkdownLatexBlock.dart';
+import 'MarkdownNodeGrouper.dart';
 
 class MarkdownInlineSegment {
   const MarkdownInlineSegment({
@@ -24,6 +26,7 @@ TextSpan buildMarkdownInlineSpannableFromChildren({
   required List<MarkdownInlineSegment> children,
   required Color textColor,
   TextStyle? baseStyle,
+  void Function(String url)? onLinkClick,
 }) {
   return TextSpan(
     children: <InlineSpan>[
@@ -33,6 +36,7 @@ TextSpan buildMarkdownInlineSpannableFromChildren({
           segment: child,
           textColor: textColor,
           baseStyle: baseStyle,
+          onLinkClick: onLinkClick,
         ),
     ],
   );
@@ -43,12 +47,14 @@ InlineSpan markdownInlineSpan({
   required MarkdownInlineSegment segment,
   required Color textColor,
   TextStyle? baseStyle,
+  void Function(String url)? onLinkClick,
 }) {
   return appendInlineNode(
     context: context,
     segment: segment,
     textColor: textColor,
     baseStyle: baseStyle,
+    onLinkClick: onLinkClick,
   );
 }
 
@@ -58,6 +64,7 @@ InlineSpan appendInlineNode({
   required Color textColor,
   TextStyle? baseStyle,
   int depth = 0,
+  void Function(String url)? onLinkClick,
 }) {
   if (segment.nodeType == 'InlineLatex') {
     return WidgetSpan(
@@ -75,6 +82,10 @@ InlineSpan appendInlineNode({
         textColor,
         baseStyle,
       ),
+      recognizer: onLinkClick == null
+          ? null
+          : (TapGestureRecognizer()
+            ..onTap = () => onLinkClick(extractLinkUrl(segment.text))),
       text: nestedChildren.isEmpty ? extractLinkText(segment.text) : null,
       children: nestedChildren.isEmpty || depth >= maxInlineRenderDepth
           ? null
@@ -86,6 +97,7 @@ InlineSpan appendInlineNode({
                   textColor: textColor,
                   baseStyle: baseStyle,
                   depth: depth + 1,
+                  onLinkClick: onLinkClick,
                 ),
             ],
     );
@@ -109,6 +121,7 @@ InlineSpan appendInlineNode({
             textColor: textColor,
             baseStyle: baseStyle,
             depth: depth + 1,
+            onLinkClick: onLinkClick,
           ),
       ],
     );
@@ -124,13 +137,57 @@ TextSpan buildMarkdownInlineSpannableFromText({
   required String text,
   required Color textColor,
   TextStyle? baseStyle,
+  void Function(String url)? onLinkClick,
 }) {
   return buildMarkdownInlineSpannableFromChildren(
     context: context,
     children: parseInlineSegments(text),
     textColor: textColor,
     baseStyle: baseStyle,
+    onLinkClick: onLinkClick,
   );
+}
+
+TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
+  required BuildContext context,
+  required List<MarkdownNodeStable> children,
+  required Color textColor,
+  TextStyle? baseStyle,
+  void Function(String url)? onLinkClick,
+}) {
+  return buildMarkdownInlineSpannableFromChildren(
+    context: context,
+    children: <MarkdownInlineSegment>[
+      for (final child in children) _segmentFromMarkdownNode(child),
+    ],
+    textColor: textColor,
+    baseStyle: baseStyle,
+    onLinkClick: onLinkClick,
+  );
+}
+
+MarkdownInlineSegment _segmentFromMarkdownNode(MarkdownNodeStable node) {
+  return MarkdownInlineSegment(
+    text: node.content,
+    nodeType: _inlineTypeName(node.type),
+    children: <MarkdownInlineSegment>[
+      for (final child in node.children) _segmentFromMarkdownNode(child),
+    ],
+  );
+}
+
+String? _inlineTypeName(MarkdownNodeType type) {
+  return switch (type) {
+    MarkdownNodeType.bold => 'Bold',
+    MarkdownNodeType.italic => 'Italic',
+    MarkdownNodeType.inlineCode => 'InlineCode',
+    MarkdownNodeType.link => 'Link',
+    MarkdownNodeType.strikethrough => 'Strikethrough',
+    MarkdownNodeType.underline => 'Underline',
+    MarkdownNodeType.inlineLatex => 'InlineLatex',
+    MarkdownNodeType.htmlBreak => 'HtmlBreak',
+    _ => null,
+  };
 }
 
 String resolveNestedInlineText(MarkdownInlineSegment segment) {

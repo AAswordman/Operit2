@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
+
 class WorkspaceHomeContent extends StatelessWidget {
   const WorkspaceHomeContent({
     super.key,
@@ -19,6 +21,7 @@ class WorkspaceHomeContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return ColoredBox(
       color: theme.colorScheme.surface,
       child: ListView(
@@ -26,8 +29,8 @@ class WorkspaceHomeContent extends StatelessWidget {
         children: <Widget>[
           _WorkspacePrimaryAction(
             icon: Icons.folder_open,
-            title: '选择文件',
-            subtitle: '从工作区里选择要查看、编辑或交给 AI 的文件',
+            title: l10n.selectFile,
+            subtitle: l10n.selectFileDescription,
             onTap: workspacePath?.trim().isNotEmpty == true
                 ? onOpenFiles
                 : () {},
@@ -35,15 +38,15 @@ class WorkspaceHomeContent extends StatelessWidget {
           const SizedBox(height: 10),
           _WorkspacePrimaryAction(
             icon: Icons.play_arrow,
-            title: '打开终端',
-            subtitle: '进入当前工作区的命令行',
+            title: l10n.openTerminal,
+            subtitle: l10n.openTerminalDescription,
             onTap: onOpenTerminal,
           ),
           const SizedBox(height: 10),
           _WorkspacePrimaryAction(
             icon: Icons.public,
-            title: '打开浏览器',
-            subtitle: '查看项目预览或自动化浏览网页',
+            title: l10n.openBrowser,
+            subtitle: l10n.openBrowserDescription,
             onTap: onOpenBrowser,
           ),
         ],

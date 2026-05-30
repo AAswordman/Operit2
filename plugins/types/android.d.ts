@@ -3,42 +3,6 @@
  */
 
 /**
- * Base class for ADB command execution
- */
-export class AdbExecutor {
-    /**
-     * Execute a raw ADB command
-     * @param {string} command - ADB command to execute
-     * @param {number} timeout - Optional timeout in milliseconds (default: 15000)
-     * @returns {Promise<string>} - Command output
-     */
-    executeAdb(command: string, timeout?: number): Promise<string>;
-
-    /**
-     * Execute an ADB shell command
-     * @param {string} command - Shell command to execute
-     * @param {number} timeout - Optional timeout in milliseconds
-     * @returns {Promise<string>} - Command output
-     */
-    executeShell(command: string, timeout?: number): Promise<string>;
-
-    /**
-     * Parse key-value output (usually from getprop, settings, etc.)
-     * @param {string} output - Command output to parse
-     * @param {string} separator - Separator between key and value (default: ': ')
-     * @returns {Object} - Key-value object
-     */
-    parseKeyValueOutput(output: string, separator?: string): Record<string, string>;
-
-    /**
-     * Escape a string for shell command usage
-     * @param {string} str - String to escape
-     * @returns {string} - Escaped string
-     */
-    escapeShellArg(str: string | number | boolean): string;
-}
-
-/**
  * Intent flags enum for Android intents
  */
 export const enum IntentFlag {
@@ -222,11 +186,6 @@ export class Intent {
     categories: string[];
 
     /**
-     * The ADB executor for this intent
-     */
-    executor: AdbExecutor;
-
-    /**
      * The data URI for this intent
      */
     uri: string | undefined;
@@ -342,7 +301,7 @@ export class Intent {
 /**
  * Class for package management operations
  */
-export class PackageManager extends AdbExecutor {
+export class PackageManager {
     /**
      * Create a new PackageManager
      */
@@ -405,7 +364,7 @@ export class PackageManager extends AdbExecutor {
 /**
  * Class for content provider operations
  */
-export class ContentProvider extends AdbExecutor {
+export class ContentProvider {
     /**
      * Create a new ContentProvider
      * @param {string} uri - Content URI
@@ -462,7 +421,7 @@ export class ContentProvider extends AdbExecutor {
 /**
  * Class for system properties and settings
  */
-export class SystemManager extends AdbExecutor {
+export class SystemManager {
     /**
      * Create a new SystemManager
      */
@@ -528,7 +487,7 @@ export class SystemManager extends AdbExecutor {
 /**
  * Class for device control operations
  */
-export class DeviceController extends AdbExecutor {
+export class DeviceController {
     /**
      * Create a new DeviceController
      */

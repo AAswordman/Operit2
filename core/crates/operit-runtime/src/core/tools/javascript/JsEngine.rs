@@ -611,6 +611,37 @@ impl JsEngineState {
                 globals
                     .set("__operitNativeLogJsExecutionTrace", logJsExecutionTrace)
                     .map_err(|error| error.to_string())?;
+
+                let decompress =
+                    QuickJsFunction::new(ctx.clone(), |data: String, algorithm: String| {
+                        nativeDecompressStrings(data, algorithm)
+                    })
+                    .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeDecompress", decompress)
+                    .map_err(|error| error.to_string())?;
+
+                let crypto = QuickJsFunction::new(
+                    ctx.clone(),
+                    |algorithm: String, operation: String, argsJson: String| {
+                        nativeCryptoStrings(algorithm, operation, argsJson)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeCrypto", crypto)
+                    .map_err(|error| error.to_string())?;
+
+                let imageProcessing = QuickJsFunction::new(
+                    ctx.clone(),
+                    |callbackId: String, operation: String, argsJson: String| {
+                        nativeImageProcessingStrings(callbackId, operation, argsJson)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeImageProcessing", imageProcessing)
+                    .map_err(|error| error.to_string())?;
                 Ok(())
             })
         }
@@ -731,6 +762,47 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
             globals
                 .set_property("__operitNativeLogJsExecutionTrace", logJsExecutionTrace)
+                .map_err(|error| error.to_string())?;
+
+            let decompress = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeDecompressStrings(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeDecompress", decompress)
+                .map_err(|error| error.to_string())?;
+
+            let crypto = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeCryptoStrings(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                        wasmQuickJsArgString(args, 2),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeCrypto", crypto)
+                .map_err(|error| error.to_string())?;
+
+            let imageProcessing = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeImageProcessingStrings(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                        wasmQuickJsArgString(args, 2),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeImageProcessing", imageProcessing)
                 .map_err(|error| error.to_string())?;
             Ok(())
         }
@@ -1033,6 +1105,42 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_exposes_ui_android_okhttp_api() {
+        let mut state = JsEngineState::new(None);
+        let script = r#"
+            exports.inspect_bootstrap_api = function(_params) {
+                return [
+                    typeof UINode,
+                    typeof Android,
+                    typeof Intent,
+                    typeof PackageManager,
+                    typeof ContentProvider,
+                    typeof SystemManager,
+                    typeof DeviceController,
+                    typeof OkHttp,
+                    typeof OkHttp.newClient,
+                    typeof OkHttpClientBuilder,
+                    typeof OkHttpClient,
+                    typeof RequestBuilder
+                ].join(":");
+            };
+        "#;
+        let params = BTreeMap::new();
+
+        let output = state.executeScriptFunctionOnCurrentThread(
+            script,
+            "inspect_bootstrap_api",
+            &params,
+            None,
+        );
+
+        assert_eq!(
+            output.as_deref(),
+            Some("\"function:function:function:function:function:function:function:object:function:function:function:function\"")
+        );
+    }
+
+    #[test]
     fn execute_inline_hook_function_source() {
         let mut state = JsEngineState::new(None);
         let script = r#"
@@ -1315,6 +1423,36 @@ fn nativeLogJsExecutionTraceStrings(callId: String, message: String) {
     let _ = message;
 }
 
+#[allow(non_snake_case)]
+fn nativeDecompressStrings(data: String, algorithm: String) -> String {
+    JsNativeInterfaceDelegates::decompress(&data, &algorithm)
+}
+
+#[allow(non_snake_case)]
+fn nativeCryptoStrings(algorithm: String, operation: String, argsJson: String) -> String {
+    JsNativeInterfaceDelegates::crypto(&algorithm, &operation, &argsJson)
+}
+
+#[allow(non_snake_case)]
+fn nativeImageProcessingStrings(
+    _callbackId: String,
+    operation: String,
+    argsJson: String,
+) -> String {
+    match JsNativeInterfaceDelegates::imageProcessing(&operation, &argsJson) {
+        Ok(result) => serde_json::json!({
+            "success": true,
+            "result": result
+        })
+        .to_string(),
+        Err(error) => serde_json::json!({
+            "success": false,
+            "error": error
+        })
+        .to_string(),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case)]
 fn wasmQuickJsArgString(args: &[WasmQuickJsValueRef], index: usize) -> String {
@@ -1532,6 +1670,34 @@ fn buildRuntimeBootstrapScript() -> String {
             }},
             logJsExecutionTrace: function(callId, message) {{
                 __operitNativeLogJsExecutionTrace(String(callId || ''), String(message || ''));
+            }},
+            decompress: function(data, algorithm) {{
+                return __operitNativeDecompress(String(data), String(algorithm));
+            }},
+            crypto: function(algorithm, operation, argsJson) {{
+                return __operitNativeCrypto(
+                    String(algorithm),
+                    String(operation),
+                    String(argsJson)
+                );
+            }},
+            image_processing: function(callbackId, operation, argsJson) {{
+                var raw = __operitNativeImageProcessing(
+                    String(callbackId),
+                    String(operation),
+                    String(argsJson)
+                );
+                var parsed = JSON.parse(raw);
+                var callback = window[String(callbackId)];
+                if (typeof callback === 'function') {{
+                    if (parsed.success) {{
+                        callback(parsed.result, false);
+                    }} else {{
+                        callback(parsed.error, true);
+                    }}
+                }} else {{
+                    console.error("Callback not found: " + String(callbackId));
+                }}
             }},
             setCallResult: function(callId, result) {{
                 __operitNativeSetCallResult(String(callId || ''), String(result == null ? '' : result));
@@ -2322,10 +2488,22 @@ fn buildRuntimeBootstrapScript() -> String {
 
         {}
         {}
+        {}
+        {}
+        {}
+        {}
+        {}
+        {}
         "#,
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
         executionPreludeJson,
         getJsToolsDefinition(),
+        include_str!("CryptoJS.script.js"),
+        include_str!("Jimp.script.js"),
+        include_str!("UINode.script.js"),
+        include_str!("AndroidUtils.script.js"),
+        include_str!("OkHttp3.script.js"),
+        include_str!("pako.script.js"),
         JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript()
     )
 }

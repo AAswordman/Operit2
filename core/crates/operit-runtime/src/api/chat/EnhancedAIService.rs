@@ -44,6 +44,7 @@ use crate::data::skill::SkillRepository::SkillRepository;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
 use crate::util::stream::Stream::{FnStream, Stream};
+use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
 
@@ -432,7 +433,6 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             description: skill.description,
         })
         .collect::<Vec<_>>();
-
         SystemPromptConfig::getSystemPromptWithCustomPrompts(SystemPromptWithCustomOptions {
             base: SystemPromptOptions {
                 chat_id: request.chat_id.clone(),
@@ -1072,6 +1072,9 @@ impl EnhancedAIService {
     ) -> Result<(), AiServiceError> {
         let message = options.message.clone();
         let chatId = options.chatId.clone();
+        let logChatId = chatId
+            .clone()
+            .unwrap_or_else(|| "__DEFAULT_CHAT__".to_string());
         let chatHistory = options.chatHistory.clone();
         let workspacePath = options.workspacePath.clone();
         let workspaceEnv = options.workspaceEnv.clone();
@@ -1119,7 +1122,6 @@ impl EnhancedAIService {
         };
         let mut execContext = MessageExecutionContext::new(executionId, chatHistory, eventChannel);
         self.registerExecutionContext(execContext.clone());
-
         lifecycle.push(SendMessageLifecycleStage::EnsureInitialized);
         self.ensureInitialized();
 
@@ -1155,7 +1157,6 @@ impl EnhancedAIService {
             preferenceProfileIdOverride.clone(),
             &runtime,
         );
-
         lifecycle.push(SendMessageLifecycleStage::SyncPreparedHistoryToExecutionContext);
         execContext.conversationHistory.clear();
         execContext
@@ -1176,7 +1177,6 @@ impl EnhancedAIService {
             chatModelIndexOverride,
             &runtime,
         );
-
         lifecycle.push(SendMessageLifecycleStage::ClearPerRequestTokenCounts);
         {
             let mut shared = self.shared_state();
@@ -1185,7 +1185,6 @@ impl EnhancedAIService {
             shared.current_request_output_token_count = 0;
             shared.current_request_cached_input_token_count = 0;
         }
-
         lifecycle.push(SendMessageLifecycleStage::GetAvailableToolsForFunction);
         let availableTools = self.getAvailableToolsForFunction(
             functionType.clone(),
@@ -1196,7 +1195,6 @@ impl EnhancedAIService {
             chatModelIndexOverride,
             &runtime,
         );
-
         lifecycle.push(SendMessageLifecycleStage::GetAIServiceForFunction);
         let serviceForFunction = self.getAIServiceForFunction(
             functionType.clone(),
@@ -1204,7 +1202,6 @@ impl EnhancedAIService {
             chatModelIndexOverride,
             &mut runtime,
         );
-
         let mut finalProcessedInput = message.clone();
         let mut finalPreparedHistory = preparedHistory;
         let beforeFinalizeContext = self.applyPromptFinalizeHooks(
@@ -1262,13 +1259,11 @@ impl EnhancedAIService {
             &message,
             &finalProcessedInput,
         );
-
         lifecycle.push(SendMessageLifecycleStage::SyncRequestHistoryToExecutionContext);
         execContext.conversationHistory.clear();
         execContext
             .conversationHistory
             .extend(requestHistory.clone());
-
         lifecycle.push(SendMessageLifecycleStage::EstimatePreparedRequestWindow);
         let requestWindowSize = self
             .estimatePreparedRequestWindow(
@@ -1278,12 +1273,20 @@ impl EnhancedAIService {
                 true,
             )
             .await?;
+        let _ = requestWindowSize;
 
         lifecycle.push(SendMessageLifecycleStage::SendMessageRequest);
         let providerModel = {
             let service = serviceForFunction.lock().await;
             service.provider_model()
         };
+        AppLogger::d(
+            TAG,
+            &format!(
+                "provider send_message begin chatId={} providerModel={}",
+                logChatId, providerModel
+            ),
+        );
         let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> = {
             let callbackFn = onNonFatalError;
             let callbacks = callbacks.clone();
@@ -1316,7 +1319,6 @@ impl EnhancedAIService {
                 })
                 .await?
         };
-
         lifecycle.push(SendMessageLifecycleStage::StartAssistantResponseRound);
         self.startAssistantResponseRound(&mut execContext);
 

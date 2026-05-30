@@ -3,6 +3,8 @@
 import 'package:flutter/widgets.dart';
 
 import '../../features/chat/screens/AIChatScreen.dart';
+import '../../features/packages/screens/PackageManagerScreen.dart';
+import '../../features/packages/screens/UnifiedMarketScreen.dart';
 
 abstract class OperitScreen {
   const OperitScreen({
@@ -39,5 +41,25 @@ class AiChatScreenRoute extends OperitScreen {
   @override
   Widget build(BuildContext context) {
     return AIChatScreen();
+  }
+}
+
+class PackageManagerScreenRoute extends OperitScreen {
+  const PackageManagerScreenRoute()
+    : super(routeTypeName: 'PackageManager', title: '包管理', keepAlive: true);
+
+  @override
+  Widget build(BuildContext context) {
+    return PackageManagerScreen();
+  }
+}
+
+class MarketScreenRoute extends OperitScreen {
+  const MarketScreenRoute()
+    : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
+
+  @override
+  Widget build(BuildContext context) {
+    return UnifiedMarketScreen();
   }
 }

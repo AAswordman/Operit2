@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
+
 class WorkspaceSetupContent extends StatefulWidget {
   const WorkspaceSetupContent({
     super.key,
@@ -33,6 +35,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     return ColoredBox(
       color: theme.colorScheme.surface,
@@ -47,7 +50,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                 Icon(Icons.widgets, size: 48, color: theme.colorScheme.primary),
                 const SizedBox(height: 16),
                 Text(
-                  '设置工作区',
+                  l10n.workspaceSetupTitle,
                   style: theme.textTheme.titleLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
                   ),
@@ -56,7 +59,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    '为您的AI项目提供一个专属的文件环境',
+                    l10n.workspaceSetupSubtitle,
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
@@ -71,14 +74,14 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                   children: <Widget>[
                     _WorkspaceOption(
                       icon: Icons.create_new_folder,
-                      title: '创建默认',
-                      description: '在应用内创建新工作区',
+                      title: l10n.workspaceCreateDefaultTitle,
+                      description: l10n.workspaceCreateDefaultDescription,
                       onTap: _showProjectTypeDialog,
                     ),
                     _WorkspaceOption(
                       icon: Icons.folder_open,
-                      title: '选择已有',
-                      description: '从设备选择文件夹',
+                      title: l10n.workspaceBindExistingTitle,
+                      description: l10n.workspaceBindExistingDescription,
                       onTap: _showBindWorkspaceDialog,
                     ),
                   ],
@@ -129,13 +132,14 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final l10n = AppLocalizations.of(context)!;
             void syncDialogState(VoidCallback action) {
               setDialogState(action);
               setState(() {});
             }
 
             return AlertDialog(
-              title: const Text('选择语言类型'),
+              title: Text(l10n.workspaceProjectTypeDialogTitle),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -144,7 +148,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        '请选择要创建的默认工作区类型',
+                        l10n.workspaceProjectTypeDialogDescription,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
@@ -164,8 +168,8 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                           padding: const EdgeInsets.only(bottom: 10),
                           child: _ProjectTypeCard(
                             icon: project.icon,
-                            title: project.title,
-                            description: project.description,
+                            title: project.title(l10n),
+                            description: project.description(l10n),
                             busy: _busy,
                             onTap: () {
                               syncDialogState(() {
@@ -190,7 +194,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                       : () {
                           Navigator.of(dialogContext).pop();
                         },
-                  child: const Text('取消'),
+                  child: Text(l10n.cancel),
                 ),
               ],
             );
@@ -209,13 +213,14 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final l10n = AppLocalizations.of(context)!;
             void syncDialogState(VoidCallback action) {
               setDialogState(action);
               setState(() {});
             }
 
             return AlertDialog(
-              title: const Text('选择已有工作区'),
+              title: Text(l10n.workspaceBindDialogTitle),
               content: SizedBox(
                 width: 420,
                 child: Column(
@@ -223,8 +228,8 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                   children: <Widget>[
                     TextField(
                       controller: _workspacePathController,
-                      decoration: const InputDecoration(
-                        labelText: '工作区路径',
+                      decoration: InputDecoration(
+                        labelText: l10n.workspacePathLabel,
                         hintText: r'D:\Code\project',
                       ),
                       enabled: !_busy,
@@ -232,9 +237,9 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                     const SizedBox(height: 10),
                     TextField(
                       controller: _workspaceEnvController,
-                      decoration: const InputDecoration(
-                        labelText: '工作区环境',
-                        hintText: '可留空',
+                      decoration: InputDecoration(
+                        labelText: l10n.workspaceEnvLabel,
+                        hintText: l10n.optionalHint,
                       ),
                       enabled: !_busy,
                     ),
@@ -260,7 +265,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                       : () {
                           Navigator.of(dialogContext).pop();
                         },
-                  child: const Text('取消'),
+                  child: Text(l10n.cancel),
                 ),
                 FilledButton(
                   onPressed: _busy
@@ -270,7 +275,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                               .trim();
                           if (workspace.isEmpty) {
                             syncDialogState(() {
-                              _errorMessage = '请输入工作区路径';
+                              _errorMessage = l10n.workspacePathRequired;
                             });
                             return;
                           }
@@ -286,7 +291,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                             );
                           });
                         },
-                  child: const Text('绑定'),
+                  child: Text(l10n.bind),
                 ),
               ],
             );
@@ -297,80 +302,112 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
   }
 }
 
+enum _WorkspaceProjectKind {
+  blank,
+  office,
+  web,
+  android,
+  flutter,
+  node,
+  typeScript,
+  python,
+  java,
+  go,
+}
+
 class _WorkspaceProjectType {
   const _WorkspaceProjectType({
     required this.icon,
-    required this.title,
-    required this.description,
+    required this.kind,
     required this.projectType,
   });
 
   final IconData icon;
-  final String title;
-  final String description;
+  final _WorkspaceProjectKind kind;
   final String? projectType;
+
+  String title(AppLocalizations l10n) {
+    return switch (kind) {
+      _WorkspaceProjectKind.blank => l10n.workspaceProjectBlankTitle,
+      _WorkspaceProjectKind.office => l10n.workspaceProjectOfficeTitle,
+      _WorkspaceProjectKind.web => l10n.workspaceProjectWebTitle,
+      _WorkspaceProjectKind.android => l10n.workspaceProjectAndroidTitle,
+      _WorkspaceProjectKind.flutter => l10n.workspaceProjectFlutterTitle,
+      _WorkspaceProjectKind.node => l10n.workspaceProjectNodeTitle,
+      _WorkspaceProjectKind.typeScript => l10n.workspaceProjectTypeScriptTitle,
+      _WorkspaceProjectKind.python => l10n.workspaceProjectPythonTitle,
+      _WorkspaceProjectKind.java => l10n.workspaceProjectJavaTitle,
+      _WorkspaceProjectKind.go => l10n.workspaceProjectGoTitle,
+    };
+  }
+
+  String description(AppLocalizations l10n) {
+    return switch (kind) {
+      _WorkspaceProjectKind.blank => l10n.workspaceProjectBlankDescription,
+      _WorkspaceProjectKind.office => l10n.workspaceProjectOfficeDescription,
+      _WorkspaceProjectKind.web => l10n.workspaceProjectWebDescription,
+      _WorkspaceProjectKind.android => l10n.workspaceProjectAndroidDescription,
+      _WorkspaceProjectKind.flutter => l10n.workspaceProjectFlutterDescription,
+      _WorkspaceProjectKind.node => l10n.workspaceProjectNodeDescription,
+      _WorkspaceProjectKind.typeScript =>
+        l10n.workspaceProjectTypeScriptDescription,
+      _WorkspaceProjectKind.python => l10n.workspaceProjectPythonDescription,
+      _WorkspaceProjectKind.java => l10n.workspaceProjectJavaDescription,
+      _WorkspaceProjectKind.go => l10n.workspaceProjectGoDescription,
+    };
+  }
 }
 
 const List<_WorkspaceProjectType> _workspaceProjectTypes =
     <_WorkspaceProjectType>[
       _WorkspaceProjectType(
         icon: Icons.create_new_folder,
-        title: '空白工作区',
-        description: '仅创建一个空的工作区目录，不包含任何模板文件',
+        kind: _WorkspaceProjectKind.blank,
         projectType: 'blank',
       ),
       _WorkspaceProjectType(
         icon: Icons.description,
-        title: '办公文档',
-        description: '用于文档编辑、文件处理和通用办公任务',
+        kind: _WorkspaceProjectKind.office,
         projectType: 'office',
       ),
       _WorkspaceProjectType(
         icon: Icons.language,
-        title: 'Web 项目',
-        description: '适用于网页开发，支持 HTML/CSS/JavaScript，自动启动本地服务器',
+        kind: _WorkspaceProjectKind.web,
         projectType: null,
       ),
       _WorkspaceProjectType(
         icon: Icons.phone_android,
-        title: 'Android 项目',
-        description: '适用于 Android 工程开发，包含 Gradle 常用任务快捷按钮',
+        kind: _WorkspaceProjectKind.android,
         projectType: 'android',
       ),
       _WorkspaceProjectType(
         icon: Icons.widgets,
-        title: 'Flutter 项目',
-        description: '适用于 Flutter 跨平台开发，内置当前稳定版应用模板和常用命令',
+        kind: _WorkspaceProjectKind.flutter,
         projectType: 'flutter',
       ),
       _WorkspaceProjectType(
         icon: Icons.terminal,
-        title: 'Node.js 项目',
-        description: '适用于 Node.js 后端开发，提供 npm 命令快捷按钮',
+        kind: _WorkspaceProjectKind.node,
         projectType: 'node',
       ),
       _WorkspaceProjectType(
         icon: Icons.code,
-        title: 'TypeScript 项目',
-        description: 'TypeScript + pnpm，支持类型安全开发和 tsc watch 实时编译',
+        kind: _WorkspaceProjectKind.typeScript,
         projectType: 'typescript',
       ),
       _WorkspaceProjectType(
         icon: Icons.code,
-        title: 'Python 项目',
-        description: '适用于 Python 开发，支持 pip 和 HTTP 服务器',
+        kind: _WorkspaceProjectKind.python,
         projectType: 'python',
       ),
       _WorkspaceProjectType(
         icon: Icons.settings,
-        title: 'Java 项目',
-        description: '适用于 Java 开发，支持 Gradle 和 Maven 构建',
+        kind: _WorkspaceProjectKind.java,
         projectType: 'java',
       ),
       _WorkspaceProjectType(
         icon: Icons.build,
-        title: 'Go 项目',
-        description: '适用于 Go 开发，提供 go mod 和 build 命令',
+        kind: _WorkspaceProjectKind.go,
         projectType: 'go',
       ),
     ];

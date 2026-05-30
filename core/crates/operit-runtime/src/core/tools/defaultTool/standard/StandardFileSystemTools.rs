@@ -8,7 +8,12 @@ use operit_host_api::{
 };
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::api::chat::enhance::FileBindingService::{
+    FileBindingService, StructuredEditAction, StructuredEditOperation,
+};
+use crate::api::chat::enhance::ToolExecutionManager::{
+    AITool, ToolExecutor, ToolParameter, ToolValidationResult,
+};
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
 
 use super::super::PathValidator::PathValidator;
@@ -525,6 +530,47 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
+    pub fn grepContext(&self, tool: &AITool) -> ToolResult {
+        let path = parameterValue(tool, "path");
+        let intent = parameterValue(tool, "intent");
+        if let Some(result) =
+            PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
+        {
+            return result;
+        }
+        if intent.trim().is_empty() {
+            return toolError(
+                tool,
+                String::new(),
+                "Intent parameter is required".to_string(),
+            );
+        }
+
+        let request = GrepCodeRequest {
+            path: path.clone(),
+            pattern: intent.clone(),
+            filePattern: match optionalParameterValue(tool, "file_pattern") {
+                Some(value) if !value.trim().is_empty() => value,
+                _ => "*".to_string(),
+            },
+            caseInsensitive: true,
+            contextLines: parameterValue(tool, "context_lines")
+                .parse::<usize>()
+                .unwrap_or(8),
+            maxResults: parameterValue(tool, "max_results")
+                .parse::<usize>()
+                .unwrap_or(10),
+        };
+        match self.host.grepCode(request) {
+            Ok(result) => success(
+                tool,
+                grepResultDataToString(self.envLabel(), &path, &intent, &result),
+            ),
+            Err(errorValue) => toolError(tool, String::new(), errorValue.message),
+        }
+    }
+
+    #[allow(non_snake_case)]
     pub fn downloadFile(&self, tool: &AITool) -> ToolResult {
         let urlParam = parameterValue(tool, "url");
         let visitKey = parameterValue(tool, "visit_key");
@@ -696,27 +742,25 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn createFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let content = parameterValue(tool, "new");
-        if let Some(result) =
-            PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
-        {
-            return result;
-        }
-
-        match self.host.writeFile(&path, &content, false) {
-            Ok(()) => success(
-                tool,
-                fileOperationDataToString(self.envLabel(), &format!("Content written to {path}")),
-            ),
-            Err(errorValue) => {
-                let message = format!("Error writing to file: {}", errorValue.message);
-                toolError(
-                    tool,
-                    fileOperationDataToString(self.envLabel(), &message),
-                    message,
-                )
-            }
-        }
+        let newContent = parameterValue(tool, "new");
+        let mut results = self.applyFile(&AITool {
+            name: "apply_file".to_string(),
+            parameters: vec![
+                ToolParameter {
+                    name: "path".to_string(),
+                    value: path,
+                },
+                ToolParameter {
+                    name: "type".to_string(),
+                    value: "create".to_string(),
+                },
+                ToolParameter {
+                    name: "new".to_string(),
+                    value: newContent,
+                },
+            ],
+        });
+        results.remove(results.len() - 1)
     }
 
     #[allow(non_snake_case)]
@@ -724,46 +768,203 @@ impl StandardFileSystemTools {
         let path = parameterValue(tool, "path");
         let oldContent = parameterValue(tool, "old");
         let newContent = parameterValue(tool, "new");
+        let mut results = self.applyFile(&AITool {
+            name: "apply_file".to_string(),
+            parameters: vec![
+                ToolParameter {
+                    name: "path".to_string(),
+                    value: path,
+                },
+                ToolParameter {
+                    name: "type".to_string(),
+                    value: "replace".to_string(),
+                },
+                ToolParameter {
+                    name: "old".to_string(),
+                    value: oldContent,
+                },
+                ToolParameter {
+                    name: "new".to_string(),
+                    value: newContent,
+                },
+            ],
+        });
+        results.remove(results.len() - 1)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn applyFile(&self, tool: &AITool) -> Vec<ToolResult> {
+        let path = parameterValue(tool, "path");
+        let operationType = optionalParameterValue(tool, "type")
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let oldContent = parameterValue(tool, "old");
+        let newContent = parameterValue(tool, "new");
+
         if let Some(result) =
             PathValidator::validateHostPath(self.host.as_ref(), &path, &tool.name, "path")
         {
-            return result;
+            return vec![result];
+        }
+        if path.trim().is_empty() {
+            return vec![toolError(
+                tool,
+                fileOperationDataToString(self.envLabel(), "Path parameter is required"),
+                "Path parameter is required".to_string(),
+            )];
+        }
+        if operationType.trim().is_empty() {
+            return vec![toolError(
+                tool,
+                fileOperationDataToString(
+                    self.envLabel(),
+                    "Type parameter is required (replace | delete | create)",
+                ),
+                "Type parameter is required (replace | delete | create)".to_string(),
+            )];
         }
 
-        let current = match self.host.readFile(&path) {
+        let existence = match self.host.fileExists(&path) {
             Ok(value) => value,
-            Err(errorValue) => {
-                let message = format!("Error reading file: {}", errorValue.message);
-                return toolError(
-                    tool,
-                    fileOperationDataToString(self.envLabel(), &message),
-                    message,
-                );
-            }
+            Err(error) => return vec![toolError(tool, String::new(), error.message)],
         };
-        if !current.contains(&oldContent) {
-            let message = "Old content was not found in file.".to_string();
-            return toolError(
+        if !existence.exists {
+            if operationType != "create" {
+                let message = "File does not exist. Use type=create with 'new' to create it.";
+                return vec![toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), message),
+                    message.to_string(),
+                )];
+            }
+            if newContent.trim().is_empty() {
+                let message = "Parameter 'new' is required for type=create";
+                return vec![toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), message),
+                    message.to_string(),
+                )];
+            }
+            return vec![match self.host.writeFile(&path, &newContent, false) {
+                Ok(()) => {
+                    let diffContent = FileBindingService.generateUnifiedDiff("", &newContent);
+                    success(
+                        tool,
+                        format!(
+                            "{}\n{}",
+                            fileOperationDataToString(
+                                self.envLabel(),
+                                &format!("Successfully created new file: {path}")
+                            ),
+                            diffContent
+                        ),
+                    )
+                }
+                Err(error) => {
+                    let message = format!("Failed to create new file: {}", error.message);
+                    toolError(
+                        tool,
+                        fileOperationDataToString(self.envLabel(), &message),
+                        message,
+                    )
+                }
+            }];
+        }
+
+        if operationType == "create" {
+            let message = "If you need to rewrite a whole existing file: do NOT use apply_file to overwrite it. Instead, call delete_file first, then write_file.";
+            return vec![toolError(
+                tool,
+                fileOperationDataToString(self.envLabel(), message),
+                message.to_string(),
+            )];
+        }
+        if existence.isDirectory {
+            let message = format!("Path is not a file: {path}");
+            return vec![toolError(
                 tool,
                 fileOperationDataToString(self.envLabel(), &message),
                 message,
-            );
+            )];
         }
-        let updated = current.replacen(&oldContent, &newContent, 1);
-        match self.host.writeFile(&path, &updated, false) {
-            Ok(()) => success(
+
+        let originalContent = match self.host.readFile(&path) {
+            Ok(value) => value,
+            Err(error) => {
+                let message = format!("Failed to read original file: {}", error.message);
+                return vec![toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )];
+            }
+        };
+        let editOperations = match operationType.as_str() {
+            "replace" => {
+                if oldContent.trim().is_empty() || newContent.trim().is_empty() {
+                    let message = "Both 'old' and 'new' are required for type=replace";
+                    return vec![toolError(
+                        tool,
+                        fileOperationDataToString(self.envLabel(), message),
+                        message.to_string(),
+                    )];
+                }
+                vec![StructuredEditOperation {
+                    action: StructuredEditAction::REPLACE,
+                    oldContent,
+                    newContent,
+                }]
+            }
+            "delete" => {
+                if oldContent.trim().is_empty() {
+                    let message = "Parameter 'old' is required for type=delete";
+                    return vec![toolError(
+                        tool,
+                        fileOperationDataToString(self.envLabel(), message),
+                        message.to_string(),
+                    )];
+                }
+                vec![StructuredEditOperation {
+                    action: StructuredEditAction::DELETE,
+                    oldContent,
+                    newContent: String::new(),
+                }]
+            }
+            _ => {
+                let message = format!(
+                    "Unsupported type: {operationType} (expected replace | delete | create)"
+                );
+                return vec![toolError(
+                    tool,
+                    fileOperationDataToString(self.envLabel(), &message),
+                    message,
+                )];
+            }
+        };
+
+        let (mergedContent, aiInstructions) =
+            FileBindingService.processFileBindingOperations(&originalContent, &editOperations);
+        if aiInstructions.to_ascii_lowercase().starts_with("error") {
+            return vec![toolError(
                 tool,
-                fileOperationDataToString(self.envLabel(), &format!("Content written to {path}")),
-            ),
-            Err(errorValue) => {
-                let message = format!("Error writing to file: {}", errorValue.message);
+                fileOperationDataToString(
+                    self.envLabel(),
+                    &format!("File binding failed: {aiInstructions}"),
+                ),
+                aiInstructions,
+            )];
+        }
+        vec![match self.host.writeFile(&path, &mergedContent, false) {
+            Ok(()) => success(tool, aiInstructions),
+            Err(error) => {
+                let message = format!("Failed to write merged file: {}", error.message);
                 toolError(
                     tool,
                     fileOperationDataToString(self.envLabel(), &message),
                     message,
                 )
             }
-        }
+        }]
     }
 
     #[allow(non_snake_case)]
@@ -915,7 +1116,9 @@ pub enum FileSystemToolOperation {
     FindFiles,
     FileInfo,
     GrepCode,
+    GrepContext,
     DownloadFile,
+    ApplyFile,
     CreateFile,
     EditFile,
     ZipFiles,
@@ -958,7 +1161,9 @@ impl ToolExecutor for FileSystemToolExecutor {
             FileSystemToolOperation::FindFiles => self.tools.findFiles(tool),
             FileSystemToolOperation::FileInfo => self.tools.fileInfo(tool),
             FileSystemToolOperation::GrepCode => self.tools.grepCode(tool),
+            FileSystemToolOperation::GrepContext => self.tools.grepContext(tool),
             FileSystemToolOperation::DownloadFile => self.tools.downloadFile(tool),
+            FileSystemToolOperation::ApplyFile => return self.tools.applyFile(tool),
             FileSystemToolOperation::CreateFile => self.tools.createFile(tool),
             FileSystemToolOperation::EditFile => self.tools.editFile(tool),
             FileSystemToolOperation::ZipFiles => self.tools.zipFiles(tool),
@@ -989,7 +1194,9 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
         FileSystemToolOperation::FindFiles | FileSystemToolOperation::GrepCode => {
             &["path", "pattern"]
         }
+        FileSystemToolOperation::GrepContext => &["path", "intent"],
         FileSystemToolOperation::DownloadFile => &["destination"],
+        FileSystemToolOperation::ApplyFile => &[],
         FileSystemToolOperation::CreateFile => &["path", "new"],
         FileSystemToolOperation::EditFile => &["path", "old", "new"],
         FileSystemToolOperation::ZipFiles | FileSystemToolOperation::UnzipFiles => {

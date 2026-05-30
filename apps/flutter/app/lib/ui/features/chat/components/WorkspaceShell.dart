@@ -20,6 +20,7 @@ class WorkspaceShell extends StatefulWidget {
     required this.onListWorkspaceFiles,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
+    required this.onWriteWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
@@ -34,6 +35,8 @@ class WorkspaceShell extends StatefulWidget {
   onListWorkspaceFiles;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
+  final Future<void> Function(String path, Uint8List bytes)
+  onWriteWorkspaceFileBytes;
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace, String? workspaceEnv)
@@ -45,6 +48,7 @@ class WorkspaceShell extends StatefulWidget {
 }
 
 class _WorkspaceShellState extends State<WorkspaceShell> {
+  final GlobalKey _workspacePanelKey = GlobalKey();
   double? _workspaceWidth;
   double? _workspaceDragStartGlobalX;
   double? _workspaceDragStartWidth;
@@ -55,20 +59,15 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final useTabletMode = constraints.maxWidth >= workspaceTabletBreakpoint;
-        final maxWorkspaceWidth = math.max(
-          0.0,
-          constraints.maxWidth -
-              (useTabletMode
-                  ? workspaceMinTabletChatWidth
-                  : workspaceMinPhonePeekWidth),
-        );
-        final minWorkspaceWidth = math.min(
-          workspaceMinWidth,
-          maxWorkspaceWidth,
-        );
+        final maxWorkspaceWidth = useTabletMode
+            ? math.max(0.0, constraints.maxWidth - workspaceMinTabletChatWidth)
+            : constraints.maxWidth;
+        final minWorkspaceWidth = useTabletMode
+            ? math.min(workspaceMinWidth, maxWorkspaceWidth)
+            : constraints.maxWidth;
         final defaultWidth = useTabletMode
             ? workspaceDefaultTabletWidth
-            : constraints.maxWidth * workspaceDefaultPhoneWidthRatio;
+            : constraints.maxWidth;
         final workspaceWidth = _resolveWorkspaceWidth(
           defaultWidth,
           minWorkspaceWidth,
@@ -84,12 +83,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           );
         }
 
-        return _buildPhoneLayout(
-          context,
-          workspaceWidth,
-          minWorkspaceWidth,
-          maxWorkspaceWidth,
-        );
+        return _buildPhoneLayout(context, workspaceWidth);
       },
     );
   }
@@ -109,67 +103,61 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     double minWorkspaceWidth,
     double maxWorkspaceWidth,
   ) {
-    return Row(
+    return Stack(
+      clipBehavior: Clip.none,
       children: <Widget>[
-        Expanded(child: widget.child),
-        AnimatedContainer(
+        Row(
+          children: <Widget>[
+            Expanded(child: widget.child),
+            AnimatedContainer(
+              duration: _workspaceAnimationDuration,
+              curve: Curves.easeOutCubic,
+              width: widget.workspaceOpen ? workspaceWidth : 0,
+            ),
+          ],
+        ),
+        AnimatedPositionedDirectional(
           duration: _workspaceAnimationDuration,
           curve: Curves.easeOutCubic,
-          width: widget.workspaceOpen ? workspaceWidth : 0,
-          child: widget.workspaceOpen
-              ? Stack(
-                  clipBehavior: Clip.none,
-                  children: <Widget>[
-                    Positioned.fill(
-                      child: WorkspacePanel(
-                        hasBoundWorkspace: widget.hasBoundWorkspace,
-                        workspacePath: widget.workspacePath,
-                        onListWorkspaceFiles: widget.onListWorkspaceFiles,
-                        onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
-                        onReadWorkspaceFileBytes:
-                            widget.onReadWorkspaceFileBytes,
-                        onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
-                        onCreateDefaultWorkspace:
-                            widget.onCreateDefaultWorkspace,
-                        onBindWorkspace: widget.onBindWorkspace,
-                      ),
-                    ),
-                    PositionedDirectional(
-                      top: 0,
-                      bottom: 0,
-                      start: -workspaceResizeHandleHitWidth / 2,
-                      width: workspaceResizeHandleHitWidth,
-                      child: WorkspaceResizeHandle(
-                        onDragStart: (details) {
-                          _startWorkspaceResize(
-                            details.globalPosition.dx,
-                            workspaceWidth,
-                          );
-                        },
-                        onDragUpdate: (details) {
-                          _updateWorkspaceWidthFromGlobalX(
-                            details.globalPosition.dx,
-                            minWorkspaceWidth,
-                            maxWorkspaceWidth,
-                          );
-                        },
-                        onDragEnd: _endWorkspaceResize,
-                      ),
-                    ),
-                  ],
-                )
-              : null,
+          top: 0,
+          bottom: 0,
+          end: widget.workspaceOpen ? 0 : -workspaceWidth,
+          width: workspaceWidth,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              Positioned.fill(child: _buildWorkspacePanel()),
+              if (widget.workspaceOpen)
+                PositionedDirectional(
+                  top: 0,
+                  bottom: 0,
+                  start: -workspaceResizeHandleHitWidth / 2,
+                  width: workspaceResizeHandleHitWidth,
+                  child: WorkspaceResizeHandle(
+                    onDragStart: (details) {
+                      _startWorkspaceResize(
+                        details.globalPosition.dx,
+                        workspaceWidth,
+                      );
+                    },
+                    onDragUpdate: (details) {
+                      _updateWorkspaceWidthFromGlobalX(
+                        details.globalPosition.dx,
+                        minWorkspaceWidth,
+                        maxWorkspaceWidth,
+                      );
+                    },
+                    onDragEnd: _endWorkspaceResize,
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildPhoneLayout(
-    BuildContext context,
-    double workspaceWidth,
-    double minWorkspaceWidth,
-    double maxWorkspaceWidth,
-  ) {
+  Widget _buildPhoneLayout(BuildContext context, double workspaceWidth) {
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
@@ -195,47 +183,24 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           bottom: 0,
           end: widget.workspaceOpen ? 0 : -workspaceWidth,
           width: workspaceWidth,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              Positioned.fill(
-                child: WorkspacePanel(
-                  hasBoundWorkspace: widget.hasBoundWorkspace,
-                  workspacePath: widget.workspacePath,
-                  onListWorkspaceFiles: widget.onListWorkspaceFiles,
-                  onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
-                  onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
-                  onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
-                  onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
-                  onBindWorkspace: widget.onBindWorkspace,
-                ),
-              ),
-              PositionedDirectional(
-                top: 0,
-                bottom: 0,
-                start: -workspaceResizeHandleHitWidth / 2,
-                width: workspaceResizeHandleHitWidth,
-                child: WorkspaceResizeHandle(
-                  onDragStart: (details) {
-                    _startWorkspaceResize(
-                      details.globalPosition.dx,
-                      workspaceWidth,
-                    );
-                  },
-                  onDragUpdate: (details) {
-                    _updateWorkspaceWidthFromGlobalX(
-                      details.globalPosition.dx,
-                      minWorkspaceWidth,
-                      maxWorkspaceWidth,
-                    );
-                  },
-                  onDragEnd: _endWorkspaceResize,
-                ),
-              ),
-            ],
-          ),
+          child: _buildWorkspacePanel(),
         ),
       ],
+    );
+  }
+
+  Widget _buildWorkspacePanel() {
+    return WorkspacePanel(
+      key: _workspacePanelKey,
+      hasBoundWorkspace: widget.hasBoundWorkspace,
+      workspacePath: widget.workspacePath,
+      onListWorkspaceFiles: widget.onListWorkspaceFiles,
+      onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
+      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
+      onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
+      onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
+      onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
+      onBindWorkspace: widget.onBindWorkspace,
     );
   }
 

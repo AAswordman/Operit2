@@ -26,6 +26,7 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::util::stream::Stream::Stream;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {
@@ -281,6 +282,8 @@ impl MessageCoordinationDelegate {
                     enhancedAiService,
                     chatId,
                     promptFunctionType.clone(),
+                    attachments.clone(),
+                    replyToMessage.clone(),
                     turnOptions.clone(),
                 )
                 .await
@@ -351,12 +354,12 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.and_then(|chat| chat.workspace);
-        let _ = self
+        let mut variantMessage = self
             .messageProcessingDelegate
             .regenerateAiMessageVariant(RegenerateAiMessageVariantRequest {
                 enhancedAiService,
                 chatHistoryDelegate: &mut self.chatHistoryDelegate,
-                chatId,
+                chatId: chatId.clone(),
                 targetMessageTimestamp: targetMessage.timestamp,
                 requestMessageContent,
                 requestHistory,
@@ -374,7 +377,33 @@ impl MessageCoordinationDelegate {
                 chatModelIndexOverride: None,
                 preferenceProfileIdOverride: None,
             })
-            .await;
+            .await
+            .map_err(|error| error.to_string())?;
+        self.chatHistoryDelegate.addMessageToChat(
+            ChatMessage {
+                content: String::new(),
+                selectedVariantIndex: targetMessage.variantCount,
+                variantCount: targetMessage.variantCount + 1,
+                isVariantPreview: true,
+                ..variantMessage.clone()
+            },
+            Some(chatId.clone()),
+        );
+        let Some(mut contentStream) = variantMessage.contentStream.clone() else {
+            return Err("Regenerated message stream is missing".to_string());
+        };
+        let mut content = String::new();
+        contentStream.collect(&mut |chunk| {
+            content.push_str(&chunk);
+        });
+        variantMessage.content = content;
+        variantMessage.contentStream = None;
+        variantMessage.isVariantPreview = false;
+        self.chatHistoryDelegate.addMessageVariant(
+            targetMessage.timestamp,
+            variantMessage,
+            Some(chatId),
+        );
         Ok(())
     }
 
@@ -588,6 +617,8 @@ impl MessageCoordinationDelegate {
         enhancedAiService: &mut EnhancedAIService,
         chatId: String,
         promptFunctionType: PromptFunctionType,
+        attachments: Vec<AttachmentInfo>,
+        replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) -> bool {
         let Some(group) = self.resolveTargetGroupForChat(&chatId) else {
@@ -619,16 +650,18 @@ impl MessageCoordinationDelegate {
             .text
             .trim()
             .to_string();
-        if originalUserText.is_empty() {
+        if originalUserText.is_empty() && attachments.is_empty() {
             return false;
         }
-        self.messageProcessingDelegate
-            .updateUserMessage(String::new());
+        if !originalUserText.is_empty() {
+            self.messageProcessingDelegate
+                .updateUserMessage(String::new());
+        }
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(
                 chatId.clone(),
                 InputProcessingState::Processing {
-                    message: "role response planner planning".to_string(),
+                    message: "role_response_planner_planning".to_string(),
                 },
             );
 
@@ -641,8 +674,16 @@ impl MessageCoordinationDelegate {
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
         let workspaceEnv = currentChat.and_then(|chat| chat.workspaceEnv);
         if !self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
+            let newTitle = if !originalUserText.is_empty() {
+                originalUserText.clone()
+            } else {
+                attachments
+                    .first()
+                    .map(|attachment| attachment.fileName.clone())
+                    .unwrap_or_else(|| "New Chat".to_string())
+            };
             self.chatHistoryDelegate
-                .updateChatTitle(chatId.clone(), originalUserText.clone());
+                .updateChatTitle(chatId.clone(), newTitle);
         }
 
         let finalUserMessageContent = match self
@@ -650,10 +691,10 @@ impl MessageCoordinationDelegate {
             .buildUserMessageContentForGroupOrchestration(
                 BuildUserMessageContentForGroupOrchestrationRequest {
                     messageText: originalUserText.clone(),
-                    attachments: Vec::new(),
+                    attachments: attachments.clone(),
                     workspacePath: workspacePath.clone(),
                     workspaceEnv: workspaceEnv.clone(),
-                    replyToMessage: None,
+                    replyToMessage,
                     chatId: chatId.clone(),
                     roleCardId: CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string(),
                 },
@@ -714,7 +755,7 @@ impl MessageCoordinationDelegate {
                 .setInputProcessingStateForChat(
                     chatId,
                     InputProcessingState::Error {
-                        message: "role response planner failed".to_string(),
+                        message: "role_response_planner_failed".to_string(),
                     },
                 );
             return true;
@@ -749,7 +790,10 @@ impl MessageCoordinationDelegate {
                     .setInputProcessingStateForChat(
                         chatId.clone(),
                         InputProcessingState::Processing {
-                            message: format!("{} replying", memberCard.name),
+                            message: format!(
+                                "role_response_planner_member_replying|{}",
+                                memberCard.name
+                            ),
                         },
                     );
                 let beforeLastAiTimestamp = self

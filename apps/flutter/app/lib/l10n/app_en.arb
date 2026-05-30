@@ -13,6 +13,16 @@
   "connectingAiService": "Connecting to AI service...",
   "receivingAiResponse": "Receiving AI response...",
   "receivingToolResultAiResponse": "Receiving AI response after tool execution...",
+  "roleResponsePlannerPlanning": "Planning group speaking order...",
+  "roleResponsePlannerMemberReplying": "Generating a reply from \"{memberName}\"...",
+  "@roleResponsePlannerMemberReplying": {
+    "placeholders": {
+      "memberName": {
+        "type": "String"
+      }
+    }
+  },
+  "roleResponsePlannerFailed": "Group planning failed",
   "summarizingMemories": "Summarizing memories...",
   "executingPlan": "Executing plan...",
   "executingTool": "Executing tool: {toolName}",
@@ -50,5 +60,288 @@
         "type": "String"
       }
     }
-  }
+  },
+  "close": "Close",
+  "create": "Create",
+  "save": "Save",
+  "delete": "Delete",
+  "search": "Search",
+  "loading": "Loading",
+  "toolApprovalTitle": "Tool permission request",
+  "toolApprovalToolLabel": "Tool",
+  "toolApprovalActionLabel": "Action",
+  "toolApprovalDeny": "Deny",
+  "toolApprovalAllowOnce": "Allow once",
+  "toolApprovalAlwaysAllow": "Always allow",
+  "createGroupTitle": "New group",
+  "groupNameLabel": "Group name",
+  "renameConversationTitle": "Edit title",
+  "newTitleLabel": "New title",
+  "deleteConversationTitle": "Delete conversation?",
+  "deleteConversationMessage": "Delete \"{title}\"?",
+  "@deleteConversationMessage": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHistory": "Chat history",
+  "editTitle": "Edit title",
+  "moveUp": "Move up",
+  "moveDown": "Move down",
+  "pin": "Pin",
+  "unpin": "Unpin",
+  "lock": "Lock",
+  "unlock": "Unlock",
+  "messageLocatorTitle": "Message locator",
+  "messageLocatorCurrent": "Current {current} / {total}",
+  "@messageLocatorCurrent": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorSearchHint": "Search message content",
+  "messageLocatorInstruction": "Scroll the list or search to jump to a message",
+  "messageLocatorResultCount": "{count} results",
+  "@messageLocatorResultCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorNoMatches": "No matching messages",
+  "messageSenderUser": "User",
+  "messageSenderSummary": "Summary",
+  "messageSenderSystem": "System",
+  "messageSenderThinking": "Thinking",
+  "messageSenderOther": "Other",
+  "hiddenUserMessage": "Hidden user message",
+  "workspaceSetupTitle": "Set up workspace",
+  "workspaceSetupSubtitle": "Provide a dedicated file environment for your AI projects",
+  "workspaceCreateDefaultTitle": "Create default",
+  "workspaceCreateDefaultDescription": "Create a new workspace in the app",
+  "workspaceBindExistingTitle": "Choose existing",
+  "workspaceBindExistingDescription": "Select a folder from this device",
+  "workspaceProjectTypeDialogTitle": "Choose project type",
+  "workspaceProjectTypeDialogDescription": "Choose the default workspace type to create",
+  "workspaceBindDialogTitle": "Choose existing workspace",
+  "workspacePathLabel": "Workspace path",
+  "workspaceEnvLabel": "Workspace environment",
+  "optionalHint": "Optional",
+  "workspacePathRequired": "Enter a workspace path",
+  "bind": "Bind",
+  "workspaceProjectBlankTitle": "Blank workspace",
+  "workspaceProjectBlankDescription": "Create an empty workspace directory without template files",
+  "workspaceProjectOfficeTitle": "Office documents",
+  "workspaceProjectOfficeDescription": "For document editing, file processing, and general office tasks",
+  "workspaceProjectWebTitle": "Web project",
+  "workspaceProjectWebDescription": "For web development with HTML/CSS/JavaScript and an automatic local server",
+  "workspaceProjectAndroidTitle": "Android project",
+  "workspaceProjectAndroidDescription": "For Android engineering with common Gradle task shortcuts",
+  "workspaceProjectFlutterTitle": "Flutter project",
+  "workspaceProjectFlutterDescription": "For Flutter cross-platform development with a stable app template and common commands",
+  "workspaceProjectNodeTitle": "Node.js project",
+  "workspaceProjectNodeDescription": "For Node.js backend development with npm command shortcuts",
+  "workspaceProjectTypeScriptTitle": "TypeScript project",
+  "workspaceProjectTypeScriptDescription": "TypeScript + pnpm with type-safe development and tsc watch",
+  "workspaceProjectPythonTitle": "Python project",
+  "workspaceProjectPythonDescription": "For Python development with pip and an HTTP server",
+  "workspaceProjectJavaTitle": "Java project",
+  "workspaceProjectJavaDescription": "For Java development with Gradle and Maven builds",
+  "workspaceProjectGoTitle": "Go project",
+  "workspaceProjectGoDescription": "For Go development with go mod and build commands",
+  "version": "Version",
+  "author": "Author",
+  "entry": "Entry",
+  "source": "Source",
+  "category": "Category",
+  "defaultStatus": "Default status",
+  "builtIn": "Built-in",
+  "external": "External",
+  "enabledByDefault": "Enabled by default",
+  "disabledByDefault": "Disabled by default",
+  "toolPkgResources": "ToolPkg resources",
+  "resourcesCount": "Resources {count}",
+  "@resourcesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "uiModulesCount": "UI modules {count}",
+  "@uiModulesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "navigationEntriesCount": "Navigation entries {count}",
+  "@navigationEntriesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "desktopWidgetsCount": "Desktop widgets {count}",
+  "@desktopWidgetsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplatesCount": "Workflow templates {count}",
+  "@workflowTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workspaceTemplatesCount": "Workspace templates {count}",
+  "@workspaceTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pluginConfiguration": "Plugin configuration",
+  "subpackages": "Subpackages",
+  "toolPkgNoSubpackages": "This ToolPkg declares no subpackages",
+  "subpackageToolCount": "{packageName} · {count} tools",
+  "@subpackageToolCount": {
+    "placeholders": {
+      "packageName": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplates": "Workflow templates",
+  "workspaceTemplates": "Workspace templates",
+  "disable": "Disable",
+  "enable": "Enable",
+  "environmentVariables": "Environment variables",
+  "required": "Required",
+  "states": "States",
+  "stateToolSummary": "{condition} · {toolCount} tools · excludes {excludeCount}",
+  "@stateToolSummary": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      },
+      "toolCount": {
+        "type": "int"
+      },
+      "excludeCount": {
+        "type": "int"
+      }
+    }
+  },
+  "inherit": "Inherit",
+  "tools": "Tools",
+  "packageNoTools": "This package declares no tools",
+  "permissionsTitle": "Permissions",
+  "clear": "Clear",
+  "noPermissionRecords": "No permission records yet",
+  "allow": "Allow",
+  "deny": "Deny",
+  "camera": "Camera",
+  "microphone": "Microphone",
+  "protectedMedia": "Protected media",
+  "midiDevice": "MIDI device",
+  "browserPermissionRequestTitle": "Website permission request",
+  "history": "History",
+  "bookmarks": "Bookmarks",
+  "downloads": "Downloads",
+  "scripts": "Scripts",
+  "desktopMode": "Desktop mode",
+  "clearLocalStorage": "Clear local storage",
+  "searchHistory": "Search history",
+  "noDownloadTasks": "No download tasks yet",
+  "openFile": "Open file",
+  "openLocation": "Open location",
+  "retry": "Retry",
+  "removeRecord": "Remove record",
+  "pending": "Pending",
+  "completed": "Completed",
+  "failed": "Failed",
+  "back": "Back",
+  "forward": "Forward",
+  "stop": "Stop",
+  "refresh": "Refresh",
+  "home": "Home",
+  "newTab": "New tab",
+  "openExternalApplication": "Open external application",
+  "open": "Open",
+  "ok": "OK",
+  "webPage": "Web page",
+  "tabs": "Tabs",
+  "noBookmarks": "No bookmarks yet",
+  "removeBookmark": "Remove bookmark",
+  "addBookmark": "Add bookmark",
+  "menu": "Menu",
+  "siteData": "Site data",
+  "clearAllWebViewCookies": "Clear all WebView cookies",
+  "clearCookies": "Clear cookies",
+  "noData": "No data",
+  "local": "Local",
+  "pageLoadFailed": "Page load failed",
+  "pause": "Pause",
+  "resume": "Resume",
+  "paused": "Paused",
+  "cancelled": "Cancelled",
+  "downloading": "Downloading",
+  "savedTo": "Saved to {path}",
+  "@savedTo": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "sslCertificateError": "SSL certificate error",
+  "edit": "Edit",
+  "files": "Files",
+  "terminal": "Terminal",
+  "browser": "Browser",
+  "filePreview": "File preview",
+  "selectFile": "Select file",
+  "selectFileDescription": "Select a file from the workspace to view, edit, or send to AI",
+  "openTerminal": "Open terminal",
+  "openTerminalDescription": "Enter the command line for the current workspace",
+  "openBrowser": "Open browser",
+  "openBrowserDescription": "Open a full browser session, project preview, and web automation",
+  "noWorkspaceBound": "This conversation has no bound workspace.",
+  "terminalSessionPlaceholder": "The current workspace terminal session will appear here.",
+  "emptyFolder": "This folder is empty",
+  "imagePreview": "Image preview",
+  "audioPreview": "Audio preview",
+  "videoPreview": "Video preview",
+  "pdfPreview": "PDF preview",
+  "wordPreview": "Word preview",
+  "spreadsheetPreview": "Spreadsheet preview",
+  "presentationPreview": "Presentation preview",
+  "webPagePreview": "Web page preview",
+  "markdownPreview": "Markdown preview",
+  "textPreview": "Text preview",
+  "file": "File",
+  "unsupportedReadOnlyPreview": "This file is not a built-in read-only preview type.",
+  "cannotPreview": "Cannot preview",
+  "openProjectInFullBrowser": "Open project in full browser",
+  "openInBrowser": "Open in browser",
+  "emptySpreadsheet": "Spreadsheet is empty"
 }

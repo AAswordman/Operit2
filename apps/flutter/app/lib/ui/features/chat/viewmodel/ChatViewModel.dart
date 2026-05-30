@@ -19,9 +19,75 @@ class ChatViewModel {
 
   final OperitRuntimeBridge bridge;
   final GeneratedCoreProxyClients clients;
+  final Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
+  _boundMessageStreams = <int, _ReplayTextStream<ChatResponseStreamEvent>>{};
+  final Map<int, StreamSubscription<ChatResponseStreamEvent>>
+  _boundResponseSubscriptions =
+      <int, StreamSubscription<ChatResponseStreamEvent>>{};
+  final StreamController<void> _stateRefreshRequests =
+      StreamController<void>.broadcast();
 
   GeneratedChatRuntimeHolderMainCoreProxy get _chat =>
       clients.chatRuntimeHolderMain;
+
+  Stream<ChatViewModelSnapshot> watchMainState() async* {
+    final changes = StreamController<void>();
+    final subscriptions = <StreamSubscription<dynamic>>[];
+    var disposed = false;
+    var scheduled = false;
+
+    void requestSnapshot(String source) {
+      if (disposed || scheduled) {
+        return;
+      }
+      scheduled = true;
+      scheduleMicrotask(() {
+        scheduled = false;
+        if (!disposed && !changes.isClosed) {
+          changes.add(null);
+        }
+      });
+    }
+
+    void forwardError(Object error, StackTrace stackTrace) {
+      if (!disposed && !changes.isClosed) {
+        changes.addError(error, stackTrace);
+      }
+    }
+
+    void listen<T>(String source, Stream<T> stream) {
+      subscriptions.add(
+        stream.listen((_) => requestSnapshot(source), onError: forwardError),
+      );
+    }
+
+    listen('chatHistoryFlow', _rawChatHistoryFlowChanges());
+    listen('currentChatIdFlow', _chat.currentChatIdFlowChanges());
+    listen('chatHistoriesFlow', _chat.chatHistoriesFlowChanges());
+    listen(
+      'activeStreamingChatIdsFlow',
+      _chat.activeStreamingChatIdsFlowChanges(),
+    );
+    listen(
+      'inputProcessingStateByChatIdFlow',
+      _chat.inputProcessingStateByChatIdFlowChanges(),
+    );
+    listen('responseStreamCompletedRefresh', _stateRefreshRequests.stream);
+
+    try {
+      yield await loadMainSnapshot();
+      await for (final _ in changes.stream) {
+        yield await loadMainSnapshot();
+      }
+    } finally {
+      disposed = true;
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+      await changes.close();
+      await _closeAllBoundResponseStreams();
+    }
+  }
 
   Future<ChatViewModelSnapshot> loadMainSnapshot() async {
     final currentChatId = await _chat.currentChatIdFlowSnapshot();
@@ -34,35 +100,30 @@ class ChatViewModel {
       currentChatId,
       chatHistories,
     );
-
-    return ChatViewModelSnapshot(
-      currentChatId: currentChatId,
-      currentChatTitle: currentChatMetadata.title,
-      currentCharacterCardName: currentChatMetadata.characterCardName,
-      currentWorkspacePath: currentChatMetadata.workspacePath,
-      activeCharacterCardName: activeCharacterCardName,
-      isLoading: isLoading,
-      inputProcessingState: ChatInputProcessingState.fromJson(
-        inputProcessingState,
+    return _bindActiveResponseStream(
+      ChatViewModelSnapshot(
+        currentChatId: currentChatId,
+        currentChatTitle: currentChatMetadata.title,
+        currentCharacterCardName: currentChatMetadata.characterCardName,
+        currentWorkspacePath: currentChatMetadata.workspacePath,
+        activeCharacterCardName: activeCharacterCardName,
+        isLoading: isLoading,
+        inputProcessingState: ChatInputProcessingState.fromJson(
+          inputProcessingState,
+        ),
+        messages: chatHistory,
+        hasOlderDisplayHistory: await _chat.hasOlderDisplayHistory(),
+        hasNewerDisplayHistory: await _chat.hasNewerDisplayHistory(),
+        isLoadingDisplayWindow: await _chat.isLoadingDisplayWindow(),
       ),
-      messages: chatHistory,
-      hasOlderDisplayHistory: await _chat.hasOlderDisplayHistory(),
-      hasNewerDisplayHistory: await _chat.hasNewerDisplayHistory(),
-      isLoadingDisplayWindow: await _chat.isLoadingDisplayWindow(),
     );
   }
 
   Future<void> sendUserMessage(String text) async {
-    debugPrint('[ChatViewModel] send begin textLength=${text.length}');
     await _chat.updateUserMessage(message: text);
-    debugPrint('[ChatViewModel] updateUserMessage ok');
 
     final mapping = await clients.preferencesFunctionalConfigManager
         .getConfigMappingForFunction(functionType: 'CHAT');
-    debugPrint(
-      '[ChatViewModel] function mapping configId=${mapping.configId} '
-      'modelIndex=${mapping.modelIndex}',
-    );
 
     await _chat.sendUserMessage(
       promptFunctionType: 'CHAT',
@@ -184,6 +245,18 @@ class ChatViewModel {
     return base64Decode(bytes.base64Content);
   }
 
+  Future<void> writeWorkspaceFileBytes(
+    String relativePath,
+    Uint8List bytes,
+  ) async {
+    final chatId = await _requiredCurrentChatId();
+    await clients.repositoryWorkspaceService.writeWorkspaceFileBytes(
+      chatId: chatId,
+      relativePath: relativePath,
+      base64Content: base64Encode(bytes),
+    );
+  }
+
   Future<void> openWorkspaceFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
     await clients.repositoryWorkspaceService.openWorkspaceFile(
@@ -200,6 +273,110 @@ class ChatViewModel {
     return (event.value as List<Object?>)
         .map((item) => ChatUiMessage.fromJson(item as Map<String, Object?>))
         .toList(growable: false);
+  }
+
+  Stream<List<ChatUiMessage>> _rawChatHistoryFlowChanges() {
+    return bridge.watchChanges('chatRuntimeHolder.main', 'chatHistoryFlow').map(
+      (event) {
+        return (event.value as List<Object?>)
+            .map((item) => ChatUiMessage.fromJson(item as Map<String, Object?>))
+            .toList(growable: false);
+      },
+    );
+  }
+
+  ChatViewModelSnapshot _bindActiveResponseStream(
+    ChatViewModelSnapshot snapshot,
+  ) {
+    final activeTimestamp = _activeStreamingMessageTimestamp(snapshot);
+    final currentChatId = snapshot.currentChatId;
+    final activeKeys = activeTimestamp == null
+        ? const <int>{}
+        : <int>{activeTimestamp};
+
+    _closeInactiveBoundResponseStreams(activeKeys);
+
+    if (activeTimestamp != null && currentChatId != null) {
+      final stream = _boundMessageStreams.putIfAbsent(activeTimestamp, () {
+        return _ReplayTextStream<ChatResponseStreamEvent>(activeTimestamp);
+      });
+      _boundResponseSubscriptions.putIfAbsent(activeTimestamp, () {
+        return watchResponseStream(currentChatId).listen(
+          (event) {
+            stream.add(event);
+            if (event.type == 'completed') {
+              stream.close();
+              _requestStateRefreshAfterStreamCompleted();
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('Failed to watch response stream: $error\n$stackTrace');
+            _requestStateRefreshAfterStreamCompleted();
+          },
+          onDone: () {
+            stream.close();
+            _requestStateRefreshAfterStreamCompleted();
+          },
+        );
+      });
+    }
+
+    return snapshot.copyWith(
+      messages: <ChatUiMessage>[
+        for (final message in snapshot.messages)
+          if (message.timestamp == activeTimestamp)
+            message
+                .copyWith(content: '')
+                .copyWithContentStream(_boundMessageStreams[message.timestamp])
+          else
+            message,
+      ],
+    );
+  }
+
+  int? _activeStreamingMessageTimestamp(ChatViewModelSnapshot snapshot) {
+    if (!snapshot.isLoading || snapshot.currentChatId == null) {
+      return null;
+    }
+    for (final message in snapshot.messages.reversed) {
+      if (message.sender == 'ai' && message.content.isEmpty) {
+        return message.timestamp;
+      }
+    }
+    return null;
+  }
+
+  void _requestStateRefreshAfterStreamCompleted() {
+    Future<void>.delayed(const Duration(milliseconds: 220), () {
+      if (!_stateRefreshRequests.isClosed) {
+        _stateRefreshRequests.add(null);
+      }
+    });
+  }
+
+  void _closeInactiveBoundResponseStreams(Set<int> activeKeys) {
+    final staleKeys = _boundMessageStreams.keys
+        .where((timestamp) => !activeKeys.contains(timestamp))
+        .toList(growable: false);
+    for (final timestamp in staleKeys) {
+      _boundResponseSubscriptions.remove(timestamp)?.cancel();
+      _boundMessageStreams.remove(timestamp)?.close();
+    }
+  }
+
+  Future<void> _closeAllBoundResponseStreams() async {
+    final subscriptions = _boundResponseSubscriptions.values.toList(
+      growable: false,
+    );
+    _boundResponseSubscriptions.clear();
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+    final streams = _boundMessageStreams.values.toList(growable: false);
+    _boundMessageStreams.clear();
+    for (final stream in streams) {
+      await stream.close();
+    }
   }
 
   Future<String> _requiredCurrentChatId() async {
@@ -272,6 +449,22 @@ class ChatViewModelSnapshot {
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
+
+  ChatViewModelSnapshot copyWith({List<ChatUiMessage>? messages}) {
+    return ChatViewModelSnapshot(
+      currentChatId: currentChatId,
+      currentChatTitle: currentChatTitle,
+      currentCharacterCardName: currentCharacterCardName,
+      currentWorkspacePath: currentWorkspacePath,
+      activeCharacterCardName: activeCharacterCardName,
+      isLoading: isLoading,
+      inputProcessingState: inputProcessingState,
+      messages: messages ?? this.messages,
+      hasOlderDisplayHistory: hasOlderDisplayHistory,
+      hasNewerDisplayHistory: hasNewerDisplayHistory,
+      isLoadingDisplayWindow: isLoadingDisplayWindow,
+    );
+  }
 }
 
 class ChatViewModelChatMetadata {
@@ -296,6 +489,7 @@ class ChatUiMessage {
     required this.modelName,
     required this.displayMode,
     required this.isFavorite,
+    required this.completedAt,
     this.contentStream,
   });
 
@@ -309,6 +503,7 @@ class ChatUiMessage {
       modelName: message.modelName,
       displayMode: message.displayMode as String,
       isFavorite: message.isFavorite,
+      completedAt: message.completedAt,
     );
   }
 
@@ -322,6 +517,7 @@ class ChatUiMessage {
       modelName: json['modelName'] as String,
       displayMode: json['displayMode'] as String,
       isFavorite: json['isFavorite'] as bool,
+      completedAt: json['completedAt'] as int,
     );
   }
 
@@ -335,11 +531,12 @@ class ChatUiMessage {
       modelName: modelName,
       displayMode: displayMode,
       isFavorite: isFavorite ?? this.isFavorite,
+      completedAt: completedAt,
       contentStream: contentStream,
     );
   }
 
-  ChatUiMessage copyWithContentStream(Stream<String>? value) {
+  ChatUiMessage copyWithContentStream(Stream<ChatResponseStreamEvent>? value) {
     return ChatUiMessage(
       sender: sender,
       content: content,
@@ -349,6 +546,7 @@ class ChatUiMessage {
       modelName: modelName,
       displayMode: displayMode,
       isFavorite: isFavorite,
+      completedAt: completedAt,
       contentStream: value,
     );
   }
@@ -361,7 +559,8 @@ class ChatUiMessage {
   final String modelName;
   final String displayMode;
   final bool isFavorite;
-  final Stream<String>? contentStream;
+  final int completedAt;
+  final Stream<ChatResponseStreamEvent>? contentStream;
 
   String get stableKey => '$sender-$timestamp';
 }
@@ -449,6 +648,7 @@ class ChatResponseStreamEvent {
   const ChatResponseStreamEvent({
     required this.chatId,
     required this.type,
+    required this.id,
     required this.value,
     required this.blockId,
     required this.inlineId,
@@ -461,6 +661,7 @@ class ChatResponseStreamEvent {
     return ChatResponseStreamEvent(
       chatId: data['chatId'] as String,
       type: data['type'] as String,
+      id: data['id'] as String?,
       value: data['value'] as String?,
       blockId: data['blockId'] as int?,
       inlineId: data['inlineId'] as int?,
@@ -471,9 +672,83 @@ class ChatResponseStreamEvent {
 
   final String chatId;
   final String type;
+  final String? id;
   final String? value;
   final int? blockId;
   final int? inlineId;
   final String? nodeType;
   final int? headerLevel;
+}
+
+class _ReplayTextStream<T> extends Stream<T> {
+  _ReplayTextStream(this.timestamp);
+
+  final int timestamp;
+  final List<T> _cache = <T>[];
+  final StreamController<T> _liveController = StreamController<T>.broadcast();
+  Object? _error;
+  StackTrace? _stackTrace;
+  bool _closed = false;
+
+  void add(T chunk) {
+    if (_closed) {
+      return;
+    }
+    _cache.add(chunk);
+    _liveController.add(chunk);
+  }
+
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    await _liveController.close();
+  }
+
+  @override
+  StreamSubscription<T> listen(
+    void Function(T event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    final replayController = StreamController<T>(sync: true);
+    StreamSubscription<T>? liveSubscription;
+
+    replayController.onListen = () {
+      for (final chunk in _cache) {
+        replayController.add(chunk);
+      }
+      final error = _error;
+      if (error != null) {
+        replayController.addError(error, _stackTrace);
+      }
+      if (_closed) {
+        replayController.close();
+        return;
+      }
+      liveSubscription = _liveController.stream.listen(
+        replayController.add,
+        onError: replayController.addError,
+        onDone: replayController.close,
+      );
+    };
+    replayController.onPause = () {
+      liveSubscription?.pause();
+    };
+    replayController.onResume = () {
+      liveSubscription?.resume();
+    };
+    replayController.onCancel = () {
+      return liveSubscription?.cancel();
+    };
+
+    return replayController.stream.listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
 }

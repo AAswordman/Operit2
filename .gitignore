@@ -136,6 +136,7 @@ tmp/
 # Plugin packaging outputs
 plugins/**/*.toolpkg
 core/crates/operit-runtime/assets/plugins/**/*.toolpkg
+core/crates/operit-runtime/assets/plugins/**/*.js
 plugins/**/build/
 plugins/**/out/
 plugins/**/.cache/

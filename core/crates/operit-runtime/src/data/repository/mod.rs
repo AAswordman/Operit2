@@ -10,6 +10,8 @@ pub mod CustomEmojiRepository;
 pub mod MemoryAutoSaveCandidateRepository;
 #[path = "MemoryRepository.rs"]
 pub mod MemoryRepository;
+#[path = "RuntimeStorageRepository.rs"]
+pub mod RuntimeStorageRepository;
 #[path = "UIHierarchyManager.rs"]
 pub mod UIHierarchyManager;
 #[path = "WorkflowRepository.rs"]
@@ -22,6 +24,7 @@ pub use ChatHistoryManager::*;
 pub use CustomEmojiRepository::*;
 pub use MemoryAutoSaveCandidateRepository::*;
 pub use MemoryRepository::*;
+pub use RuntimeStorageRepository::*;
 pub use UIHierarchyManager::*;
 pub use WorkflowRepository::*;
 pub use WorkspaceService::*;

@@ -125,6 +125,23 @@ impl WorkspaceService {
     }
 
     #[allow(non_snake_case)]
+    pub fn writeWorkspaceFileBytes(
+        &self,
+        chatId: String,
+        relativePath: String,
+        base64Content: String,
+    ) -> Result<(), String> {
+        let workspaceRoot = self.workspaceRoot(chatId)?;
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
+        let bytes = STANDARD
+            .decode(base64Content.as_bytes())
+            .map_err(|error| error.to_string())?;
+        self.fileSystemHost
+            .writeFileBytes(&filePath, &bytes)
+            .map_err(|error| error.message)
+    }
+
+    #[allow(non_snake_case)]
     pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
         let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);

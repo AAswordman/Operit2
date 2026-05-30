@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
+import 'browser/WorkspaceBrowserContent.dart';
 import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
 import 'WorkspaceHomeContent.dart';
@@ -18,11 +20,13 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onListWorkspaceFiles,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
+    required this.onWriteWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onOpenFile,
     required this.onOpenFiles,
     required this.onOpenTerminal,
     required this.onOpenBrowser,
+    required this.onOpenProjectBrowser,
   });
 
   final WorkspaceTab tab;
@@ -31,29 +35,38 @@ class WorkspaceTabContent extends StatelessWidget {
   onListWorkspaceFiles;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
+  final Future<void> Function(String path, Uint8List bytes)
+  onWriteWorkspaceFileBytes;
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenTerminal;
-  final VoidCallback onOpenBrowser;
+  final void Function({
+    String? url,
+    String? localFilePath,
+    String? workspaceHtmlPath,
+  })
+  onOpenBrowser;
+  final VoidCallback onOpenProjectBrowser;
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     switch (tab.kind) {
       case WorkspaceTabKind.home:
         return WorkspaceHomeContent(
           workspacePath: workspacePath,
           onOpenFiles: onOpenFiles,
           onOpenTerminal: onOpenTerminal,
-          onOpenBrowser: onOpenBrowser,
+          onOpenBrowser: onOpenProjectBrowser,
         );
       case WorkspaceTabKind.files:
         final rootPath = workspacePath?.trim();
         if (rootPath == null || rootPath.isEmpty) {
-          return const _WorkspaceSimplePane(
+          return _WorkspaceSimplePane(
             icon: Icons.folder_off_outlined,
-            title: '文件',
-            subtitle: '当前对话还没有绑定工作区。',
+            title: l10n.files,
+            subtitle: l10n.noWorkspaceBound,
           );
         }
         return WorkspaceFileBrowserContent(
@@ -63,22 +76,29 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenFile: onOpenFile,
         );
       case WorkspaceTabKind.terminal:
-        return const _WorkspaceSimplePane(
+        return _WorkspaceSimplePane(
           icon: Icons.terminal,
-          title: '终端',
-          subtitle: '这里会显示当前工作区的终端会话。',
+          title: l10n.terminal,
+          subtitle: l10n.terminalSessionPlaceholder,
         );
       case WorkspaceTabKind.browser:
-        return const _WorkspaceSimplePane(
-          icon: Icons.public,
-          title: '浏览器',
-          subtitle: '这里会显示项目预览或自动化浏览器。',
+        return WorkspaceBrowserContent(
+          workspacePath: workspacePath,
+          initialUrl: tab.url,
+          initialFilePath: tab.absolutePath,
+          initialWorkspaceHtmlPath: tab.workspaceHtmlPath,
+          onReadWorkspaceTextFile: onReadWorkspaceTextFile,
+          onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
+          onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
+          onOpenWorkspaceFile: onOpenWorkspaceFile,
+          onOpenBrowserTab: onOpenBrowser,
         );
       case WorkspaceTabKind.filePreview:
         return WorkspaceFilePreviewContent(
           tab: tab,
           onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
           onOpenWorkspaceFile: onOpenWorkspaceFile,
+          onOpenBrowser: onOpenBrowser,
         );
     }
   }

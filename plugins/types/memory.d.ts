@@ -115,6 +115,24 @@ export namespace Memory {
     function update(oldTitle: string, updates?: Omit<UpdateOptions, 'oldTitle'>, callerCardId?: string): Promise<string>;
     function update(options: UpdateOptions & { oldTitle: string }): Promise<string>;
 
+    interface UserPreferencesOptions {
+        birthDate?: number | string;
+        birth_date?: number | string;
+        gender?: string;
+        personality?: string;
+        identity?: string;
+        occupation?: string;
+        aiStyle?: string;
+        ai_style?: string;
+    }
+
+    /**
+     * Update user preference profile fields
+     * @param options - Preference fields to update
+     * @returns Update result as a string
+     */
+    function updateUserPreferences(options: UserPreferencesOptions): Promise<string>;
+
     interface DeleteOptions extends CallerScopedOptions {
         title: string;
     }

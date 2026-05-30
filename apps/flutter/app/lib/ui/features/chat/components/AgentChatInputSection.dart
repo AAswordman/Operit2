@@ -47,6 +47,8 @@ class AgentChatInputSection extends StatefulWidget {
 class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   final LayerLink _modelPopupLink = LayerLink();
   final LayerLink _inputMenuPopupLink = LayerLink();
+  final GlobalKey _modelPopupTargetKey = GlobalKey();
+  final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
 
@@ -74,6 +76,11 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     final overlay = Overlay.of(context);
     _modelPopupEntry = OverlayEntry(
       builder: (context) {
+        final placement = _popupPlacement(
+          context,
+          targetKey: _modelPopupTargetKey,
+          alignEnd: false,
+        );
         return Stack(
           children: <Widget>[
             Positioned.fill(
@@ -83,19 +90,20 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                 child: const SizedBox.expand(),
               ),
             ),
-            CompositedTransformFollower(
-              link: _modelPopupLink,
-              showWhenUnlinked: false,
-              targetAnchor: Alignment.topLeft,
-              followerAnchor: Alignment.bottomLeft,
-              offset: const Offset(0, -8),
+            Positioned(
+              left: placement.left,
+              bottom: placement.bottom,
+              width: placement.width,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: AgentModelSelectorPopup(
-                  viewModel: widget.viewModel,
-                  onDismiss: _dismissModelSettingsPopup,
-                  onModelChanged: widget.onModelChanged,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                  child: AgentModelSelectorPopup(
+                    viewModel: widget.viewModel,
+                    onDismiss: _dismissModelSettingsPopup,
+                    onModelChanged: widget.onModelChanged,
+                  ),
                 ),
               ),
             ),
@@ -110,6 +118,11 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     final overlay = Overlay.of(context);
     _inputMenuPopupEntry = OverlayEntry(
       builder: (context) {
+        final placement = _popupPlacement(
+          context,
+          targetKey: _inputMenuPopupTargetKey,
+          alignEnd: true,
+        );
         return Stack(
           children: <Widget>[
             Positioned.fill(
@@ -119,19 +132,20 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                 child: const SizedBox.expand(),
               ),
             ),
-            CompositedTransformFollower(
-              link: _inputMenuPopupLink,
-              showWhenUnlinked: false,
-              targetAnchor: Alignment.topRight,
-              followerAnchor: Alignment.bottomRight,
-              offset: const Offset(0, -8),
+            Positioned(
+              left: placement.left,
+              bottom: placement.bottom,
+              width: placement.width,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: AgentInputMenuPopup(
-                  viewModel: widget.viewModel,
-                  currentChatId: widget.currentChatId,
-                  onDismiss: _dismissInputMenuPopup,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                  child: AgentInputMenuPopup(
+                    viewModel: widget.viewModel,
+                    currentChatId: widget.currentChatId,
+                    onDismiss: _dismissInputMenuPopup,
+                  ),
                 ),
               ),
             ),
@@ -140,6 +154,46 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
       },
     );
     overlay.insert(_inputMenuPopupEntry!);
+  }
+
+  _PopupPlacement _popupPlacement(
+    BuildContext context, {
+    required GlobalKey targetKey,
+    required bool alignEnd,
+  }) {
+    final mediaQuery = MediaQuery.of(context);
+    final screenSize = mediaQuery.size;
+    final horizontalPadding = 12.0 + mediaQuery.padding.left;
+    final rightPadding = 12.0 + mediaQuery.padding.right;
+    final availableWidth = screenSize.width - horizontalPadding - rightPadding;
+    final width = availableWidth < 300.0 ? availableWidth : 300.0;
+    final targetRect = _targetRect(targetKey);
+    final targetLeft = targetRect.left;
+    final targetRight = targetRect.right;
+    final desiredLeft = alignEnd ? targetRight - width : targetLeft;
+    final maxLeft = screenSize.width - rightPadding - width;
+    final left = desiredLeft.clamp(horizontalPadding, maxLeft).toDouble();
+    final targetTop = targetRect.top;
+    final bottom = screenSize.height - targetTop + 8;
+    final maxHeight = (targetTop - mediaQuery.padding.top - 20).clamp(
+      96.0,
+      420.0,
+    );
+    return _PopupPlacement(
+      left: left,
+      bottom: bottom,
+      width: width,
+      maxHeight: maxHeight.toDouble(),
+    );
+  }
+
+  Rect _targetRect(GlobalKey targetKey) {
+    final renderObject = targetKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      throw StateError('Popup target is not laid out.');
+    }
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    return topLeft & renderObject.size;
   }
 
   void _dismissModelSettingsPopup() {
@@ -229,7 +283,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     inputState: widget.inputState,
                     modelLabel: widget.modelLabel,
                     modelSelectorLink: _modelPopupLink,
+                    modelSelectorKey: _modelPopupTargetKey,
                     settingsLink: _inputMenuPopupLink,
+                    settingsKey: _inputMenuPopupTargetKey,
                     processing: processing,
                     hasDraftText: hasDraftText,
                     showCancelAction: showCancelAction,
@@ -257,7 +313,9 @@ class _InputBody extends StatelessWidget {
     required this.inputState,
     required this.modelLabel,
     required this.modelSelectorLink,
+    required this.modelSelectorKey,
     required this.settingsLink,
+    required this.settingsKey,
     required this.processing,
     required this.hasDraftText,
     required this.showCancelAction,
@@ -274,7 +332,9 @@ class _InputBody extends StatelessWidget {
   final ChatInputProcessingState inputState;
   final String modelLabel;
   final LayerLink modelSelectorLink;
+  final GlobalKey modelSelectorKey;
   final LayerLink settingsLink;
+  final GlobalKey settingsKey;
   final bool processing;
   final bool hasDraftText;
   final bool showCancelAction;
@@ -334,6 +394,7 @@ class _InputBody extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: CompositedTransformTarget(
+                  key: modelSelectorKey,
                   link: modelSelectorLink,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
@@ -378,6 +439,7 @@ class _InputBody extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             CompositedTransformTarget(
+              key: settingsKey,
               link: settingsLink,
               child: _IconTapTarget(
                 icon: Icons.tune_outlined,
@@ -472,16 +534,38 @@ String _toolProgressStatus(
 }
 
 String _inputProcessingMessage(AppLocalizations l10n, String key) {
+  const memberReplyingPrefix = 'role_response_planner_member_replying|';
+  if (key.startsWith(memberReplyingPrefix)) {
+    return l10n.roleResponsePlannerMemberReplying(
+      key.substring(memberReplyingPrefix.length),
+    );
+  }
   return switch (key) {
     'enhanced_processing_input' => l10n.processingInput,
     'enhanced_processing_message' => l10n.processingMessage,
     'enhanced_connecting_service' => l10n.connectingAiService,
     'enhanced_receiving_response' => l10n.receivingAiResponse,
     'enhanced_receiving_tool_result' => l10n.receivingToolResultAiResponse,
+    'role_response_planner_planning' => l10n.roleResponsePlannerPlanning,
+    'role_response_planner_failed' => l10n.roleResponsePlannerFailed,
     'message_processing' => l10n.processingMessage,
     'message_summarizing' => l10n.summarizingMemories,
     _ => key,
   };
+}
+
+class _PopupPlacement {
+  const _PopupPlacement({
+    required this.left,
+    required this.bottom,
+    required this.width,
+    required this.maxHeight,
+  });
+
+  final double left;
+  final double bottom;
+  final double width;
+  final double maxHeight;
 }
 
 class _IconTapTarget extends StatelessWidget {

@@ -57,6 +57,11 @@ export namespace Chat {
     function startService(options?: StartServiceOptions): Promise<ChatServiceStartResultData>;
 
     /**
+     * Stop the chat service runtime holder
+     */
+    function stopService(): Promise<ChatServiceStartResultData>;
+
+    /**
      * Create a new chat conversation
      * @param group - Optional group name for the new chat
      * @param setAsCurrentChat - Optional, whether to switch to the new chat (default true)

@@ -7,7 +7,7 @@ import {
     AppUsageTimeResultData, DeviceInfoResultData, NotificationData, LocationData,
     BluetoothStateData, BluetoothBondedDevicesData, BluetoothScanResultData, BluetoothSessionData,
     BluetoothTransferData, BluetoothReadData, BluetoothBleServicesData, BluetoothBleNotificationData,
-    ADBResultData, IntentResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
+    IntentResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
     TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData,
     MusicPlaybackResultData
 } from './results';
@@ -227,12 +227,6 @@ export namespace System {
             function readNotifications(sessionId: string, limit?: number | string): Promise<BluetoothBleNotificationData>;
         }
     }
-
-    /**
-     * Execute an shell command (requires root access)
-     * @param command The shell command to execute
-     */
-    function shell(command: string): Promise<ADBResultData>;
 
     /**
      * Execute an Intent

@@ -54,6 +54,15 @@ def _collect_sync_plan(source_dir: Path) -> list[SyncPlanItem]:
                 )
             )
             continue
+        if child.is_file() and child.suffix.lower() == ".ts" and not child.name.endswith(".d.ts"):
+            plans.append(
+                SyncPlanItem(
+                    mode="compile-ts",
+                    source=child,
+                    destination_name=f"{child.stem}.js",
+                )
+            )
+            continue
         if child.is_dir() and _find_manifest_file(child):
             plans.append(
                 SyncPlanItem(
@@ -130,6 +139,22 @@ def _collect_prebuild_inputs(source_dir: Path, child_dir: Path) -> list[Path]:
     return paths
 
 
+def _collect_root_prebuild_inputs(source_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    tsconfig = source_dir / "tsconfig.json"
+    if tsconfig.is_file():
+        paths.append(tsconfig)
+    for file_path in source_dir.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
+            paths.append(file_path)
+    types_dir = source_dir.parent / "types"
+    if types_dir.is_dir():
+        for file_path in types_dir.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
+                paths.append(file_path)
+    return paths
+
+
 def _load_state(path: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
@@ -147,6 +172,19 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
     state_file = source_dir / ".sync_state.json"
     state = _load_state(state_file)
     changed = False
+
+    if any(plan.mode == "compile-ts" for plan in plans):
+        tsconfig = source_dir / "tsconfig.json"
+        if not tsconfig.is_file():
+            raise ValueError(f"Missing tsconfig.json for TypeScript plugins: {source_dir}")
+        signature = _compute_paths_signature(repo_root, _collect_root_prebuild_inputs(source_dir))
+        key = "prebuild:."
+        if state.get(key) == signature:
+            print(f"SKIP-PREBUILD: {source_dir}")
+        else:
+            _run_checked_command([_platform_command("tsc"), "-p", str(tsconfig)], repo_root, dry_run=dry_run)
+            state[key] = signature
+            changed = True
 
     child_dirs = sorted(
         {plan.source for plan in plans if plan.source.is_dir()},
@@ -240,6 +278,14 @@ def _sync(source_dir: Path, output_dir: Path, *, dry_run: bool) -> tuple[int, in
             print(f"{'DRY-COPY' if dry_run else 'COPY'}: {plan.source} -> {destination}")
             if not dry_run:
                 shutil.copy2(plan.source, destination)
+            copied += 1
+        elif plan.mode == "compile-ts":
+            compiled = source_dir.parent / ".out" / source_dir.name / f"{plan.source.stem}.js"
+            print(f"{'DRY-COPY' if dry_run else 'COPY'}: {compiled} -> {destination}")
+            if not dry_run:
+                if not compiled.is_file():
+                    raise FileNotFoundError(f"Compiled JavaScript not found: {compiled}")
+                shutil.copy2(compiled, destination)
             copied += 1
         else:
             print(f"{'DRY-PACK' if dry_run else 'PACK'}: {plan.source} -> {destination}")

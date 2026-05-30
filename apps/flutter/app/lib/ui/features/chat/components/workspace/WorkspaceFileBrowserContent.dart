@@ -3,7 +3,9 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
+import 'WorkspacePathBar.dart';
 import 'WorkspaceTabModels.dart';
 
 class WorkspaceFileBrowserContent extends StatefulWidget {
@@ -31,6 +33,8 @@ class _WorkspaceFileBrowserContentState
   late String _currentPath;
   final List<String> _history = <String>[];
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _pathController = TextEditingController();
+  bool _editingPath = false;
   Future<List<WorkspaceFileEntry>>? _entriesFuture;
 
   @override
@@ -43,6 +47,7 @@ class _WorkspaceFileBrowserContentState
   @override
   void dispose() {
     _scrollController.dispose();
+    _pathController.dispose();
     super.dispose();
   }
 
@@ -59,46 +64,25 @@ class _WorkspaceFileBrowserContentState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return ColoredBox(
       color: theme.colorScheme.surface,
       child: Column(
         children: <Widget>[
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLow,
-              border: Border(
-                bottom: BorderSide(color: theme.colorScheme.outlineVariant),
-              ),
+          WorkspacePathBar.editable(
+            path: _displayPath(),
+            controller: _pathController,
+            isEditing: _editingPath,
+            leading: WorkspacePathIconButton(
+              tooltip: l10n.back,
+              onPressed: _history.isEmpty ? null : _openPreviousPath,
+              icon: Icons.arrow_back,
             ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-              child: Row(
-                children: <Widget>[
-                  IconButton(
-                    tooltip: '返回',
-                    onPressed: _history.isEmpty ? null : _openPreviousPath,
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                  Expanded(
-                    child: Text(
-                      _displayPath(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '刷新',
-                    onPressed: () {
-                      setState(_loadCurrentPath);
-                    },
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ],
-              ),
-            ),
+            onRefresh: () {
+              setState(_loadCurrentPath);
+            },
+            onEditToggle: _startEditingPath,
+            onSubmitted: _submitEditedPath,
           ),
           Expanded(
             child: FutureBuilder<List<WorkspaceFileEntry>>(
@@ -115,9 +99,9 @@ class _WorkspaceFileBrowserContentState
                 }
                 final entries = snapshot.data ?? const <WorkspaceFileEntry>[];
                 if (entries.isEmpty) {
-                  return const _WorkspaceFileMessage(
+                  return _WorkspaceFileMessage(
                     icon: Icons.folder_off_outlined,
-                    message: '这个文件夹是空的',
+                    message: l10n.emptyFolder,
                   );
                 }
                 return ScrollConfiguration(
@@ -164,7 +148,7 @@ class _WorkspaceFileBrowserContentState
                           ),
                           subtitle: entry.isDirectory
                               ? null
-                              : Text(_previewLabel(previewKind!)),
+                              : Text(_previewLabel(l10n, previewKind!)),
                           onTap: () {
                             if (entry.isDirectory) {
                               _openDirectory(entry.relativePath);
@@ -200,6 +184,27 @@ class _WorkspaceFileBrowserContentState
   void _openPreviousPath() {
     setState(() {
       _currentPath = _history.removeLast();
+      _editingPath = false;
+      _loadCurrentPath();
+    });
+  }
+
+  void _startEditingPath() {
+    setState(() {
+      _pathController.text = _displayPath();
+      _pathController.selection = TextSelection.collapsed(
+        offset: _pathController.text.length,
+      );
+      _editingPath = true;
+    });
+  }
+
+  void _submitEditedPath(String value) {
+    final normalizedPath = _relativePathFromDisplay(value);
+    setState(() {
+      _history.add(_currentPath);
+      _currentPath = normalizedPath;
+      _editingPath = false;
       _loadCurrentPath();
     });
   }
@@ -211,28 +216,42 @@ class _WorkspaceFileBrowserContentState
     return '${widget.rootLabel}/$_currentPath';
   }
 
-  String _previewLabel(WorkspaceFilePreviewKind kind) {
+  String _relativePathFromDisplay(String value) {
+    final normalizedValue = value.trim().replaceAll('\\', '/');
+    final normalizedRoot = widget.rootLabel.trim().replaceAll('\\', '/');
+    if (normalizedValue == normalizedRoot) {
+      return '';
+    }
+    if (normalizedValue.startsWith('$normalizedRoot/')) {
+      return normalizedValue.substring(normalizedRoot.length + 1);
+    }
+    return normalizedValue.replaceFirst(RegExp(r'^/+'), '');
+  }
+
+  String _previewLabel(AppLocalizations l10n, WorkspaceFilePreviewKind kind) {
     switch (kind) {
       case WorkspaceFilePreviewKind.image:
-        return '图片预览';
+        return l10n.imagePreview;
       case WorkspaceFilePreviewKind.audio:
-        return '音频预览';
+        return l10n.audioPreview;
       case WorkspaceFilePreviewKind.video:
-        return '视频预览';
+        return l10n.videoPreview;
       case WorkspaceFilePreviewKind.pdf:
-        return 'PDF 预览';
+        return l10n.pdfPreview;
       case WorkspaceFilePreviewKind.word:
-        return 'Word 预览';
+        return l10n.wordPreview;
       case WorkspaceFilePreviewKind.spreadsheet:
-        return '表格预览';
+        return l10n.spreadsheetPreview;
+      case WorkspaceFilePreviewKind.presentation:
+        return l10n.presentationPreview;
       case WorkspaceFilePreviewKind.html:
-        return '网页预览';
+        return l10n.webPagePreview;
       case WorkspaceFilePreviewKind.markdown:
-        return 'Markdown 预览';
+        return l10n.markdownPreview;
       case WorkspaceFilePreviewKind.text:
-        return '文本预览';
+        return l10n.textPreview;
       case WorkspaceFilePreviewKind.binary:
-        return '文件';
+        return l10n.file;
     }
   }
 }

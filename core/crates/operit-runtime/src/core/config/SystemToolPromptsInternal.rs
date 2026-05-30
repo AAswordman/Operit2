@@ -463,16 +463,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "calculate",
-                    "Evaluate a math expression.",
-                    "",
-                    vec![
-                        param("expression", "string", "math expression, e.g. \"(1+2)*3\"", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "execute_intent",
                     "Execute an Android Intent (activity/broadcast/service).",
                     "",
@@ -747,138 +737,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("path", "string", "file path", true, None),
                         param("title", "string", "optional share title", false, Some("\"Share File\"".to_string()))
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        ),
-        category(
-            "Tasker Tools",
-            "",
-            vec![
-                tool(
-                    "trigger_tasker_event",
-                    "Trigger a Tasker event.",
-                    "",
-                    vec![
-                        param("task_type", "string", "Tasker event type", true, None),
-                        param("arg1", "string", "optional", false, None),
-                        param("arg2", "string", "optional", false, None),
-                        param("arg3", "string", "optional", false, None),
-                        param("arg4", "string", "optional", false, None),
-                        param("arg5", "string", "optional", false, None),
-                        param("args_json", "string", "optional, JSON object string", false, None)
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        ),
-        category(
-            "Workflow Tools",
-            "",
-            vec![
-                tool(
-                    "get_all_workflows",
-                    "Get all workflows.",
-                    "",
-                    Vec::new(),
-                    "",
-                    "",
-                ),
-                tool(
-                    "create_workflow",
-                    "Create a workflow.",
-                    "",
-                    vec![
-                        param("name", "string", "workflow name", true, None),
-                        param("description", "string", "optional", false, None),
-                        param("nodes", "string", "optional, nodes JSON array string", false, None),
-                        param("connections", "string", "optional, connections JSON array string", false, None),
-                        param("enabled", "boolean", "optional", false, Some("true".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "get_workflow",
-                    "Get workflow detail.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "update_workflow",
-                    "Update a workflow.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None),
-                        param("name", "string", "optional", false, None),
-                        param("description", "string", "optional", false, None),
-                        param("nodes", "string", "optional, nodes JSON array string", false, None),
-                        param("connections", "string", "optional, connections JSON array string", false, None),
-                        param("enabled", "boolean", "optional", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "patch_workflow",
-                    "Patch a workflow incrementally.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None),
-                        param("name", "string", "optional", false, None),
-                        param("description", "string", "optional", false, None),
-                        param("enabled", "boolean", "optional", false, None),
-                        param("node_patches", "string", "optional, node patch JSON array string", false, None),
-                        param("connection_patches", "string", "optional, connection patch JSON array string", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "enable_workflow",
-                    "Enable a workflow.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "disable_workflow",
-                    "Disable a workflow.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "delete_workflow",
-                    "Delete a workflow.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "trigger_workflow",
-                    "Trigger a workflow execution.",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "workflow id", true, None)
                     ],
                     "",
                     "",
@@ -1605,47 +1463,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             ],
             "",
         ),
-        category(
-            "FFmpeg Tools",
-            "",
-            vec![
-                tool(
-                    "ffmpeg_execute",
-                    "Execute an FFmpeg command (arguments only; do not include the leading ffmpeg).",
-                    "",
-                    vec![
-                        param("command", "string", "FFmpeg command arguments only, without the leading ffmpeg", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "ffmpeg_info",
-                    "Get FFmpeg information.",
-                    "",
-                    Vec::new(),
-                    "",
-                    "",
-                ),
-                tool(
-                    "ffmpeg_convert",
-                    "Convert a video file using FFmpeg.",
-                    "",
-                    vec![
-                        param("input_path", "string", "input file path", true, None),
-                        param("output_path", "string", "output file path", true, None),
-                        param("format", "string", "optional", false, None),
-                        param("resolution", "string", "optional, e.g. 1280x720", false, None),
-                        param("bitrate", "string", "optional, e.g. 1000k", false, None),
-                        param("audio_codec", "string", "optional", false, None),
-                        param("video_codec", "string", "optional, use h264 for H.264 encoding", false, None)
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        )
     ]
 }
 
@@ -2070,16 +1887,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "calculate",
-                    "计算数学表达式。",
-                    "",
-                    vec![
-                        param("expression", "string", "数学表达式，例如 \"(1+2)*3\"", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "execute_intent",
                     "执行 Android Intent（activity/broadcast/service）。",
                     "",
@@ -2354,138 +2161,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("path", "string", "文件路径", true, None),
                         param("title", "string", "可选的共享标题", false, Some("\"Share File\"".to_string()))
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        ),
-        category(
-            "Tasker 工具",
-            "",
-            vec![
-                tool(
-                    "trigger_tasker_event",
-                    "触发 Tasker 事件。",
-                    "",
-                    vec![
-                        param("task_type", "string", "Tasker 事件类型", true, None),
-                        param("arg1", "string", "可选", false, None),
-                        param("arg2", "string", "可选", false, None),
-                        param("arg3", "string", "可选", false, None),
-                        param("arg4", "string", "可选", false, None),
-                        param("arg5", "string", "可选", false, None),
-                        param("args_json", "string", "可选，JSON 对象字符串", false, None)
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        ),
-        category(
-            "工作流工具",
-            "",
-            vec![
-                tool(
-                    "get_all_workflows",
-                    "获取所有工作流列表。",
-                    "",
-                    Vec::new(),
-                    "",
-                    "",
-                ),
-                tool(
-                    "create_workflow",
-                    "创建工作流。",
-                    "",
-                    vec![
-                        param("name", "string", "工作流名称", true, None),
-                        param("description", "string", "可选", false, None),
-                        param("nodes", "string", "可选，节点 JSON 数组字符串", false, None),
-                        param("connections", "string", "可选，连线 JSON 数组字符串", false, None),
-                        param("enabled", "boolean", "可选", false, Some("true".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "get_workflow",
-                    "获取工作流详情。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "update_workflow",
-                    "更新工作流。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None),
-                        param("name", "string", "可选", false, None),
-                        param("description", "string", "可选", false, None),
-                        param("nodes", "string", "可选，节点 JSON 数组字符串", false, None),
-                        param("connections", "string", "可选，连线 JSON 数组字符串", false, None),
-                        param("enabled", "boolean", "可选", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "patch_workflow",
-                    "差异更新工作流。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None),
-                        param("name", "string", "可选", false, None),
-                        param("description", "string", "可选", false, None),
-                        param("enabled", "boolean", "可选", false, None),
-                        param("node_patches", "string", "可选，节点 patch JSON 数组字符串", false, None),
-                        param("connection_patches", "string", "可选，连线 patch JSON 数组字符串", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "enable_workflow",
-                    "启用工作流。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "disable_workflow",
-                    "禁用工作流。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "delete_workflow",
-                    "删除工作流。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "trigger_workflow",
-                    "触发工作流执行。",
-                    "",
-                    vec![
-                        param("workflow_id", "string", "工作流 ID", true, None)
                     ],
                     "",
                     "",
@@ -3212,47 +2887,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             ],
             "",
         ),
-        category(
-            "FFmpeg 工具",
-            "",
-            vec![
-                tool(
-                    "ffmpeg_execute",
-                    "执行 FFmpeg 命令（仅填写参数，不要包含前缀 ffmpeg）。",
-                    "",
-                    vec![
-                        param("command", "string", "仅填写 FFmpeg 命令参数，不要包含前缀 ffmpeg", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "ffmpeg_info",
-                    "获取 FFmpeg 信息。",
-                    "",
-                    Vec::new(),
-                    "",
-                    "",
-                ),
-                tool(
-                    "ffmpeg_convert",
-                    "使用 FFmpeg 转换视频文件。",
-                    "",
-                    vec![
-                        param("input_path", "string", "输入文件路径", true, None),
-                        param("output_path", "string", "输出文件路径", true, None),
-                        param("format", "string", "可选", false, None),
-                        param("resolution", "string", "可选，例如 1280x720", false, None),
-                        param("bitrate", "string", "可选，例如 1000k", false, None),
-                        param("audio_codec", "string", "可选", false, None),
-                        param("video_codec", "string", "可选，H.264 编码请使用 h264", false, None)
-                    ],
-                    "",
-                    "",
-                )
-            ],
-            "",
-        )
     ]
 }
 

@@ -11,6 +11,7 @@ enum WorkspaceFilePreviewKind {
   pdf,
   word,
   spreadsheet,
+  presentation,
   html,
   markdown,
   text,
@@ -27,6 +28,8 @@ class WorkspaceTab {
     this.absolutePath,
     this.fileContent,
     this.previewKind,
+    this.url,
+    this.workspaceHtmlPath,
   });
 
   final WorkspaceTabKind kind;
@@ -37,6 +40,8 @@ class WorkspaceTab {
   final String? absolutePath;
   final String? fileContent;
   final WorkspaceFilePreviewKind? previewKind;
+  final String? url;
+  final String? workspaceHtmlPath;
 }
 
 WorkspaceFilePreviewKind workspacePreviewKindForPath(String path) {
@@ -68,13 +73,15 @@ WorkspaceFilePreviewKind workspacePreviewKindForPath(String path) {
       return WorkspaceFilePreviewKind.video;
     case 'pdf':
       return WorkspaceFilePreviewKind.pdf;
-    case 'doc':
     case 'docx':
       return WorkspaceFilePreviewKind.word;
-    case 'xls':
     case 'xlsx':
+    case 'xlsm':
     case 'csv':
+    case 'tsv':
       return WorkspaceFilePreviewKind.spreadsheet;
+    case 'pptx':
+      return WorkspaceFilePreviewKind.presentation;
     case 'html':
     case 'htm':
       return WorkspaceFilePreviewKind.html;
@@ -127,6 +134,8 @@ IconData workspacePreviewIconForKind(WorkspaceFilePreviewKind kind) {
       return Icons.article_outlined;
     case WorkspaceFilePreviewKind.spreadsheet:
       return Icons.table_chart_outlined;
+    case WorkspaceFilePreviewKind.presentation:
+      return Icons.slideshow_outlined;
     case WorkspaceFilePreviewKind.html:
     case WorkspaceFilePreviewKind.markdown:
     case WorkspaceFilePreviewKind.text:

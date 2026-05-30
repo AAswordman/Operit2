@@ -83,7 +83,7 @@ export declare function toolCall(toolName: string): Promise<any>;
 
 /**
  * Global function to complete tool execution with a result
- * Result values must be JSON-serializable. Java bridge instances are serialized as bridge handles.
+ * Result values must be JSON-serializable.
  * @param result - The result to return
  */
 export declare function complete<T>(result: T): void;
@@ -174,6 +174,21 @@ export namespace NativeInterface {
     function getPluginConfigDir(pluginId: string): string;
 
     /**
+     * Decompress native deflate data from a base64 string or binary handle.
+     */
+    function decompress(data: string, algorithm: 'deflate'): string;
+
+    /**
+     * Execute native crypto operations used by the CryptoJS bridge.
+     */
+    function crypto(algorithm: 'md5' | 'aes', operation: string, argsJson: string): string;
+
+    /**
+     * Execute native image operations used by the Jimp bridge.
+     */
+    function image_processing(callbackId: string, operation: string, argsJson: string): void;
+
+    /**
      * Register an input menu toggle plugin for current toolpkg main registration session.
      * @param specJson - JSON object string describing an input menu toggle plugin
      */
@@ -207,99 +222,6 @@ export namespace NativeInterface {
      * @param errorStack - Error stack trace
      */
     function reportError(errorType: string, errorMessage: string, errorLine: number, errorStack: string): void;
-
-    /**
-     * Check whether a Java/Kotlin class exists.
-     */
-    function javaClassExists(className: string): boolean;
-
-    /**
-     * Load an external `.dex` file into the Java bridge class loader chain.
-     * @param path - Absolute or app-accessible path to the dex file
-     * @param optionsJson - JSON object string, currently supports `nativeLibraryDir`
-     * @returns Bridge JSON string: {"success":boolean,"data"?:{"index":number,"type":"dex","path":string,"nativeLibraryDir":string|null,"alreadyLoaded":boolean},"error"?:string}
-     */
-    function javaLoadDex(path: string, optionsJson: string): string;
-
-    /**
-     * Load an external Android-executable `.jar` file into the Java bridge class loader chain.
-     * The jar must contain `classes.dex`.
-     * @param path - Absolute or app-accessible path to the jar file
-     * @param optionsJson - JSON object string, currently supports `nativeLibraryDir`
-     * @returns Bridge JSON string: {"success":boolean,"data"?:{"index":number,"type":"jar","path":string,"nativeLibraryDir":string|null,"alreadyLoaded":boolean},"error"?:string}
-     */
-    function javaLoadJar(path: string, optionsJson: string): string;
-
-    /**
-     * List external dex/jar artifacts already loaded in the current engine session.
-     * @returns Bridge JSON string: {"success":boolean,"data"?:Array<{"index":number,"type":"dex"|"jar","path":string,"nativeLibraryDir":string|null,"alreadyLoaded":boolean}>,"error"?:string}
-     */
-    function javaListLoadedCodePaths(): string;
-
-    /**
-     * Get the Android application Context as a bridge handle payload.
-     * @returns Bridge JSON string: {"success":boolean,"data"?:{"__javaHandle":string,"__javaClass":string},"error"?:string}
-     */
-    function javaGetApplicationContext(): string;
-
-    /**
-     * Get the current foreground Activity as a bridge handle payload.
-     * @returns Bridge JSON string: {"success":boolean,"data"?:{"__javaHandle":string,"__javaClass":string},"error"?:string}
-     */
-    function javaGetCurrentActivity(): string;
-
-    /**
-     * Create a Java/Kotlin instance.
-     * @param className - Fully qualified class name
-     * @param argsJson - JSON array string of arguments
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaNewInstance(className: string, argsJson: string): string;
-
-    /**
-     * Invoke a static Java/Kotlin method.
-     * @param className - Fully qualified class name
-     * @param methodName - Static method name
-     * @param argsJson - JSON array string of arguments
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaCallStatic(className: string, methodName: string, argsJson: string): string;
-
-    /**
-     * Invoke an instance Java/Kotlin method.
-     * @param instanceHandle - Bridge object handle
-     * @param methodName - Instance method name
-     * @param argsJson - JSON array string of arguments
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaCallInstance(instanceHandle: string, methodName: string, argsJson: string): string;
-    function javaHasInstanceMethod(instanceHandle: string, methodName: string): string;
-
-    /**
-     * Get a static field/property from a class.
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaGetStaticField(className: string, fieldName: string): string;
-
-    /**
-     * Set a static field/property on a class.
-     * @param valueJson - JSON value string
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaSetStaticField(className: string, fieldName: string, valueJson: string): string;
-
-    /**
-     * Get an instance field/property.
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaGetInstanceField(instanceHandle: string, fieldName: string): string;
-
-    /**
-     * Set an instance field/property.
-     * @param valueJson - JSON value string
-     * @returns Bridge JSON string: {"success":boolean,"data"?:any,"error"?:string}
-     */
-    function javaSetInstanceField(instanceHandle: string, fieldName: string, valueJson: string): string;
 
 }
 

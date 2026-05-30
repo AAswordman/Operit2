@@ -195,6 +195,54 @@ pub fn getJsToolsDefinition() -> &'static str {
                 getNotifications: function(limit, includeOngoing) {
                     return toolCall("get_notifications", { limit: parseInt(limit === undefined ? 10 : limit), include_ongoing: !!includeOngoing });
                 },
+                getAppUsageTime: function(options) {
+                    var params = Object.assign({}, options || {});
+                    if (params.packageName !== undefined && params.packageName !== null) {
+                        params.package_name = String(params.packageName);
+                        delete params.packageName;
+                    }
+                    if (params.sinceHours !== undefined && params.sinceHours !== null) {
+                        params.since_hours = parseInt(params.sinceHours);
+                        delete params.sinceHours;
+                    }
+                    if (params.includeSystemApps !== undefined) {
+                        params.include_system_apps = !!params.includeSystemApps;
+                        delete params.includeSystemApps;
+                    }
+                    if (params.limit !== undefined && params.limit !== null) {
+                        params.limit = parseInt(params.limit);
+                    }
+                    return toolCall("get_app_usage_time", params);
+                },
+                getLocation: function(highAccuracy, timeout) {
+                    return toolCall("get_device_location", { high_accuracy: !!highAccuracy, timeout: parseInt(timeout === undefined ? 10 : timeout) });
+                },
+                intent: function(options) {
+                    var source = options || {};
+                    var params = {};
+                    if (source.action !== undefined && source.action !== null) params.action = String(source.action);
+                    if (source.uri !== undefined && source.uri !== null) params.uri = String(source.uri);
+                    if (source.package !== undefined && source.package !== null) params.package = String(source.package);
+                    if (source.component !== undefined && source.component !== null) params.component = String(source.component);
+                    if (source.flags !== undefined && source.flags !== null) params.flags = String(source.flags);
+                    if (source.extras !== undefined && source.extras !== null) params.extras = typeof source.extras === 'string' ? source.extras : JSON.stringify(source.extras);
+                    if (source.type !== undefined && source.type !== null) params.type = String(source.type);
+                    return toolCall("execute_intent", params);
+                },
+                sendBroadcast: function(options) {
+                    var source = options || {};
+                    var params = {};
+                    if (source.action !== undefined && source.action !== null) params.action = String(source.action);
+                    if (source.uri !== undefined && source.uri !== null) params.uri = String(source.uri);
+                    if (source.package !== undefined && source.package !== null) params.package = String(source.package);
+                    if (source.component !== undefined && source.component !== null) params.component = String(source.component);
+                    if (source.extras !== undefined && source.extras !== null) params.extras = typeof source.extras === 'string' ? source.extras : JSON.stringify(source.extras);
+                    if (source.extra_key !== undefined && source.extra_key !== null) params.extra_key = String(source.extra_key);
+                    if (source.extra_value !== undefined && source.extra_value !== null) params.extra_value = String(source.extra_value);
+                    if (source.extra_key2 !== undefined && source.extra_key2 !== null) params.extra_key2 = String(source.extra_key2);
+                    if (source.extra_value2 !== undefined && source.extra_value2 !== null) params.extra_value2 = String(source.extra_value2);
+                    return toolCall("send_broadcast", params);
+                },
                 terminal: {
                     info: function() { return toolCall("get_terminal_info", {}); },
                     create: function(sessionName, type) {
@@ -207,11 +255,19 @@ pub fn getJsToolsDefinition() -> &'static str {
                         if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
                         return toolCall("execute_in_terminal_session", params);
                     },
-                    hiddenExec: function(command, type, executorKey, timeoutMs) {
+                    execStreaming: function(sessionId, command, options) {
+                        var params = { session_id: sessionId, command: command };
+                        var toolOptions = {};
+                        options = options || {};
+                        if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
+                        if (typeof options.onIntermediateResult === "function") toolOptions.onIntermediateResult = options.onIntermediateResult;
+                        return toolCall("execute_in_terminal_session_streaming", params, toolOptions);
+                    },
+                    hiddenExec: function(command, options) {
                         var params = { command: command };
-                        if (type !== undefined && type !== null) params.type = String(type);
-                        if (executorKey !== undefined && executorKey !== null) params.executor_key = String(executorKey);
-                        if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
+                        options = options || {};
+                        if (options.executorKey !== undefined && options.executorKey !== null) params.executor_key = String(options.executorKey);
+                        if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
                         return toolCall("execute_hidden_terminal_command", params);
                     },
                     screen: function(sessionId) { return toolCall("get_terminal_session_screen", { session_id: sessionId }); },
@@ -239,6 +295,95 @@ pub fn getJsToolsDefinition() -> &'static str {
                     return toolCall("execute_cli_command", {
                         args: JSON.stringify(args)
                     });
+                }
+            },
+            Chat: {
+                _json: function(promise) {
+                    return promise.then(function(value) {
+                        return typeof value === "string" ? JSON.parse(value) : value;
+                    });
+                },
+                startService: function(options) {
+                    var params = {};
+                    options = options || {};
+                    if (options.initial_mode !== undefined && options.initial_mode !== null && String(options.initial_mode).trim() !== "") params.initial_mode = String(options.initial_mode);
+                    if (options.auto_enter_voice_chat !== undefined && options.auto_enter_voice_chat !== null) params.auto_enter_voice_chat = options.auto_enter_voice_chat;
+                    if (options.wake_launched !== undefined && options.wake_launched !== null) params.wake_launched = options.wake_launched;
+                    if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                    if (options.keep_if_exists !== undefined && options.keep_if_exists !== null) params.keep_if_exists = options.keep_if_exists;
+                    return Tools.Chat._json(toolCall("start_chat_service", params));
+                },
+                stopService: function() {
+                    return Tools.Chat._json(toolCall("stop_chat_service", {}));
+                },
+                createNew: function(group, setAsCurrentChat, characterCardId) {
+                    var params = {};
+                    if (group !== undefined && group !== null && String(group).trim() !== "") params.group = String(group);
+                    if (setAsCurrentChat !== undefined && setAsCurrentChat !== null) params.set_as_current_chat = String(setAsCurrentChat);
+                    if (characterCardId !== undefined && characterCardId !== null && String(characterCardId).trim() !== "") params.character_card_id = String(characterCardId);
+                    return Tools.Chat._json(toolCall("create_new_chat", params));
+                },
+                listAll: function() {
+                    return Tools.Chat._json(toolCall("list_chats", {}));
+                },
+                listChats: function(params) {
+                    return Tools.Chat._json(toolCall("list_chats", params || {}));
+                },
+                findChat: function(params) {
+                    return Tools.Chat._json(toolCall("find_chat", params || {}));
+                },
+                agentStatus: function(chatId) {
+                    return Tools.Chat._json(toolCall("agent_status", { chat_id: chatId }));
+                },
+                switchTo: function(chatId) {
+                    return Tools.Chat._json(toolCall("switch_chat", { chat_id: chatId }));
+                },
+                updateTitle: function(chatId, title) {
+                    return Tools.Chat._json(toolCall("update_chat_title", { chat_id: String(chatId || ""), title: String(title || "") }));
+                },
+                deleteChat: function(chatId) {
+                    return Tools.Chat._json(toolCall("delete_chat", { chat_id: String(chatId || "") }));
+                },
+                getMessages: function(chatId, options) {
+                    var params = { chat_id: String(chatId || "") };
+                    options = options || {};
+                    if (options.order !== undefined && options.order !== null && String(options.order).trim() !== "") params.order = String(options.order);
+                    if (options.limit !== undefined && options.limit !== null) params.limit = String(options.limit);
+                    return Tools.Chat._json(toolCall("get_chat_messages", params));
+                },
+                sendMessage: function(message, chatId, roleCardId, senderName, options) {
+                    var params = { message: message };
+                    options = options || {};
+                    if (chatId) params.chat_id = chatId;
+                    if (roleCardId) params.role_card_id = roleCardId;
+                    if (senderName) params.sender_name = senderName;
+                    if (options.runtime) params.runtime = String(options.runtime);
+                    if (options.persist_turn !== undefined) params.persist_turn = options.persist_turn;
+                    if (options.notify_reply !== undefined) params.notify_reply = options.notify_reply;
+                    if (options.hide_user_message !== undefined) params.hide_user_message = options.hide_user_message;
+                    if (options.disable_warning !== undefined) params.disable_warning = options.disable_warning;
+                    if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                    return Tools.Chat._json(toolCall("send_message_to_ai", params));
+                },
+                sendMessageStreaming: function(message, chatId, roleCardId, senderName, options) {
+                    var params = { message: message };
+                    var toolOptions = {};
+                    options = options || {};
+                    if (chatId) params.chat_id = chatId;
+                    if (roleCardId) params.role_card_id = roleCardId;
+                    if (senderName) params.sender_name = senderName;
+                    if (options.runtime) params.runtime = String(options.runtime);
+                    if (options.persist_turn !== undefined) params.persist_turn = options.persist_turn;
+                    if (options.notify_reply !== undefined) params.notify_reply = options.notify_reply;
+                    if (options.hide_user_message !== undefined) params.hide_user_message = options.hide_user_message;
+                    if (options.disable_warning !== undefined) params.disable_warning = options.disable_warning;
+                    if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                    if (options.waifu !== undefined) params.waifu = options.waifu;
+                    if (typeof options.onIntermediateResult === "function") toolOptions.onIntermediateResult = options.onIntermediateResult;
+                    return Tools.Chat._json(toolCall("send_message_to_ai_streaming", params, toolOptions));
+                },
+                listCharacterCards: function() {
+                    return Tools.Chat._json(toolCall("list_character_cards", {}));
                 }
             },
             Memory: {
@@ -281,11 +426,99 @@ pub fn getJsToolsDefinition() -> &'static str {
                     var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
                     return toolCall("create_memory", params);
+                },
+                update: function(oldTitle, updates, callerCardId) {
+                    var options = oldTitle && typeof oldTitle === 'object' && !Array.isArray(oldTitle) ? oldTitle : Object.assign({ oldTitle: oldTitle }, updates || {}, { callerCardId: callerCardId });
+                    var params = { old_title: options.oldTitle };
+                    if (options.newTitle) params.new_title = options.newTitle;
+                    if (options.content) params.content = options.content;
+                    if (options.contentType) params.content_type = options.contentType;
+                    if (options.source) params.source = options.source;
+                    if (options.credibility !== undefined) params.credibility = options.credibility;
+                    if (options.importance !== undefined) params.importance = options.importance;
+                    if (options.folderPath) params.folder_path = options.folderPath;
+                    if (options.tags) params.tags = options.tags;
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("update_memory", params);
+                },
+                updateUserPreferences: function(options) {
+                    options = options || {};
+                    var params = {};
+                    if (options.birthDate !== undefined && options.birthDate !== null) params.birth_date = String(options.birthDate);
+                    if (options.birth_date !== undefined && options.birth_date !== null) params.birth_date = String(options.birth_date);
+                    if (options.gender !== undefined && options.gender !== null) params.gender = String(options.gender);
+                    if (options.personality !== undefined && options.personality !== null) params.personality = String(options.personality);
+                    if (options.identity !== undefined && options.identity !== null) params.identity = String(options.identity);
+                    if (options.occupation !== undefined && options.occupation !== null) params.occupation = String(options.occupation);
+                    if (options.aiStyle !== undefined && options.aiStyle !== null) params.ai_style = String(options.aiStyle);
+                    if (options.ai_style !== undefined && options.ai_style !== null) params.ai_style = String(options.ai_style);
+                    return toolCall("update_user_preferences", params);
+                },
+                deleteMemory: function(title, callerCardId) {
+                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, callerCardId: callerCardId };
+                    var params = { title: options.title };
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("delete_memory", params);
+                },
+                move: function(targetFolderPath, titles, sourceFolderPath, callerCardId) {
+                    var options = targetFolderPath && typeof targetFolderPath === 'object' && !Array.isArray(targetFolderPath) ? targetFolderPath : { targetFolderPath: targetFolderPath, titles: titles, sourceFolderPath: sourceFolderPath, callerCardId: callerCardId };
+                    var params = { target_folder_path: options.targetFolderPath };
+                    if (options.titles) params.titles = Array.isArray(options.titles) ? options.titles.join(",") : String(options.titles);
+                    if (options.sourceFolderPath !== undefined && options.sourceFolderPath !== null) params.source_folder_path = String(options.sourceFolderPath);
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("move_memory", params);
+                },
+                link: function(sourceTitle, targetTitle, linkType, weight, description, callerCardId) {
+                    var options = sourceTitle && typeof sourceTitle === 'object' && !Array.isArray(sourceTitle) ? sourceTitle : { sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, weight: weight, description: description, callerCardId: callerCardId };
+                    var params = { source_title: options.sourceTitle, target_title: options.targetTitle };
+                    if (options.linkType) params.link_type = options.linkType;
+                    if (options.weight !== undefined) params.weight = options.weight;
+                    if (options.description) params.description = options.description;
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("link_memories", params);
+                },
+                queryLinks: function(linkId, sourceTitle, targetTitle, linkType, limit, callerCardId) {
+                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, limit: limit, callerCardId: callerCardId };
+                    var params = {};
+                    if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
+                    if (options.sourceTitle) params.source_title = options.sourceTitle;
+                    if (options.targetTitle) params.target_title = options.targetTitle;
+                    if (options.linkType) params.link_type = options.linkType;
+                    if (options.limit !== undefined) params.limit = options.limit;
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("query_memory_links", params);
+                },
+                updateLink: function(linkId, sourceTitle, targetTitle, linkType, newLinkType, weight, description, callerCardId) {
+                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, newLinkType: newLinkType, weight: weight, description: description, callerCardId: callerCardId };
+                    var params = {};
+                    if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
+                    if (options.sourceTitle) params.source_title = options.sourceTitle;
+                    if (options.targetTitle) params.target_title = options.targetTitle;
+                    if (options.linkType) params.link_type = options.linkType;
+                    if (options.newLinkType) params.new_link_type = options.newLinkType;
+                    if (options.weight !== undefined) params.weight = options.weight;
+                    if (options.description !== undefined) params.description = options.description;
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("update_memory_link", params);
+                },
+                deleteLink: function(linkId, sourceTitle, targetTitle, linkType, callerCardId) {
+                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, callerCardId: callerCardId };
+                    var params = {};
+                    if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
+                    if (options.sourceTitle) params.source_title = options.sourceTitle;
+                    if (options.targetTitle) params.target_title = options.targetTitle;
+                    if (options.linkType) params.link_type = options.linkType;
+                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
+                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    return toolCall("delete_memory_link", params);
                 }
             },
-            calc: function(expression) {
-                return toolCall("calculate", { expression: expression });
-            }
         };
     "#
 }

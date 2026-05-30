@@ -8,8 +8,6 @@ import {
     FileApplyResultData, GrepResultData
 } from './results';
 
-import { FFmpegVideoCodec, FFmpegAudioCodec, FFmpegResolution, FFmpegBitrate } from './ffmpeg';
-
 /**
  * Execution environment for file operations
  */

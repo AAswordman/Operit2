@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../viewmodel/ChatViewModel.dart';
 
@@ -461,6 +462,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final normalizedSearchQuery = normalizeMessageSearchText(_searchQuery);
     final activeEntries = normalizedSearchQuery.isEmpty
@@ -486,7 +488,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
       (entry) => entry.timestamp == widget.currentMessageTimestamp,
     );
     final maxMessageLength = activeEntries
-        .map(messageContentLength)
+        .map((preview) => messageContentLength(l10n, preview))
         .fold<int>(1, (max, value) => math.max(max, value));
     final dialogIsLoading = widget.isLoading || _isLoadingSearchEntries;
     final useTabletLayout = useTabletLayoutForContext(context);
@@ -507,9 +509,18 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text('消息定位', style: theme.textTheme.titleMedium),
                       Text(
-                        '当前 ${(currentMessageIndex + 1).clamp(0, widget.locatorEntries.length)} / ${widget.locatorEntries.length}',
+                        l10n.messageLocatorTitle,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      Text(
+                        l10n.messageLocatorCurrent(
+                          (currentMessageIndex + 1).clamp(
+                            0,
+                            widget.locatorEntries.length,
+                          ),
+                          widget.locatorEntries.length,
+                        ),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -518,7 +529,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
                   ),
                   TextButton(
                     onPressed: widget.onDismiss,
-                    child: const Text('关闭'),
+                    child: Text(l10n.close),
                   ),
                 ],
               ),
@@ -529,10 +540,10 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
                     child: TextField(
                       controller: _searchController,
                       maxLines: 1,
-                      decoration: const InputDecoration(
-                        labelText: '搜索',
-                        hintText: '搜索消息内容',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: l10n.search,
+                        hintText: l10n.messageLocatorSearchHint,
+                        border: const OutlineInputBorder(),
                       ),
                       onChanged: _onSearchChanged,
                     ),
@@ -551,14 +562,14 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
               const SizedBox(height: 12),
               if (normalizedSearchQuery.isEmpty && !_favoritesOnly)
                 Text(
-                  '滚动列表或搜索后跳转到指定消息',
+                  l10n.messageLocatorInstruction,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 )
               else if (filteredEntries.isNotEmpty)
                 Text(
-                  '${filteredEntries.length} 条结果',
+                  l10n.messageLocatorResultCount(filteredEntries.length),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -611,10 +622,11 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     int maxMessageLength,
   ) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     if (dialogIsLoading) {
       return Center(
         child: Text(
-          '加载中',
+          l10n.loading,
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -624,7 +636,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     if (filteredEntries.isEmpty) {
       return Center(
         child: Text(
-          '没有匹配的消息',
+          l10n.messageLocatorNoMatches,
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -828,8 +840,9 @@ class ChatMessageLocatorRow extends StatelessWidget {
     final borderColor = isCurrent
         ? theme.colorScheme.primary.withValues(alpha: 0.4)
         : theme.colorScheme.outlineVariant.withValues(alpha: 0.22);
-    final messageLength = messageContentLength(preview);
-    final previewText = buildMessagePreview(preview, searchQuery);
+    final l10n = AppLocalizations.of(context)!;
+    final messageLength = messageContentLength(l10n, preview);
+    final previewText = buildMessagePreview(l10n, preview, searchQuery);
 
     return Material(
       color: containerColor,
@@ -871,7 +884,7 @@ class ChatMessageLocatorRow extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      senderLabel(preview.sender),
+                      senderLabel(context, preview.sender),
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -989,35 +1002,42 @@ class _ChatMessageLocatorEntry {
   final ChatMessageLocatorPreview preview;
 }
 
-String senderLabel(String sender) {
+String senderLabel(BuildContext context, String sender) {
+  final l10n = AppLocalizations.of(context)!;
   switch (sender) {
     case 'user':
-      return '用户';
+      return l10n.messageSenderUser;
     case 'ai':
       return 'AI';
     case 'summary':
-      return '摘要';
+      return l10n.messageSenderSummary;
     case 'system':
-      return '系统';
+      return l10n.messageSenderSystem;
     case 'think':
-      return '思考';
+      return l10n.messageSenderThinking;
     default:
-      return '其他';
+      return l10n.messageSenderOther;
   }
 }
 
-String visibleLocatorContent(ChatMessageLocatorPreview preview) {
+String visibleLocatorContent(
+  AppLocalizations l10n,
+  ChatMessageLocatorPreview preview,
+) {
   if (preview.sender == 'user' && preview.displayMode == 'HIDDEN_PLACEHOLDER') {
-    return '隐藏的用户消息';
+    return l10n.hiddenUserMessage;
   }
   return preview.previewContent;
 }
 
-int messageContentLength(ChatMessageLocatorPreview preview) {
+int messageContentLength(
+  AppLocalizations l10n,
+  ChatMessageLocatorPreview preview,
+) {
   if (preview.contentLength > 0) {
     return preview.contentLength;
   }
-  return math.max(visibleLocatorContent(preview).length, 1);
+  return math.max(visibleLocatorContent(l10n, preview).length, 1);
 }
 
 double messageBarFraction(int messageLength, int maxMessageLength) {
@@ -1028,10 +1048,13 @@ double messageBarFraction(int messageLength, int maxMessageLength) {
 }
 
 String buildMessagePreview(
+  AppLocalizations l10n,
   ChatMessageLocatorPreview preview,
   String searchQuery,
 ) {
-  final content = normalizeMessageSearchText(visibleLocatorContent(preview));
+  final content = normalizeMessageSearchText(
+    visibleLocatorContent(l10n, preview),
+  );
   if (content.isEmpty) {
     return preview.sender;
   }

@@ -10,7 +10,13 @@ class ScreenRouteRegistry {
   const ScreenRouteRegistry._();
 
   static const OperitScreen aiChat = AiChatScreenRoute();
-  static const List<OperitScreen> _hostScreens = <OperitScreen>[aiChat];
+  static const OperitScreen packageManager = PackageManagerScreenRoute();
+  static const OperitScreen market = MarketScreenRoute();
+  static const List<OperitScreen> _hostScreens = <OperitScreen>[
+    aiChat,
+    packageManager,
+    market,
+  ];
 
   static final Map<String, OperitScreen> _screensByRouteId =
       <String, OperitScreen>{
@@ -32,6 +38,22 @@ class ScreenRouteRegistry {
         title: l10n.aiChat,
         icon: Icons.chat_bubble_outline,
         order: 10,
+      ),
+      NavigationEntrySpec(
+        entryId: 'main.package_manager',
+        routeId: routeIdOf(packageManager),
+        surface: NavigationSurface.mainSidebarAi,
+        title: '包管理',
+        icon: Icons.extension_outlined,
+        order: 20,
+      ),
+      NavigationEntrySpec(
+        entryId: 'main.market',
+        routeId: routeIdOf(market),
+        surface: NavigationSurface.mainSidebarAi,
+        title: '市场',
+        icon: Icons.store_outlined,
+        order: 30,
       ),
     ];
   }

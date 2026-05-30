@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import 'WorkspaceTabModels.dart';
 
 class WorkspaceTabStrip extends StatelessWidget {
@@ -21,6 +22,7 @@ class WorkspaceTabStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return ColoredBox(
       color: theme.colorScheme.surfaceContainerLow,
       child: SizedBox(
@@ -47,6 +49,7 @@ class WorkspaceTabStrip extends StatelessWidget {
                 final selected = index == selectedIndex;
                 return _WorkspaceTabButton(
                   tab: tab,
+                  title: _tabTitle(l10n, tab),
                   selected: selected,
                   onTap: () {
                     onSelected(index);
@@ -69,12 +72,14 @@ class WorkspaceTabStrip extends StatelessWidget {
 class _WorkspaceTabButton extends StatelessWidget {
   const _WorkspaceTabButton({
     required this.tab,
+    required this.title,
     required this.selected,
     required this.onTap,
     required this.onClose,
   });
 
   final WorkspaceTab tab;
+  final String title;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onClose;
@@ -117,7 +122,7 @@ class _WorkspaceTabButton extends StatelessWidget {
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
-                  tab.title,
+                  title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.labelMedium?.copyWith(
@@ -126,7 +131,9 @@ class _WorkspaceTabButton extends StatelessWidget {
                   ),
                 ),
               ),
-              if (onClose != null) ...<Widget>[
+              if (onClose == null)
+                const SizedBox(width: 8)
+              else ...<Widget>[
                 const SizedBox(width: 4),
                 SizedBox(
                   width: 22,
@@ -147,5 +154,23 @@ class _WorkspaceTabButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+String _tabTitle(AppLocalizations l10n, WorkspaceTab tab) {
+  if (tab.title.isNotEmpty) {
+    return tab.title;
+  }
+  switch (tab.kind) {
+    case WorkspaceTabKind.home:
+      return l10n.home;
+    case WorkspaceTabKind.files:
+      return l10n.files;
+    case WorkspaceTabKind.terminal:
+      return l10n.terminal;
+    case WorkspaceTabKind.browser:
+      return l10n.browser;
+    case WorkspaceTabKind.filePreview:
+      return l10n.filePreview;
   }
 }

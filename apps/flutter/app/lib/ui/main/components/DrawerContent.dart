@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -10,6 +11,7 @@ import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../navigation/AppNavigationModels.dart';
+import '../screens/ScreenRouteRegistry.dart';
 import 'CollapsedDrawerContent.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
@@ -38,19 +40,24 @@ class DrawerContent extends StatefulWidget {
 
 class _DrawerContentState extends State<DrawerContent> {
   static const int _collapsedHistoryLimit = 4;
+  static final Set<String> _rememberedCollapsedCharacterSections = <String>{};
+  static final Set<String> _rememberedCollapsedGroupSections = <String>{};
 
   final ScrollController _historyScrollController = ScrollController();
-  final GlobalKey _expandButtonKey = GlobalKey();
   final TextEditingController _searchController = TextEditingController();
   final List<core_proxy.ChatHistory> _histories = <core_proxy.ChatHistory>[];
-  final Set<String> _collapsedCharacterSections = <String>{};
-  final Set<String> _collapsedGroupSections = <String>{};
+  final Set<String> _collapsedCharacterSections = Set<String>.of(
+    _rememberedCollapsedCharacterSections,
+  );
+  final Set<String> _collapsedGroupSections = Set<String>.of(
+    _rememberedCollapsedGroupSections,
+  );
   StreamSubscription<List<core_proxy.ChatHistory>>? _historiesSubscription;
   StreamSubscription<String?>? _currentChatSubscription;
   String? _currentChatId;
   String? _errorMessage;
   bool _loading = true;
-  bool _allHistoriesExpanded = false;
+  int _historyRenderLimit = _collapsedHistoryLimit;
   bool _searchExpanded = false;
 
   GeneratedChatRuntimeHolderMainCoreProxy get _chatCoreProxy =>
@@ -82,8 +89,12 @@ class _DrawerContentState extends State<DrawerContent> {
       _errorMessage = null;
     });
     try {
-      final histories = await _chatCoreProxy.chatHistoriesFlowSnapshot();
-      final currentChatId = await _chatCoreProxy.currentChatIdFlowSnapshot();
+      final results = await Future.wait<Object?>(<Future<Object?>>[
+        _chatCoreProxy.chatHistoriesFlowSnapshot(),
+        _chatCoreProxy.currentChatIdFlowSnapshot(),
+      ]);
+      final histories = results[0] as List<core_proxy.ChatHistory>;
+      final currentChatId = results[1] as String?;
       if (!mounted) {
         return;
       }
@@ -161,6 +172,16 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
+  void _openPackageManager() {
+    for (final entry in widget.navigationEntries) {
+      if (entry.entryId == 'main.package_manager') {
+        widget.onNavigationEntrySelected(entry);
+        return;
+      }
+    }
+    throw StateError('Unknown navigation entry: main.package_manager');
+  }
+
   void _toggleSearchExpanded() {
     setState(() {
       _searchExpanded = !_searchExpanded;
@@ -179,7 +200,6 @@ class _DrawerContentState extends State<DrawerContent> {
         setAsCurrentChat: true,
         characterGroupId: null,
       );
-      await _loadConversations();
       widget.onConversationActivated();
     } catch (error, stackTrace) {
       debugPrint('Failed to create chat: $error\n$stackTrace');
@@ -224,7 +244,6 @@ class _DrawerContentState extends State<DrawerContent> {
           },
         ),
       );
-      await _loadConversations();
       widget.onConversationActivated();
     } catch (error, stackTrace) {
       debugPrint('Failed to create group: $error\n$stackTrace');
@@ -279,7 +298,6 @@ class _DrawerContentState extends State<DrawerContent> {
     });
     try {
       await _chatCoreProxy.switchChat(chatId: history.id);
-      await _loadConversations();
       widget.onConversationActivated();
     } catch (error, stackTrace) {
       debugPrint('Failed to switch chat: $error\n$stackTrace');
@@ -368,7 +386,6 @@ class _DrawerContentState extends State<DrawerContent> {
     });
     try {
       await _chatCoreProxy.deleteChatHistory(chatId: history.id);
-      await _loadConversations();
     } catch (error, stackTrace) {
       debugPrint('Failed to delete chat history: $error\n$stackTrace');
       if (!mounted) {
@@ -396,7 +413,6 @@ class _DrawerContentState extends State<DrawerContent> {
         chatId: history.id,
         title: normalizedTitle,
       );
-      await _loadConversations();
     } catch (error, stackTrace) {
       debugPrint('Failed to update chat title: $error\n$stackTrace');
       if (!mounted) {
@@ -417,7 +433,6 @@ class _DrawerContentState extends State<DrawerContent> {
         chatId: history.id,
         pinned: !history.pinned,
       );
-      await _loadConversations();
     } catch (error, stackTrace) {
       debugPrint('Failed to update chat pinned state: $error\n$stackTrace');
       if (!mounted) {
@@ -438,7 +453,6 @@ class _DrawerContentState extends State<DrawerContent> {
         chatId: history.id,
         locked: !history.locked,
       );
-      await _loadConversations();
     } catch (error, stackTrace) {
       debugPrint('Failed to update chat locked state: $error\n$stackTrace');
       if (!mounted) {
@@ -539,7 +553,6 @@ class _DrawerContentState extends State<DrawerContent> {
       setState(() {
         _errorMessage = error.toString();
       });
-      await _loadConversations();
     }
   }
 
@@ -606,6 +619,58 @@ class _DrawerContentState extends State<DrawerContent> {
     return sections;
   }
 
+  _VisibleHistoryPlan _buildVisibleHistoryPlan(
+    List<_CharacterHistorySection> sections,
+    int renderLimit,
+  ) {
+    var remaining = renderLimit;
+    var hiddenCount = 0;
+    final plannedSections = <_CharacterHistorySection>[];
+
+    for (final section in sections) {
+      if (_collapsedCharacterSections.contains(section.key)) {
+        plannedSections.add(section);
+        continue;
+      }
+
+      final plannedGroups = <_HistoryGroupSection>[];
+      for (final group in section.groups) {
+        if (_collapsedGroupSections.contains(group.key)) {
+          plannedGroups.add(group);
+          continue;
+        }
+
+        final visibleCount = math.min(remaining, group.histories.length);
+        final visibleHistories = group.histories
+            .take(visibleCount)
+            .toList(growable: false);
+        hiddenCount += group.histories.length - visibleCount;
+        remaining -= visibleCount;
+        plannedGroups.add(
+          _HistoryGroupSection(
+            key: group.key,
+            label: group.label,
+            histories: visibleHistories,
+            historyCount: group.historyCount,
+          ),
+        );
+      }
+
+      plannedSections.add(
+        _CharacterHistorySection(
+          key: section.key,
+          label: section.label,
+          groups: plannedGroups,
+        ),
+      );
+    }
+
+    return _VisibleHistoryPlan(
+      sections: plannedSections,
+      hiddenCount: hiddenCount,
+    );
+  }
+
   String _characterSectionKey(core_proxy.ChatHistory history) {
     final name = history.characterCardName?.trim();
     return name == null || name.isEmpty
@@ -636,6 +701,7 @@ class _DrawerContentState extends State<DrawerContent> {
       } else {
         _collapsedCharacterSections.add(sectionKey);
       }
+      _rememberExpansionState();
     });
   }
 
@@ -646,72 +712,96 @@ class _DrawerContentState extends State<DrawerContent> {
       } else {
         _collapsedGroupSections.add(sectionKey);
       }
+      _rememberExpansionState();
     });
   }
 
-  void _toggleAllHistoriesExpanded() {
-    final anchorTop = _expandButtonTop;
+  void _showMoreHistories(int hiddenCount) {
     setState(() {
-      _allHistoriesExpanded = !_allHistoriesExpanded;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          anchorTop == null ||
-          !_historyScrollController.hasClients) {
-        return;
-      }
-      final nextAnchorTop = _expandButtonTop;
-      if (nextAnchorTop == null) {
-        return;
-      }
-      final position = _historyScrollController.position;
-      final targetPixels = (position.pixels + nextAnchorTop - anchorTop).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      );
-      _historyScrollController.jumpTo(targetPixels);
+      _historyRenderLimit += hiddenCount;
     });
   }
 
-  double? get _expandButtonTop {
-    final context = _expandButtonKey.currentContext;
-    if (context == null) {
-      return null;
+  void _collapseHistories() {
+    setState(() {
+      _historyRenderLimit = _collapsedHistoryLimit;
+    });
+  }
+
+  void _rememberExpansionState() {
+    _rememberedCollapsedCharacterSections
+      ..clear()
+      ..addAll(_collapsedCharacterSections);
+    _rememberedCollapsedGroupSections
+      ..clear()
+      ..addAll(_collapsedGroupSections);
+  }
+
+  List<_HistoryListEntry> _buildHistoryEntries(
+    List<_CharacterHistorySection> sections,
+  ) {
+    final entries = <_HistoryListEntry>[];
+    for (final section in sections) {
+      entries.add(_CharacterHeaderEntry(section));
+      if (_collapsedCharacterSections.contains(section.key)) {
+        continue;
+      }
+      for (final group in section.groups) {
+        entries.add(_GroupHeaderEntry(group));
+        if (_collapsedGroupSections.contains(group.key)) {
+          continue;
+        }
+        for (final history in group.histories) {
+          entries.add(_HistoryRowEntry(history));
+        }
+      }
     }
-    final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) {
-      return null;
-    }
-    return renderObject.localToGlobal(Offset.zero).dy;
+    return entries;
   }
 
   @override
   Widget build(BuildContext context) {
     final visibleHistories = _visibleHistories;
+    final showInitialLoading =
+        _loading && _histories.isEmpty && _errorMessage == null;
     final searching = _searchController.text.trim().isNotEmpty;
-    final shownHistories = searching || _allHistoriesExpanded
-        ? visibleHistories
-        : visibleHistories.take(_collapsedHistoryLimit).toList(growable: false);
-    final hiddenHistoryCount = visibleHistories.length - shownHistories.length;
-    final characterSections = _buildCharacterSections(shownHistories);
+    final allCharacterSections = _buildCharacterSections(visibleHistories);
+    final historyPlan = searching
+        ? _VisibleHistoryPlan(sections: allCharacterSections, hiddenCount: 0)
+        : _buildVisibleHistoryPlan(allCharacterSections, _historyRenderLimit);
+    final characterSections = historyPlan.sections;
+    final hiddenHistoryCount = historyPlan.hiddenCount;
+    final historyEntries = _buildHistoryEntries(characterSections);
+    final aiChatRouteId = ScreenRouteRegistry.routeIdOf(
+      ScreenRouteRegistry.aiChat,
+    );
+    final packageManagerRouteId = ScreenRouteRegistry.routeIdOf(
+      ScreenRouteRegistry.packageManager,
+    );
+    final conversationSelectionEnabled =
+        widget.selectedRouteId == aiChatRouteId;
     return Column(
       children: <Widget>[
         Expanded(
           child: Stack(
             children: <Widget>[
-              SingleChildScrollView(
+              CustomScrollView(
+                key: const PageStorageKey<String>('drawer-history-scroll'),
                 controller: _historyScrollController,
                 primary: false,
-                padding: const EdgeInsets.fromLTRB(0, 30, 8, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    SidebarInfoCard(
-                      brandName: 'Operit',
-                      appearance: widget.appearance,
+                slivers: <Widget>[
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(0, 30, 8, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: SidebarInfoCard(
+                        brandName: 'Operit',
+                        appearance: widget.appearance,
+                      ),
                     ),
-                    const SizedBox(height: 24),
-                    Padding(
+                  ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                  SliverToBoxAdapter(
+                    child: Padding(
                       padding: const EdgeInsetsDirectional.only(
                         start: 28,
                         end: 12,
@@ -745,8 +835,10 @@ class _DrawerContentState extends State<DrawerContent> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Padding(
+                  ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 6)),
+                  SliverToBoxAdapter(
+                    child: Padding(
                       padding: const EdgeInsetsDirectional.only(
                         start: 12,
                         end: 0,
@@ -758,7 +850,9 @@ class _DrawerContentState extends State<DrawerContent> {
                         onCreateGroup: _showCreateGroupDialog,
                       ),
                     ),
-                    AnimatedSize(
+                  ),
+                  SliverToBoxAdapter(
+                    child: AnimatedSize(
                       duration: const Duration(milliseconds: 180),
                       curve: Curves.easeOutCubic,
                       child: _searchExpanded
@@ -775,70 +869,96 @@ class _DrawerContentState extends State<DrawerContent> {
                             )
                           : const SizedBox.shrink(),
                     ),
-                    if (_errorMessage != null)
-                      SidebarStatusText(
+                  ),
+                  if (_errorMessage != null)
+                    SliverToBoxAdapter(
+                      child: SidebarStatusText(
                         text: _errorMessage!,
                         appearance: widget.appearance,
                       ),
-                    for (final section in characterSections)
-                      _CharacterHistorySectionView(
-                        section: section,
-                        selectedChatId: _currentChatId,
-                        appearance: widget.appearance,
-                        expanded: !_collapsedCharacterSections.contains(
-                          section.key,
+                    ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final entry = historyEntries[index];
+                      return switch (entry) {
+                        _CharacterHeaderEntry(:final section) =>
+                          _CharacterSectionHeader(
+                            label: section.label,
+                            count: section.historyCount,
+                            expanded: !_collapsedCharacterSections.contains(
+                              section.key,
+                            ),
+                            appearance: widget.appearance,
+                            onToggleExpanded: () =>
+                                _toggleCharacterSection(section.key),
+                          ),
+                        _GroupHeaderEntry(:final group) => _GroupSectionHeader(
+                          label: group.label,
+                          count: group.historyCount,
+                          expanded: !_collapsedGroupSections.contains(
+                            group.key,
+                          ),
+                          appearance: widget.appearance,
+                          onToggleExpanded: () =>
+                              _toggleGroupSection(group.key),
                         ),
-                        onToggleExpanded: () =>
-                            _toggleCharacterSection(section.key),
-                        isGroupExpanded: (groupKey) =>
-                            !_collapsedGroupSections.contains(groupKey),
-                        onToggleGroupExpanded: _toggleGroupSection,
-                        onHistoryClick: _switchConversation,
-                        onHistoryRename: (history) {
-                          _showRenameConversationDialog(history);
-                        },
-                        onHistoryDelete: (history) {
-                          _showDeleteConversationDialog(history);
-                        },
-                        onHistoryLongPress: (history) {
-                          _showConversationActionDialog(history);
-                        },
-                        onHistoryMoveTo: _moveConversationTo,
-                      ),
-                    if (!searching &&
-                        visibleHistories.length > _collapsedHistoryLimit)
-                      _ExpandSectionButton(
-                        key: _expandButtonKey,
-                        expanded: _allHistoriesExpanded,
-                        hiddenCount: hiddenHistoryCount,
+                        _HistoryRowEntry(:final history) =>
+                          ConversationDrawerItem(
+                            history: history,
+                            title: history.title,
+                            selected:
+                                conversationSelectionEnabled &&
+                                _currentChatId == history.id,
+                            appearance: widget.appearance,
+                            nested: true,
+                            onClick: () => _switchConversation(history),
+                            onRename: () {
+                              _showRenameConversationDialog(history);
+                            },
+                            onDelete: () {
+                              _showDeleteConversationDialog(history);
+                            },
+                            onLongPress: () {
+                              _showConversationActionDialog(history);
+                            },
+                            onMoveTo: (moved) =>
+                                _moveConversationTo(moved, history),
+                          ),
+                      };
+                    }, childCount: historyEntries.length),
+                  ),
+                  if (!searching && hiddenHistoryCount > 0)
+                    SliverToBoxAdapter(
+                      child: _HistoryLimitButton(
+                        icon: Icons.expand_more,
+                        label: '展开更多 $hiddenHistoryCount',
                         appearance: widget.appearance,
-                        onClick: _toggleAllHistoriesExpanded,
+                        onClick: () => _showMoreHistories(hiddenHistoryCount),
                       ),
-                  ],
-                ),
+                    ),
+                  if (!searching &&
+                      _historyRenderLimit > _collapsedHistoryLimit)
+                    SliverToBoxAdapter(
+                      child: _HistoryLimitButton(
+                        icon: Icons.keyboard_arrow_up,
+                        label: '收起',
+                        appearance: widget.appearance,
+                        onClick: _collapseHistories,
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                ],
               ),
-              PositionedDirectional(
-                top: 0,
-                start: 12,
-                end: 20,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: _loading ? 1 : 0,
-                    duration: const Duration(milliseconds: 140),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        minHeight: 2,
+              if (showInitialLoading)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Center(
+                      child: CircularProgressIndicator(
                         color: widget.appearance.selectedContainerColor,
-                        backgroundColor: widget
-                            .appearance
-                            .selectedContainerColor
-                            .withValues(alpha: 0.12),
                       ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -851,7 +971,8 @@ class _DrawerContentState extends State<DrawerContent> {
                   icon: Icons.inventory_2_outlined,
                   label: '包管理',
                   appearance: widget.appearance,
-                  onClick: () {},
+                  selected: widget.selectedRouteId == packageManagerRouteId,
+                  onClick: _openPackageManager,
                 ),
               ),
               const SizedBox(width: 10),
@@ -885,7 +1006,7 @@ class _CharacterHistorySection {
   int get historyCount {
     var count = 0;
     for (final group in groups) {
-      count += group.histories.length;
+      count += group.historyCount;
     }
     return count;
   }
@@ -896,11 +1017,45 @@ class _HistoryGroupSection {
     required this.key,
     required this.label,
     required this.histories,
-  });
+    int? historyCount,
+  }) : historyCount = historyCount ?? histories.length;
 
   final String key;
   final String label;
   final List<core_proxy.ChatHistory> histories;
+  final int historyCount;
+}
+
+class _VisibleHistoryPlan {
+  const _VisibleHistoryPlan({
+    required this.sections,
+    required this.hiddenCount,
+  });
+
+  final List<_CharacterHistorySection> sections;
+  final int hiddenCount;
+}
+
+sealed class _HistoryListEntry {
+  const _HistoryListEntry();
+}
+
+class _CharacterHeaderEntry extends _HistoryListEntry {
+  const _CharacterHeaderEntry(this.section);
+
+  final _CharacterHistorySection section;
+}
+
+class _GroupHeaderEntry extends _HistoryListEntry {
+  const _GroupHeaderEntry(this.group);
+
+  final _HistoryGroupSection group;
+}
+
+class _HistoryRowEntry extends _HistoryListEntry {
+  const _HistoryRowEntry(this.history);
+
+  final core_proxy.ChatHistory history;
 }
 
 class _ChatBindingForCreate {
@@ -911,92 +1066,6 @@ class _ChatBindingForCreate {
 
   final String? characterCardName;
   final String? characterGroupId;
-}
-
-class _CharacterHistorySectionView extends StatelessWidget {
-  const _CharacterHistorySectionView({
-    required this.section,
-    required this.selectedChatId,
-    required this.appearance,
-    required this.expanded,
-    required this.onToggleExpanded,
-    required this.isGroupExpanded,
-    required this.onToggleGroupExpanded,
-    required this.onHistoryClick,
-    required this.onHistoryRename,
-    required this.onHistoryDelete,
-    required this.onHistoryLongPress,
-    required this.onHistoryMoveTo,
-  });
-
-  final _CharacterHistorySection section;
-  final String? selectedChatId;
-  final NavigationDrawerAppearance appearance;
-  final bool expanded;
-  final VoidCallback onToggleExpanded;
-  final bool Function(String groupKey) isGroupExpanded;
-  final ValueChanged<String> onToggleGroupExpanded;
-  final ValueChanged<core_proxy.ChatHistory> onHistoryClick;
-  final ValueChanged<core_proxy.ChatHistory> onHistoryRename;
-  final ValueChanged<core_proxy.ChatHistory> onHistoryDelete;
-  final ValueChanged<core_proxy.ChatHistory> onHistoryLongPress;
-  final void Function(
-    core_proxy.ChatHistory moved,
-    core_proxy.ChatHistory target,
-  )
-  onHistoryMoveTo;
-
-  @override
-  Widget build(BuildContext context) {
-    final children = <Widget>[
-      _CharacterSectionHeader(
-        label: section.label,
-        count: section.historyCount,
-        expanded: expanded,
-        appearance: appearance,
-        onToggleExpanded: onToggleExpanded,
-      ),
-    ];
-
-    if (expanded) {
-      for (final group in section.groups) {
-        final groupExpanded = isGroupExpanded(group.key);
-        children.add(
-          _GroupSectionHeader(
-            label: group.label,
-            count: group.histories.length,
-            expanded: groupExpanded,
-            appearance: appearance,
-            onToggleExpanded: () => onToggleGroupExpanded(group.key),
-          ),
-        );
-        if (!groupExpanded) {
-          continue;
-        }
-        for (final history in group.histories) {
-          children.add(
-            ConversationDrawerItem(
-              history: history,
-              title: history.title,
-              selected: selectedChatId == history.id,
-              appearance: appearance,
-              nested: true,
-              onClick: () => onHistoryClick(history),
-              onRename: () => onHistoryRename(history),
-              onDelete: () => onHistoryDelete(history),
-              onLongPress: () => onHistoryLongPress(history),
-              onMoveTo: (moved) => onHistoryMoveTo(moved, history),
-            ),
-          );
-        }
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
-    );
-  }
 }
 
 class _CharacterSectionHeader extends StatelessWidget {
@@ -1230,17 +1299,16 @@ class _GroupSectionHeader extends StatelessWidget {
   }
 }
 
-class _ExpandSectionButton extends StatelessWidget {
-  const _ExpandSectionButton({
-    super.key,
-    required this.expanded,
-    required this.hiddenCount,
+class _HistoryLimitButton extends StatelessWidget {
+  const _HistoryLimitButton({
+    required this.icon,
+    required this.label,
     required this.appearance,
     required this.onClick,
   });
 
-  final bool expanded;
-  final int hiddenCount;
+  final IconData icon;
+  final String label;
   final NavigationDrawerAppearance appearance;
   final VoidCallback onClick;
 
@@ -1251,15 +1319,11 @@ class _ExpandSectionButton extends StatelessWidget {
       child: TextButton.icon(
         onPressed: onClick,
         icon: Icon(
-          expanded ? Icons.expand_less : Icons.expand_more,
+          icon,
           size: 18,
           color: appearance.itemColor.withValues(alpha: 0.72),
         ),
-        label: Text(
-          expanded ? '收起' : '展开更多 $hiddenCount',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
         style: TextButton.styleFrom(
           alignment: Alignment.centerLeft,
           foregroundColor: appearance.itemColor.withValues(alpha: 0.72),

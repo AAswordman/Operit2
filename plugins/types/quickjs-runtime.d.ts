@@ -9,11 +9,11 @@ declare global {
 
     var console: Console;
 
-    type TimerHandler = ((...args: any[]) => any) | string;
+    type QuickJsTimerHandler = ((...args: any[]) => any) | string;
 
-    function setTimeout(handler: TimerHandler, timeout?: number, ...args: any[]): number;
+    function setTimeout(handler: QuickJsTimerHandler, timeout?: number, ...args: any[]): number;
     function clearTimeout(timerId?: number): void;
-    function setInterval(handler: TimerHandler, timeout?: number, ...args: any[]): number;
+    function setInterval(handler: QuickJsTimerHandler, timeout?: number, ...args: any[]): number;
     function clearInterval(timerId?: number): void;
     function queueMicrotask(callback: () => void): void;
 

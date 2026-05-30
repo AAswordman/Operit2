@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../l10n/generated/app_localizations.dart';
 
 enum ConversationAction {
   rename,
@@ -31,22 +32,23 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('新建分组'),
+      title: Text(l10n.createGroupTitle),
       content: TextField(
         controller: _controller,
         autofocus: true,
-        decoration: const InputDecoration(labelText: '分组名称'),
+        decoration: InputDecoration(labelText: l10n.groupNameLabel),
         onSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: const Text('创建'),
+          child: Text(l10n.create),
         ),
       ],
     );
@@ -76,23 +78,24 @@ class _RenameConversationDialogState extends State<RenameConversationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('编辑标题'),
+      title: Text(l10n.renameConversationTitle),
       content: TextField(
         controller: _controller,
         autofocus: true,
-        decoration: const InputDecoration(labelText: '新标题'),
+        decoration: InputDecoration(labelText: l10n.newTitleLabel),
         textInputAction: TextInputAction.done,
         onSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: const Text('保存'),
+          child: Text(l10n.save),
         ),
       ],
     );
@@ -106,20 +109,21 @@ class DeleteConversationDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('确认删除对话'),
-      content: Text('删除 “${history.title}”？'),
+      title: Text(l10n.deleteConversationTitle),
+      content: Text(l10n.deleteConversationMessage(history.title)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(true),
           style: TextButton.styleFrom(
             foregroundColor: Theme.of(context).colorScheme.error,
           ),
-          child: const Text('删除'),
+          child: Text(l10n.delete),
         ),
       ],
     );
@@ -140,6 +144,7 @@ class ConversationActionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
@@ -155,7 +160,7 @@ class ConversationActionDialog extends StatelessWidget {
                   child: Column(
                     children: <Widget>[
                       Text(
-                        '聊天记录',
+                        l10n.chatHistory,
                         style: Theme.of(context).textTheme.headlineSmall
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
@@ -177,13 +182,13 @@ class ConversationActionDialog extends StatelessWidget {
                 const SizedBox(height: 12),
                 _ConversationActionTile(
                   icon: Icons.edit,
-                  label: '编辑标题',
+                  label: l10n.editTitle,
                   onTap: () =>
                       Navigator.of(context).pop(ConversationAction.rename),
                 ),
                 _ConversationActionTile(
                   icon: Icons.keyboard_arrow_up,
-                  label: '上移',
+                  label: l10n.moveUp,
                   onTap: canMoveUp
                       ? () =>
                             Navigator.of(context).pop(ConversationAction.moveUp)
@@ -191,7 +196,7 @@ class ConversationActionDialog extends StatelessWidget {
                 ),
                 _ConversationActionTile(
                   icon: Icons.keyboard_arrow_down,
-                  label: '下移',
+                  label: l10n.moveDown,
                   onTap: canMoveDown
                       ? () => Navigator.of(
                           context,
@@ -200,21 +205,21 @@ class ConversationActionDialog extends StatelessWidget {
                 ),
                 _ConversationActionTile(
                   icon: Icons.push_pin,
-                  label: history.pinned ? '取消置顶' : '置顶',
+                  label: history.pinned ? l10n.unpin : l10n.pin,
                   onTap: () => Navigator.of(
                     context,
                   ).pop(ConversationAction.togglePinned),
                 ),
                 _ConversationActionTile(
                   icon: history.locked ? Icons.lock_open : Icons.lock,
-                  label: history.locked ? '解锁' : '锁定',
+                  label: history.locked ? l10n.unlock : l10n.lock,
                   onTap: () => Navigator.of(
                     context,
                   ).pop(ConversationAction.toggleLocked),
                 ),
                 _ConversationActionTile(
                   icon: Icons.delete_outline,
-                  label: '删除',
+                  label: l10n.delete,
                   danger: true,
                   onTap: () =>
                       Navigator.of(context).pop(ConversationAction.delete),
@@ -225,7 +230,7 @@ class ConversationActionDialog extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('取消'),
+                      child: Text(l10n.cancel),
                     ),
                   ),
                 ),

@@ -381,8 +381,22 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     switch (node.type) {
       case MarkdownNodeType.plainText:
       case MarkdownNodeType.header:
+      case MarkdownNodeType.blockQuote:
+      case MarkdownNodeType.codeBlock:
       case MarkdownNodeType.orderedList:
       case MarkdownNodeType.unorderedList:
+      case MarkdownNodeType.horizontalRule:
+      case MarkdownNodeType.blockLatex:
+      case MarkdownNodeType.table:
+      case MarkdownNodeType.image:
+      case MarkdownNodeType.bold:
+      case MarkdownNodeType.italic:
+      case MarkdownNodeType.inlineCode:
+      case MarkdownNodeType.link:
+      case MarkdownNodeType.strikethrough:
+      case MarkdownNodeType.underline:
+      case MarkdownNodeType.inlineLatex:
+      case MarkdownNodeType.htmlBreak:
         return node.content.trim().isEmpty;
       case MarkdownNodeType.xmlBlock:
         final tag = _extractXmlTagName(node.content);

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceSetupContent.dart';
+import 'WorkspaceProjectConfig.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceTabStrip.dart';
@@ -18,6 +19,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.onListWorkspaceFiles,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
+    required this.onWriteWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
@@ -29,6 +31,8 @@ class WorkspacePanel extends StatefulWidget {
   onListWorkspaceFiles;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
+  final Future<void> Function(String path, Uint8List bytes)
+  onWriteWorkspaceFileBytes;
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace, String? workspaceEnv)
@@ -42,7 +46,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   final List<WorkspaceTab> _tabs = <WorkspaceTab>[
     const WorkspaceTab(
       kind: WorkspaceTabKind.home,
-      title: '首页',
+      title: '',
       icon: Icons.home_outlined,
       closable: false,
     ),
@@ -71,42 +75,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                       onClosed: _closeTab,
                     ),
                     Expanded(
-                      child: WorkspaceTabContent(
-                        tab: _tabs[_selectedIndex],
-                        workspacePath: widget.workspacePath,
-                        onListWorkspaceFiles: widget.onListWorkspaceFiles,
-                        onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
-                        onReadWorkspaceFileBytes:
-                            widget.onReadWorkspaceFileBytes,
-                        onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
-                        onOpenFile: _openFileTab,
-                        onOpenFiles: () {
-                          _openSingletonTab(
-                            const WorkspaceTab(
-                              kind: WorkspaceTabKind.files,
-                              title: '文件',
-                              icon: Icons.folder_outlined,
+                      child: IndexedStack(
+                        index: _selectedIndex,
+                        children: <Widget>[
+                          for (final tab in _tabs)
+                            KeyedSubtree(
+                              key: ValueKey<String>(_tabIdentity(tab)),
+                              child: _buildTabContent(tab),
                             ),
-                          );
-                        },
-                        onOpenTerminal: () {
-                          _openSingletonTab(
-                            const WorkspaceTab(
-                              kind: WorkspaceTabKind.terminal,
-                              title: '终端',
-                              icon: Icons.terminal,
-                            ),
-                          );
-                        },
-                        onOpenBrowser: () {
-                          _openSingletonTab(
-                            const WorkspaceTab(
-                              kind: WorkspaceTabKind.browser,
-                              title: '浏览器',
-                              icon: Icons.public,
-                            ),
-                          );
-                        },
+                        ],
                       ),
                     ),
                   ],
@@ -136,6 +113,95 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         _selectedIndex = _tabs.length - 1;
       }
     });
+  }
+
+  void _openBrowserTab({
+    String? url,
+    String? localFilePath,
+    String? workspaceHtmlPath,
+  }) {
+    final title = _browserTabTitle(
+      url: url,
+      localFilePath: localFilePath,
+      workspaceHtmlPath: workspaceHtmlPath,
+    );
+    final tab = WorkspaceTab(
+      kind: WorkspaceTabKind.browser,
+      title: title,
+      icon: Icons.public,
+      url: url,
+      absolutePath: localFilePath,
+      workspaceHtmlPath: workspaceHtmlPath,
+    );
+    setState(() {
+      _tabs.add(tab);
+      _selectedIndex = _tabs.length - 1;
+    });
+  }
+
+  String _browserTabTitle({
+    String? url,
+    String? localFilePath,
+    String? workspaceHtmlPath,
+  }) {
+    final htmlPath = workspaceHtmlPath?.trim();
+    if (htmlPath != null && htmlPath.isNotEmpty) {
+      return htmlPath.split(RegExp(r'[\\/]')).last;
+    }
+    final filePath = localFilePath?.trim();
+    if (filePath != null && filePath.isNotEmpty) {
+      return filePath.split(RegExp(r'[\\/]')).last;
+    }
+    final rawUrl = url?.trim();
+    if (rawUrl != null && rawUrl.isNotEmpty) {
+      final uri = Uri.tryParse(rawUrl);
+      return uri?.host.isNotEmpty == true ? uri!.host : rawUrl;
+    }
+    return '';
+  }
+
+  Widget _buildTabContent(WorkspaceTab tab) {
+    return WorkspaceTabContent(
+      tab: tab,
+      workspacePath: widget.workspacePath,
+      onListWorkspaceFiles: widget.onListWorkspaceFiles,
+      onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
+      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
+      onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
+      onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
+      onOpenFile: _openFileTab,
+      onOpenFiles: () {
+        _openSingletonTab(
+          const WorkspaceTab(
+            kind: WorkspaceTabKind.files,
+            title: '',
+            icon: Icons.folder_outlined,
+          ),
+        );
+      },
+      onOpenTerminal: () {
+        _openSingletonTab(
+          const WorkspaceTab(
+            kind: WorkspaceTabKind.terminal,
+            title: '',
+            icon: Icons.terminal,
+          ),
+        );
+      },
+      onOpenBrowser: _openBrowserTab,
+      onOpenProjectBrowser: _openProjectBrowserTab,
+    );
+  }
+
+  String _tabIdentity(WorkspaceTab tab) {
+    return <String>[
+      tab.kind.name,
+      tab.filePath ?? '',
+      tab.absolutePath ?? '',
+      tab.url ?? '',
+      tab.workspaceHtmlPath ?? '',
+      tab.title,
+    ].join('|');
   }
 
   void _closeTab(int index) {
@@ -186,5 +252,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         _selectedIndex = _tabs.length - 1;
       }
     });
+  }
+
+  Future<void> _openProjectBrowserTab() async {
+    final configText = await widget.onReadWorkspaceTextFile(
+      '.operit/config.json',
+    );
+    final config = WorkspaceProjectConfig.fromJsonText(configText);
+    final previewUrl = config.previewUrl.trim();
+    if (previewUrl.isEmpty) {
+      _openBrowserTab();
+      return;
+    }
+    _openBrowserTab(url: previewUrl);
   }
 }

@@ -98,7 +98,6 @@ impl ConversationService {
             use_english: None,
             metadata: build_prepare_history_metadata(&request),
         });
-
         let effective_chat_history = before_context.chat_history.clone();
         let mut prepared_history = Vec::new();
 
@@ -150,7 +149,6 @@ impl ConversationService {
                 _ => prepared_history.push(turn.clone()),
             }
         }
-
         let after_context = history_hooks.dispatch_prompt_history_hooks(HistoryHookContext {
             stage: "after_prepare_history".to_string(),
             prepared_history,

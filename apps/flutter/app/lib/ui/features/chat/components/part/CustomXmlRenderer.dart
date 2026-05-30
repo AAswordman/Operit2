@@ -1,8 +1,11 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import 'DetailsTagRenderer.dart';
 import 'FileDiffDisplay.dart';
@@ -16,17 +19,46 @@ class CustomXmlRenderer extends StatelessWidget {
     required this.xmlContent,
     required this.isStreaming,
     required this.textColor,
+    this.xmlStream,
+    this.showThinkingProcess = true,
+    this.showStatusTags = true,
+    this.initialThinkingExpanded = false,
+    this.allowExpandedThinkingFullHeight = false,
   });
 
   final String xmlContent;
   final bool isStreaming;
   final Color textColor;
+  final Stream<String>? xmlStream;
+  final bool showThinkingProcess;
+  final bool showStatusTags;
+  final bool initialThinkingExpanded;
+  final bool allowExpandedThinkingFullHeight;
 
   @override
   Widget build(BuildContext context) {
     final parsed = _ParsedXml.from(xmlContent);
     if (_shouldHideGeminiThoughtSignatureMeta(xmlContent, parsed.tagName)) {
       return const SizedBox.shrink();
+    }
+    if ((parsed.tagName == 'think' || parsed.tagName == 'thinking') &&
+        !showThinkingProcess) {
+      return const SizedBox.shrink();
+    }
+    if (parsed.tagName == 'status' &&
+        !showStatusTags &&
+        _isQuietStatus(parsed)) {
+      return const SizedBox.shrink();
+    }
+    final pluginRender = XmlRenderPluginRegistry.renderIfMatched(
+      tagName: parsed.tagName,
+      xmlContent: xmlContent,
+      textColor: textColor,
+      isStreaming: isStreaming,
+      xmlStream: xmlStream,
+    );
+    if (pluginRender != null) {
+      return pluginRender;
     }
     if (!_isXmlFullyClosed(xmlContent) &&
         _builtInTags.contains(parsed.tagName) &&
@@ -44,7 +76,10 @@ class CustomXmlRenderer extends StatelessWidget {
         return _ThinkPanel(
           text: parsed.body,
           textColor: textColor,
-          isStreaming: isStreaming,
+          isStreaming: xmlStream != null && !_isXmlFullyClosed(xmlContent),
+          xmlStream: xmlStream,
+          initiallyExpanded: initialThinkingExpanded,
+          fullHeight: allowExpandedThinkingFullHeight,
         );
       case 'search':
         return _LabeledPanel(
@@ -54,13 +89,20 @@ class CustomXmlRenderer extends StatelessWidget {
           isStreaming: isStreaming,
         );
       case 'status':
-        return _StatusChip(text: parsed.body, isStreaming: isStreaming);
+        return _StatusChip(
+          parsed: parsed,
+          textColor: textColor,
+          isStreaming: isStreaming,
+        );
+      case 'meta':
+        return const SizedBox.shrink();
       case 'tool':
         return _ToolRequestRenderer(
           xmlContent: xmlContent,
           parsed: parsed,
           textColor: textColor,
           isStreaming: isStreaming,
+          xmlStream: xmlStream,
         );
       case 'tool_result':
         final result = _extractToolResult(parsed, xmlContent);
@@ -134,12 +176,14 @@ class _ToolRequestRenderer extends StatelessWidget {
     required this.parsed,
     required this.textColor,
     required this.isStreaming,
+    required this.xmlStream,
   });
 
   final String xmlContent;
   final _ParsedXml parsed;
   final Color textColor;
   final bool isStreaming;
+  final Stream<String>? xmlStream;
 
   @override
   Widget build(BuildContext context) {
@@ -154,20 +198,38 @@ class _ToolRequestRenderer extends StatelessWidget {
       params,
     );
     final isClosed = _isXmlFullyClosed(xmlContent);
-    final paramTokenEstimate = _estimateTokenCount(paramText);
+    final initialTokenEstimate = _estimateTokenCount(paramText);
 
-    if (displayToolName == 'apply_file' ||
-        displayToolName == 'create_file' ||
-        displayToolName == 'edit_file') {
-      if (isClosed) {
-        return CompactToolDisplay(
+    Widget renderWithEstimate(int paramTokenEstimate) {
+      if (displayToolName == 'apply_file' ||
+          displayToolName == 'create_file' ||
+          displayToolName == 'edit_file') {
+        if (isClosed) {
+          return CompactToolDisplay(
+            toolName: rawToolName,
+            params: paramText,
+            textColor: textColor,
+            isStreaming: isStreaming,
+          );
+        }
+        return DetailedToolDisplay(
           toolName: rawToolName,
           params: paramText,
           textColor: textColor,
           isStreaming: isStreaming,
         );
       }
-      return DetailedToolDisplay(
+
+      if (!isClosed && paramTokenEstimate > _toolParamTokenThreshold) {
+        return DetailedToolDisplay(
+          toolName: rawToolName,
+          params: paramText,
+          textColor: textColor,
+          isStreaming: isStreaming,
+        );
+      }
+
+      return CompactToolDisplay(
         toolName: rawToolName,
         params: paramText,
         textColor: textColor,
@@ -175,20 +237,14 @@ class _ToolRequestRenderer extends StatelessWidget {
       );
     }
 
-    if (!isClosed && paramTokenEstimate > _toolParamTokenThreshold) {
-      return DetailedToolDisplay(
-        toolName: rawToolName,
-        params: paramText,
-        textColor: textColor,
-        isStreaming: isStreaming,
-      );
+    final stream = xmlStream;
+    if (stream == null) {
+      return renderWithEstimate(initialTokenEstimate);
     }
-
-    return CompactToolDisplay(
-      toolName: rawToolName,
-      params: paramText,
-      textColor: textColor,
-      isStreaming: isStreaming,
+    return StreamBuilder<int>(
+      stream: _toolParamTokenEstimateStream(stream, initialTokenEstimate),
+      initialData: initialTokenEstimate,
+      builder: (context, snapshot) => renderWithEstimate(snapshot.requireData),
     );
   }
 }
@@ -212,14 +268,38 @@ class _ThinkPanel extends StatelessWidget {
     required this.text,
     required this.textColor,
     required this.isStreaming,
+    required this.xmlStream,
+    required this.initiallyExpanded,
+    required this.fullHeight,
   });
 
   final String text;
   final Color textColor;
   final bool isStreaming;
+  final Stream<String>? xmlStream;
+  final bool initiallyExpanded;
+  final bool fullHeight;
 
   @override
   Widget build(BuildContext context) {
+    if (!initiallyExpanded) {
+      return _LabeledPanel(
+        label: 'Thinking',
+        text: text,
+        color: Theme.of(context).colorScheme.secondary,
+        isStreaming: isStreaming,
+      );
+    }
+
+    final panel = _LabeledPanel(
+      label: 'Thinking',
+      text: text,
+      color: Theme.of(context).colorScheme.secondary,
+      isStreaming: isStreaming,
+    );
+    if (fullHeight) {
+      return panel;
+    }
     return _LabeledPanel(
       label: 'Thinking',
       text: text,
@@ -285,7 +365,113 @@ class _LabeledPanel extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.text, required this.isStreaming});
+  const _StatusChip({
+    required this.parsed,
+    required this.textColor,
+    required this.isStreaming,
+  });
+
+  final _ParsedXml parsed;
+  final Color textColor;
+  final bool isStreaming;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final statusType = (parsed.attr('type') ?? 'info').trim();
+    final statusContent = _isQuietStatus(parsed) ? '' : parsed.body;
+    final statusText = switch (statusType) {
+      'completion' || 'complete' => '✓ Task completed',
+      'wait_for_user_need' => '✓ Ready for further assistance',
+      _ => statusContent,
+    };
+
+    if (statusType == 'warning') {
+      return _WarningStatusRow(text: statusContent, isStreaming: isStreaming);
+    }
+
+    final backgroundColor = switch (statusType) {
+      'completion' || 'complete' => theme.colorScheme.primaryContainer
+          .withValues(alpha: 0.3),
+      'wait_for_user_need' => theme.colorScheme.tertiaryContainer.withValues(
+          alpha: 0.3,
+        ),
+      _ => theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+    };
+    final borderColor = switch (statusType) {
+      'completion' || 'complete' => theme.colorScheme.primary.withValues(
+          alpha: 0.3,
+        ),
+      'wait_for_user_need' => theme.colorScheme.tertiary.withValues(alpha: 0.3),
+      _ => theme.colorScheme.outline.withValues(alpha: 0.3),
+    };
+    final effectiveTextColor = switch (statusType) {
+      'completion' || 'complete' => theme.colorScheme.primary,
+      'wait_for_user_need' => theme.colorScheme.tertiary,
+      _ => textColor,
+    };
+
+    return _StatusCard(
+      text: statusText,
+      textColor: effectiveTextColor,
+      backgroundColor: backgroundColor,
+      borderColor: borderColor,
+      isStreaming: isStreaming,
+    );
+  }
+}
+
+class _StatusCard extends StatelessWidget {
+  const _StatusCard({
+    required this.text,
+    required this.textColor,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.isStreaming,
+  });
+
+  final String text;
+  final Color textColor;
+  final Color backgroundColor;
+  final Color borderColor;
+  final bool isStreaming;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: textColor,
+              ),
+            ),
+          ),
+          if (isStreaming)
+            const Padding(
+              padding: EdgeInsets.only(left: 6),
+              child: StreamingCursor(),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WarningStatusRow extends StatelessWidget {
+  const _WarningStatusRow({required this.text, required this.isStreaming});
 
   final String text;
   final bool isStreaming;
@@ -293,29 +479,26 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.55,
-        ),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(
-            Icons.info_outline,
-            size: 14,
-            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.72),
+          Container(
+            width: 2,
+            height: 16,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.error.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(999),
+            ),
           ),
-          const SizedBox(width: 6),
-          Flexible(
+          const SizedBox(width: 8),
+          Expanded(
             child: Text(
-              text,
+              text.isEmpty ? 'AI reported an error' : text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+                color: theme.colorScheme.error.withValues(alpha: 0.9),
               ),
             ),
           ),
@@ -401,6 +584,15 @@ bool _shouldHideGeminiThoughtSignatureMeta(String content, String tagName) {
       ).hasMatch(content);
 }
 
+bool _isQuietStatus(_ParsedXml parsed) {
+  final statusType = parsed.attr('type');
+  return const {
+    'completion',
+    'complete',
+    'wait_for_user_need',
+  }.contains(statusType);
+}
+
 bool _isXmlFullyClosed(String xml) {
   final trimmed = xml.trim();
   final rawTagName = _extractRawXmlTagName(trimmed);
@@ -481,6 +673,96 @@ int _estimateTokenCount(String text) {
     }
   }
   return (chineseCharCount * 1.5 + otherCharCount * 0.25).toInt();
+}
+
+Stream<int> _toolParamTokenEstimateStream(
+  Stream<String> xmlStream,
+  int initialValue,
+) async* {
+  final counter = _XmlInnerTokenCounter(tagName: 'tool');
+  var value = initialValue;
+  await for (final chunk in xmlStream) {
+    final next = counter.append(chunk);
+    if (next > value) {
+      value = next;
+    }
+    yield value;
+  }
+}
+
+class _IncrementalTokenEstimator {
+  int _chineseCharCount = 0;
+  int _otherCharCount = 0;
+
+  void append(String text) {
+    for (final codePoint in text.runes) {
+      appendCodePoint(codePoint);
+    }
+  }
+
+  void appendCodePoint(int codePoint) {
+    if (codePoint >= 0x4E00 && codePoint <= 0x9FFF) {
+      _chineseCharCount++;
+    } else {
+      _otherCharCount++;
+    }
+  }
+
+  int estimate() {
+    return (_chineseCharCount * 1.5 + _otherCharCount * 0.25).toInt();
+  }
+}
+
+class _XmlInnerTokenCounter {
+  _XmlInnerTokenCounter({required String tagName})
+      : _closingPattern = '</$tagName>';
+
+  static const String _openingTagEndChar = '>';
+  final String _closingPattern;
+  final _IncrementalTokenEstimator _estimator = _IncrementalTokenEstimator();
+  final StringBuffer _closeCandidate = StringBuffer();
+  bool _isInsideOuterContent = false;
+  bool _isClosed = false;
+
+  int append(String chunk) {
+    if (_isClosed || chunk.isEmpty) {
+      return _estimator.estimate();
+    }
+
+    for (final codePoint in chunk.runes) {
+      if (_isClosed) {
+        break;
+      }
+      final char = String.fromCharCode(codePoint);
+
+      if (!_isInsideOuterContent) {
+        if (char == _openingTagEndChar) {
+          _isInsideOuterContent = true;
+        }
+        continue;
+      }
+
+      if (_closeCandidate.isNotEmpty || char == '<') {
+        final candidate = _closeCandidate.toString() + char;
+        if (_closingPattern.startsWith(candidate)) {
+          _closeCandidate.write(char);
+          if (candidate == _closingPattern) {
+            _isClosed = true;
+            _closeCandidate.clear();
+          }
+          continue;
+        }
+
+        _estimator.append(candidate);
+        _closeCandidate.clear();
+        continue;
+      }
+
+      _estimator.appendCodePoint(codePoint);
+    }
+
+    return _estimator.estimate();
+  }
 }
 
 _ToolResultRenderState _extractToolResult(

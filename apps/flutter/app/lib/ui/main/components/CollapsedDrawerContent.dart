@@ -41,6 +41,16 @@ class CollapsedDrawerContent extends StatelessWidget {
     onConversationActivated();
   }
 
+  void _openPackageManager() {
+    for (final entry in navigationEntries) {
+      if (entry.entryId == 'main.package_manager') {
+        onNavigationEntrySelected(entry);
+        return;
+      }
+    }
+    throw StateError('Unknown navigation entry: main.package_manager');
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.paddingOf(context).top;
@@ -87,10 +97,10 @@ class CollapsedDrawerContent extends StatelessWidget {
         const SizedBox(height: 16),
         Center(
           child: _RoundDrawerButton(
-            selected: false,
+            selected: selectedRouteId == _packageManagerRouteId,
             appearance: appearance,
             icon: Icons.inventory_2_outlined,
-            onClick: () {},
+            onClick: _openPackageManager,
           ),
         ),
         const SizedBox(height: 8),
@@ -104,6 +114,15 @@ class CollapsedDrawerContent extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String get _packageManagerRouteId {
+    for (final entry in navigationEntries) {
+      if (entry.entryId == 'main.package_manager') {
+        return entry.routeId;
+      }
+    }
+    throw StateError('Unknown navigation entry: main.package_manager');
   }
 }
 
@@ -513,18 +532,26 @@ class BottomSidebarAction extends StatelessWidget {
     required this.label,
     required this.appearance,
     required this.onClick,
+    this.selected = false,
   });
 
   final IconData icon;
   final String label;
   final NavigationDrawerAppearance appearance;
   final VoidCallback onClick;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     final shape = BorderRadius.circular(14);
+    final backgroundColor = selected
+        ? appearance.selectedContainerColor
+        : appearance.selectedContainerColor.withValues(alpha: 0.18);
+    final contentColor = selected
+        ? appearance.selectedContentColor
+        : appearance.itemColor;
     return Material(
-      color: appearance.selectedContainerColor.withValues(alpha: 0.18),
+      color: backgroundColor,
       borderRadius: shape,
       child: InkWell(
         borderRadius: shape,
@@ -534,7 +561,7 @@ class BottomSidebarAction extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
-              Icon(icon, size: 18, color: appearance.itemColor),
+              Icon(icon, size: 18, color: contentColor),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -542,8 +569,8 @@ class BottomSidebarAction extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: appearance.itemColor,
-                    fontWeight: FontWeight.w600,
+                    color: contentColor,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                   ),
                 ),
               ),

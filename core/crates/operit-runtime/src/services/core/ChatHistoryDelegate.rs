@@ -850,20 +850,10 @@ impl ChatHistoryDelegate {
         let chatId = chatIdOverride
             .or_else(|| self.currentChatId.clone())
             .expect("No active chat");
-        let mut selectedVariantIndex = 0;
-        if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            if let Some(existing) = chat
-                .messages
-                .iter_mut()
-                .find(|existing| existing.timestamp == timestamp)
-            {
-                existing.variantCount += 1;
-                selectedVariantIndex = existing.variantCount - 1;
-            } else {
-                selectedVariantIndex = message.selectedVariantIndex;
-                chat.messages.push(message);
-            }
-        }
+        let selectedVariantIndex = self
+            .chatHistoryManager
+            .addMessageVariant(chatId.clone(), timestamp, message)
+            .expect("ChatHistoryManager.addMessageVariant must succeed");
         if self.currentChatId.as_ref() == Some(&chatId) {
             self.reloadCurrentChatDisplayHistory(chatId);
         }

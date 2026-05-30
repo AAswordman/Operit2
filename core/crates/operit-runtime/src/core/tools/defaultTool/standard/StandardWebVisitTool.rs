@@ -3,40 +3,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use operit_host_api::{WebVisitHost, WebVisitLinkData, WebVisitRequest, WebVisitResult};
+use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
 use reqwest::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VisitWebResultData {
-    pub url: String,
-    pub title: String,
-    pub content: String,
-    pub metadata: HashMap<String, String>,
-    pub links: Vec<LinkData>,
-    pub imageLinks: Vec<String>,
-    pub visitKey: Option<String>,
-    pub contentSavedTo: Option<String>,
-    pub contentTruncated: bool,
-    pub originalContentLength: Option<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LinkData {
-    pub url: String,
-    pub text: String,
-}
-
-impl From<WebVisitLinkData> for LinkData {
-    fn from(value: WebVisitLinkData) -> Self {
-        Self {
-            url: value.url,
-            text: value.text,
-        }
-    }
-}
+use crate::core::tools::ToolResultDataClasses::{LinkData, VisitWebResultData};
 
 #[derive(Clone)]
 pub struct StandardWebVisitTool {

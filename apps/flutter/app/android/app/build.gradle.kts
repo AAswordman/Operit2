@@ -60,6 +60,9 @@ val operitPluginSyncPython = if (System.getProperty("os.name").lowercase().conta
     operitRepoRoot.resolve(".venv/bin/python")
 }
 val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
+val operitLibclangDir = operitRepoRoot
+    .resolve("target/operit-build-tools/libclang.runtime.win-x64.21.1.8/runtimes/win-x64/native")
+fun File.clangPath(): String = absolutePath.replace('\\', '/')
 val operitRustTargets = listOf(
     Triple("arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
     Triple("x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
@@ -88,11 +91,22 @@ val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarge
             .resolve("bin")
         val linker = ndkToolchain.resolve("${clangPrefix}${apiLevel}-clang.cmd")
         val ar = ndkToolchain.resolve("llvm-ar.exe")
+        val clangResourceDir = ndkToolchain
+            .parentFile
+            .resolve("lib")
+            .resolve("clang")
+            .listFiles()
+            ?.single { it.isDirectory }
+            ?: throw GradleException("Android NDK clang resource dir not found")
+        val bindgenClangArgs =
+            "--target=$rustTarget --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
         val ccEnvTarget = rustTarget.replace("-", "_")
         environment("CC_$ccEnvTarget", linker.absolutePath)
         environment("AR_$ccEnvTarget", ar.absolutePath)
         environment("CARGO_TARGET_${envTarget}_LINKER", linker.absolutePath)
         environment("CARGO_TARGET_${envTarget}_AR", ar.absolutePath)
+        environment("LIBCLANG_PATH", operitLibclangDir.absolutePath)
+        environment("BINDGEN_EXTRA_CLANG_ARGS_$ccEnvTarget", bindgenClangArgs)
         commandLine(
             "cargo",
             "build",

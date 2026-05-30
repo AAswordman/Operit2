@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/permissions/ToolApprovalBridge.dart';
 import '../../core/permissions/ToolApprovalModels.dart';
+import '../../l10n/generated/app_localizations.dart';
 
 class ToolApprovalHost extends StatefulWidget {
   const ToolApprovalHost({
@@ -114,6 +115,7 @@ class _ToolApprovalModal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final elapsedSeconds =
         ((DateTime.now().millisecondsSinceEpoch - request.requestedAtMillis) /
@@ -145,7 +147,7 @@ class _ToolApprovalModal extends StatelessWidget {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            '工具权限申请',
+                            l10n.toolApprovalTitle,
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                         ),
@@ -157,9 +159,15 @@ class _ToolApprovalModal extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _InfoLine(label: '工具', value: request.tool.name),
+                    _InfoLine(
+                      label: l10n.toolApprovalToolLabel,
+                      value: request.tool.name,
+                    ),
                     const SizedBox(height: 8),
-                    _InfoLine(label: '操作', value: request.description),
+                    _InfoLine(
+                      label: l10n.toolApprovalActionLabel,
+                      value: request.description,
+                    ),
                     if (request.tool.parameters.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       _ParameterList(parameters: request.tool.parameters),
@@ -171,20 +179,20 @@ class _ToolApprovalModal extends StatelessWidget {
                         TextButton.icon(
                           onPressed: () => onResult(ToolApprovalResult.deny),
                           icon: const Icon(Icons.close),
-                          label: const Text('拒绝'),
+                          label: Text(l10n.toolApprovalDeny),
                         ),
                         const SizedBox(width: 8),
                         FilledButton.tonalIcon(
                           onPressed: () => onResult(ToolApprovalResult.allow),
                           icon: const Icon(Icons.check),
-                          label: const Text('允许本次'),
+                          label: Text(l10n.toolApprovalAllowOnce),
                         ),
                         const SizedBox(width: 8),
                         FilledButton.icon(
                           onPressed: () =>
                               onResult(ToolApprovalResult.alwaysAllow),
                           icon: const Icon(Icons.done_all),
-                          label: const Text('始终允许'),
+                          label: Text(l10n.toolApprovalAlwaysAllow),
                         ),
                       ],
                     ),

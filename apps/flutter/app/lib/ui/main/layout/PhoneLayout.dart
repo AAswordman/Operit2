@@ -44,11 +44,11 @@ class _PhoneLayoutState extends State<PhoneLayout>
   static const double _lowBouncyDampingRatio = 0.75;
   static const double _noBouncyDampingRatio = 1.0;
   static const double _springStiffness = 1000;
-  static const double _composeCameraPerspective = -0.001;
   static const double _dragThreshold = 40;
 
   late final AnimationController _drawerProgressController;
   double _currentDrag = 0;
+  double _verticalDrag = 0;
 
   @override
   void initState() {
@@ -93,22 +93,29 @@ class _PhoneLayoutState extends State<PhoneLayout>
 
   void _handleHorizontalDragStart(DragStartDetails details) {
     _currentDrag = 0;
+    _verticalDrag = 0;
   }
 
   void _handleHorizontalDragUpdate(DragUpdateDetails details) {
     _currentDrag += details.primaryDelta ?? 0;
-    if (!widget.drawerOpen && _currentDrag > _dragThreshold) {
+    _verticalDrag += details.delta.dy;
+    if (!widget.drawerOpen &&
+        _currentDrag > _dragThreshold &&
+        _currentDrag.abs() > _verticalDrag.abs()) {
       _currentDrag = 0;
+      _verticalDrag = 0;
       widget.onOpenDrawer();
     }
     if (widget.drawerOpen && _currentDrag < -_dragThreshold) {
       _currentDrag = 0;
+      _verticalDrag = 0;
       widget.onCloseDrawer();
     }
   }
 
   void _handleHorizontalDragEnd(DragEndDetails details) {
     _currentDrag = 0;
+    _verticalDrag = 0;
   }
 
   @override
@@ -154,6 +161,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
           0.0,
           math.min(drawerContentAlpha, 1.0),
         );
+        final isDrawerOpen = widget.drawerOpen || drawerProgress > 0.001;
 
         return GestureDetector(
           behavior: HitTestBehavior.translucent,
@@ -162,6 +170,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
           onHorizontalDragEnd: _handleHorizontalDragEnd,
           onHorizontalDragCancel: () {
             _currentDrag = 0;
+            _verticalDrag = 0;
           },
           child: Stack(
             children: <Widget>[
@@ -171,7 +180,6 @@ class _PhoneLayoutState extends State<PhoneLayout>
                   child: Transform(
                     alignment: Alignment.centerLeft,
                     transform: Matrix4.identity()
-                      ..setEntry(3, 2, _composeCameraPerspective)
                       ..rotateY(contentRotationY * math.pi / 180),
                     child: Transform.scale(
                       alignment: Alignment.centerLeft,
@@ -193,14 +201,14 @@ class _PhoneLayoutState extends State<PhoneLayout>
                           borderRadius: BorderRadius.circular(
                             clampedContentCornerRadius,
                           ),
-                          child: widget.content,
+                          child: RepaintBoundary(child: widget.content),
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-              if (widget.drawerOpen)
+              if (isDrawerOpen)
                 Positioned.fill(
                   left: widget.drawerWidth,
                   child: GestureDetector(
@@ -227,13 +235,16 @@ class _PhoneLayoutState extends State<PhoneLayout>
                         bottomEnd: Radius.circular(16),
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: DrawerContent(
-                        navigationEntries: widget.navigationEntries,
-                        selectedRouteId: widget.selectedRouteId,
-                        appearance: appearance,
-                        onNavigationEntrySelected:
-                            widget.onNavigationEntrySelected,
-                        onConversationActivated: widget.onConversationActivated,
+                      child: RepaintBoundary(
+                        child: DrawerContent(
+                          navigationEntries: widget.navigationEntries,
+                          selectedRouteId: widget.selectedRouteId,
+                          appearance: appearance,
+                          onNavigationEntrySelected:
+                              widget.onNavigationEntrySelected,
+                          onConversationActivated:
+                              widget.onConversationActivated,
+                        ),
                       ),
                     ),
                   ),

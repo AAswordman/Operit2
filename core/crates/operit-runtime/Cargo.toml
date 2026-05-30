@@ -7,10 +7,14 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+aes = "0.8"
 base64.workspace = true
 chrono.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 futures-util.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 json5.workspace = true
+md-5 = "0.10"
 operit-host-api = { path = "../operit-host-api" }
 operit-store = { path = "../operit-store" }
 reqwest.workspace = true
@@ -30,8 +34,11 @@ rusqlite.workspace = true
 [build-dependencies]
 zip.workspace = true
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 rquickjs.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

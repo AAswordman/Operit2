@@ -2,15 +2,15 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::FileBindingService::{
-    FileBindingService, StructuredEditAction, StructuredEditOperation,
-};
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolParameter, ToolValidationResult,
 };
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
+};
+use crate::core::tools::defaultTool::standard::StandardChatManagerTool::{
+    ChatManagerToolExecutor, ChatManagerToolOperation, StandardChatManagerTool,
 };
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::{
     FileSystemToolExecutor, FileSystemToolOperation, StandardFileSystemTools,
@@ -34,7 +34,6 @@ use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::data::preferences::EnvPreferences::EnvPreferences;
-use operit_host_api::FileSystemHost;
 
 #[allow(non_snake_case)]
 pub fn registerAllTools(handler: &mut AIToolHandler, context: &OperitApplicationContext) {
@@ -48,8 +47,30 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
         "sleep".to_string(),
         Box::new(FnToolExecutor {
             name: "sleep".to_string(),
-            validate: validateSleep,
-            invoke: executeSleep,
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(|tool| {
+                let durationMs = tool
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "duration_ms")
+                    .and_then(|parameter| parameter.value.parse::<i32>().ok())
+                    .unwrap_or(1000);
+                let sleptMs = durationMs.max(0);
+                std::thread::sleep(std::time::Duration::from_millis(sleptMs as u64));
+                ToolResult {
+                    toolName: tool.name.clone(),
+                    success: true,
+                    result: serde_json::json!({
+                        "requestedMs": durationMs,
+                        "sleptMs": sleptMs
+                    })
+                    .to_string(),
+                    error: None,
+                }
+            }),
         }),
     );
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
@@ -61,29 +82,323 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
     );
     registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
     registerMemoryPublicTools(handler);
+    registerChatTools(handler, StandardChatManagerTool::new());
 
     let packageManager = handler.getOrCreatePackageManager();
+    let usePackageManager = packageManager.clone();
+    let usePackageHandler = handler.clone();
     handler.registerTool(
         "use_package".to_string(),
-        Box::new(UsePackageToolExecutor {
-            packageManager: packageManager.clone(),
-            handler: handler.clone(),
+        Box::new(FnToolExecutor {
+            name: "use_package".to_string(),
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool| {
+                let packageName = requiredParameterValue(tool, "package_name");
+                let (result, selectedPackage) = {
+                    let mut guard = usePackageManager
+                        .lock()
+                        .expect("package manager mutex poisoned");
+                    let result = guard.executeUsePackageTool(&tool.name, &packageName);
+                    let selectedPackage = if result.success {
+                        guard
+                            .getEffectivePackageTools(&packageName)
+                            .filter(|package| !guard.isToolPkgContainer(&package.name))
+                    } else {
+                        None
+                    };
+                    (result, selectedPackage)
+                };
+                if let Some(selectedPackage) = selectedPackage {
+                    registerPackageTools(
+                        &usePackageHandler,
+                        usePackageManager.clone(),
+                        selectedPackage,
+                    );
+                }
+                result
+            }),
         }),
     );
+    let searchContext = context.clone();
+    let searchPackageManager = packageManager.clone();
     handler.registerTool(
         SEARCH_TOOL_NAME.to_string(),
-        Box::new(SearchHiddenToolCatalogExecutor {
-            context: context.clone(),
-            packageManager,
+        Box::new(FnToolExecutor {
+            name: SEARCH_TOOL_NAME.to_string(),
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool| {
+                let useEnglish = false;
+                let runtimeContext = ToolExecutionManager::currentToolRuntimeContext();
+                if runtimeContext
+                    .as_ref()
+                    .map(|context| context.toolExposureMode.clone())
+                    != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
+                {
+                    return toolErrorResult(
+                        tool,
+                        CliToolModeSupport::buildCliModeUnavailableMessage(useEnglish),
+                    );
+                }
+
+                let query = requiredParameterValue(tool, "query");
+                if query.trim().is_empty() {
+                    return toolErrorResult(tool, "Missing required parameter: query".to_string());
+                }
+                let limit = tool
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "limit")
+                    .map(|parameter| parameter.value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .and_then(|value| value.parse::<i32>().ok())
+                    .unwrap_or_else(CliToolModeSupport::defaultSearchLimit);
+
+                let hostEnvironment = searchContext.hostEnvironment.clone();
+                let packageManagerGuard = searchPackageManager
+                    .lock()
+                    .expect("package manager mutex poisoned");
+                let roleCardToolAccess =
+                    crate::data::preferences::CharacterCardToolAccessResolver::CharacterCardToolAccessResolver::getInstance()
+                        .resolve(
+                            runtimeContext
+                                .as_ref()
+                                .and_then(|context| context.callerCardId.as_deref()),
+                            &packageManagerGuard,
+                            None,
+                        );
+                let catalog = CliToolModeSupport::buildHiddenToolCatalog(
+                    &searchContext,
+                    &packageManagerGuard,
+                    useEnglish,
+                    &roleCardToolAccess,
+                    &hostEnvironment,
+                );
+                let results = CliToolModeSupport::searchHiddenToolCatalog(&catalog, &query, limit);
+                ToolResult {
+                    toolName: tool.name.clone(),
+                    success: true,
+                    result: CliToolModeSupport::formatSearchResults(&query, &results, useEnglish),
+                    error: None,
+                }
+            }),
         }),
     );
+    let proxyHandler = handler.clone();
     handler.registerTool(
         PROXY_TOOL_NAME.to_string(),
-        Box::new(ProxyToolExecutor {
-            handler: handler.clone(),
+        Box::new(FnToolExecutor {
+            name: PROXY_TOOL_NAME.to_string(),
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool| {
+                let useEnglish = false;
+                let runtimeContext = ToolExecutionManager::currentToolRuntimeContext();
+                if runtimeContext
+                    .as_ref()
+                    .map(|context| context.toolExposureMode.clone())
+                    != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
+                {
+                    return toolErrorResult(
+                        tool,
+                        CliToolModeSupport::buildCliModeUnavailableMessage(useEnglish),
+                    );
+                }
+
+                let (parsedInvocation, parseError) = parseProxyInvocation(tool, false);
+                if let Some(error) = parseError {
+                    return error;
+                }
+                let Some(resolvedInvocation) = parsedInvocation else {
+                    return toolErrorResult(tool, "Missing required parameter: tool_name".to_string());
+                };
+
+                if CliToolModeSupport::isReservedProxyTarget(&resolvedInvocation.targetToolName) {
+                    return toolErrorResult(
+                        tool,
+                        CliToolModeSupport::buildReservedProxyTargetMessage(
+                            &resolvedInvocation.targetToolName,
+                            useEnglish,
+                        ),
+                    );
+                }
+
+                let packageManager = proxyHandler.getOrCreatePackageManager();
+                let packageManagerGuard = packageManager
+                    .lock()
+                    .expect("package manager mutex poisoned");
+                let roleCardToolAccess =
+                    crate::data::preferences::CharacterCardToolAccessResolver::CharacterCardToolAccessResolver::getInstance()
+                        .resolve(
+                            runtimeContext
+                                .as_ref()
+                                .and_then(|context| context.callerCardId.as_deref()),
+                            &packageManagerGuard,
+                            None,
+                        );
+                drop(packageManagerGuard);
+
+                let usePackageSourceName = if resolvedInvocation.targetToolName == "use_package" {
+                    resolvedInvocation
+                        .forwardedParameters
+                        .iter()
+                        .find(|parameter| parameter.name == "package_name")
+                        .map(|parameter| parameter.value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                } else {
+                    None
+                };
+                if !CliToolModeSupport::isToolNameAllowedForRoleCard(
+                    &resolvedInvocation.targetToolName,
+                    usePackageSourceName.as_deref(),
+                    &roleCardToolAccess,
+                ) {
+                    return ToolResult {
+                        toolName: resolvedInvocation.targetToolName,
+                        success: false,
+                        result: String::new(),
+                        error: Some(CliToolModeSupport::buildRoleAccessDeniedMessage(useEnglish)),
+                    };
+                }
+
+                let proxiedTool = AITool {
+                    name: resolvedInvocation.targetToolName,
+                    parameters: resolvedInvocation.forwardedParameters,
+                };
+                let permissionSystem = proxyHandler.getToolPermissionSystem();
+                let hasPermission = match permissionSystem.checkToolPermission(&proxiedTool) {
+                    Ok(value) => value,
+                    Err(_) => false,
+                };
+                if !hasPermission {
+                    let errorMessage = "User cancelled the tool execution.".to_string();
+                    proxyHandler.notifyToolPermissionChecked(&proxiedTool, false, Some(&errorMessage));
+                    return ToolResult {
+                        toolName: proxiedTool.name,
+                        success: false,
+                        result: String::new(),
+                        error: Some(errorMessage),
+                    };
+                }
+
+                proxyHandler.notifyToolPermissionChecked(&proxiedTool, true, None);
+                let mut clonedHandler = proxyHandler.clone();
+                let proxiedResult = clonedHandler.executeTool(proxiedTool);
+                ToolResult {
+                    toolName: proxiedResult.toolName,
+                    success: proxiedResult.success,
+                    result: proxiedResult.result,
+                    error: proxiedResult.error,
+                }
+            }),
         }),
     );
     registerTerminalTools(handler, ToolGetter::getTerminalTools(context));
+}
+
+#[allow(non_snake_case)]
+fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManagerTool) {
+    registerChatTool(
+        handler,
+        &chatTools,
+        "start_chat_service",
+        ChatManagerToolOperation::StartChatService,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "stop_chat_service",
+        ChatManagerToolOperation::StopChatService,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "create_new_chat",
+        ChatManagerToolOperation::CreateNewChat,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "list_chats",
+        ChatManagerToolOperation::ListChats,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "find_chat",
+        ChatManagerToolOperation::FindChat,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "agent_status",
+        ChatManagerToolOperation::AgentStatus,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "switch_chat",
+        ChatManagerToolOperation::SwitchChat,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "update_chat_title",
+        ChatManagerToolOperation::UpdateChatTitle,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "delete_chat",
+        ChatManagerToolOperation::DeleteChat,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "send_message_to_ai",
+        ChatManagerToolOperation::SendMessageToAi,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "send_message_to_ai_streaming",
+        ChatManagerToolOperation::SendMessageToAiStreaming,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "list_character_cards",
+        ChatManagerToolOperation::ListCharacterCards,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        "get_chat_messages",
+        ChatManagerToolOperation::GetChatMessages,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerChatTool(
+    handler: &mut AIToolHandler,
+    chatTools: &StandardChatManagerTool,
+    name: &str,
+    operation: ChatManagerToolOperation,
+) {
+    handler.registerTool(
+        name.to_string(),
+        Box::new(ChatManagerToolExecutor {
+            tools: chatTools.clone(),
+            operation,
+        }),
+    );
 }
 
 #[allow(non_snake_case)]
@@ -260,42 +575,199 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
     registerMemoryInternalTools(handler);
 
-    if let Some(fileSystemHost) = context.fileSystemHost.clone() {
+    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
         handler.registerInternalTool(
             "apply_file".to_string(),
-            Box::new(ApplyFileToolExecutor {
-                fileBindingService: FileBindingService,
-                fileSystemHost,
+            Box::new(FileSystemToolExecutor {
+                tools: fileSystemTools,
+                operation: FileSystemToolOperation::ApplyFile,
             }),
         );
     }
 
+    let packageProxyHandler = handler.clone();
     handler.registerInternalTool(
         "package_proxy".to_string(),
-        Box::new(PackageProxyToolExecutor {
-            handler: handler.clone(),
+        Box::new(FnToolExecutor {
+            name: "package_proxy".to_string(),
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool| {
+                let (parsedInvocation, parseError) = parseProxyInvocation(tool, true);
+                if let Some(error) = parseError {
+                    return error;
+                }
+                let Some(resolvedInvocation) = parsedInvocation else {
+                    return toolErrorResult(
+                        tool,
+                        "Missing required parameter: tool_name".to_string(),
+                    );
+                };
+                if resolvedInvocation.targetToolName == PACKAGE_PROXY_TOOL_NAME {
+                    return toolErrorResult(tool, "tool_name cannot be package_proxy".to_string());
+                }
+
+                let proxiedTool = AITool {
+                    name: resolvedInvocation.targetToolName,
+                    parameters: resolvedInvocation.forwardedParameters,
+                };
+                let mut clonedHandler = packageProxyHandler.clone();
+                let proxiedResult = clonedHandler.executeTool(proxiedTool);
+                ToolResult {
+                    toolName: proxiedResult.toolName,
+                    success: proxiedResult.success,
+                    result: proxiedResult.result,
+                    error: proxiedResult.error,
+                }
+            }),
         }),
     );
+    let cliCommandHandler = handler.clone();
     handler.registerInternalTool(
         "execute_cli_command".to_string(),
-        Box::new(ExecuteCliCommandToolExecutor {
-            handler: handler.clone(),
+        Box::new(FnToolExecutor {
+            name: "execute_cli_command".to_string(),
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(move |tool| {
+                let argsRaw = requiredParameterValue(tool, "args");
+                let args = match serde_json::from_str::<Vec<String>>(&argsRaw) {
+                    Ok(args) => args,
+                    Err(error) => {
+                        return toolErrorResult(
+                            tool,
+                            format!("args must be a JSON string array: {error}"),
+                        );
+                    }
+                };
+                let context = cliCommandHandler.getContext();
+                let Some(executor) = context.coreCommandExecutor else {
+                    return toolErrorResult(
+                        tool,
+                        "Core command executor is not configured.".to_string(),
+                    );
+                };
+                match executor(args) {
+                    Ok(output) => ToolResult {
+                        toolName: tool.name.clone(),
+                        success: true,
+                        result: output,
+                        error: None,
+                    },
+                    Err(error) => toolErrorResult(tool, error),
+                }
+            }),
         }),
     );
     handler.registerInternalTool(
         "read_environment_variable".to_string(),
         Box::new(FnToolExecutor {
             name: "read_environment_variable".to_string(),
-            validate: validateEnvironmentVariableKey,
-            invoke: executeReadEnvironmentVariable,
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(|tool| {
+                let key = requiredParameterValue(tool, "key");
+                let envPreferences = EnvPreferences::getInstance();
+                match envPreferences.getEnv(&key) {
+                    Ok(value) => ToolResult {
+                        toolName: tool.name.clone(),
+                        success: true,
+                        result: serde_json::json!({
+                            "key": key,
+                            "value": value,
+                            "exists": value.is_some()
+                        })
+                        .to_string(),
+                        error: None,
+                    },
+                    Err(error) => ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: serde_json::json!({
+                            "key": key,
+                            "value": null,
+                            "exists": false
+                        })
+                        .to_string(),
+                        error: Some(error.to_string()),
+                    },
+                }
+            }),
         }),
     );
     handler.registerInternalTool(
         "write_environment_variable".to_string(),
         Box::new(FnToolExecutor {
             name: "write_environment_variable".to_string(),
-            validate: validateEnvironmentVariableKey,
-            invoke: executeWriteEnvironmentVariable,
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: Arc::new(|tool| {
+                let key = requiredParameterValue(tool, "key");
+                let value = tool
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "value")
+                    .map(|parameter| parameter.value.clone())
+                    .unwrap_or_default();
+                let envPreferences = EnvPreferences::getInstance();
+                let writeResult = if value.trim().is_empty() {
+                    envPreferences.removeEnv(&key)
+                } else {
+                    envPreferences.setEnv(&key, value.trim())
+                };
+                if let Err(error) = writeResult {
+                    return ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: serde_json::json!({
+                            "key": key,
+                            "requestedValue": value,
+                            "value": null,
+                            "exists": false,
+                            "cleared": value.trim().is_empty()
+                        })
+                        .to_string(),
+                        error: Some(error.to_string()),
+                    };
+                }
+
+                match envPreferences.getEnv(&key) {
+                    Ok(current) => ToolResult {
+                        toolName: tool.name.clone(),
+                        success: true,
+                        result: serde_json::json!({
+                            "key": key,
+                            "requestedValue": value,
+                            "value": current,
+                            "exists": current.is_some(),
+                            "cleared": value.trim().is_empty()
+                        })
+                        .to_string(),
+                        error: None,
+                    },
+                    Err(error) => ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: serde_json::json!({
+                            "key": key,
+                            "requestedValue": value,
+                            "value": null,
+                            "exists": false,
+                            "cleared": value.trim().is_empty()
+                        })
+                        .to_string(),
+                        error: Some(error.to_string()),
+                    },
+                }
+            }),
         }),
     );
 }
@@ -558,6 +1030,12 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     registerFileSystemTool(
         handler,
         &fileSystemTools,
+        "grep_context",
+        FileSystemToolOperation::GrepContext,
+    );
+    registerFileSystemTool(
+        handler,
+        &fileSystemTools,
         "download_file",
         FileSystemToolOperation::DownloadFile,
     );
@@ -579,304 +1057,12 @@ fn registerFileSystemTool(
     );
 }
 
-#[allow(non_snake_case)]
-fn validateSleep(tool: &AITool) -> ToolValidationResult {
-    let duration = tool
-        .parameters
-        .iter()
-        .find(|parameter| parameter.name == "duration_ms")
-        .map(|parameter| parameter.value.trim().to_string());
-    match duration {
-        Some(value) if value.parse::<u64>().is_err() => ToolValidationResult {
-            valid: false,
-            errorMessage: "duration_ms must be an integer.".to_string(),
-        },
-        _ => ToolValidationResult {
-            valid: true,
-            errorMessage: String::new(),
-        },
-    }
-}
-
-#[allow(non_snake_case)]
-fn executeSleep(tool: &AITool) -> ToolResult {
-    let durationMs = tool
-        .parameters
-        .iter()
-        .find(|parameter| parameter.name == "duration_ms")
-        .and_then(|parameter| parameter.value.trim().parse::<u64>().ok())
-        .unwrap_or(1000);
-    std::thread::sleep(std::time::Duration::from_millis(durationMs));
-    ToolResult {
-        toolName: tool.name.clone(),
-        success: true,
-        result: format!("Slept for {durationMs} ms."),
-        error: None,
-    }
-}
-
-struct ApplyFileToolExecutor {
-    fileBindingService: FileBindingService,
-    fileSystemHost: std::sync::Arc<dyn FileSystemHost>,
-}
-
-struct UsePackageToolExecutor {
-    packageManager: Arc<Mutex<PackageManager>>,
-    handler: AIToolHandler,
-}
-
-struct PackageProxyToolExecutor {
-    handler: AIToolHandler,
-}
-
-struct ExecuteCliCommandToolExecutor {
-    handler: AIToolHandler,
-}
-
-struct ProxyToolExecutor {
-    handler: AIToolHandler,
-}
-
-struct SearchHiddenToolCatalogExecutor {
-    context: OperitApplicationContext,
-    packageManager: Arc<Mutex<PackageManager>>,
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for ApplyFileToolExecutor {
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        validateApplyFile(tool)
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeApplyFile(
-            &self.fileBindingService,
-            self.fileSystemHost.as_ref(),
-            tool,
-        )]
-    }
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for UsePackageToolExecutor {
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        validateUsePackage(tool)
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeUsePackage(&self.packageManager, &self.handler, tool)]
-    }
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor
-    for SearchHiddenToolCatalogExecutor
-{
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        if requiredParameterValue(tool, "query").trim().is_empty() {
-            return invalidToolValidation("query is required.");
-        }
-        ToolValidationResult {
-            valid: true,
-            errorMessage: String::new(),
-        }
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeSearchHiddenToolCatalog(
-            tool,
-            &self.context,
-            &self.packageManager,
-        )]
-    }
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for PackageProxyToolExecutor {
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        validatePackageProxy(tool)
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executePackageProxy(&self.handler, tool)]
-    }
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor
-    for ExecuteCliCommandToolExecutor
-{
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        validateExecuteCliCommand(tool)
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeCliCommand(&self.handler, tool)]
-    }
-}
-
-impl crate::api::chat::enhance::ToolExecutionManager::ToolExecutor for ProxyToolExecutor {
-    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        validateProxy(tool)
-    }
-
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![executeProxy(&self.handler, tool)]
-    }
-}
-
-#[allow(non_snake_case)]
-fn validateApplyFile(tool: &AITool) -> ToolValidationResult {
-    let path = requiredParameterValue(tool, "path");
-    let operationType = requiredParameterValue(tool, "type").to_ascii_lowercase();
-    if path.trim().is_empty() {
-        return invalidToolValidation("path is required.");
-    }
-    match operationType.as_str() {
-        "create" => {
-            if requiredParameterValue(tool, "new").trim().is_empty() {
-                return invalidToolValidation("new is required for type=create.");
-            }
-        }
-        "replace" => {
-            if requiredParameterValue(tool, "old").trim().is_empty() {
-                return invalidToolValidation("old is required for type=replace.");
-            }
-            if requiredParameterValue(tool, "new").trim().is_empty() {
-                return invalidToolValidation("new is required for type=replace.");
-            }
-        }
-        "delete" => {
-            if requiredParameterValue(tool, "old").trim().is_empty() {
-                return invalidToolValidation("old is required for type=delete.");
-            }
-        }
-        _ => {
-            return invalidToolValidation("type must be create, replace, or delete.");
-        }
-    }
-    ToolValidationResult {
-        valid: true,
-        errorMessage: String::new(),
-    }
-}
-
-#[allow(non_snake_case)]
-fn executeApplyFile(
-    fileBindingService: &FileBindingService,
-    fileSystemHost: &dyn FileSystemHost,
-    tool: &AITool,
-) -> ToolResult {
-    let path = requiredParameterValue(tool, "path");
-    if let Err(error) = fileSystemHost.validatePath(&path, "path") {
-        return toolErrorResult(tool, error.message);
-    }
-
-    let operationType = requiredParameterValue(tool, "type").to_ascii_lowercase();
-    let oldContent = requiredParameterValue(tool, "old");
-    let newContent = requiredParameterValue(tool, "new");
-    let existence = match fileSystemHost.fileExists(&path) {
-        Ok(value) => value,
-        Err(error) => return toolErrorResult(tool, error.message),
-    };
-
-    match operationType.as_str() {
-        "create" => {
-            if existence.exists {
-                return toolErrorResult(
-                    tool,
-                    "If you want to rewrite an entire existing file: please delete_file first then use apply_file with type=create (do not overwrite directly).".to_string(),
-                );
-            }
-            match fileSystemHost.writeFile(&path, &newContent, false) {
-                Ok(()) => ToolResult {
-                    toolName: tool.name.clone(),
-                    success: true,
-                    result: format!("Created file: {path}"),
-                    error: None,
-                },
-                Err(error) => toolErrorResult(tool, error.message),
-            }
-        }
-        "replace" | "delete" => {
-            if !existence.exists {
-                return toolErrorResult(tool, format!("File does not exist: {path}"));
-            }
-            if existence.isDirectory {
-                return toolErrorResult(tool, format!("Path is not a file: {path}"));
-            }
-            let originalContent = match fileSystemHost.readFile(&path) {
-                Ok(value) => value,
-                Err(error) => return toolErrorResult(tool, error.message),
-            };
-            let operation = StructuredEditOperation {
-                action: if operationType == "replace" {
-                    StructuredEditAction::REPLACE
-                } else {
-                    StructuredEditAction::DELETE
-                },
-                oldContent,
-                newContent,
-            };
-            let (updatedContent, diffResult) =
-                fileBindingService.processFileBindingOperations(&originalContent, &[operation]);
-            if diffResult.starts_with("Error:") {
-                return toolErrorResult(tool, diffResult);
-            }
-            match fileSystemHost.writeFile(&path, &updatedContent, false) {
-                Ok(()) => ToolResult {
-                    toolName: tool.name.clone(),
-                    success: true,
-                    result: diffResult,
-                    error: None,
-                },
-                Err(error) => toolErrorResult(tool, error.message),
-            }
-        }
-        _ => toolErrorResult(tool, "type must be create, replace, or delete.".to_string()),
-    }
-}
-
 fn requiredParameterValue(tool: &AITool, name: &str) -> String {
     tool.parameters
         .iter()
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.trim().to_string())
         .unwrap_or_default()
-}
-
-fn validateUsePackage(tool: &AITool) -> ToolValidationResult {
-    if requiredParameterValue(tool, "package_name")
-        .trim()
-        .is_empty()
-    {
-        return invalidToolValidation("package_name is required.");
-    }
-    ToolValidationResult {
-        valid: true,
-        errorMessage: String::new(),
-    }
-}
-
-fn executeUsePackage(
-    packageManager: &Arc<Mutex<PackageManager>>,
-    handler: &AIToolHandler,
-    tool: &AITool,
-) -> ToolResult {
-    let packageName = requiredParameterValue(tool, "package_name");
-    let (result, selectedPackage) = {
-        let mut guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        let result = guard.executeUsePackageTool(&tool.name, &packageName);
-        let selectedPackage = if result.success {
-            guard
-                .getEffectivePackageTools(&packageName)
-                .filter(|package| !guard.isToolPkgContainer(&package.name))
-        } else {
-            None
-        };
-        (result, selectedPackage)
-    };
-    if let Some(selectedPackage) = selectedPackage {
-        registerPackageTools(handler, packageManager.clone(), selectedPackage);
-    }
-    result
 }
 
 #[allow(non_snake_case)]
@@ -921,360 +1107,12 @@ fn registerPackageTools(
     }
 }
 
-#[allow(non_snake_case)]
-fn executeSearchHiddenToolCatalog(
-    tool: &AITool,
-    context: &OperitApplicationContext,
-    packageManager: &Arc<Mutex<PackageManager>>,
-) -> ToolResult {
-    let useEnglish = false;
-    let runtimeContext = ToolExecutionManager::currentToolRuntimeContext();
-    if runtimeContext
-        .as_ref()
-        .map(|context| context.toolExposureMode.clone())
-        != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
-    {
-        return toolErrorResult(
-            tool,
-            CliToolModeSupport::buildCliModeUnavailableMessage(useEnglish),
-        );
-    }
-
-    let query = requiredParameterValue(tool, "query");
-    if query.trim().is_empty() {
-        return toolErrorResult(tool, "Missing required parameter: query".to_string());
-    }
-    let limit = tool
-        .parameters
-        .iter()
-        .find(|parameter| parameter.name == "limit")
-        .map(|parameter| parameter.value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<i32>().ok())
-        .unwrap_or_else(CliToolModeSupport::defaultSearchLimit);
-
-    let hostEnvironment = context.hostEnvironment.clone();
-    let packageManagerGuard = packageManager
-        .lock()
-        .expect("package manager mutex poisoned");
-    let roleCardToolAccess =
-        crate::data::preferences::CharacterCardToolAccessResolver::CharacterCardToolAccessResolver::getInstance()
-            .resolve(
-                runtimeContext
-                    .as_ref()
-                    .and_then(|context| context.callerCardId.as_deref()),
-                &packageManagerGuard,
-                None,
-            );
-    let catalog = CliToolModeSupport::buildHiddenToolCatalog(
-        context,
-        &packageManagerGuard,
-        useEnglish,
-        &roleCardToolAccess,
-        &hostEnvironment,
-    );
-    let results = CliToolModeSupport::searchHiddenToolCatalog(&catalog, &query, limit);
-    ToolResult {
-        toolName: tool.name.clone(),
-        success: true,
-        result: CliToolModeSupport::formatSearchResults(&query, &results, useEnglish),
-        error: None,
-    }
-}
-
-fn validatePackageProxy(tool: &AITool) -> ToolValidationResult {
-    if requiredParameterValue(tool, "tool_name").trim().is_empty() {
-        return invalidToolValidation("tool_name is required.");
-    }
-    if requiredParameterValue(tool, "params").trim().is_empty() {
-        return invalidToolValidation("params is required.");
-    }
-    ToolValidationResult {
-        valid: true,
-        errorMessage: String::new(),
-    }
-}
-
-fn validateProxy(tool: &AITool) -> ToolValidationResult {
-    validatePackageProxy(tool)
-}
-
-fn executeProxy(handler: &AIToolHandler, tool: &AITool) -> ToolResult {
-    let useEnglish = false;
-    let runtimeContext = ToolExecutionManager::currentToolRuntimeContext();
-    if runtimeContext
-        .as_ref()
-        .map(|context| context.toolExposureMode.clone())
-        != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
-    {
-        return toolErrorResult(
-            tool,
-            CliToolModeSupport::buildCliModeUnavailableMessage(useEnglish),
-        );
-    }
-
-    let (parsedInvocation, parseError) = parseProxyInvocation(tool, false);
-    if let Some(error) = parseError {
-        return error;
-    }
-    let Some(resolvedInvocation) = parsedInvocation else {
-        return toolErrorResult(tool, "Missing required parameter: tool_name".to_string());
-    };
-
-    if CliToolModeSupport::isReservedProxyTarget(&resolvedInvocation.targetToolName) {
-        return toolErrorResult(
-            tool,
-            CliToolModeSupport::buildReservedProxyTargetMessage(
-                &resolvedInvocation.targetToolName,
-                useEnglish,
-            ),
-        );
-    }
-
-    let packageManager = handler.getOrCreatePackageManager();
-    let packageManagerGuard = packageManager
-        .lock()
-        .expect("package manager mutex poisoned");
-    let roleCardToolAccess =
-        crate::data::preferences::CharacterCardToolAccessResolver::CharacterCardToolAccessResolver::getInstance()
-            .resolve(
-                runtimeContext
-                    .as_ref()
-                    .and_then(|context| context.callerCardId.as_deref()),
-                &packageManagerGuard,
-                None,
-            );
-    drop(packageManagerGuard);
-
-    let usePackageSourceName = if resolvedInvocation.targetToolName == "use_package" {
-        resolvedInvocation
-            .forwardedParameters
-            .iter()
-            .find(|parameter| parameter.name == "package_name")
-            .map(|parameter| parameter.value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    } else {
-        None
-    };
-    if !CliToolModeSupport::isToolNameAllowedForRoleCard(
-        &resolvedInvocation.targetToolName,
-        usePackageSourceName.as_deref(),
-        &roleCardToolAccess,
-    ) {
-        return ToolResult {
-            toolName: resolvedInvocation.targetToolName,
-            success: false,
-            result: String::new(),
-            error: Some(CliToolModeSupport::buildRoleAccessDeniedMessage(useEnglish)),
-        };
-    }
-
-    let proxiedTool = AITool {
-        name: resolvedInvocation.targetToolName,
-        parameters: resolvedInvocation.forwardedParameters,
-    };
-    let permissionSystem = handler.getToolPermissionSystem();
-    let hasPermission = match permissionSystem.checkToolPermission(&proxiedTool) {
-        Ok(value) => value,
-        Err(_) => false,
-    };
-    if !hasPermission {
-        let errorMessage = "User cancelled the tool execution.".to_string();
-        handler.notifyToolPermissionChecked(&proxiedTool, false, Some(&errorMessage));
-        return ToolResult {
-            toolName: proxiedTool.name,
-            success: false,
-            result: String::new(),
-            error: Some(errorMessage),
-        };
-    }
-
-    handler.notifyToolPermissionChecked(&proxiedTool, true, None);
-    let mut clonedHandler = handler.clone();
-    let proxiedResult = clonedHandler.executeTool(proxiedTool);
-    ToolResult {
-        toolName: proxiedResult.toolName,
-        success: proxiedResult.success,
-        result: proxiedResult.result,
-        error: proxiedResult.error,
-    }
-}
-
-fn executePackageProxy(handler: &AIToolHandler, tool: &AITool) -> ToolResult {
-    let (parsedInvocation, parseError) = parseProxyInvocation(tool, true);
-    if let Some(error) = parseError {
-        return error;
-    }
-    let Some(resolvedInvocation) = parsedInvocation else {
-        return toolErrorResult(tool, "Missing required parameter: tool_name".to_string());
-    };
-    if resolvedInvocation.targetToolName == PACKAGE_PROXY_TOOL_NAME {
-        return toolErrorResult(tool, "tool_name cannot be package_proxy".to_string());
-    }
-
-    let proxiedTool = AITool {
-        name: resolvedInvocation.targetToolName,
-        parameters: resolvedInvocation.forwardedParameters,
-    };
-    let mut clonedHandler = handler.clone();
-    let proxiedResult = clonedHandler.executeTool(proxiedTool);
-    ToolResult {
-        toolName: proxiedResult.toolName,
-        success: proxiedResult.success,
-        result: proxiedResult.result,
-        error: proxiedResult.error,
-    }
-}
-
-fn invalidToolValidation(message: &str) -> ToolValidationResult {
-    ToolValidationResult {
-        valid: false,
-        errorMessage: message.to_string(),
-    }
-}
-
-fn validateEnvironmentVariableKey(tool: &AITool) -> ToolValidationResult {
-    if requiredParameterValue(tool, "key").trim().is_empty() {
-        return invalidToolValidation("Missing required parameter: key");
-    }
-    ToolValidationResult {
-        valid: true,
-        errorMessage: String::new(),
-    }
-}
-
-#[allow(non_snake_case)]
-fn executeReadEnvironmentVariable(tool: &AITool) -> ToolResult {
-    let key = requiredParameterValue(tool, "key");
-    let envPreferences = EnvPreferences::getInstance();
-    match envPreferences.getEnv(&key) {
-        Ok(value) => ToolResult {
-            toolName: tool.name.clone(),
-            success: true,
-            result: serde_json::json!({
-                "key": key,
-                "value": value,
-                "exists": value.is_some()
-            })
-            .to_string(),
-            error: None,
-        },
-        Err(error) => ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: serde_json::json!({
-                "key": key,
-                "value": null,
-                "exists": false
-            })
-            .to_string(),
-            error: Some(error.to_string()),
-        },
-    }
-}
-
-#[allow(non_snake_case)]
-fn executeWriteEnvironmentVariable(tool: &AITool) -> ToolResult {
-    let key = requiredParameterValue(tool, "key");
-    let value = tool
-        .parameters
-        .iter()
-        .find(|parameter| parameter.name == "value")
-        .map(|parameter| parameter.value.clone())
-        .unwrap_or_default();
-    let envPreferences = EnvPreferences::getInstance();
-    let writeResult = if value.trim().is_empty() {
-        envPreferences.removeEnv(&key)
-    } else {
-        envPreferences.setEnv(&key, value.trim())
-    };
-    if let Err(error) = writeResult {
-        return ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: serde_json::json!({
-                "key": key,
-                "requestedValue": value,
-                "value": null,
-                "exists": false,
-                "cleared": value.trim().is_empty()
-            })
-            .to_string(),
-            error: Some(error.to_string()),
-        };
-    }
-
-    match envPreferences.getEnv(&key) {
-        Ok(current) => ToolResult {
-            toolName: tool.name.clone(),
-            success: true,
-            result: serde_json::json!({
-                "key": key,
-                "requestedValue": value,
-                "value": current,
-                "exists": current.is_some(),
-                "cleared": value.trim().is_empty()
-            })
-            .to_string(),
-            error: None,
-        },
-        Err(error) => ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: serde_json::json!({
-                "key": key,
-                "requestedValue": value,
-                "value": null,
-                "exists": false,
-                "cleared": value.trim().is_empty()
-            })
-            .to_string(),
-            error: Some(error.to_string()),
-        },
-    }
-}
-
 fn toolErrorResult(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
         result: String::new(),
         error: Some(error),
-    }
-}
-
-#[allow(non_snake_case)]
-fn validateExecuteCliCommand(tool: &AITool) -> ToolValidationResult {
-    if requiredParameterValue(tool, "args").trim().is_empty() {
-        return invalidToolValidation("args is required.");
-    }
-    ToolValidationResult {
-        valid: true,
-        errorMessage: String::new(),
-    }
-}
-
-#[allow(non_snake_case)]
-fn executeCliCommand(handler: &AIToolHandler, tool: &AITool) -> ToolResult {
-    let argsRaw = requiredParameterValue(tool, "args");
-    let args = match serde_json::from_str::<Vec<String>>(&argsRaw) {
-        Ok(args) => args,
-        Err(error) => {
-            return toolErrorResult(tool, format!("args must be a JSON string array: {error}"));
-        }
-    };
-    let context = handler.getContext();
-    let Some(executor) = context.coreCommandExecutor else {
-        return toolErrorResult(tool, "Core command executor is not configured.".to_string());
-    };
-    match executor(args) {
-        Ok(output) => ToolResult {
-            toolName: tool.name.clone(),
-            success: true,
-            result: output,
-            error: None,
-        },
-        Err(error) => toolErrorResult(tool, error),
     }
 }
 

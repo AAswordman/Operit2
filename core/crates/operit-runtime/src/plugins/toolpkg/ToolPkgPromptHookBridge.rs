@@ -7,6 +7,7 @@ use crate::core::chat::hooks::PromptHookRegistry::{
     PromptHookContext, PromptHookMutation, PromptHookRegistry, PromptInputHook,
     SystemPromptComposeHook, ToolPromptComposeHook,
 };
+use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE, TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY,
     TOOLPKG_EVENT_PROMPT_FINALIZE, TOOLPKG_EVENT_PROMPT_HISTORY, TOOLPKG_EVENT_PROMPT_INPUT,
@@ -16,6 +17,9 @@ use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
 };
+use crate::util::AppLogger::AppLogger;
+
+const TAG: &str = "ToolPkgPromptHookBridge";
 
 static PROMPT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> = OnceLock::new();
 static PROMPT_HISTORY_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> = OnceLock::new();
@@ -106,8 +110,13 @@ impl ToolPkgPromptHookBridge {
 
 fn replace_hooks(
     target: &Mutex<Vec<ToolPkgPromptHookRegistration>>,
-    updated: Vec<ToolPkgPromptHookRegistration>,
+    mut updated: Vec<ToolPkgPromptHookRegistration>,
 ) {
+    updated.sort_by(|left, right| {
+        left.containerPackageName
+            .cmp(&right.containerPackageName)
+            .then(left.hookId.cmp(&right.hookId))
+    });
     *target.lock().expect("toolpkg prompt hook mutex poisoned") = updated;
 }
 
@@ -211,31 +220,49 @@ fn dispatch_prompt_hooks(
         .lock()
         .expect("toolpkg prompt hook mutex poisoned")
         .clone();
+    let mut current = context.clone();
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;
     for hook in snapshot {
-        let result = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .runToolPkgMainHook(
+        let package_manager = {
+            let package_manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
+                crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
+            )
+            .getOrCreatePackageManager();
+            let cloned_package_manager = package_manager
+                .lock()
+                .expect("package manager mutex poisoned")
+                .clone();
+            cloned_package_manager
+        };
+        let result = match package_manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,
             event,
-            None,
+            Some(&current.stage),
             Some(&hook.hookId),
             hook.functionSource.as_deref(),
-            prompt_context_to_value(context),
+            prompt_context_to_value(&current),
             None,
             None,
             None,
-        )
-        .ok()
-        .and_then(decodeToolPkgHookResult);
-        if let Some(Value::Object(object)) = result {
-            changed |= apply_prompt_object_result(&mut mutation, object);
+        ) {
+            Ok(raw) => decodeToolPkgHookResult(raw),
+            Err(error) => {
+                AppLogger::e(
+                    TAG,
+                    &format!(
+                        "ToolPkg prompt hook failed: {}:{} {}",
+                        hook.containerPackageName, hook.hookId, error
+                    ),
+                );
+                None
+            }
+        };
+        if let Some(next_mutation) = parse_prompt_hook_result(event, result.as_ref(), &current) {
+            apply_prompt_mutation(&mut current, next_mutation.clone());
+            merge_prompt_mutation(&mut mutation, next_mutation);
+            changed = true;
         }
     }
     if changed {
@@ -262,30 +289,217 @@ fn prompt_context_to_value(context: &PromptHookContext) -> Value {
     })
 }
 
-fn apply_prompt_object_result(
-    mutation: &mut PromptHookMutation,
-    object: serde_json::Map<String, Value>,
-) -> bool {
-    let mut changed = false;
-    if let Some(value) = object.get("rawInput").and_then(Value::as_str) {
+fn parse_prompt_hook_result(
+    event: &str,
+    decoded: Option<&Value>,
+    context: &PromptHookContext,
+) -> Option<PromptHookMutation> {
+    match decoded? {
+        Value::String(value) => parse_prompt_string_result(event, value),
+        Value::Array(values) => parse_prompt_array_result(event, values, context),
+        Value::Object(object) => Some(parse_prompt_object_result(object)),
+        _ => None,
+    }
+}
+
+fn parse_prompt_string_result(event: &str, value: &str) -> Option<PromptHookMutation> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    let mut mutation = PromptHookMutation::default();
+    match event {
+        TOOLPKG_EVENT_PROMPT_INPUT
+        | TOOLPKG_EVENT_PROMPT_FINALIZE
+        | TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE => {
+            mutation.processed_input = Some(value.to_string());
+        }
+        TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE => {
+            mutation.system_prompt = Some(value.to_string());
+        }
+        TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE => {
+            mutation.tool_prompt = Some(value.to_string());
+        }
+        _ => return None,
+    }
+    Some(mutation)
+}
+
+fn parse_prompt_array_result(
+    event: &str,
+    values: &[Value],
+    context: &PromptHookContext,
+) -> Option<PromptHookMutation> {
+    let turns = parse_prompt_turns(values)?;
+    let mut mutation = PromptHookMutation::default();
+    match event {
+        TOOLPKG_EVENT_PROMPT_HISTORY | TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY => {
+            if context.stage == "before_prepare_history" {
+                mutation.chat_history = Some(turns);
+            } else {
+                mutation.prepared_history = Some(turns);
+            }
+        }
+        TOOLPKG_EVENT_PROMPT_FINALIZE | TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE => {
+            mutation.prepared_history = Some(turns);
+        }
+        _ => return None,
+    }
+    Some(mutation)
+}
+
+fn parse_prompt_object_result(object: &serde_json::Map<String, Value>) -> PromptHookMutation {
+    let mut mutation = PromptHookMutation::default();
+    if let Some(value) = object
+        .get("rawInput")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
         mutation.raw_input = Some(value.to_string());
-        changed = true;
     }
-    if let Some(value) = object.get("processedInput").and_then(Value::as_str) {
+    if let Some(value) = object
+        .get("processedInput")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
         mutation.processed_input = Some(value.to_string());
-        changed = true;
     }
-    if let Some(value) = object.get("systemPrompt").and_then(Value::as_str) {
+    if let Some(Value::Array(values)) = object.get("chatHistory") {
+        mutation.chat_history = parse_prompt_turns(values);
+    }
+    if let Some(Value::Array(values)) = object.get("preparedHistory") {
+        mutation.prepared_history = parse_prompt_turns(values);
+    }
+    if let Some(value) = object
+        .get("systemPrompt")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
         mutation.system_prompt = Some(value.to_string());
-        changed = true;
     }
-    if let Some(value) = object.get("toolPrompt").and_then(Value::as_str) {
+    if let Some(value) = object
+        .get("toolPrompt")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
         mutation.tool_prompt = Some(value.to_string());
-        changed = true;
+    }
+    if let Some(Value::Array(values)) = object.get("availableTools") {
+        mutation.available_tools = Some(
+            values
+                .iter()
+                .filter_map(|value| value.as_object().cloned())
+                .map(|object| object.into_iter().collect())
+                .collect(),
+        );
     }
     if let Some(Value::Object(metadata)) = object.get("metadata") {
         mutation.metadata.extend(metadata.clone());
-        changed = true;
     }
-    changed
+    mutation
+}
+
+fn parse_prompt_turns(values: &[Value]) -> Option<Vec<PromptTurn>> {
+    let mut turns = Vec::new();
+    for value in values {
+        let Some(object) = value.as_object() else {
+            continue;
+        };
+        let Some(kind) = object
+            .get("kind")
+            .and_then(Value::as_str)
+            .and_then(parse_prompt_turn_kind)
+        else {
+            continue;
+        };
+        let content = object
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let tool_name = object
+            .get("toolName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let metadata = object
+            .get("metadata")
+            .and_then(Value::as_object)
+            .cloned()
+            .map(|metadata| metadata.into_iter().collect())
+            .unwrap_or_default();
+        turns.push(PromptTurn {
+            kind,
+            content,
+            tool_name,
+            metadata,
+        });
+    }
+    Some(turns)
+}
+
+fn parse_prompt_turn_kind(value: &str) -> Option<PromptTurnKind> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "SYSTEM" => Some(PromptTurnKind::SYSTEM),
+        "USER" => Some(PromptTurnKind::USER),
+        "ASSISTANT" => Some(PromptTurnKind::ASSISTANT),
+        "TOOL_CALL" => Some(PromptTurnKind::TOOL_CALL),
+        "TOOL_RESULT" => Some(PromptTurnKind::TOOL_RESULT),
+        "SUMMARY" => Some(PromptTurnKind::SUMMARY),
+        _ => None,
+    }
+}
+
+fn merge_prompt_mutation(target: &mut PromptHookMutation, mutation: PromptHookMutation) {
+    if mutation.raw_input.is_some() {
+        target.raw_input = mutation.raw_input;
+    }
+    if mutation.processed_input.is_some() {
+        target.processed_input = mutation.processed_input;
+    }
+    if mutation.chat_history.is_some() {
+        target.chat_history = mutation.chat_history;
+    }
+    if mutation.prepared_history.is_some() {
+        target.prepared_history = mutation.prepared_history;
+    }
+    if mutation.system_prompt.is_some() {
+        target.system_prompt = mutation.system_prompt;
+    }
+    if mutation.tool_prompt.is_some() {
+        target.tool_prompt = mutation.tool_prompt;
+    }
+    if mutation.available_tools.is_some() {
+        target.available_tools = mutation.available_tools;
+    }
+    if !mutation.metadata.is_empty() {
+        target.metadata.extend(mutation.metadata);
+    }
+}
+
+fn apply_prompt_mutation(current: &mut PromptHookContext, mutation: PromptHookMutation) {
+    if let Some(raw_input) = mutation.raw_input {
+        current.raw_input = Some(raw_input);
+    }
+    if let Some(processed_input) = mutation.processed_input {
+        current.processed_input = Some(processed_input);
+    }
+    if let Some(chat_history) = mutation.chat_history {
+        current.chat_history = chat_history;
+    }
+    if let Some(prepared_history) = mutation.prepared_history {
+        current.prepared_history = prepared_history;
+    }
+    if let Some(system_prompt) = mutation.system_prompt {
+        current.system_prompt = Some(system_prompt);
+    }
+    if let Some(tool_prompt) = mutation.tool_prompt {
+        current.tool_prompt = Some(tool_prompt);
+    }
+    if let Some(available_tools) = mutation.available_tools {
+        current.available_tools = available_tools;
+    }
+    if !mutation.metadata.is_empty() {
+        current.metadata.extend(mutation.metadata);
+    }
 }

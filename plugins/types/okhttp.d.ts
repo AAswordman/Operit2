@@ -8,7 +8,7 @@
 /**
  * Configuration options for OkHttpClient
  */
-interface OkHttpConfig {
+export interface OkHttpConfig {
     timeouts: {
         connect: number;
         read: number;
@@ -22,7 +22,7 @@ interface OkHttpConfig {
 /**
  * HTTP request representation
  */
-interface HttpRequest {
+export interface HttpRequest {
     url: string;
     method: string;
     headers: Record<string, string>;
@@ -33,7 +33,7 @@ interface HttpRequest {
     execute(options?: OkHttpExecuteOptions): Promise<OkHttpResponse>;
 }
 
-interface HttpStreamEvent {
+export interface HttpStreamEvent {
     type: 'response_started' | 'chunk';
     url: string;
     statusCode?: number;
@@ -45,14 +45,14 @@ interface HttpStreamEvent {
     receivedBytes?: number;
 }
 
-interface OkHttpExecuteOptions {
+export interface OkHttpExecuteOptions {
     onIntermediateResult?: (event: HttpStreamEvent) => void;
 }
 
 /**
  * HTTP response representation
  */
-interface OkHttpResponse {
+export interface OkHttpResponse {
     /**
      * The raw response data
      */
@@ -112,7 +112,7 @@ interface OkHttpResponse {
 /**
  * OkHttpClientBuilder class for configuring a client
  */
-declare class OkHttpClientBuilder {
+export declare class OkHttpClientBuilder {
     /**
      * Set the connection timeout in milliseconds
      */
@@ -152,7 +152,7 @@ declare class OkHttpClientBuilder {
 /**
  * OkHttpClient class for executing HTTP requests
  */
-declare class OkHttpClient {
+export declare class OkHttpClient {
     /**
      * Create a new request builder
      */
@@ -194,7 +194,7 @@ declare class OkHttpClient {
 /**
  * RequestBuilder class for building HTTP requests
  */
-declare class RequestBuilder {
+export declare class RequestBuilder {
     /**
      * Set the request URL
      */
@@ -244,7 +244,7 @@ declare class RequestBuilder {
 /**
  * Global OkHttp object
  */
-declare const OkHttp: {
+export declare const OkHttp: {
     /**
      * Create a new client with default configuration
      */

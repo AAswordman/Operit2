@@ -27,9 +27,23 @@ class MarkdownGroupItem extends MarkdownGroupedItem {
 enum MarkdownNodeType {
   plainText,
   header,
+  blockQuote,
+  codeBlock,
   orderedList,
   unorderedList,
+  horizontalRule,
+  blockLatex,
+  table,
   xmlBlock,
+  image,
+  bold,
+  italic,
+  inlineCode,
+  link,
+  strikethrough,
+  underline,
+  inlineLatex,
+  htmlBreak,
 }
 
 class MarkdownNodeStable {
@@ -38,12 +52,55 @@ class MarkdownNodeStable {
     required this.content,
     required this.isStreaming,
     this.stableKey = '',
+    this.children = const <MarkdownNodeStable>[],
+    this.headerLevel,
   });
 
   final MarkdownNodeType type;
   final String content;
   final bool isStreaming;
   final String stableKey;
+  final List<MarkdownNodeStable> children;
+  final int? headerLevel;
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is MarkdownNodeStable &&
+            other.type == type &&
+            other.content == content &&
+            other.isStreaming == isStreaming &&
+            other.stableKey == stableKey &&
+            other.headerLevel == headerLevel &&
+            _listEquals(other.children, children);
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+      type,
+      content,
+      isStreaming,
+      stableKey,
+      headerLevel,
+      Object.hashAll(children),
+    );
+  }
+}
+
+bool _listEquals<T>(List<T> left, List<T> right) {
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 abstract class MarkdownNodeGrouper {

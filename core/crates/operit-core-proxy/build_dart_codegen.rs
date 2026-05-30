@@ -216,7 +216,7 @@ fn render_dart_struct(
         output.push_str(&format!(
             "      {}: {},\n",
             dart_identifier(&field.name),
-            dart_decode_expr(&format!("json['{}']", field.name), &field_type)
+            dart_decode_expr(&format!("json['{}']", field.json_name), &field_type)
         ));
     }
     output.push_str("    );\n");
@@ -227,7 +227,7 @@ fn render_dart_struct(
         let field_type = dart_type(&field.ty, serializable_types);
         output.push_str(&format!(
             "      '{}': {},\n",
-            field.name,
+            field.json_name,
             dart_encode_expr(&dart_identifier(&field.name), &field_type)
         ));
     }

@@ -30,6 +30,8 @@ class _AIChatScreenState extends State<AIChatScreen>
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
+  final List<_PendingSubmittedMessage> _pendingSubmittedMessages =
+      <_PendingSubmittedMessage>[];
 
   bool _loading = true;
   ChatInputProcessingState _inputProcessingState =
@@ -41,7 +43,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       );
   String _modelLabel = 'Model';
   String? _errorMessage;
-  StreamSubscription<ChatResponseStreamEvent>? _responseStreamSubscription;
+  StreamSubscription<ChatViewModelSnapshot>? _mainStateSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
   TopBarController? _topBarController;
   final Object _topBarTitleOwner = Object();
@@ -52,8 +54,6 @@ class _AIChatScreenState extends State<AIChatScreen>
   String? _currentChatId;
   String? _currentWorkspacePath;
   String? _toastMessage;
-  StreamController<String>? _responseChunkController;
-  int? _streamingAiMessageTimestamp;
   bool _autoScrollToBottom = true;
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
@@ -66,7 +66,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _workspaceOpen = _chatWorkspaceOpen;
-    _loadSnapshot();
+    _watchMainState();
     _watchToastEvent();
     _messageController.addListener(_onInputChanged);
     _inputFocusNode.addListener(_onInputFocusChanged);
@@ -87,8 +87,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     _messageController.dispose();
     _inputFocusNode.dispose();
     _scrollController.dispose();
-    _responseStreamSubscription?.cancel();
-    _responseChunkController?.close();
+    _mainStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
     _topBarController?.clearActions(owner: _topBarActionsOwner);
     _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
@@ -134,6 +133,31 @@ class _AIChatScreenState extends State<AIChatScreen>
     });
   }
 
+  void _watchMainState() {
+    _mainStateSubscription?.cancel();
+    _mainStateSubscription = widget.viewModel.watchMainState().listen(
+      (snapshot) {
+        if (!mounted) {
+          return;
+        }
+        _applySnapshot(snapshot);
+        _refreshCurrentModelLabel();
+        _updateTopBarTitle();
+        _scheduleScrollToBottom();
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Failed to watch chat state: $error\n$stackTrace');
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _errorMessage = error.toString();
+          _loading = false;
+        });
+      },
+    );
+  }
+
   Future<ChatViewModelSnapshot?> _loadSnapshot({
     bool showLoading = true,
   }) async {
@@ -149,25 +173,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       if (!mounted) {
         return null;
       }
-      setState(() {
-        _responseChunkController?.close();
-        _responseChunkController = null;
-        _streamingAiMessageTimestamp = null;
-        _messages
-          ..clear()
-          ..addAll(snapshot.messages);
-        _loading = snapshot.isLoading;
-        _inputProcessingState = snapshot.inputProcessingState;
-        _modelLabel = _resolveModelLabel(snapshot.messages);
-        _currentChatId = snapshot.currentChatId;
-        _currentWorkspacePath = snapshot.currentWorkspacePath;
-        _currentChatTitle = snapshot.currentChatTitle;
-        _currentCharacterCardName = snapshot.currentCharacterCardName;
-        _activeCharacterCardName = snapshot.activeCharacterCardName;
-        _hasOlderDisplayHistory = snapshot.hasOlderDisplayHistory;
-        _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
-        _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
-      });
+      _applySnapshot(snapshot);
       _refreshCurrentModelLabel();
       _updateTopBarTitle();
       _scheduleScrollToBottom();
@@ -185,6 +191,28 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
   }
 
+  void _applySnapshot(ChatViewModelSnapshot snapshot) {
+    _removeAcknowledgedPendingMessages(snapshot.messages);
+    setState(() {
+      _errorMessage = null;
+      _messages
+        ..clear()
+        ..addAll(snapshot.messages)
+        ..addAll(_pendingSubmittedMessages.map((pending) => pending.message));
+      _loading = snapshot.isLoading || _pendingSubmittedMessages.isNotEmpty;
+      _inputProcessingState = snapshot.inputProcessingState;
+      _modelLabel = _resolveModelLabel(snapshot.messages);
+      _currentChatId = snapshot.currentChatId;
+      _currentWorkspacePath = snapshot.currentWorkspacePath;
+      _currentChatTitle = snapshot.currentChatTitle;
+      _currentCharacterCardName = snapshot.currentCharacterCardName;
+      _activeCharacterCardName = snapshot.activeCharacterCardName;
+      _hasOlderDisplayHistory = snapshot.hasOlderDisplayHistory;
+      _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
+      _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
+    });
+  }
+
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isEmpty) {
@@ -192,129 +220,108 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
 
     _messageController.clear();
+    final now = DateTime.now();
+    final pendingMessage = ChatUiMessage(
+      sender: 'user',
+      content: text,
+      timestamp: -now.microsecondsSinceEpoch,
+      roleName: '',
+      provider: '',
+      modelName: '',
+      displayMode: 'NORMAL',
+      isFavorite: false,
+      completedAt: 0,
+    );
+    final pendingSubmittedMessage = _PendingSubmittedMessage(
+      message: pendingMessage,
+      submittedAtMillis: now.millisecondsSinceEpoch,
+    );
     setState(() {
       _autoScrollToBottom = true;
-      _messages.add(
-        ChatUiMessage(
-          sender: 'user',
-          content: text,
-          timestamp: DateTime.now().microsecondsSinceEpoch,
-          roleName: '',
-          provider: '',
-          modelName: '',
-          displayMode: 'NORMAL',
-          isFavorite: false,
-        ),
-      );
-      _loading = true;
       _errorMessage = null;
+      _loading = true;
+      _inputProcessingState = const ChatInputProcessingState(
+        kind: 'Processing',
+        message: 'message_processing',
+        progress: 0,
+        toolName: '',
+      );
+      _pendingSubmittedMessages.add(pendingSubmittedMessage);
+      _messages.add(pendingMessage);
     });
     _scheduleScrollToBottom();
-
-    final request = widget.viewModel.sendUserMessage(text);
-    request
-        .then((_) async {
-          final snapshot = await _loadSnapshot(showLoading: false);
-          final chatId = snapshot?.currentChatId;
-          if (chatId != null && snapshot?.isLoading == true) {
-            _watchResponseStream(chatId);
-          }
-        })
-        .catchError((Object error, StackTrace stackTrace) {
-          debugPrint('Failed to send chat message: $error\n$stackTrace');
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _errorMessage = error.toString();
-            _loading = false;
-            _inputProcessingState = ChatInputProcessingState(
-              kind: 'Error',
-              message: error.toString(),
-              progress: 0,
-              toolName: '',
-            );
-          });
-        });
+    _sendPendingMessageAfterNextFrame(
+      text: text,
+      pendingSubmittedMessage: pendingSubmittedMessage,
+      pendingMessage: pendingMessage,
+    );
   }
 
-  void _watchResponseStream(String chatId) {
-    _responseStreamSubscription?.cancel();
-    _responseChunkController?.close();
-    _responseChunkController = StreamController<String>();
-    _streamingAiMessageTimestamp = null;
-    _responseStreamSubscription = widget.viewModel
-        .watchResponseStream(chatId)
-        .listen(
-          (event) {
-            if (event.type == 'chunk') {
-              final chunk = event.value;
-              if (chunk == null) {
-                return;
-              }
-              _appendAiStreamChunk(chunk);
-            } else if (event.type == 'completed') {
-              _loadSnapshotAfterStreamCompleted();
+  void _sendPendingMessageAfterNextFrame({
+    required String text,
+    required _PendingSubmittedMessage pendingSubmittedMessage,
+    required ChatUiMessage pendingMessage,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      widget.viewModel
+          .sendUserMessage(text)
+          .then((_) {
+            return _loadSnapshot(showLoading: false);
+          })
+          .catchError((Object error, StackTrace stackTrace) {
+            debugPrint('Failed to send chat message: $error\n$stackTrace');
+            if (!mounted) {
+              return null;
             }
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            debugPrint('Failed to watch response stream: $error\n$stackTrace');
-          },
-          onDone: () {
-            _loadSnapshotAfterStreamCompleted();
-          },
-        );
+            setState(() {
+              _pendingSubmittedMessages.remove(pendingSubmittedMessage);
+              _messages.removeWhere(
+                (message) => message.timestamp == pendingMessage.timestamp,
+              );
+              _errorMessage = error.toString();
+              _loading = false;
+              _inputProcessingState = ChatInputProcessingState(
+                kind: 'Error',
+                message: error.toString(),
+                progress: 0,
+                toolName: '',
+              );
+            });
+            return null;
+          });
+    });
   }
 
-  Future<void> _loadSnapshotAfterStreamCompleted() async {
-    await _responseChunkController?.close();
-    _responseChunkController = null;
-    _streamingAiMessageTimestamp = null;
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-    await _loadSnapshot(showLoading: false);
-  }
-
-  void _appendAiStreamChunk(String chunk) {
-    if (!mounted) {
+  void _removeAcknowledgedPendingMessages(
+    List<ChatUiMessage> snapshotMessages,
+  ) {
+    if (_pendingSubmittedMessages.isEmpty) {
       return;
     }
-    final controller = _responseChunkController;
-    if (controller == null || controller.isClosed) {
-      return;
-    }
-    if (_streamingAiMessageTimestamp == null) {
-      final lastMessageIndex = _messages.length - 1;
-      setState(() {
-        if (lastMessageIndex >= 0 &&
-            _messages[lastMessageIndex].sender == 'ai' &&
-            _messages[lastMessageIndex].content.isEmpty) {
-          final message = _messages[lastMessageIndex];
-          _streamingAiMessageTimestamp = message.timestamp;
-          _messages[lastMessageIndex] = message.copyWithContentStream(
-            controller.stream,
-          );
-        } else {
-          final timestamp = DateTime.now().microsecondsSinceEpoch;
-          _streamingAiMessageTimestamp = timestamp;
-          _messages.add(
-            ChatUiMessage(
-              sender: 'ai',
-              content: '',
-              timestamp: timestamp,
-              roleName: 'Operit',
-              provider: '',
-              modelName: '',
-              displayMode: 'NORMAL',
-              isFavorite: false,
-              contentStream: controller.stream,
-            ),
-          );
+    final acknowledgedSnapshotIndexes = <int>{};
+    final acknowledgedPendingMessages = <_PendingSubmittedMessage>{};
+    for (final pending in _pendingSubmittedMessages) {
+      for (var index = 0; index < snapshotMessages.length; index += 1) {
+        if (acknowledgedSnapshotIndexes.contains(index)) {
+          continue;
         }
-        _loading = true;
-      });
-      _scheduleScrollToBottom();
+        final message = snapshotMessages[index];
+        if (message.sender != 'user' ||
+            message.content != pending.message.content ||
+            message.timestamp < pending.submittedAtMillis) {
+          continue;
+        }
+        acknowledgedSnapshotIndexes.add(index);
+        acknowledgedPendingMessages.add(pending);
+        break;
+      }
     }
-    controller.add(chunk);
+    _pendingSubmittedMessages.removeWhere((pending) {
+      return acknowledgedPendingMessages.contains(pending);
+    });
   }
 
   void _cancelMessage() {
@@ -534,11 +541,12 @@ class _AIChatScreenState extends State<AIChatScreen>
       onListWorkspaceFiles: widget.viewModel.listWorkspaceFiles,
       onReadWorkspaceTextFile: widget.viewModel.readWorkspaceTextFile,
       onReadWorkspaceFileBytes: widget.viewModel.readWorkspaceFileBytes,
+      onWriteWorkspaceFileBytes: widget.viewModel.writeWorkspaceFileBytes,
       onOpenWorkspaceFile: widget.viewModel.openWorkspaceFile,
       onCreateDefaultWorkspace: _createDefaultWorkspace,
       onBindWorkspace: _bindWorkspace,
       child: ChatScreenContent(
-        messages: _messages,
+        messages: List<ChatUiMessage>.unmodifiable(_messages),
         loading: _loading,
         errorMessage: _errorMessage,
         messageController: _messageController,
@@ -584,4 +592,14 @@ class _AIChatScreenState extends State<AIChatScreen>
     await widget.viewModel.bindChatToWorkspace(chatId, workspace, workspaceEnv);
     await _loadSnapshot(showLoading: false);
   }
+}
+
+class _PendingSubmittedMessage {
+  const _PendingSubmittedMessage({
+    required this.message,
+    required this.submittedAtMillis,
+  });
+
+  final ChatUiMessage message;
+  final int submittedAtMillis;
 }
