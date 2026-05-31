@@ -1,5 +1,6 @@
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
@@ -192,10 +193,165 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.deleteMessage(index);
     }
 
+    #[allow(non_snake_case)]
+    pub fn deleteMessages(&mut self, indices: Vec<usize>) -> bool {
+        let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() else {
+            return false;
+        };
+        let mut timestamps = Vec::new();
+        for index in indices {
+            let Some(message) = self.chatHistoryDelegate.chatHistory.get(index) else {
+                return false;
+            };
+            timestamps.push(message.timestamp);
+        }
+        self.chatHistoryDelegate
+            .deleteMessagesByTimestamps(chatId, timestamps);
+        true
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn updateMessage(&mut self, index: usize, editedContent: String) -> bool {
+        let Some(message) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+            return false;
+        };
+        let editedMessage = ChatMessage {
+            content: editedContent,
+            contentStream: None,
+            ..message
+        };
+        self.chatHistoryDelegate
+            .addMessageToChat(editedMessage, None);
+        if let (Some(service), Some(delegate)) = (
+            self.enhancedAiService.as_mut(),
+            self.messageCoordinationDelegate.as_mut(),
+        ) {
+            delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+            delegate
+                .refreshStableContextWindow(
+                    service,
+                    self.chatHistoryDelegate.currentChatId.clone(),
+                    None,
+                    Some(PromptFunctionType::CHAT),
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+        }
+        true
+    }
+
+    #[allow(non_snake_case)]
+    pub fn deleteMessagesFrom(&mut self, index: usize) -> bool {
+        self.chatHistoryDelegate.deleteMessagesFrom(index)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn deleteMessageVariant(&mut self, timestamp: i64, variantIndex: i32) {
+        self.chatHistoryDelegate
+            .deleteMessageVariant(timestamp, variantIndex);
+    }
+
     pub fn createBranch(&mut self, upToMessageTimestamp: Option<i64>) {
         self.chatHistoryDelegate.createBranch(upToMessageTimestamp);
         self.syncTokenStatisticsForCurrentChat();
         self.messageProcessingDelegate.scrollToBottom();
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn insertSummary(&mut self, message: ChatMessage) -> bool {
+        if message.sender != "user" && message.sender != "ai" {
+            return false;
+        }
+        let Some(currentChatId) = self.chatHistoryDelegate.currentChatId.clone() else {
+            return false;
+        };
+        let Some(enhancedAiService) = self.enhancedAiService.as_mut() else {
+            return false;
+        };
+        self.messageProcessingDelegate
+            .setInputProcessingStateForChat(
+                currentChatId.clone(),
+                InputProcessingState::Summarizing {
+                    message: "chat_summarizing_generating".to_string(),
+                },
+            );
+        let beforeTimestamp = if message.sender == "ai" {
+            Some(message.timestamp)
+        } else {
+            None
+        };
+        let afterTimestamp = if message.sender == "user" {
+            Some(message.timestamp)
+        } else {
+            None
+        };
+        let messagesToSummarize = self
+            .chatHistoryDelegate
+            .loadMessagesForSummaryInsertion(currentChatId.clone(), afterTimestamp, beforeTimestamp)
+            .into_iter()
+            .filter(|message| message.sender == "user" || message.sender == "ai")
+            .collect::<Vec<_>>();
+        if messagesToSummarize.is_empty() {
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
+            return false;
+        }
+        let isGroupChat = self
+            .chatHistoryDelegate
+            .chatHistoriesFlow()
+            .value()
+            .into_iter()
+            .find(|chat| chat.id == currentChatId)
+            .and_then(|chat| chat.characterGroupId)
+            .is_some();
+        let summaryMessage = match AIMessageManager::summarizeMemory(
+            enhancedAiService,
+            messagesToSummarize,
+            false,
+            isGroupChat,
+        )
+        .await
+        {
+            Ok(Some(summaryMessage)) => summaryMessage,
+            _ => {
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
+                return false;
+            }
+        };
+        self.chatHistoryDelegate.addSummaryMessage(
+            summaryMessage,
+            beforeTimestamp,
+            afterTimestamp,
+            Some(currentChatId.clone()),
+        );
+        if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+            delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+            delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
+            delegate
+                .refreshStableContextWindow(
+                    enhancedAiService,
+                    Some(currentChatId.clone()),
+                    None,
+                    None,
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+            self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+        }
+        self.messageProcessingDelegate
+            .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
+        true
     }
 
     pub fn getBranches(
@@ -385,6 +541,23 @@ impl ChatServiceCore {
         )
         .await;
         true
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn regenerateSingleAiMessage(&mut self, index: usize) -> Result<(), String> {
+        let Some(service) = self.enhancedAiService.as_mut() else {
+            return Err("EnhancedAIService is not initialized".to_string());
+        };
+        let Some(delegate) = self.messageCoordinationDelegate.as_mut() else {
+            return Err("MessageCoordinationDelegate is not initialized".to_string());
+        };
+        delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+        delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
+        delegate.regenerateSingleAiMessage(service, index).await?;
+        self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+        self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+        self.syncTokenStatisticsForCurrentChat();
+        Ok(())
     }
 
     #[allow(non_snake_case)]

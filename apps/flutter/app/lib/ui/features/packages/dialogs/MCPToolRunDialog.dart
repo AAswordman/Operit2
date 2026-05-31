@@ -1,0 +1,290 @@
+// ignore_for_file: file_names
+
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+
+class MCPToolRunDialog extends StatefulWidget {
+  const MCPToolRunDialog({
+    super.key,
+    required this.serverId,
+    required this.tool,
+    required this.clients,
+  });
+
+  final String serverId;
+  final core_proxy.CachedToolInfo tool;
+  final GeneratedCoreProxyClients clients;
+
+  @override
+  State<MCPToolRunDialog> createState() => _MCPToolRunDialogState();
+}
+
+class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
+  late final List<_MCPToolParameter> _parameters;
+  late final Map<String, TextEditingController> _controllers;
+  bool _executing = false;
+  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _parameters = _parseParameters(widget.tool.inputSchema);
+    _controllers = <String, TextEditingController>{
+      for (final parameter in _parameters)
+        parameter.name: TextEditingController(),
+    };
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final toolId = '${widget.serverId}:${widget.tool.name}';
+    return AlertDialog(
+      icon: const Icon(Icons.play_circle_outline),
+      title: Text(widget.tool.name),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SelectableText(
+                'ID: $toolId',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                widget.tool.description,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (_parameters.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 16),
+                Text(
+                  '参数',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final parameter in _parameters) ...<Widget>[
+                  TextField(
+                    controller: _controllers[parameter.name],
+                    minLines: 1,
+                    maxLines:
+                        parameter.type == 'object' || parameter.type == 'array'
+                        ? 5
+                        : 1,
+                    decoration: InputDecoration(
+                      labelText:
+                          '${parameter.name}${parameter.required ? " *" : ""}',
+                      helperText: _helperText(parameter),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ],
+              if (_result != null) ...<Widget>[
+                const SizedBox(height: 12),
+                _ExecutionResultCard(result: _result!),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _executing ? null : () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+        FilledButton.icon(
+          onPressed: _executing ? null : _execute,
+          icon: _executing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.play_arrow),
+          label: Text(_executing ? '运行中' : '运行'),
+        ),
+      ],
+    );
+  }
+
+  String _helperText(_MCPToolParameter parameter) {
+    final description = parameter.description.trim();
+    final type = parameter.type.trim();
+    if (description.isEmpty) {
+      return type;
+    }
+    return '$description · $type';
+  }
+
+  Future<void> _execute() async {
+    final missing = _parameters
+        .where((parameter) => parameter.required)
+        .where((parameter) => _controllers[parameter.name]!.text.trim().isEmpty)
+        .map((parameter) => parameter.name)
+        .toList(growable: false);
+    if (missing.isNotEmpty) {
+      setState(() {
+        _result =
+            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+              toolName: '${widget.serverId}:${widget.tool.name}',
+              success: false,
+              result: '',
+              error: '缺少必填参数：${missing.join(", ")}',
+            );
+      });
+      return;
+    }
+
+    setState(() {
+      _executing = true;
+      _result = null;
+    });
+    try {
+      await widget.clients.permissionsPackToolPackageManager.useMcpServer(
+        serverName: widget.serverId,
+      );
+      final parameters = _parameters
+          .where(
+            (parameter) =>
+                parameter.required ||
+                _controllers[parameter.name]!.text.trim().isNotEmpty,
+          )
+          .map(
+            (parameter) =>
+                core_proxy.CoreApiChatEnhanceToolExecutionManagerToolParameter(
+                  name: parameter.name,
+                  value: _controllers[parameter.name]!.text,
+                ),
+          )
+          .toList(growable: false);
+      final result = await widget.clients.permissionsAiToolHandler.executeTool(
+        tool: core_proxy.CoreApiChatEnhanceToolExecutionManagerAiTool(
+          name: '${widget.serverId}:${widget.tool.name}',
+          parameters: parameters,
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _result = result;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _result =
+            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+              toolName: '${widget.serverId}:${widget.tool.name}',
+              success: false,
+              result: '',
+              error: error.toString(),
+            );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _executing = false;
+        });
+      }
+    }
+  }
+}
+
+class _ExecutionResultCard extends StatelessWidget {
+  const _ExecutionResultCard({required this.result});
+
+  final core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: result.success
+          ? colorScheme.primaryContainer.withValues(alpha: 0.35)
+          : colorScheme.errorContainer.withValues(alpha: 0.45),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Icon(
+              result.success ? Icons.check_circle_outline : Icons.error_outline,
+              color: result.success ? colorScheme.primary : colorScheme.error,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: SelectableText(
+                result.success ? result.result : result.error ?? '',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MCPToolParameter {
+  const _MCPToolParameter({
+    required this.name,
+    required this.description,
+    required this.type,
+    required this.required,
+  });
+
+  final String name;
+  final String description;
+  final String type;
+  final bool required;
+}
+
+List<_MCPToolParameter> _parseParameters(String inputSchema) {
+  final schema = jsonDecode(inputSchema) as Map<String, Object?>;
+  final requiredNames = ((schema['required'] as List<Object?>?) ?? <Object?>[])
+      .map((item) => item as String)
+      .toSet();
+  final properties =
+      (schema['properties'] as Map<Object?, Object?>?) ?? <Object?, Object?>{};
+  final names = properties.keys.map((key) => key as String).toList()..sort();
+  return names
+      .map((name) {
+        final rawProperty = properties[name];
+        final property = rawProperty is Map<Object?, Object?>
+            ? rawProperty
+            : <Object?, Object?>{};
+        return _MCPToolParameter(
+          name: name,
+          description: property['description'] as String? ?? '',
+          type: property['type'] as String? ?? 'string',
+          required: requiredNames.contains(name),
+        );
+      })
+      .toList(growable: false);
+}

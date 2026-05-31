@@ -1,6 +1,17 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+typedef MarkdownXmlRenderer =
+    Widget Function({
+      required String xmlContent,
+      required bool isStreaming,
+      required Color textColor,
+      Stream<String>? xmlStream,
+      String? renderInstanceKey,
+    });
 
 sealed class MarkdownGroupedItem {
   const MarkdownGroupedItem();
@@ -118,7 +129,11 @@ abstract class MarkdownNodeGrouper {
     required bool isVisible,
     required bool isLastNode,
     required Color textColor,
-    required Widget Function(int index) renderNodeAt,
+    required MarkdownXmlRenderer xmlRenderer,
+    required Stream<String>? Function(int index) xmlStreamResolver,
+    required void Function(String url)? onLinkClick,
+    required bool fillMaxWidth,
+    required double fontSize,
   });
 }
 
@@ -143,7 +158,11 @@ class NoopMarkdownNodeGrouper extends MarkdownNodeGrouper {
     required bool isVisible,
     required bool isLastNode,
     required Color textColor,
-    required Widget Function(int index) renderNodeAt,
+    required MarkdownXmlRenderer xmlRenderer,
+    required Stream<String>? Function(int index) xmlStreamResolver,
+    required void Function(String url)? onLinkClick,
+    required bool fillMaxWidth,
+    required double fontSize,
   }) {
     return const SizedBox.shrink();
   }

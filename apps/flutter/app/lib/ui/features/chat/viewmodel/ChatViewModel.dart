@@ -12,6 +12,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'WorkspaceFileModels.dart';
 
 typedef ChatMessageLocatorPreview = core_proxy.ChatMessageLocatorPreview;
+typedef WorkspaceFileChange = core_proxy.WorkspaceFileChange;
 
 class ChatViewModel {
   ChatViewModel({this.bridge = const ProxyCoreRuntimeBridge()})
@@ -119,7 +120,10 @@ class ChatViewModel {
     );
   }
 
-  Future<void> sendUserMessage(String text) async {
+  Future<void> sendUserMessage(
+    String text, {
+    ChatUiMessage? replyToMessage,
+  }) async {
     await _chat.updateUserMessage(message: text);
 
     final mapping = await clients.preferencesFunctionalConfigManager
@@ -134,7 +138,7 @@ class ChatViewModel {
       chatModelConfigIdOverride: mapping.configId,
       chatModelIndexOverride: mapping.modelIndex,
       attachments: const <core_proxy.AttachmentInfo>[],
-      replyToMessage: null,
+      replyToMessage: replyToMessage?.toProxy(),
       turnOptions: const core_proxy.ChatTurnOptions(
         persistTurn: true,
         notifyReply: null,
@@ -174,6 +178,58 @@ class ChatViewModel {
       timestamp: timestamp,
       isFavorite: isFavorite,
     );
+  }
+
+  Future<void> deleteMessage(int index) {
+    return _chat.deleteMessage(index: index);
+  }
+
+  Future<bool> deleteMessages(Set<int> indices) {
+    return _chat.deleteMessages(indices: indices.toList(growable: false));
+  }
+
+  Future<bool> updateMessage(int index, String editedContent) {
+    return _chat.updateMessage(index: index, editedContent: editedContent);
+  }
+
+  Future<bool> deleteMessagesFrom(int index) {
+    return _chat.deleteMessagesFrom(index: index);
+  }
+
+  Future<void> deleteMessageVariant(int timestamp, int variantIndex) {
+    return _chat.deleteMessageVariant(
+      timestamp: timestamp,
+      variantIndex: variantIndex,
+    );
+  }
+
+  Future<bool> rollbackToMessage(int index) {
+    return _chat.rollbackToMessage(index: index);
+  }
+
+  Future<bool> rewindAndResendMessage(int index, String editedContent) {
+    return _chat.rewindAndResendMessage(
+      index: index,
+      editedContent: editedContent,
+    );
+  }
+
+  Future<List<WorkspaceFileChange>> previewWorkspaceChangesForMessage(
+    int index,
+  ) {
+    return _chat.previewWorkspaceChangesForMessage(index: index);
+  }
+
+  Future<void> regenerateSingleAiMessage(int index) {
+    return _chat.regenerateSingleAiMessage(index: index);
+  }
+
+  Future<void> createBranch(int timestamp) {
+    return _chat.createBranch(upToMessageTimestamp: timestamp);
+  }
+
+  Future<bool> insertSummary(ChatUiMessage message) {
+    return _chat.insertSummary(message: message.toProxy());
   }
 
   Future<void> loadOlderMessagesForCurrentChat() {
@@ -485,10 +541,19 @@ class ChatUiMessage {
     required this.content,
     required this.timestamp,
     required this.roleName,
+    required this.selectedVariantIndex,
+    required this.variantCount,
     required this.provider,
     required this.modelName,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.cachedInputTokens,
+    required this.sentAt,
+    required this.outputDurationMs,
+    required this.waitDurationMs,
     required this.displayMode,
     required this.isFavorite,
+    required this.isVariantPreview,
     required this.completedAt,
     this.contentStream,
   });
@@ -499,10 +564,19 @@ class ChatUiMessage {
       content: message.content,
       timestamp: message.timestamp,
       roleName: message.roleName,
+      selectedVariantIndex: message.selectedVariantIndex,
+      variantCount: message.variantCount,
       provider: message.provider,
       modelName: message.modelName,
+      inputTokens: message.inputTokens,
+      outputTokens: message.outputTokens,
+      cachedInputTokens: message.cachedInputTokens,
+      sentAt: message.sentAt,
+      outputDurationMs: message.outputDurationMs,
+      waitDurationMs: message.waitDurationMs,
       displayMode: message.displayMode as String,
       isFavorite: message.isFavorite,
+      isVariantPreview: message.isVariantPreview,
       completedAt: message.completedAt,
     );
   }
@@ -513,10 +587,19 @@ class ChatUiMessage {
       content: json['content'] as String,
       timestamp: json['timestamp'] as int,
       roleName: json['roleName'] as String,
+      selectedVariantIndex: json['selectedVariantIndex'] as int,
+      variantCount: json['variantCount'] as int,
       provider: json['provider'] as String,
       modelName: json['modelName'] as String,
+      inputTokens: json['inputTokens'] as int,
+      outputTokens: json['outputTokens'] as int,
+      cachedInputTokens: json['cachedInputTokens'] as int,
+      sentAt: json['sentAt'] as int,
+      outputDurationMs: json['outputDurationMs'] as int,
+      waitDurationMs: json['waitDurationMs'] as int,
       displayMode: json['displayMode'] as String,
       isFavorite: json['isFavorite'] as bool,
+      isVariantPreview: json['isVariantPreview'] as bool? ?? false,
       completedAt: json['completedAt'] as int,
     );
   }
@@ -527,10 +610,19 @@ class ChatUiMessage {
       content: content ?? this.content,
       timestamp: timestamp,
       roleName: roleName,
+      selectedVariantIndex: selectedVariantIndex,
+      variantCount: variantCount,
       provider: provider,
       modelName: modelName,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cachedInputTokens: cachedInputTokens,
+      sentAt: sentAt,
+      outputDurationMs: outputDurationMs,
+      waitDurationMs: waitDurationMs,
       displayMode: displayMode,
       isFavorite: isFavorite ?? this.isFavorite,
+      isVariantPreview: isVariantPreview,
       completedAt: completedAt,
       contentStream: contentStream,
     );
@@ -542,12 +634,45 @@ class ChatUiMessage {
       content: content,
       timestamp: timestamp,
       roleName: roleName,
+      selectedVariantIndex: selectedVariantIndex,
+      variantCount: variantCount,
       provider: provider,
       modelName: modelName,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cachedInputTokens: cachedInputTokens,
+      sentAt: sentAt,
+      outputDurationMs: outputDurationMs,
+      waitDurationMs: waitDurationMs,
       displayMode: displayMode,
       isFavorite: isFavorite,
+      isVariantPreview: isVariantPreview,
       completedAt: completedAt,
       contentStream: value,
+    );
+  }
+
+  core_proxy.ChatMessage toProxy() {
+    return core_proxy.ChatMessage(
+      sender: sender,
+      content: content,
+      timestamp: timestamp,
+      roleName: roleName,
+      selectedVariantIndex: selectedVariantIndex,
+      variantCount: variantCount,
+      provider: provider,
+      modelName: modelName,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens,
+      cachedInputTokens: cachedInputTokens,
+      sentAt: sentAt,
+      outputDurationMs: outputDurationMs,
+      waitDurationMs: waitDurationMs,
+      completedAt: completedAt,
+      displayMode: displayMode,
+      isFavorite: isFavorite,
+      isVariantPreview: isVariantPreview,
+      contentStream: null,
     );
   }
 
@@ -555,10 +680,19 @@ class ChatUiMessage {
   final String content;
   final int timestamp;
   final String roleName;
+  final int selectedVariantIndex;
+  final int variantCount;
   final String provider;
   final String modelName;
+  final int inputTokens;
+  final int outputTokens;
+  final int cachedInputTokens;
+  final int sentAt;
+  final int outputDurationMs;
+  final int waitDurationMs;
   final String displayMode;
   final bool isFavorite;
+  final bool isVariantPreview;
   final int completedAt;
   final Stream<ChatResponseStreamEvent>? contentStream;
 

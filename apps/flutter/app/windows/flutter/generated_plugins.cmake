@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   dynamic_color
+  file_selector_windows
   printing
   url_launcher_windows
   webview_all_windows

@@ -1,4 +1,4 @@
-package com.operit.operit2
+package com.ai.assistance.operit2
 
 import android.os.Build
 import android.os.Bundle

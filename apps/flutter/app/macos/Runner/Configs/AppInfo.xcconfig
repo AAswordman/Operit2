@@ -8,7 +8,7 @@
 PRODUCT_NAME = Operit2
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.operit.operit2
+PRODUCT_BUNDLE_IDENTIFIER = com.ai.assistance.operit2
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.operit. All rights reserved.

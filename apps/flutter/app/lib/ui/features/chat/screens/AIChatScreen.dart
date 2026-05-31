@@ -8,6 +8,8 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
 import '../components/ChatScreenContent.dart';
+import '../components/MessageEditorDialog.dart';
+import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
 import '../viewmodel/ChatViewModel.dart';
@@ -30,8 +32,6 @@ class _AIChatScreenState extends State<AIChatScreen>
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
-  final List<_PendingSubmittedMessage> _pendingSubmittedMessages =
-      <_PendingSubmittedMessage>[];
 
   bool _loading = true;
   ChatInputProcessingState _inputProcessingState =
@@ -54,6 +54,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   String? _currentChatId;
   String? _currentWorkspacePath;
   String? _toastMessage;
+  ChatUiMessage? _replyToMessage;
+  bool _isMultiSelectMode = false;
+  Set<int> _selectedMessageIndices = const <int>{};
   bool _autoScrollToBottom = true;
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
@@ -192,14 +195,16 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _applySnapshot(ChatViewModelSnapshot snapshot) {
-    _removeAcknowledgedPendingMessages(snapshot.messages);
     setState(() {
+      final chatChanged =
+          _currentChatId != null &&
+          snapshot.currentChatId != null &&
+          _currentChatId != snapshot.currentChatId;
       _errorMessage = null;
       _messages
         ..clear()
-        ..addAll(snapshot.messages)
-        ..addAll(_pendingSubmittedMessages.map((pending) => pending.message));
-      _loading = snapshot.isLoading || _pendingSubmittedMessages.isNotEmpty;
+        ..addAll(snapshot.messages);
+      _loading = snapshot.isLoading;
       _inputProcessingState = snapshot.inputProcessingState;
       _modelLabel = _resolveModelLabel(snapshot.messages);
       _currentChatId = snapshot.currentChatId;
@@ -210,6 +215,18 @@ class _AIChatScreenState extends State<AIChatScreen>
       _hasOlderDisplayHistory = snapshot.hasOlderDisplayHistory;
       _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
       _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
+      if (chatChanged) {
+        _isMultiSelectMode = false;
+        _selectedMessageIndices = const <int>{};
+      } else if (_selectedMessageIndices.isNotEmpty) {
+        _selectedMessageIndices = _selectedMessageIndices.where((index) {
+          if (index < 0 || index >= snapshot.messages.length) {
+            return false;
+          }
+          final sender = snapshot.messages[index].sender;
+          return sender == 'user' || sender == 'ai';
+        }).toSet();
+      }
     });
   }
 
@@ -220,22 +237,6 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
 
     _messageController.clear();
-    final now = DateTime.now();
-    final pendingMessage = ChatUiMessage(
-      sender: 'user',
-      content: text,
-      timestamp: -now.microsecondsSinceEpoch,
-      roleName: '',
-      provider: '',
-      modelName: '',
-      displayMode: 'NORMAL',
-      isFavorite: false,
-      completedAt: 0,
-    );
-    final pendingSubmittedMessage = _PendingSubmittedMessage(
-      message: pendingMessage,
-      submittedAtMillis: now.millisecondsSinceEpoch,
-    );
     setState(() {
       _autoScrollToBottom = true;
       _errorMessage = null;
@@ -246,29 +247,20 @@ class _AIChatScreenState extends State<AIChatScreen>
         progress: 0,
         toolName: '',
       );
-      _pendingSubmittedMessages.add(pendingSubmittedMessage);
-      _messages.add(pendingMessage);
     });
     _scheduleScrollToBottom();
-    _sendPendingMessageAfterNextFrame(
-      text: text,
-      pendingSubmittedMessage: pendingSubmittedMessage,
-      pendingMessage: pendingMessage,
-    );
+    _sendMessageAfterNextFrame(text);
   }
 
-  void _sendPendingMessageAfterNextFrame({
-    required String text,
-    required _PendingSubmittedMessage pendingSubmittedMessage,
-    required ChatUiMessage pendingMessage,
-  }) {
+  void _sendMessageAfterNextFrame(String text) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
       widget.viewModel
-          .sendUserMessage(text)
+          .sendUserMessage(text, replyToMessage: _replyToMessage)
           .then((_) {
+            _replyToMessage = null;
             return _loadSnapshot(showLoading: false);
           })
           .catchError((Object error, StackTrace stackTrace) {
@@ -277,10 +269,6 @@ class _AIChatScreenState extends State<AIChatScreen>
               return null;
             }
             setState(() {
-              _pendingSubmittedMessages.remove(pendingSubmittedMessage);
-              _messages.removeWhere(
-                (message) => message.timestamp == pendingMessage.timestamp,
-              );
               _errorMessage = error.toString();
               _loading = false;
               _inputProcessingState = ChatInputProcessingState(
@@ -292,35 +280,6 @@ class _AIChatScreenState extends State<AIChatScreen>
             });
             return null;
           });
-    });
-  }
-
-  void _removeAcknowledgedPendingMessages(
-    List<ChatUiMessage> snapshotMessages,
-  ) {
-    if (_pendingSubmittedMessages.isEmpty) {
-      return;
-    }
-    final acknowledgedSnapshotIndexes = <int>{};
-    final acknowledgedPendingMessages = <_PendingSubmittedMessage>{};
-    for (final pending in _pendingSubmittedMessages) {
-      for (var index = 0; index < snapshotMessages.length; index += 1) {
-        if (acknowledgedSnapshotIndexes.contains(index)) {
-          continue;
-        }
-        final message = snapshotMessages[index];
-        if (message.sender != 'user' ||
-            message.content != pending.message.content ||
-            message.timestamp < pending.submittedAtMillis) {
-          continue;
-        }
-        acknowledgedSnapshotIndexes.add(index);
-        acknowledgedPendingMessages.add(pending);
-        break;
-      }
-    }
-    _pendingSubmittedMessages.removeWhere((pending) {
-      return acknowledgedPendingMessages.contains(pending);
     });
   }
 
@@ -417,6 +376,163 @@ class _AIChatScreenState extends State<AIChatScreen>
         }
       }
     });
+  }
+
+  Future<void> _deleteMessage(int index) async {
+    await widget.viewModel.deleteMessage(index);
+  }
+
+  Future<bool> _deleteMessagesFrom(int index) async {
+    return widget.viewModel.deleteMessagesFrom(index);
+  }
+
+  Future<void> _deleteMessageVariant(int timestamp, int variantIndex) async {
+    await widget.viewModel.deleteMessageVariant(timestamp, variantIndex);
+  }
+
+  void _requestRollbackToMessage(int index) {
+    _showWorkspaceChangeConfirm(
+      mode: WorkspaceChangeConfirmMode.rollback,
+      index: index,
+      onConfirm: () async {
+        await widget.viewModel.rollbackToMessage(index);
+        await _loadSnapshot(showLoading: false);
+      },
+    );
+  }
+
+  void _selectMessageToEdit(int index, ChatUiMessage message) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return MessageEditorDialog(
+          initialText: message.content,
+          showResendButton: message.sender == 'user',
+          onSave: (content) async {
+            await widget.viewModel.updateMessage(index, content);
+            await _loadSnapshot(showLoading: false);
+          },
+          onResend: (content) async {
+            if (_currentWorkspacePath != null &&
+                _currentWorkspacePath!.trim().isNotEmpty) {
+              await _showWorkspaceChangeConfirm(
+                mode: WorkspaceChangeConfirmMode.editAndResend,
+                index: index,
+                onConfirm: () async {
+                  await widget.viewModel.rewindAndResendMessage(index, content);
+                  await _loadSnapshot(showLoading: false);
+                },
+              );
+            } else {
+              await widget.viewModel.rewindAndResendMessage(index, content);
+              await _loadSnapshot(showLoading: false);
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showWorkspaceChangeConfirm({
+    required WorkspaceChangeConfirmMode mode,
+    required int index,
+    required Future<void> Function() onConfirm,
+  }) async {
+    final changes = await widget.viewModel.previewWorkspaceChangesForMessage(
+      index,
+    );
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return WorkspaceChangeConfirmDialog(
+          mode: mode,
+          changes: changes,
+          onConfirm: onConfirm,
+        );
+      },
+    );
+  }
+
+  Future<void> _regenerateMessage(int index) async {
+    await widget.viewModel.regenerateSingleAiMessage(index);
+  }
+
+  void _insertSummary(ChatUiMessage message) {
+    widget.viewModel
+        .insertSummary(message)
+        .then((_) => _loadSnapshot(showLoading: false))
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('Failed to insert summary: $error\n$stackTrace');
+          return null;
+        });
+  }
+
+  Future<void> _createBranch(int timestamp) async {
+    await widget.viewModel.createBranch(timestamp);
+  }
+
+  void _replyToMessageTarget(ChatUiMessage message) {
+    setState(() {
+      _replyToMessage = message;
+    });
+    _inputFocusNode.requestFocus();
+  }
+
+  void _toggleMultiSelectMode(int index) {
+    setState(() {
+      _isMultiSelectMode = true;
+      _selectedMessageIndices = <int>{index};
+    });
+  }
+
+  void _toggleMessageSelection(int index) {
+    setState(() {
+      final next = Set<int>.of(_selectedMessageIndices);
+      if (next.contains(index)) {
+        next.remove(index);
+      } else {
+        next.add(index);
+      }
+      _selectedMessageIndices = next;
+    });
+  }
+
+  void _exitMultiSelectMode() {
+    setState(() {
+      _isMultiSelectMode = false;
+      _selectedMessageIndices = const <int>{};
+    });
+  }
+
+  void _clearMessageSelection() {
+    setState(() {
+      _selectedMessageIndices = const <int>{};
+    });
+  }
+
+  void _selectAllMessages() {
+    setState(() {
+      _isMultiSelectMode = true;
+      _selectedMessageIndices = Set<int>.from(
+        List<int>.generate(_messages.length, (index) => index).where((index) {
+          final sender = _messages[index].sender;
+          return sender == 'user' || sender == 'ai';
+        }),
+      );
+    });
+  }
+
+  Future<void> _deleteSelectedMessages() async {
+    final indices = Set<int>.of(_selectedMessageIndices);
+    if (indices.isEmpty) {
+      return;
+    }
+    await widget.viewModel.deleteMessages(indices);
+    _exitMultiSelectMode();
+    await _loadSnapshot(showLoading: false);
   }
 
   Future<void> _loadOlderDisplayWindow() async {
@@ -566,6 +682,25 @@ class _AIChatScreenState extends State<AIChatScreen>
         onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
         onShowLatestDisplayWindow: _showLatestDisplayWindow,
         onToggleFavoriteMessage: _setMessageFavorite,
+        onDeleteMessage: _deleteMessage,
+        onDeleteMessagesFrom: _deleteMessagesFrom,
+        onDeleteMessageVariant: _deleteMessageVariant,
+        onRollbackToMessage: _requestRollbackToMessage,
+        onSelectMessageToEdit: _selectMessageToEdit,
+        onRegenerateMessage: _regenerateMessage,
+        onInsertSummary: _insertSummary,
+        onCreateBranch: _createBranch,
+        onReplyToMessage: _replyToMessageTarget,
+        onToggleMultiSelectMode: _toggleMultiSelectMode,
+        onToggleMessageSelection: _toggleMessageSelection,
+        onExitMultiSelectMode: _exitMultiSelectMode,
+        onSelectAllMessages: _selectAllMessages,
+        onClearMessageSelection: _clearMessageSelection,
+        onDeleteSelectedMessages: _deleteSelectedMessages,
+        onRefreshRequested: () =>
+            _loadSnapshot(showLoading: false).then((_) {}),
+        isMultiSelectMode: _isMultiSelectMode,
+        selectedMessageIndices: _selectedMessageIndices,
         onSendMessage: _sendMessage,
         onCancelMessage: _cancelMessage,
         onModelChanged: _setModelLabel,
@@ -592,14 +727,4 @@ class _AIChatScreenState extends State<AIChatScreen>
     await widget.viewModel.bindChatToWorkspace(chatId, workspace, workspaceEnv);
     await _loadSnapshot(showLoading: false);
   }
-}
-
-class _PendingSubmittedMessage {
-  const _PendingSubmittedMessage({
-    required this.message,
-    required this.submittedAtMillis,
-  });
-
-  final ChatUiMessage message;
-  final int submittedAtMillis;
 }

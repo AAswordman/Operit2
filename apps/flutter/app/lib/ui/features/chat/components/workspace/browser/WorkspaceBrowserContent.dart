@@ -27,7 +27,6 @@ import 'permissions/WorkspaceBrowserPermissionDialog.dart';
 import 'permissions/WorkspaceBrowserPermissionSheet.dart';
 import 'permissions/WorkspaceBrowserPermissionStore.dart';
 import 'tabs/WorkspaceBrowserTabModels.dart';
-import 'tabs/WorkspaceBrowserTabStore.dart';
 import 'userscripts/WorkspaceUserscriptModels.dart';
 import 'userscripts/WorkspaceUserscriptSheet.dart';
 
@@ -86,7 +85,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   OverlayEntry? _menuPopupEntry;
   OverlayEntry? _panelPopupEntry;
   int _selectedIndex = 0;
-  bool _isRestoringTabs = false;
 
   WorkspaceBrowserTabState get _currentTab => _tabs[_selectedIndex];
 
@@ -128,7 +126,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   void dispose() {
     _dismissMenuPopup();
     _dismissPanelPopup();
-    _persistTabs();
     for (final tab in _tabs) {
       tab.dispose();
     }
@@ -190,11 +187,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   Future<void> _openInitialTab() async {
-    final explicitUrl = widget.initialUrl;
-    if (explicitUrl != null && explicitUrl.trim().isNotEmpty) {
-      _addTab(explicitUrl);
-      return;
-    }
     final explicitFilePath = widget.initialFilePath;
     if (explicitFilePath != null && explicitFilePath.trim().isNotEmpty) {
       _addTabForLocalFile(explicitFilePath);
@@ -203,11 +195,15 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     final explicitWorkspaceHtmlPath = widget.initialWorkspaceHtmlPath;
     if (explicitWorkspaceHtmlPath != null &&
         explicitWorkspaceHtmlPath.trim().isNotEmpty) {
-      await _addTabForWorkspaceHtml(explicitWorkspaceHtmlPath);
+      await _addTabForWorkspaceHtml(
+        explicitWorkspaceHtmlPath,
+        initialUrl: widget.initialUrl,
+      );
       return;
     }
-    final restored = await _restoreSavedTabs();
-    if (restored) {
+    final explicitUrl = widget.initialUrl;
+    if (explicitUrl != null && explicitUrl.trim().isNotEmpty) {
+      _addTab(explicitUrl);
       return;
     }
     _addTab(_homeUrl);
@@ -223,7 +219,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     });
     _syncSessionRegistry();
     tab.controller.loadRequest(Uri.parse(url));
-    _persistTabs();
   }
 
   void _addTabForLocalFile(String absolutePath) {
@@ -235,13 +230,17 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     });
     _syncSessionRegistry();
     tab.controller.loadFile(absolutePath);
-    _persistTabs();
   }
 
-  Future<void> _addTabForWorkspaceHtml(String relativePath) async {
-    await _htmlPreviewServer.stop();
+  Future<void> _addTabForWorkspaceHtml(
+    String relativePath, {
+    String? initialUrl,
+  }) async {
     final uri = await _htmlPreviewServer.start(relativePath);
-    _addTab(uri.toString());
+    final url = initialUrl?.trim().isNotEmpty == true
+        ? initialUrl!.trim()
+        : uri.toString();
+    _addTab(url);
   }
 
   WorkspaceBrowserTabState _createTab(String url, {String? localFilePath}) {
@@ -356,7 +355,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
           );
           _injectUserscripts(tab, url, WorkspaceUserscriptRunAt.documentStart);
           unawaited(_installBrowserChromeHooks(tab));
-          _persistTabs();
         },
         onProgress: (progress) {
           if (tab.isDisposed) {
@@ -398,8 +396,9 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
           if (tab.isDisposed) {
             return;
           }
-          _stores.history.add(url: tab.url, title: tab.title);
-          _persistTabs();
+          if (!_isWorkspaceHtmlPreviewUrl(tab.url)) {
+            _stores.history.add(url: tab.url, title: tab.title);
+          }
         },
         onUrlChange: (change) {
           if (tab.isDisposed) {
@@ -408,7 +407,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
           final url = change.url;
           if (url != null) {
             tab.update(url: url, addressText: url);
-            _persistTabs();
           }
         },
         onWebResourceError: (error) {
@@ -595,7 +593,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
     _currentTab.update(url: url, addressText: url, errorText: null);
     _currentTab.controller.loadRequest(Uri.parse(url));
-    _persistTabs();
   }
 
   void _goBack() {
@@ -637,7 +634,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       }
     });
     _syncSessionRegistry();
-    _persistTabs();
   }
 
   void _selectBrowserSession(String sessionId) {
@@ -647,7 +643,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     }
     setState(() => _selectedIndex = index);
     _syncSessionRegistry();
-    _persistTabs();
   }
 
   void _closeBrowserSession(String sessionId) {
@@ -656,64 +651,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       return;
     }
     _closeTab(index);
-  }
-
-  Future<bool> _restoreSavedTabs() async {
-    final saved = await _stores.tabs.load();
-    if (saved == null || saved.tabs.isEmpty) {
-      return false;
-    }
-    _isRestoringTabs = true;
-    final restoredTabs = <WorkspaceBrowserTabState>[];
-    for (final savedTab in saved.tabs) {
-      final tab = _createTab(
-        savedTab.url,
-        localFilePath: savedTab.localFilePath,
-      )..update(title: savedTab.title, addressText: savedTab.url);
-      _configureTab(tab);
-      restoredTabs.add(tab);
-    }
-    if (!mounted) {
-      _isRestoringTabs = false;
-      for (final tab in restoredTabs) {
-        tab.dispose();
-      }
-      return true;
-    }
-    setState(() {
-      _tabs.addAll(restoredTabs);
-      _selectedIndex = saved.selectedIndex.clamp(0, _tabs.length - 1);
-    });
-    _syncSessionRegistry();
-    for (final tab in restoredTabs) {
-      if (tab.localFilePath == null) {
-        await tab.controller.loadRequest(Uri.parse(tab.url));
-      } else {
-        await tab.controller.loadFile(tab.localFilePath!);
-      }
-    }
-    _isRestoringTabs = false;
-    return true;
-  }
-
-  void _persistTabs() {
-    if (_isRestoringTabs || _tabs.isEmpty) {
-      return;
-    }
-    _stores.tabs.save(
-      WorkspaceBrowserSavedTabs(
-        selectedIndex: _selectedIndex.clamp(0, _tabs.length - 1),
-        tabs: _tabs
-            .map(
-              (tab) => WorkspaceBrowserSavedTab(
-                url: tab.url,
-                title: tab.title,
-                localFilePath: tab.localFilePath,
-              ),
-            )
-            .toList(growable: false),
-      ),
-    );
   }
 
   void _toggleMenuPopup() {
@@ -1150,4 +1087,18 @@ String normalizeWorkspaceBrowserUrl(String raw) {
   return Uri.https('www.bing.com', '/search', <String, String>{
     'q': value,
   }).toString();
+}
+
+bool _isWorkspaceHtmlPreviewUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) {
+    return false;
+  }
+  final host = uri.host.toLowerCase();
+  final isLoopback = host == '127.0.0.1' || host == 'localhost';
+  if (!isLoopback) {
+    return false;
+  }
+  final path = uri.path.toLowerCase();
+  return path.endsWith('.html') || path.endsWith('.htm');
 }

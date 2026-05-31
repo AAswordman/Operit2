@@ -436,7 +436,7 @@ class ChatMessageLocatorDialog extends StatefulWidget {
 }
 
 class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
-  final ScrollController _scrollController = ScrollController();
+  late final ScrollController _scrollController;
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
   String _searchQuery = '';
@@ -449,7 +449,9 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToInitialRow());
+    _scrollController = ScrollController(
+      initialScrollOffset: _initialRowOffset(),
+    );
   }
 
   @override
@@ -624,12 +626,11 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     if (dialogIsLoading) {
-      return Center(
-        child: Text(
-          l10n.loading,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2.4),
         ),
       );
     }
@@ -733,18 +734,18 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     await widget.onToggleFavoriteMessage(preview.timestamp, nextFavorite);
   }
 
-  void _scrollToInitialRow() {
+  double _initialRowOffset() {
     final currentMessageIndex = widget.locatorEntries.indexWhere(
       (entry) => entry.timestamp == widget.currentMessageTimestamp,
     );
-    if (currentMessageIndex < 0 || !_scrollController.hasClients) {
-      return;
+    if (currentMessageIndex < 0) {
+      return 0;
     }
     final target = (currentMessageIndex - 2).clamp(
       0,
       widget.locatorEntries.length,
     );
-    _scrollController.jumpTo(target * 56);
+    return (target * 56).toDouble();
   }
 
   void _scrollToClosestSearchRow() {

@@ -22,9 +22,16 @@ pub struct MCPConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "type", default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     #[serde(default)]
     pub disabled: bool,
     #[serde(rename = "autoApprove", default)]
@@ -35,41 +42,12 @@ pub struct ServerConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginMetadata {
-    pub id: String,
     pub name: String,
     pub description: String,
-    #[serde(rename = "logoUrl", default)]
-    pub logoUrl: Option<String>,
     #[serde(default = "unknownAuthor")]
     pub author: String,
-    #[serde(rename = "isInstalled", default)]
-    pub isInstalled: bool,
     #[serde(default)]
     pub version: String,
-    #[serde(rename = "updatedAt", default)]
-    pub updatedAt: String,
-    #[serde(rename = "longDescription", default)]
-    pub longDescription: String,
-    #[serde(rename = "repoUrl", default)]
-    pub repoUrl: String,
-    #[serde(default = "localType")]
-    pub r#type: String,
-    #[serde(default)]
-    pub endpoint: Option<String>,
-    #[serde(rename = "connectionType", default = "httpStreamConnectionType")]
-    pub connectionType: Option<String>,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(rename = "bearerToken", default)]
-    pub bearerToken: Option<String>,
-    #[serde(default)]
-    pub headers: Option<BTreeMap<String, String>>,
-    #[serde(rename = "installedPath", default)]
-    pub installedPath: Option<String>,
-    #[serde(rename = "installedTime", default = "currentTimeMillis")]
-    pub installedTime: i64,
-    #[serde(rename = "marketConfig", default)]
-    pub marketConfig: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +176,9 @@ impl MCPLocalServer {
                     .into_iter()
                     .filter(|item| !item.trim().is_empty())
                     .collect(),
+                url: None,
+                r#type: None,
+                headers: BTreeMap::new(),
                 disabled,
                 autoApprove: autoApprove
                     .into_iter()
@@ -271,9 +252,13 @@ impl MCPLocalServer {
     }
 
     #[allow(non_snake_case)]
-    pub fn addOrUpdatePluginMetadata(&self, metadata: PluginMetadata) -> Result<(), String> {
+    pub fn addOrUpdatePluginMetadata(
+        &self,
+        pluginId: &str,
+        metadata: PluginMetadata,
+    ) -> Result<(), String> {
         let mut config = self.readMCPConfig()?;
-        config.pluginMetadata.insert(metadata.id.clone(), metadata);
+        config.pluginMetadata.insert(pluginId.to_string(), metadata);
         self.writeMCPConfig(&config)
     }
 
@@ -402,11 +387,6 @@ impl MCPLocalServer {
         if let Some(serverConfig) = self.getMCPServer(serverId) {
             return !serverConfig.disabled;
         }
-        if let Some(metadata) = self.getPluginMetadata(serverId) {
-            if metadata.r#type == "remote" {
-                return !metadata.disabled;
-            }
-        }
         true
     }
 
@@ -417,14 +397,8 @@ impl MCPLocalServer {
             serverConfig.disabled = !enabled;
             return self.writeMCPConfig(&config);
         }
-        if let Some(metadata) = config.pluginMetadata.get_mut(serverId) {
-            if metadata.r#type == "remote" {
-                metadata.disabled = !enabled;
-                return self.writeMCPConfig(&config);
-            }
-        }
         Err(format!(
-            "Cannot set enabled state, server config or remote metadata not found: {serverId}"
+            "Cannot set enabled state, server config not found: {serverId}"
         ))
     }
 
@@ -439,10 +413,14 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     pub fn isPluginRuntimeReady(&self, pluginId: &str) -> bool {
-        let Some(metadata) = self.getPluginMetadata(pluginId) else {
+        if self.getPluginMetadata(pluginId).is_none() {
             return false;
-        };
-        if metadata.r#type == "remote" {
+        }
+        if self
+            .getMCPServer(pluginId)
+            .map(|config| isRemoteServerConfig(&config))
+            .unwrap_or(false)
+        {
             return true;
         }
         let dir = PathBuf::from(self.getPluginRuntimeDirectory(pluginId));
@@ -583,12 +561,20 @@ impl MCPLocalServer {
     #[allow(non_snake_case)]
     fn sanitizeServerConfig(
         &self,
-        serverId: &str,
+        _serverId: &str,
         serverConfig: ServerConfig,
         _source: &str,
     ) -> Option<ServerConfig> {
         let command = serverConfig.command.trim().to_string();
-        if command.is_empty() {
+        let url = serverConfig
+            .url
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let transportType = serverConfig
+            .r#type
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if command.is_empty() && url.is_none() {
             return None;
         }
         Some(ServerConfig {
@@ -598,6 +584,9 @@ impl MCPLocalServer {
                 .into_iter()
                 .filter(|item| !item.trim().is_empty())
                 .collect(),
+            url,
+            r#type: transportType,
+            headers: cleanEnv(serverConfig.headers),
             disabled: serverConfig.disabled,
             autoApprove: serverConfig
                 .autoApprove
@@ -625,14 +614,8 @@ impl MCPLocalServer {
         let mut sanitizedMetadata = config.pluginMetadata;
         let mut removedMetadataIds = Vec::new();
         for serverId in &removedServerIds {
-            if sanitizedMetadata
-                .get(serverId)
-                .map(|metadata| metadata.r#type != "remote")
-                .unwrap_or(false)
-            {
-                sanitizedMetadata.remove(serverId);
-                removedMetadataIds.push(serverId.clone());
-            }
+            sanitizedMetadata.remove(serverId);
+            removedMetadataIds.push(serverId.clone());
         }
 
         SanitizedConfigResult {
@@ -655,25 +638,10 @@ impl MCPLocalServer {
             metadata.insert(
                 serverId.clone(),
                 PluginMetadata {
-                    id: serverId.clone(),
                     name: displayNameFromId(serverId),
                     description: String::new(),
-                    logoUrl: None,
                     author: "Unknown".to_string(),
-                    isInstalled: true,
                     version: "1.0.0".to_string(),
-                    updatedAt: chrono::Local::now().format("%Y-%m-%d").to_string(),
-                    longDescription: "Local auto detected MCP server".to_string(),
-                    repoUrl: String::new(),
-                    r#type: "local".to_string(),
-                    endpoint: None,
-                    connectionType: Some("httpStream".to_string()),
-                    disabled: false,
-                    bearerToken: None,
-                    headers: None,
-                    installedPath: None,
-                    installedTime: currentTimeMillis(),
-                    marketConfig: None,
                 },
             );
         }
@@ -731,6 +699,15 @@ fn cleanEnv(env: BTreeMap<String, String>) -> BTreeMap<String, String> {
 }
 
 #[allow(non_snake_case)]
+fn isRemoteServerConfig(serverConfig: &ServerConfig) -> bool {
+    serverConfig
+        .url
+        .as_ref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+#[allow(non_snake_case)]
 fn displayNameFromId(serverId: &str) -> String {
     serverId
         .replace(['_', '-'], " ")
@@ -754,16 +731,6 @@ fn currentTimeMillis() -> i64 {
 #[allow(non_snake_case)]
 fn unknownAuthor() -> String {
     "Unknown".to_string()
-}
-
-#[allow(non_snake_case)]
-fn localType() -> String {
-    "local".to_string()
-}
-
-#[allow(non_snake_case)]
-fn httpStreamConnectionType() -> Option<String> {
-    Some("httpStream".to_string())
 }
 
 #[allow(non_snake_case)]

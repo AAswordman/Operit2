@@ -43,6 +43,7 @@ use operit_runtime::data::preferences::UserPreferencesManager::UserPreferencesMa
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::util::stream::Stream::Stream;
+use operit_runtime::util::GithubReleaseUtil::FullUpdateTarget;
 use sha2::{Digest, Sha256};
 
 pub(crate) mod link;
@@ -94,6 +95,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
         "market" => run_core_command_and_print(&mut core, &args).await,
+        "update" => run_update_cli_command(&mut core, &args[1..]).await,
         "skill" => run_core_command_and_print(&mut core, &args).await,
         "package" => run_core_command_and_print(&mut core, &args).await,
         "plugin" => run_core_command_and_print(&mut core, &args).await,
@@ -139,6 +141,7 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
         "market" => run_core_command_and_print(&mut core, &args).await,
+        "update" => run_core_command_and_print(&mut core, &args).await,
         "skill" => run_core_command_and_print(&mut core, &args).await,
         "package" => run_core_command_and_print(&mut core, &args).await,
         "plugin" => run_core_command_and_print(&mut core, &args).await,
@@ -149,6 +152,67 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         }
     };
     result.map_err(rewrite_cli_usage_message)
+}
+
+async fn run_update_cli_command(
+    core: &mut crate::core_proxy::CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    if args.is_empty() {
+        let target = FullUpdateTarget::cliForCurrentHost()?;
+        let command = vec![
+            "update".to_string(),
+            "run".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            target.product,
+            target.platform,
+            target.arch,
+        ];
+        return run_core_command_and_print(core, &command).await;
+    }
+
+    match args[0].as_str() {
+        "check" if args.len() == 1 => {
+            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let command = vec![
+                "update".to_string(),
+                "check".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+                target.product,
+                target.platform,
+                target.arch,
+            ];
+            run_core_command_and_print(core, &command).await
+        }
+        "target" if args.len() == 1 => {
+            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let package_name = target.assetName()?;
+            println!("product={}", target.product);
+            println!("platform={}", target.platform);
+            println!("arch={}", target.arch);
+            println!("package={package_name}");
+            Ok(())
+        }
+        "run" if args.len() == 5 => {
+            let mut command = vec!["update".to_string()];
+            command.extend_from_slice(args);
+            run_core_command_and_print(core, &command).await
+        }
+        "check" if args.len() == 5 => {
+            let mut command = vec!["update".to_string()];
+            command.extend_from_slice(args);
+            run_core_command_and_print(core, &command).await
+        }
+        "target" if args.len() == 4 => {
+            let mut command = vec!["update".to_string()];
+            command.extend_from_slice(args);
+            run_core_command_and_print(core, &command).await
+        }
+        _ => {
+            print_update_usage();
+            Ok(())
+        }
+    }
 }
 
 fn rewrite_cli_usage_message(message: String) -> String {
@@ -198,8 +262,8 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|link|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -223,10 +287,11 @@ fn print_cli_usage() {
     println!(
         "operit2 cli market <auth|stats|rank|search|show|install|comments|comment|reactions|react>"
     );
+    println!("operit2 cli update [check|target]");
     println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <dir|list|show|import|enable|disable|use|exec>");
     println!("operit2 cli plugin <list|show|import|enable|disable>");
-    println!("operit2 cli mcp <dir|list|show|import|enable|disable|start|cached|export>");
+    println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
         "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
     );
@@ -268,7 +333,7 @@ fn print_cli_usage() {
 }
 
 fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!("operit2 cli link run <session> <version|chat>");
 }
 
@@ -436,6 +501,19 @@ fn print_market_usage() {
     println!("operit2 cli market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>");
 }
 
+fn print_update_usage() {
+    println!("operit2 cli update");
+    println!("operit2 cli update check");
+    println!("operit2 cli update target");
+    println!(
+        "operit2 cli update run <current-version> <app|cli> <windows|linux|macos|android> <arch>"
+    );
+    println!(
+        "operit2 cli update check <current-version> <app|cli> <windows|linux|macos|android> <arch>"
+    );
+    println!("operit2 cli update target <app|cli> <windows|linux|macos|android> <arch>");
+}
+
 fn print_skill_usage() {
     println!("operit2 cli skill dir");
     println!("operit2 cli skill list");
@@ -471,13 +549,20 @@ fn print_plugin_usage() {
 fn print_mcp_usage() {
     println!("operit2 cli mcp dir");
     println!("operit2 cli mcp list");
-    println!("operit2 cli mcp show <name>");
+    println!("operit2 cli mcp show <id>");
     println!("operit2 cli mcp import <json-or-@file>");
-    println!("operit2 cli mcp enable <name>");
-    println!("operit2 cli mcp disable <name>");
-    println!("operit2 cli mcp start <name>");
-    println!("operit2 cli mcp cached <name>");
     println!("operit2 cli mcp export");
+    println!("operit2 cli mcp remove <id>");
+    println!("operit2 cli mcp enable <id>");
+    println!("operit2 cli mcp disable <id>");
+    println!("operit2 cli mcp start <id>");
+    println!("operit2 cli mcp tools <id>");
+    println!("operit2 cli mcp config <id>");
+    println!("operit2 cli mcp config-set <id> <json-or-@file>");
+    println!("operit2 cli mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]");
+    println!("operit2 cli mcp meta <id>");
+    println!("operit2 cli mcp meta-set <id> <name> <description-or-@file> <author> <version>");
+    println!("operit2 cli mcp describe <id>");
 }
 
 fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {

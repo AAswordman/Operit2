@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::app::{FocusArea, OperitTui};
+use super::app::{FocusArea, FullUpdateDownloadState, OperitTui};
 use super::helpers::{
     centered_rect, render_message_lines, short_chat_label, transcript_max_scroll, wrap_approx_lines,
 };
@@ -56,7 +56,11 @@ impl OperitTui {
             self.render_help_modal(frame);
         }
 
-        if self.startup_workspace_prompt.is_some() {
+        if self.startup_update_prompt.is_some() {
+            self.render_startup_update_prompt(frame);
+        }
+
+        if self.startup_workspace_prompt.is_some() && self.startup_update_prompt.is_none() {
             self.render_startup_workspace_prompt(frame);
         }
 
@@ -444,6 +448,176 @@ impl OperitTui {
         frame.render_widget(modal, popup);
     }
 
+    fn render_startup_update_prompt(&self, frame: &mut Frame) {
+        let Some(prompt) = self.startup_update_prompt.as_ref() else {
+            return;
+        };
+        let popup = centered_rect(78, 42, frame.area());
+        frame.render_widget(Clear, popup);
+        let download_style = if prompt.download_selected {
+            Style::default()
+                .fg(theme::TEXT_INVERTED)
+                .bg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::ACCENT_STRONG)
+        };
+        let skip_style = if prompt.download_selected {
+            Style::default().fg(theme::TEXT_SUBTLE)
+        } else {
+            Style::default()
+                .fg(theme::TEXT_INVERTED)
+                .bg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        };
+        let release_version = prompt
+            .release_info
+            .as_ref()
+            .map(|info| info.version.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let release_page = prompt
+            .release_info
+            .as_ref()
+            .map(|info| info.releasePageUrl.clone())
+            .unwrap_or_else(String::new);
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "Full update available",
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("version: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    release_version,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("release: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(release_page, Style::default().fg(theme::TEXT_MUTED)),
+            ]),
+            Line::from(""),
+        ];
+
+        match &prompt.download_state {
+            FullUpdateDownloadState::Ready => {
+                lines.push(Line::from(vec![
+                    Span::styled(" 1 Download ", download_style),
+                    Span::raw("  "),
+                    Span::styled(" 2 Skip ", skip_style),
+                ]));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter selects | Left/Right changes | d/s | Esc=skip",
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                )));
+            }
+            FullUpdateDownloadState::Downloading {
+                stage,
+                message,
+                read_bytes,
+                total_bytes,
+                speed_bytes_per_sec,
+            } => {
+                let percent = if *total_bytes > 0 {
+                    ((*read_bytes as f64 / *total_bytes as f64) * 100.0).round() as u64
+                } else {
+                    0
+                };
+                let bar = progress_bar(percent, 34);
+                lines.push(Line::from(vec![
+                    Span::styled("stage: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::raw(format!("{stage:?}")),
+                ]));
+                lines.push(Line::from(message.clone()));
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled(bar, Style::default().fg(theme::ACCENT_STRONG)),
+                    Span::raw(format!(" {percent}%")),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("bytes: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::raw(format!(
+                        "{} / {}",
+                        format_bytes(*read_bytes),
+                        format_bytes(*total_bytes)
+                    )),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("speed: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
+                ]));
+            }
+            FullUpdateDownloadState::Complete { package_path } => {
+                lines.push(Line::from(Span::styled(
+                    "Package ready",
+                    Style::default()
+                        .fg(theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    package_path.to_string_lossy().to_string(),
+                    Style::default().fg(theme::TEXT_MUTED),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter closes",
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                )));
+            }
+            FullUpdateDownloadState::Error { message } => {
+                lines.push(Line::from(Span::styled(
+                    "Download failed",
+                    Style::default()
+                        .fg(theme::ERROR)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    message.clone(),
+                    Style::default().fg(theme::ERROR_DIM),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter closes",
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                )));
+            }
+            FullUpdateDownloadState::CheckError { message } => {
+                lines.push(Line::from(Span::styled(
+                    "Update check failed",
+                    Style::default()
+                        .fg(theme::ERROR)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    message.clone(),
+                    Style::default().fg(theme::ERROR_DIM),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter closes",
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                )));
+            }
+        }
+
+        let modal = Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .title("Update")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(modal, popup);
+    }
+
     fn render_approval_modal(&self, frame: &mut Frame) {
         let Some(request) = self.approval_bridge.current() else {
             return;
@@ -532,6 +706,27 @@ impl OperitTui {
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(modal, popup);
+    }
+}
+
+fn progress_bar(percent: u64, width: usize) -> String {
+    let filled = ((percent.min(100) as usize) * width) / 100;
+    format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.1} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{bytes} B")
     }
 }
 

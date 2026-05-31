@@ -112,6 +112,20 @@ impl ToolPkgManager {
     }
 
     #[allow(non_snake_case)]
+    pub fn removeToolPkgContainer(
+        &mut self,
+        containerPackageName: &str,
+    ) -> Option<ToolPkgContainerRuntime> {
+        let runtime = self.containers.remove(containerPackageName.trim())?;
+        for subpackage in &runtime.subpackages {
+            self.subpackageByPackageName
+                .remove(subpackage.packageName.trim());
+        }
+        self.releaseToolPkgExecutionEngine(&format!("toolpkg_main:{}", runtime.packageName));
+        Some(runtime)
+    }
+
+    #[allow(non_snake_case)]
     pub fn getEnabledToolPkgContainerRuntimes(
         &self,
         enabledPackageNames: &[String],

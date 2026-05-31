@@ -7,6 +7,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/EmptyState.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
+import '../dialogs/MCPDetailsDialog.dart';
 
 class MCPConfigScreen extends StatefulWidget {
   const MCPConfigScreen({
@@ -85,6 +86,9 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
           serverId: core_proxy.ServerConfig(
             command: current.command,
             args: current.args,
+            url: current.url,
+            type: current.type,
+            headers: current.headers,
             disabled: !enabled,
             autoApprove: current.autoApprove,
             env: current.env,
@@ -114,19 +118,19 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     final metadata = _metadata[serverId];
     final server = _servers[serverId];
     final status = _statuses[serverId];
-    final configJson = await _localServer.getPluginConfig(pluginId: serverId);
     if (!mounted) {
       return;
     }
     showDialog<void>(
       context: context,
       builder: (context) {
-        return _MCPDetailsDialog(
+        return MCPDetailsDialog(
           serverId: serverId,
           metadata: metadata,
           server: server,
           status: status,
-          configJson: configJson,
+          clients: widget.clients,
+          onConfigSaved: _loadMcp,
         );
       },
     );
@@ -192,7 +196,8 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
                           : serverId,
                       metadata: <String>[
                         serverId,
-                        metadata?.type ?? 'local',
+                        if (metadata?.version.trim().isNotEmpty == true)
+                          metadata!.version,
                         if (toolCount != null) '$toolCount 工具',
                         if (hasError) '错误',
                       ],
@@ -298,93 +303,6 @@ class _MCPHeaderCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _MCPDetailsDialog extends StatelessWidget {
-  const _MCPDetailsDialog({
-    required this.serverId,
-    required this.metadata,
-    required this.server,
-    required this.status,
-    required this.configJson,
-  });
-
-  final String serverId;
-  final core_proxy.PluginMetadata? metadata;
-  final core_proxy.ServerConfig? server;
-  final core_proxy.ServerStatus? status;
-  final String configJson;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      icon: const Icon(Icons.extension_outlined),
-      title: Text(
-        metadata?.name.trim().isNotEmpty == true ? metadata!.name : serverId,
-      ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620, maxHeight: 520),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text('ID: $serverId'),
-              if (metadata != null) ...<Widget>[
-                Text('作者: ${metadata!.author}'),
-                Text('版本: ${metadata!.version}'),
-                Text('类型: ${metadata!.type}'),
-                if (metadata!.repoUrl.trim().isNotEmpty)
-                  Text('Repo: ${metadata!.repoUrl}'),
-                if (metadata!.endpoint != null)
-                  Text('Endpoint: ${metadata!.endpoint}'),
-              ],
-              if (server != null) ...<Widget>[
-                const SizedBox(height: 12),
-                Text('命令: ${server!.command} ${server!.args.join(" ")}'),
-                Text('自动批准: ${server!.autoApprove.join(", ")}'),
-              ],
-              if (status?.errorMessage != null) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  status!.errorMessage!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ],
-              if (status?.cachedTools?.isNotEmpty == true) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  '工具',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                for (final tool in status!.cachedTools!)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.build_outlined),
-                    title: Text(tool.name),
-                    subtitle: Text(tool.description),
-                  ),
-              ],
-              if (configJson.trim().isNotEmpty) ...<Widget>[
-                const SizedBox(height: 12),
-                SelectableText(configJson),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        FilledButton.tonal(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
-        ),
-      ],
     );
   }
 }

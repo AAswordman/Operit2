@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 use operit_runtime::util::stream::HotStream::SharedStream;
+use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
 use super::markdown::render_markdown_lines;
@@ -370,7 +370,8 @@ fn parse_user_message_content(content: &str) -> UserMessageParseResult {
     let mut parsed_trailing = Vec::new();
     for (index, (start, end, attachment)) in attachment_matches.into_iter().enumerate() {
         let is_trailing = trailing_indices.contains(&index)
-            || (attachment.mime_type == "text/json" && attachment.file_name == "screen_content.json");
+            || (attachment.mime_type == "text/json"
+                && attachment.file_name == "screen_content.json");
         if start > last_index {
             let text_before = &cleaned_content[last_index..start];
             if !is_trailing || Some(index) == first_trailing_index {
@@ -487,7 +488,11 @@ fn attachment_display_label(attachment: &UserAttachmentData) -> String {
     } else if attachment.mime_type == "application/vnd.workspace-context+xml" {
         "工作区状态".to_string()
     } else if attachment.file_size > 0 {
-        format!("{} {}", attachment.file_name, format_file_size(attachment.file_size))
+        format!(
+            "{} {}",
+            attachment.file_name,
+            format_file_size(attachment.file_size)
+        )
     } else {
         attachment.file_name.clone()
     }

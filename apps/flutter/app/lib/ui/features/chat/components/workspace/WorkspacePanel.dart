@@ -259,11 +259,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       '.operit/config.json',
     );
     final config = WorkspaceProjectConfig.fromJsonText(configText);
-    final previewUrl = config.previewUrl.trim();
-    if (previewUrl.isEmpty) {
-      _openBrowserTab();
-      return;
-    }
-    _openBrowserTab(url: previewUrl);
+    _openBrowserTab(
+      url: config.previewUrl.trim(),
+      workspaceHtmlPath: 'index.html',
+    );
   }
 }
