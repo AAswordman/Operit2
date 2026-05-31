@@ -6,6 +6,7 @@ import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../common/OperitLogoMark.dart';
 import '../navigation/AppNavigationModels.dart';
 import 'NavigationDrawerAppearance.dart';
 
@@ -27,8 +28,6 @@ class CollapsedDrawerContent extends StatelessWidget {
   final VoidCallback onConversationActivated;
   final OperitRuntimeBridge bridge;
   static const double _topBarHeight = 64;
-  static const String _operitLogoAsset =
-      'assets/images/operit_logo_transparent.png';
 
   Future<void> _createConversation() async {
     await GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain.createNewChat(
@@ -61,14 +60,7 @@ class CollapsedDrawerContent extends StatelessWidget {
           height: topPadding + _topBarHeight,
           child: Padding(
             padding: EdgeInsets.only(top: topPadding),
-            child: Center(
-              child: Image.asset(
-                _operitLogoAsset,
-                width: 34,
-                height: 34,
-                fit: BoxFit.contain,
-              ),
-            ),
+            child: Center(child: const OperitLogoMark(size: 34)),
           ),
         ),
         const SizedBox(height: 24),

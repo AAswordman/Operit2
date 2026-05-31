@@ -215,7 +215,7 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   (void)channel;
   (void)user_data;
   const gchar* method = fl_method_call_get_name(method_call);
-  std::string response;
+  std::string response_text;
   std::string error;
   if (strcmp(method, "call") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
@@ -224,8 +224,8 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
       return;
     }
     const gchar* request = fl_value_get_string(args);
-    if (g_operit_runtime_library->Call(request, &response, &error)) {
-      respond_success(method_call, response);
+    if (g_operit_runtime_library->Call(request, &response_text, &error)) {
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
@@ -239,8 +239,8 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
       return;
     }
     const gchar* request = fl_value_get_string(args);
-    if (g_operit_runtime_library->WatchSnapshot(request, &response, &error)) {
-      respond_success(method_call, response);
+    if (g_operit_runtime_library->WatchSnapshot(request, &response_text, &error)) {
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
@@ -254,8 +254,8 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
       return;
     }
     const gchar* request = fl_value_get_string(args);
-    if (g_operit_runtime_library->WatchStream(request, &response, &error)) {
-      respond_success(method_call, response);
+    if (g_operit_runtime_library->WatchStream(request, &response_text, &error)) {
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
@@ -269,9 +269,9 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
       return;
     }
     const gchar* subscription = fl_value_get_string(args);
-    if (g_operit_runtime_library->PollWatchStream(subscription, &response,
+    if (g_operit_runtime_library->PollWatchStream(subscription, &response_text,
                                                  &error)) {
-      respond_success(method_call, response);
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
@@ -285,17 +285,17 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
       return;
     }
     const gchar* subscription = fl_value_get_string(args);
-    if (g_operit_runtime_library->CloseWatchStream(subscription, &response,
+    if (g_operit_runtime_library->CloseWatchStream(subscription, &response_text,
                                                   &error)) {
-      respond_success(method_call, response);
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
     return;
   }
   if (strcmp(method, "hostDescriptor") == 0) {
-    if (g_operit_runtime_library->HostDescriptor(&response, &error)) {
-      respond_success(method_call, response);
+    if (g_operit_runtime_library->HostDescriptor(&response_text, &error)) {
+      respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
@@ -308,9 +308,10 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
 
 }  // namespace
 
-void register_operit_runtime_channel(FlPluginRegistry* registry) {
+void register_operit_runtime_channel(FlView* view) {
   g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
-  FlBinaryMessenger* messenger = fl_plugin_registry_get_messenger(registry);
+  FlBinaryMessenger* messenger =
+      fl_engine_get_binary_messenger(fl_view_get_engine(view));
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   g_operit_runtime_channel = fl_method_channel_new(
       messenger, "operit/runtime", FL_METHOD_CODEC(codec));

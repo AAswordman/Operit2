@@ -552,32 +552,19 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
         return Ok(());
     }
 
-    let (metadata, issueUrl, statsId) = if looks_like_url(target) {
+    let (pluginId, metadata, issueUrl, statsId, installConfig) = if looks_like_url(target) {
         let pluginId = mcp_id_from_title(target);
         (
+            pluginId.clone(),
             operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
-                id: pluginId.clone(),
                 name: pluginId,
                 description: String::new(),
-                logoUrl: None,
                 author: "Unknown".to_string(),
-                isInstalled: false,
                 version: "1.0.0".to_string(),
-                updatedAt: String::new(),
-                longDescription: String::new(),
-                repoUrl: target.to_string(),
-                r#type: "local".to_string(),
-                endpoint: None,
-                connectionType: Some("httpStream".to_string()),
-                disabled: false,
-                bearerToken: None,
-                headers: None,
-                installedPath: None,
-                installedTime: 0,
-                marketConfig: None,
             },
             target.to_string(),
             normalizeMarketArtifactId(target),
+            String::new(),
         )
     } else {
         let entry = find_issue_rank_entry(core, "mcp", target)?;
@@ -585,18 +572,12 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
         let pluginId = mcp_id_from_title(&entry.issue.title);
         let statsId = resolveMarketEntryId(&info.repositoryUrl, &entry.issue.title);
         let metadata = operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
-            id: pluginId,
             name: entry.issue.title.clone(),
             description: info
                 .description
                 .trim()
                 .to_string()
                 .if_empty_then(entry.summaryDescription.clone()),
-            logoUrl: Some(
-                entry
-                    .authorAvatarUrl
-                    .if_empty_then(entry.issue.user.avatarUrl.clone()),
-            ),
             author: info
                 .repositoryUrl
                 .split("github.com/")
@@ -604,60 +585,39 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
                 .and_then(|value| value.split('/').next())
                 .unwrap_or(&entry.issue.user.login)
                 .to_string(),
-            isInstalled: false,
             version: info.version.if_empty_then("1.0.0".to_string()),
-            updatedAt: entry.issue.updated_at.clone(),
-            longDescription: entry.issue.body.clone().unwrap_or_default(),
-            repoUrl: info.repositoryUrl,
-            r#type: "local".to_string(),
-            endpoint: None,
-            connectionType: Some("httpStream".to_string()),
-            disabled: false,
-            bearerToken: None,
-            headers: None,
-            installedPath: None,
-            installedTime: 0,
-            marketConfig: if info.installConfig.trim().is_empty() {
-                None
-            } else {
-                Some(info.installConfig)
-            },
         };
-        (metadata, entry.issue.html_url, statsId)
+        (
+            pluginId,
+            metadata,
+            entry.issue.html_url,
+            statsId,
+            info.installConfig,
+        )
     };
 
-    if let Some(config) = metadata
-        .marketConfig
-        .as_ref()
-        .filter(|config| !config.trim().is_empty())
-    {
+    if !installConfig.trim().is_empty() {
         let _ = core
             .api_market_stats_api_service()
             .trackDownload("mcp", &statsId, &issueUrl);
         if !core
             .mcp_repository()
-            .checkConfigNeedsPhysicalInstallation(config)
+            .checkConfigNeedsPhysicalInstallation(&installConfig)
         {
             let count = core
                 .mcp_local_server()
-                .mergeConfigFromJson(config)
+                .mergeConfigFromJson(&installConfig)
                 .map_err(|error| error.to_string())?;
             println!("imported={count}");
             return Ok(());
         }
     }
 
-    let pluginId = metadata.id.clone();
-    let targetUrl = if metadata.repoUrl.trim().is_empty() {
-        issueUrl.clone()
-    } else {
-        metadata.repoUrl.clone()
-    };
     let _ = core
         .api_market_stats_api_service()
-        .trackDownload("mcp", &statsId, &targetUrl);
+        .trackDownload("mcp", &statsId, &issueUrl);
     core.mcp_local_server()
-        .addOrUpdatePluginMetadata(metadata)
+        .addOrUpdatePluginMetadata(&pluginId, metadata)
         .map_err(|error| error.to_string())?;
     println!("registered={pluginId}");
     Ok(())

@@ -3,9 +3,16 @@ use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
+use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
+use crate::api::chat::llmprovider::AIService::{collect_stream_chunks, SendMessageRequest};
 use crate::core::application::OperitApplicationContext::defaultHttpHost;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::core::config::FunctionalPrompts::FunctionalPrompts;
+use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
 use crate::data::mcp::MCPLocalServer::{MCPConfig, MCPLocalServer, PluginMetadata};
+use crate::data::model::FunctionType::FunctionType;
+use crate::util::ChatUtils::ChatUtils;
 use operit_host_api::HttpRequestData;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use url::Url;
@@ -13,8 +20,9 @@ use url::Url;
 const CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const READ_TIMEOUT_SECONDS: u64 = 30;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MCPRepository {
+    context: OperitApplicationContext,
     mcpLocalServer: MCPLocalServer,
     pluginsBaseDir: PathBuf,
 }
@@ -39,6 +47,7 @@ impl MCPRepository {
         let paths = RuntimeStorePaths::default();
         let _ = paths.ensure_mcp_plugins_dir();
         Self {
+            context: context.clone(),
             mcpLocalServer: MCPLocalServer::getInstance(context),
             pluginsBaseDir: paths.mcp_plugins_dir(),
         }
@@ -47,12 +56,14 @@ impl MCPRepository {
     #[allow(non_snake_case)]
     pub fn installMCPServerWithObject(
         &self,
+        pluginId: String,
+        repoUrl: String,
         server: PluginMetadata,
         progressCallback: impl Fn(InstallProgress),
     ) -> InstallResult {
-        let result = self.installPluginInternal(&server, &progressCallback);
+        let result = self.installPluginInternal(&pluginId, &repoUrl, &progressCallback);
         if let InstallResult::Success { pluginPath } = &result {
-            if let Err(error) = self.savePluginMetadata(&server, pluginPath) {
+            if let Err(error) = self.savePluginMetadata(&pluginId, &server, pluginPath) {
                 return InstallResult::Error { message: error };
             }
         }
@@ -76,12 +87,13 @@ impl MCPRepository {
     #[allow(non_snake_case)]
     fn installPluginInternal(
         &self,
-        server: &PluginMetadata,
+        pluginId: &str,
+        repoUrl: &str,
         progressCallback: &impl Fn(InstallProgress),
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
-        let pluginDir = self.pluginsBaseDir.join(&server.id);
+        let pluginDir = self.pluginsBaseDir.join(pluginId);
         if pluginDir.exists() {
             let _ = fs::remove_dir_all(&pluginDir);
         }
@@ -91,7 +103,7 @@ impl MCPRepository {
             };
         }
 
-        let Some((owner, repoName)) = extractOwnerAndRepo(&server.repoUrl) else {
+        let Some((owner, repoName)) = extractOwnerAndRepo(repoUrl) else {
             return InstallResult::Error {
                 message: "Invalid GitHub repository URL".to_string(),
             };
@@ -99,7 +111,7 @@ impl MCPRepository {
 
         progressCallback(InstallProgress::Downloading(0));
         let Some(zipFile) =
-            self.downloadRepositoryZip(&owner, &repoName, &server.id, progressCallback)
+            self.downloadRepositoryZip(&owner, &repoName, pluginId, progressCallback)
         else {
             return InstallResult::Error {
                 message: "Failed to download repository zip".to_string(),
@@ -149,13 +161,137 @@ impl MCPRepository {
     }
 
     #[allow(non_snake_case)]
-    fn savePluginMetadata(&self, server: &PluginMetadata, pluginPath: &str) -> Result<(), String> {
-        let mut metadata = server.clone();
-        metadata.r#type = "local".to_string();
-        metadata.installedPath = Some(pluginPath.to_string());
-        metadata.installedTime = currentTimeMillis();
-        self.mcpLocalServer.addOrUpdatePluginMetadata(metadata)
+    fn savePluginMetadata(
+        &self,
+        pluginId: &str,
+        server: &PluginMetadata,
+        _pluginPath: &str,
+    ) -> Result<(), String> {
+        self.mcpLocalServer
+            .addOrUpdatePluginMetadata(pluginId, server.clone())
     }
+
+    #[allow(non_snake_case)]
+    pub async fn generatePluginDescription(
+        &self,
+        pluginId: &str,
+        pluginName: &str,
+    ) -> Result<String, String> {
+        let metadata = self
+            .mcpLocalServer
+            .getPluginMetadata(pluginId)
+            .ok_or_else(|| "MCP server not found".to_string())?;
+        let toolDescriptions = self.collectToolDescriptionsForDescriptionGeneration(pluginId);
+        if toolDescriptions.is_empty() {
+            return Err("No tools available for description generation".to_string());
+        }
+        let targetPluginName = if pluginName.trim().is_empty() {
+            metadata.name
+        } else {
+            pluginName.trim().to_string()
+        };
+        let generatedDescription =
+            generatePackageDescription(&targetPluginName, &toolDescriptions).await?;
+        if generatedDescription.trim().is_empty() {
+            return Err("Generated description is empty".to_string());
+        }
+        Ok(generatedDescription)
+    }
+
+    #[allow(non_snake_case)]
+    fn collectToolDescriptionsForDescriptionGeneration(&self, pluginId: &str) -> Vec<String> {
+        let cachedToolDescriptions = self
+            .mcpLocalServer
+            .getCachedTools(pluginId)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|cachedTool| {
+                let toolName = cachedTool.name.trim().to_string();
+                if toolName.is_empty() {
+                    return None;
+                }
+                let description = cachedTool.description.trim().to_string();
+                if description.is_empty() {
+                    Some(toolName)
+                } else {
+                    Some(format!("{toolName}: {description}"))
+                }
+            })
+            .collect::<Vec<_>>();
+        if !cachedToolDescriptions.is_empty() {
+            return cachedToolDescriptions;
+        }
+
+        let serviceName = self.serviceNameForDescriptionGeneration(pluginId);
+        MCPBridgeClient::new(self.context.clone(), serviceName).getToolDescriptions()
+    }
+
+    #[allow(non_snake_case)]
+    fn serviceNameForDescriptionGeneration(&self, pluginId: &str) -> String {
+        let pluginConfig = self.mcpLocalServer.getPluginConfig(pluginId);
+        extractServerNameFromConfig(&pluginConfig).unwrap_or_else(|| {
+            pluginId
+                .split('/')
+                .last()
+                .unwrap_or(pluginId)
+                .to_ascii_lowercase()
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+async fn generatePackageDescription(
+    pluginName: &str,
+    toolDescriptions: &[String],
+) -> Result<String, String> {
+    if toolDescriptions.is_empty() {
+        return Ok(String::new());
+    }
+    let toolList = toolDescriptions
+        .iter()
+        .map(|item| format!("- {item}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let useEnglish = false;
+    let descriptionPrompt =
+        FunctionalPrompts::packageDescriptionUserPrompt(pluginName, &toolList, useEnglish);
+    let chatHistory = vec![
+        PromptTurn::new(
+            PromptTurnKind::SYSTEM,
+            FunctionalPrompts::packageDescriptionSystemPrompt(useEnglish),
+        ),
+        PromptTurn::new(PromptTurnKind::USER, descriptionPrompt),
+    ];
+    let mut multiServiceManager = MultiServiceManager::default();
+    multiServiceManager
+        .initialize()
+        .map_err(|error| error.to_string())?;
+    let summaryService = multiServiceManager
+        .getServiceForFunction(FunctionType::SUMMARY)
+        .map_err(|error| error.to_string())?;
+    let modelParameters = multiServiceManager
+        .getModelParametersForFunction(FunctionType::SUMMARY)
+        .map_err(|error| error.to_string())?;
+    let mut service = summaryService.lock().await;
+    let stream = service
+        .send_message(SendMessageRequest {
+            chat_history: chatHistory,
+            model_parameters: modelParameters,
+            enable_thinking: false,
+            stream: true,
+            available_tools: Vec::new(),
+            preserve_think_in_history: false,
+            enable_retry: true,
+            on_non_fatal_error: None,
+            on_tool_invocation: None,
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(
+        ChatUtils::remove_thinking_content(&collect_stream_chunks(stream).join(""))
+            .trim()
+            .to_string(),
+    )
 }
 
 #[allow(non_snake_case)]
@@ -191,6 +327,20 @@ fn extractOwnerAndRepo(repoUrl: &str) -> Option<(String, String)> {
     } else {
         Some((owner, repo))
     }
+}
+
+#[allow(non_snake_case)]
+fn extractServerNameFromConfig(configJson: &str) -> Option<String> {
+    if configJson.trim().is_empty() {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(configJson).ok()?;
+    value
+        .get("mcpServers")
+        .and_then(serde_json::Value::as_object)?
+        .keys()
+        .next()
+        .cloned()
 }
 
 #[allow(non_snake_case)]

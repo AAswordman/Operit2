@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
+import 'MessageContextMenu.dart';
 import 'ChatScrollNavigator.dart';
 import 'style/cursor/CursorStyleChatMessage.dart';
 
@@ -31,6 +32,20 @@ class ChatArea extends StatefulWidget {
     required this.onLoadNewerDisplayWindow,
     required this.onShowLatestDisplayWindow,
     required this.onToggleFavoriteMessage,
+    required this.onDeleteMessage,
+    required this.onDeleteMessagesFrom,
+    required this.onDeleteMessageVariant,
+    required this.onRollbackToMessage,
+    required this.onSelectMessageToEdit,
+    required this.onRegenerateMessage,
+    required this.onInsertSummary,
+    required this.onCreateBranch,
+    required this.onReplyToMessage,
+    required this.onToggleMultiSelectMode,
+    required this.onToggleMessageSelection,
+    required this.onRefreshRequested,
+    this.isMultiSelectMode = false,
+    this.selectedMessageIndices = const <int>{},
   });
 
   final List<ChatUiMessage> messages;
@@ -48,6 +63,20 @@ class ChatArea extends StatefulWidget {
   final Future<void> Function() onLoadNewerDisplayWindow;
   final Future<void> Function() onShowLatestDisplayWindow;
   final ToggleFavoriteMessage onToggleFavoriteMessage;
+  final MessageIndexAction onDeleteMessage;
+  final MessageIndexBoolAction onDeleteMessagesFrom;
+  final MessageVariantAction onDeleteMessageVariant;
+  final ValueChanged<int> onRollbackToMessage;
+  final MessageSelectionAction onSelectMessageToEdit;
+  final MessageIndexAction onRegenerateMessage;
+  final ValueChanged<ChatUiMessage> onInsertSummary;
+  final MessageTimestampAction onCreateBranch;
+  final ValueChanged<ChatUiMessage> onReplyToMessage;
+  final ValueChanged<int> onToggleMultiSelectMode;
+  final ValueChanged<int> onToggleMessageSelection;
+  final Future<void> Function() onRefreshRequested;
+  final bool isMultiSelectMode;
+  final Set<int> selectedMessageIndices;
 
   @override
   State<ChatArea> createState() => _ChatAreaState();
@@ -116,13 +145,48 @@ class _ChatAreaState extends State<ChatArea> {
                           index < messageEndIndex) {
                         final message =
                             widget.messages[index - messageStartIndex];
-                        child = CursorStyleChatMessage(
-                          key: ValueKey<String>(message.stableKey),
-                          message: message,
-                          isStreaming: _isStreamingMessage(
-                            index - messageStartIndex,
+                        final messageIndex = index - messageStartIndex;
+                        final messageContent = _SelectableMessageFrame(
+                          selected: widget.selectedMessageIndices.contains(
+                            messageIndex,
+                          ),
+                          selectionMode: widget.isMultiSelectMode,
+                          child: CursorStyleChatMessage(
+                            key: ValueKey<String>(message.stableKey),
+                            message: message,
+                            isStreaming: _isStreamingMessage(messageIndex),
                           ),
                         );
+                        if (widget.isMultiSelectMode) {
+                          child = GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: () =>
+                                widget.onToggleMessageSelection(messageIndex),
+                            child: messageContent,
+                          );
+                        } else {
+                          child = MessageContextMenu(
+                            key: ValueKey<String>('menu-${message.stableKey}'),
+                            index: messageIndex,
+                            message: message,
+                            onToggleFavoriteMessage:
+                                widget.onToggleFavoriteMessage,
+                            onDeleteMessage: widget.onDeleteMessage,
+                            onDeleteMessagesFrom: widget.onDeleteMessagesFrom,
+                            onDeleteMessageVariant:
+                                widget.onDeleteMessageVariant,
+                            onRollbackToMessage: widget.onRollbackToMessage,
+                            onSelectMessageToEdit: widget.onSelectMessageToEdit,
+                            onRegenerateMessage: widget.onRegenerateMessage,
+                            onInsertSummary: widget.onInsertSummary,
+                            onCreateBranch: widget.onCreateBranch,
+                            onReplyToMessage: widget.onReplyToMessage,
+                            onToggleMultiSelectMode:
+                                widget.onToggleMultiSelectMode,
+                            onRefresh: widget.onRefreshRequested,
+                            child: messageContent,
+                          );
+                        }
                       } else if (widget.hasNewerDisplayHistory &&
                           index == messageEndIndex) {
                         child = _DisplayWindowAction(
@@ -500,6 +564,57 @@ class _DisplayWindowAction extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SelectableMessageFrame extends StatelessWidget {
+  const _SelectableMessageFrame({
+    required this.selected,
+    required this.selectionMode,
+    required this.child,
+  });
+
+  final bool selected;
+  final bool selectionMode;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!selectionMode && !selected) {
+      return child;
+    }
+    final colorScheme = Theme.of(context).colorScheme;
+    return Stack(
+      children: <Widget>[
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(
+            color: selected
+                ? colorScheme.primary.withValues(alpha: 0.08)
+                : Colors.transparent,
+            border: Border.all(
+              color: selected
+                  ? colorScheme.primary
+                  : colorScheme.outlineVariant.withValues(alpha: 0.45),
+              width: selected ? 1.5 : 1,
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: child,
+        ),
+        Positioned(
+          left: 6,
+          top: 6,
+          child: Icon(
+            selected ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 18,
+            color: selected
+                ? colorScheme.primary
+                : colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+          ),
+        ),
+      ],
     );
   }
 }

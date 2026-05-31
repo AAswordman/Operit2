@@ -10,7 +10,7 @@ mod render;
 mod theme;
 mod typewriter;
 
-use app::OperitTui;
+use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
 use approval::TuiApprovalBridge;
 use link_proxy_rs::tui_core;
 use operit_link::{
@@ -25,6 +25,9 @@ use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
+use operit_runtime::util::GithubReleaseUtil::{
+    FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -41,6 +44,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
     install_local_permission_requester(&mut core, approval_bridge.clone());
+    let startup_update_prompt = build_startup_update_prompt().await?;
     let startup_workspace_prompt_path = if shell_args.chatId.is_none() && !shell_args.resume {
         Some(
             std::env::current_dir()
@@ -56,6 +60,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         shell_args,
         initial_chat_id,
         approval_bridge,
+        startup_update_prompt,
         startup_workspace_prompt_path,
     )
     .await?;
@@ -76,8 +81,41 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
     let initial_chat_id = initialize_remote_chat(&mut core, &shell_args).await?;
     let approval_bridge = TuiApprovalBridge::new();
     start_remote_host_interaction_loop(host_interaction_session, approval_bridge.clone());
-    let mut tui = OperitTui::new(core, shell_args, initial_chat_id, approval_bridge, None).await?;
+    let mut tui = OperitTui::new(
+        core,
+        shell_args,
+        initial_chat_id,
+        approval_bridge,
+        None,
+        None,
+    )
+    .await?;
     tui.run().await
+}
+
+async fn build_startup_update_prompt() -> Result<Option<StartupUpdatePrompt>, String> {
+    let target = FullUpdateTarget::cliForCurrentHost()?;
+    let status =
+        match GithubReleaseUtil::checkForFullUpdate(env!("CARGO_PKG_VERSION"), target).await {
+            Ok(status) => status,
+            Err(message) => {
+                return Ok(Some(StartupUpdatePrompt {
+                    release_info: None,
+                    download_selected: false,
+                    download_state: FullUpdateDownloadState::CheckError { message },
+                    progress_rx: None,
+                }));
+            }
+        };
+    match status {
+        FullUpdateStatus::Available(release_info) => Ok(Some(StartupUpdatePrompt {
+            release_info: Some(release_info),
+            download_selected: true,
+            download_state: FullUpdateDownloadState::Ready,
+            progress_rx: None,
+        })),
+        FullUpdateStatus::UpToDate => Ok(None),
+    }
 }
 
 fn install_local_permission_requester(

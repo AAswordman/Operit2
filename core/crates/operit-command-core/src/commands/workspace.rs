@@ -351,7 +351,12 @@ fn execute_workspace_shell_command(
     let sessionName = workspace_command_session_name(workspacePath, command);
     let session = terminalHost
         .createOrGetSession(&sessionName, &terminalInfo.defaultType)
-        .map_err(|error| format!("failed to create workspace terminal session: {}", error.message))?;
+        .map_err(|error| {
+            format!(
+                "failed to create workspace terminal session: {}",
+                error.message
+            )
+        })?;
     let cdCommand = format!("cd {}", shell_quote(&workingDir));
     terminalHost
         .executeInSession(&session.sessionId, &cdCommand, 120000)
@@ -373,7 +378,11 @@ fn execute_workspace_shell_command(
     }
 }
 
-fn resolve_workspace_tool_parameter_value(name: &str, rawValue: &str, workspaceDir: &Path) -> String {
+fn resolve_workspace_tool_parameter_value(
+    name: &str,
+    rawValue: &str,
+    workspaceDir: &Path,
+) -> String {
     let workspacePath = workspaceDir.to_string_lossy();
     let expanded = rawValue
         .replace("$WORKSPACE", workspacePath.as_ref())
@@ -431,7 +440,10 @@ fn workspace_command_working_dir(workspacePath: &str, workingDir: &str) -> Strin
     if configuredDir.is_absolute() {
         return configuredDir.to_string_lossy().to_string();
     }
-    workspaceDir.join(configuredDir).to_string_lossy().to_string()
+    workspaceDir
+        .join(configuredDir)
+        .to_string_lossy()
+        .to_string()
 }
 
 fn workspace_command_session_name(workspacePath: &str, command: &CommandConfig) -> String {

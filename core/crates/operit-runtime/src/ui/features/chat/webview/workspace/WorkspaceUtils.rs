@@ -125,9 +125,10 @@ fn copyTemplateFiles(workspaceRelativePath: &str, templateName: &str) -> Result<
             continue;
         };
         matched = true;
+        let destinationRelativePath = templateDestinationPath(relativePath);
         storage
             .writeBytes(
-                &format!("{workspaceRelativePath}/{relativePath}"),
+                &format!("{workspaceRelativePath}/{destinationRelativePath}"),
                 asset.bytes,
             )
             .map_err(|error| error.to_string())?;
@@ -139,6 +140,21 @@ fn copyTemplateFiles(workspaceRelativePath: &str, templateName: &str) -> Result<
         ));
     }
     Ok(())
+}
+
+#[allow(non_snake_case)]
+fn templateDestinationPath(relativePath: &str) -> String {
+    relativePath
+        .split('/')
+        .map(|segment| {
+            if segment == "gitignore" {
+                ".gitignore"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[allow(non_snake_case)]

@@ -6,17 +6,28 @@ import 'dart:io';
 import 'WorkspaceHtmlPreviewServer.dart';
 
 class WorkspaceHtmlPreviewServerImpl implements WorkspaceHtmlPreviewServer {
-  WorkspaceHtmlPreviewServerImpl({required this.onReadWorkspaceFileBytes});
+  WorkspaceHtmlPreviewServerImpl({required this.onReadWorkspaceFileBytes}) {
+    _onReadWorkspaceFileBytes = onReadWorkspaceFileBytes;
+  }
+
+  static const int _workspacePreviewPort = 8093;
+  static HttpServer? _server;
+  static StreamSubscription<HttpRequest>? _subscription;
+  static WorkspaceHtmlFileReader? _onReadWorkspaceFileBytes;
 
   final WorkspaceHtmlFileReader onReadWorkspaceFileBytes;
-  HttpServer? _server;
-  StreamSubscription<HttpRequest>? _subscription;
 
   @override
   Future<Uri> start(String entryPath) async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final server =
+        _server ??
+        await HttpServer.bind(
+          InternetAddress.loopbackIPv4,
+          _workspacePreviewPort,
+          shared: true,
+        );
     _server = server;
-    _subscription = server.listen(_handleRequest);
+    _subscription ??= server.listen(_handleRequest);
     return Uri(
       scheme: 'http',
       host: server.address.address,
@@ -27,16 +38,14 @@ class WorkspaceHtmlPreviewServerImpl implements WorkspaceHtmlPreviewServer {
 
   @override
   Future<void> stop() async {
-    await _subscription?.cancel();
-    _subscription = null;
-    await _server?.close(force: true);
-    _server = null;
+    _onReadWorkspaceFileBytes = onReadWorkspaceFileBytes;
   }
 
-  Future<void> _handleRequest(HttpRequest request) async {
-    final relativePath = _decodeWorkspacePath(request.uri.path);
+  static Future<void> _handleRequest(HttpRequest request) async {
+    final relativePath = _workspaceRequestPath(request.uri.path);
     try {
-      final bytes = await onReadWorkspaceFileBytes(relativePath);
+      final reader = _onReadWorkspaceFileBytes!;
+      final bytes = await reader(relativePath);
       request.response.headers.contentType = _contentTypeForPath(relativePath);
       request.response.headers.set('Access-Control-Allow-Origin', '*');
       request.response.add(bytes);
@@ -48,6 +57,14 @@ class WorkspaceHtmlPreviewServerImpl implements WorkspaceHtmlPreviewServer {
       await request.response.close();
     }
   }
+}
+
+String _workspaceRequestPath(String path) {
+  final relativePath = _decodeWorkspacePath(path);
+  if (relativePath.isEmpty) {
+    return 'index.html';
+  }
+  return relativePath;
 }
 
 String _encodeWorkspacePath(String path) {

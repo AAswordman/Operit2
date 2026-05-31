@@ -95,22 +95,24 @@ impl MCPStarter {
             "Starting plugin: {pluginId}"
         )));
         let bridge = MCPBridge::getInstance(&self.context);
-        let serverName = normalizedServerName(&pluginInfo.name, pluginId);
+        let serverName = pluginId.to_string();
         let mut actualServiceName = serverName.clone();
-        let registerResult = if pluginInfo.r#type == "remote" {
-            let Some(endpoint) = pluginInfo.endpoint.clone() else {
-                statusCallback(StartStatus::Error(format!(
-                    "Remote service is missing endpoint: {pluginId}"
-                )));
-                return false;
-            };
+        let serverConfig = localServer.getMCPServer(pluginId);
+        let registerResult = if serverConfig
+            .as_ref()
+            .and_then(|config| config.url.as_ref())
+            .map(|url| !url.trim().is_empty())
+            .unwrap_or(false)
+        {
+            let serverConfig = serverConfig.clone().unwrap();
+            let endpoint = serverConfig.url.clone().unwrap();
             bridge.registerRemoteMcpService(
                 serverName.clone(),
                 endpoint,
-                pluginInfo.connectionType.clone(),
+                serverConfig.r#type.clone(),
                 Some(format!("Remote MCP Server: {pluginId}")),
-                pluginInfo.bearerToken.clone(),
-                pluginInfo.headers.clone().unwrap_or_default(),
+                None,
+                serverConfig.headers.clone(),
             )
         } else {
             let pluginConfig = localServer.getPluginConfig(pluginId);
@@ -195,8 +197,15 @@ impl MCPStarter {
             actualServiceName.clone(),
             MCPServerConfig {
                 name: actualServiceName.clone(),
-                endpoint: if pluginInfo.r#type == "remote" {
-                    pluginInfo.endpoint.unwrap_or_default()
+                endpoint: if serverConfig
+                    .as_ref()
+                    .and_then(|config| config.url.as_ref())
+                    .map(|url| !url.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    serverConfig
+                        .and_then(|config| config.url)
+                        .unwrap_or_default()
                 } else {
                     format!("mcp://plugin/{actualServiceName}")
                 },

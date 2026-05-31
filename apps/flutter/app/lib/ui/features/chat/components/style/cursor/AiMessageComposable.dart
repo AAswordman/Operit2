@@ -23,20 +23,20 @@ class AiMessageComposable extends StatefulWidget {
 
 class _AiMessageComposableState extends State<AiMessageComposable> {
   late StreamMarkdownRendererState _rendererState;
-  late String _messageKey;
+  late int _messageTimestamp;
 
   @override
   void initState() {
     super.initState();
-    _messageKey = widget.message.stableKey;
+    _messageTimestamp = widget.message.timestamp;
     _rendererState = StreamMarkdownRendererState();
   }
 
   @override
   void didUpdateWidget(covariant AiMessageComposable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.message.stableKey != _messageKey) {
-      _messageKey = widget.message.stableKey;
+    if (widget.message.timestamp != _messageTimestamp) {
+      _messageTimestamp = widget.message.timestamp;
       _rendererState = StreamMarkdownRendererState();
     }
   }
@@ -77,15 +77,17 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: StreamMarkdownRenderer(
-              content: widget.message.content,
-              contentStream: widget.message.contentStream,
-              isStreaming: widget.isStreaming,
-              textColor: colorScheme.onSurface,
-              backgroundColor: colorScheme.surface,
-              nodeGrouper: nodeGrouper,
-              rendererId: 'ai-message-${widget.message.stableKey}',
-              state: _rendererState,
+            child: KeyedSubtree(
+              key: ValueKey<int>(widget.message.timestamp),
+              child: StreamMarkdownRenderer(
+                content: widget.message.content,
+                contentStream: widget.message.contentStream,
+                isStreaming: widget.isStreaming,
+                textColor: colorScheme.onSurface,
+                backgroundColor: colorScheme.surface,
+                nodeGrouper: nodeGrouper,
+                state: _rendererState,
+              ),
             ),
           ),
         ],

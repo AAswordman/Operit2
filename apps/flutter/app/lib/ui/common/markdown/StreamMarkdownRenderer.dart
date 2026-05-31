@@ -63,9 +63,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   @override
   void initState() {
     super.initState();
-    _rendererId =
-        widget.rendererId ??
-        'flutter-stream-markdown-${identityHashCode(this)}';
+    _rendererId = _computeRendererId();
     _rendererState = widget.state ?? StreamMarkdownRendererState();
     _startCurrentContent();
   }
@@ -73,9 +71,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   @override
   void didUpdateWidget(covariant StreamMarkdownRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final nextRendererId =
-        widget.rendererId ??
-        'flutter-stream-markdown-${identityHashCode(this)}';
+    final nextRendererId = _computeRendererId();
     final stateChanged =
         widget.state != null && widget.state != oldWidget.state;
     if (stateChanged) {
@@ -88,6 +84,18 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       _rendererId = nextRendererId;
       _startCurrentContent();
     }
+  }
+
+  String _computeRendererId() {
+    final explicitRendererId = widget.rendererId;
+    if (explicitRendererId != null) {
+      return explicitRendererId;
+    }
+    final stream = widget.contentStream;
+    if (stream != null) {
+      return 'renderer-${identityHashCode(stream)}';
+    }
+    return 'static-renderer-${widget.content.hashCode}';
   }
 
   void _startCurrentContent() {
@@ -114,11 +122,12 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _rendererState.collectedContent.write(widget.content);
         _rendererState.streamParsingCompletedSuccessfully = true;
         _rendererState.renderNodes.addAll(cachedNodes);
-        for (final node in cachedNodes) {
-          _rendererState.nodeAnimationStates[_nodeKeyForStable(
-            _rendererId,
-            node,
-          )] = true;
+        for (var index = 0; index < cachedNodes.length; index++) {
+          _rendererState.nodeAnimationStates[_nodeKeyForIndex(
+                _rendererId,
+                index,
+              )] =
+              true;
         }
         return;
       }
@@ -146,8 +155,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _rendererState.streamParsingCompletedSuccessfully = true;
     _synchronizeRenderNodes(isStreaming: false);
     _staticMarkdownNodeCache.put(content, _rendererState.renderNodes);
-    for (final node in _rendererState.renderNodes) {
-      _rendererState.nodeAnimationStates[_nodeKeyForStable(_rendererId, node)] =
+    for (var index = 0; index < _rendererState.renderNodes.length; index++) {
+      _rendererState.nodeAnimationStates[_nodeKeyForIndex(_rendererId, index)] =
           true;
     }
     setState(() {});
@@ -186,7 +195,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       isStreaming: isStreaming,
     );
     final nextKeys = <String>{
-      for (final node in nextNodes) _nodeKeyForStable(_rendererId, node),
+      for (var index = 0; index < nextNodes.length; index++)
+        _nodeKeyForIndex(_rendererId, index),
     };
     final keysToReveal = <String>[];
 
@@ -254,7 +264,9 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         final inlineId = normalized.inlineId;
         final value = normalized.value;
         if (blockId == null || inlineId == null || value == null) {
-          throw StateError('markdownInlineChunk missing blockId, inlineId, or value');
+          throw StateError(
+            'markdownInlineChunk missing blockId, inlineId, or value',
+          );
         }
         _rendererState.eventBuilder.appendInline(
           blockId: blockId,
@@ -462,15 +474,32 @@ class _MarkdownNodeColumn extends StatelessWidget {
       if (states == null) {
         return true;
       }
-      final node = nodes[index];
-      final key = _nodeKeyForStable(rendererId, node);
+      final key = _nodeKeyForIndex(rendererId, index);
       return states.containsKey(key) ? states[key] == true : true;
+    }
+
+    Widget renderXmlContent({
+      required String xmlContent,
+      required bool isStreaming,
+      required Color textColor,
+      Stream<String>? xmlStream,
+      String? renderInstanceKey,
+    }) {
+      return CustomXmlRenderer(
+        key: renderInstanceKey == null
+            ? null
+            : ValueKey<String>(renderInstanceKey),
+        xmlContent: xmlContent,
+        isStreaming: isStreaming,
+        textColor: textColor,
+        xmlStream: xmlStream,
+      );
     }
 
     Widget renderNodeAt(int index) {
       final node = nodes[index];
       if (node.type == MarkdownNodeType.xmlBlock) {
-        return CustomXmlRenderer(
+        return renderXmlContent(
           xmlContent: node.content,
           isStreaming: node.isStreaming,
           textColor: textColor,
@@ -478,8 +507,8 @@ class _MarkdownNodeColumn extends StatelessWidget {
         );
       }
       return CanvasMarkdownNodeRenderer(
-        key: ValueKey<String>(_nodeKeyForStable(rendererId, node)),
-        nodeKey: _nodeKeyForStable(rendererId, node),
+        key: ValueKey<String>(_nodeKeyForIndex(rendererId, index)),
+        nodeKey: _nodeKeyForIndex(rendererId, index),
         node: node,
         textColor: textColor,
         backgroundColor: backgroundColor,
@@ -513,15 +542,22 @@ class _MarkdownNodeColumn extends StatelessWidget {
               isVisible: isVisibleAt(item.startIndex),
               isLastNode: item.endIndexInclusive == lastRenderableIndex,
               textColor: textColor,
-              renderNodeAt: renderNodeAt,
+              xmlRenderer: renderXmlContent,
+              xmlStreamResolver: (index) => xmlNodeStreams[index],
+              onLinkClick: onLinkClick,
+              fillMaxWidth: true,
+              fontSize: 14,
             ),
       ],
     );
   }
 }
 
-String _nodeKeyForStable(String rendererId, MarkdownNodeStable node) {
-  return '$rendererId-${node.stableKey}';
+String _nodeKeyForIndex(String rendererId, int index) {
+  if (rendererId.startsWith('static-')) {
+    return 'static-node-$rendererId-$index';
+  }
+  return 'node-$rendererId-$index';
 }
 
 class _AnimatedMarkdownNode extends StatefulWidget {
@@ -591,8 +627,7 @@ bool _canTypewriteNode(MarkdownNodeType type) {
   return type == MarkdownNodeType.plainText ||
       type == MarkdownNodeType.header ||
       type == MarkdownNodeType.orderedList ||
-      type == MarkdownNodeType.unorderedList ||
-      type == MarkdownNodeType.blockQuote;
+      type == MarkdownNodeType.unorderedList;
 }
 
 int _typewriterTextLength(String text) {

@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../../util/ChatMarkupRegex.dart';
@@ -182,15 +184,21 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
     required bool isVisible,
     required bool isLastNode,
     required Color textColor,
-    required Widget Function(int index) renderNodeAt,
+    required MarkdownXmlRenderer xmlRenderer,
+    required Stream<String>? Function(int index) xmlStreamResolver,
+    required void Function(String url)? onLinkClick,
+    required bool fillMaxWidth,
+    required double fontSize,
   }) {
     return _ThinkToolsXmlGroup(
+      key: ValueKey<String>('group-$rendererId-${group.stableKey}'),
       group: group,
       nodes: nodes,
       rendererId: rendererId,
       isVisible: isVisible,
       textColor: textColor,
-      renderNodeAt: renderNodeAt,
+      xmlRenderer: xmlRenderer,
+      xmlStreamResolver: xmlStreamResolver,
       forceExpandGroups: forceExpandGroups,
       toolCollapseMode: toolCollapseMode,
     );
@@ -199,12 +207,14 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
 
 class _ThinkToolsXmlGroup extends StatefulWidget {
   const _ThinkToolsXmlGroup({
+    super.key,
     required this.group,
     required this.nodes,
     required this.rendererId,
     required this.isVisible,
     required this.textColor,
-    required this.renderNodeAt,
+    required this.xmlRenderer,
+    required this.xmlStreamResolver,
     required this.forceExpandGroups,
     required this.toolCollapseMode,
   });
@@ -214,7 +224,8 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
   final String rendererId;
   final bool isVisible;
   final Color textColor;
-  final Widget Function(int index) renderNodeAt;
+  final MarkdownXmlRenderer xmlRenderer;
+  final Stream<String>? Function(int index) xmlStreamResolver;
   final bool forceExpandGroups;
   final ToolCollapseMode toolCollapseMode;
 
@@ -223,6 +234,8 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
 }
 
 class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
+  String? _stateKey;
+  bool _expanded = false;
   bool? _userOverride;
   final Set<String> _appearedItemKeys = <String>{};
   final Set<String> _visibleItemKeys = <String>{};
@@ -247,8 +260,10 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
         ? 'Tools ($toolCount)'
         : 'Thinking & tools ($toolCount)';
 
-    final hasLiveXmlStream = slice.any(
-      (node) => node.type == MarkdownNodeType.xmlBlock && node.isStreaming,
+    final hasLiveXmlStream = List<int>.generate(slice.length, (idx) => idx).any(
+      (idx) =>
+          slice[idx].type == MarkdownNodeType.xmlBlock &&
+          widget.xmlStreamResolver(widget.group.startIndex + idx) != null,
     );
     final tailStartIndex = (widget.group.endIndexInclusive + 1).clamp(
       0,
@@ -260,11 +275,21 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
               .sublist(tailStartIndex)
               .any((node) => !_isConformingTailNode(node));
     final shouldAutoExpand = hasLiveXmlStream && !hasNonConformingAfterGroup;
-    final expanded =
-        widget.forceExpandGroups || (_userOverride ?? shouldAutoExpand);
+    final nextStateKey =
+        '${widget.rendererId}-${widget.group.stableKey}-${widget.forceExpandGroups}';
+    if (_stateKey != nextStateKey) {
+      _stateKey = nextStateKey;
+      _userOverride = null;
+      _expanded = widget.forceExpandGroups || shouldAutoExpand;
+    }
+    if (widget.forceExpandGroups) {
+      _expanded = true;
+    } else if (_userOverride == null) {
+      _expanded = shouldAutoExpand;
+    }
 
-    return AnimatedOpacity(
-      opacity: widget.forceExpandGroups || widget.isVisible ? 1 : 0,
+    return _ThinkToolsGroupAlpha(
+      visible: widget.forceExpandGroups || widget.isVisible,
       duration: widget.forceExpandGroups
           ? _instantDuration
           : _groupFadeDuration,
@@ -276,7 +301,9 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
             InkWell(
               onTap: () {
                 setState(() {
-                  _userOverride = !expanded;
+                  final nextExpanded = !_expanded;
+                  _expanded = nextExpanded;
+                  _userOverride = nextExpanded;
                 });
               },
               borderRadius: BorderRadius.circular(6),
@@ -285,7 +312,7 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                 child: Row(
                   children: <Widget>[
                     AnimatedRotation(
-                      turns: expanded ? 0.25 : 0,
+                      turns: _expanded ? 0.25 : 0,
                       duration: widget.forceExpandGroups
                           ? _instantDuration
                           : _arrowRotationDuration,
@@ -307,33 +334,22 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                 ),
               ),
             ),
-            AnimatedSwitcher(
+            _ThinkToolsContentVisibility(
+              visible: _expanded,
               duration: widget.forceExpandGroups
                   ? _instantDuration
                   : _contentFadeDuration,
-              switchInCurve: Curves.linear,
-              switchOutCurve: Curves.linear,
-              transitionBuilder: (child, animation) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: expanded
-                  ? Padding(
-                      key: const ValueKey<String>('expanded'),
-                      padding: const EdgeInsets.only(
-                        top: 4,
-                        bottom: 8,
-                        left: 24,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          for (var idx = 0; idx < slice.length; idx++)
-                            if (slice[idx].type == MarkdownNodeType.xmlBlock)
-                              _renderXmlItem(widget.group.startIndex + idx),
-                        ],
-                      ),
-                    )
-                  : const SizedBox.shrink(key: ValueKey<String>('collapsed')),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 8, left: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (var idx = 0; idx < slice.length; idx++)
+                      if (slice[idx].type == MarkdownNodeType.xmlBlock)
+                        _renderXmlItem(widget.group.startIndex + idx),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -342,13 +358,20 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   }
 
   Widget _renderXmlItem(int absoluteIndex) {
-    final child = widget.renderNodeAt(absoluteIndex);
+    final node = widget.nodes[absoluteIndex];
+    final itemKey =
+        'think-tools-${widget.rendererId}-${widget.group.stableKey}-$absoluteIndex';
+    final child = widget.xmlRenderer(
+      xmlContent: node.content,
+      isStreaming: node.isStreaming,
+      textColor: widget.textColor,
+      xmlStream: widget.xmlStreamResolver(absoluteIndex),
+      renderInstanceKey: itemKey,
+    );
     if (widget.forceExpandGroups) {
       return child;
     }
 
-    final itemKey =
-        'think-tools-${widget.rendererId}-${widget.group.stableKey}-$absoluteIndex';
     final isVisible = _isXmlItemVisible(itemKey);
     return AnimatedOpacity(
       key: ValueKey<String>(itemKey),
@@ -380,23 +403,6 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   bool _isConformingTailNode(MarkdownNodeStable node) {
     switch (node.type) {
       case MarkdownNodeType.plainText:
-      case MarkdownNodeType.header:
-      case MarkdownNodeType.blockQuote:
-      case MarkdownNodeType.codeBlock:
-      case MarkdownNodeType.orderedList:
-      case MarkdownNodeType.unorderedList:
-      case MarkdownNodeType.horizontalRule:
-      case MarkdownNodeType.blockLatex:
-      case MarkdownNodeType.table:
-      case MarkdownNodeType.image:
-      case MarkdownNodeType.bold:
-      case MarkdownNodeType.italic:
-      case MarkdownNodeType.inlineCode:
-      case MarkdownNodeType.link:
-      case MarkdownNodeType.strikethrough:
-      case MarkdownNodeType.underline:
-      case MarkdownNodeType.inlineLatex:
-      case MarkdownNodeType.htmlBreak:
         return node.content.trim().isEmpty;
       case MarkdownNodeType.xmlBlock:
         final tag = _extractXmlTagName(node.content);
@@ -417,7 +423,143 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
           default:
             return false;
         }
+      default:
+        return false;
     }
+  }
+}
+
+class _ThinkToolsContentVisibility extends StatefulWidget {
+  const _ThinkToolsContentVisibility({
+    required this.visible,
+    required this.duration,
+    required this.child,
+  });
+
+  final bool visible;
+  final Duration duration;
+  final Widget child;
+
+  @override
+  State<_ThinkToolsContentVisibility> createState() =>
+      _ThinkToolsContentVisibilityState();
+}
+
+class _ThinkToolsContentVisibilityState
+    extends State<_ThinkToolsContentVisibility>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _alpha;
+  late bool _present;
+
+  @override
+  void initState() {
+    super.initState();
+    _present = widget.visible;
+    _controller =
+        AnimationController(
+          vsync: this,
+          duration: widget.duration,
+          value: widget.visible ? 1 : 0,
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.dismissed && _present) {
+            setState(() {
+              _present = false;
+            });
+          }
+        });
+    _alpha = CurvedAnimation(parent: _controller, curve: Curves.linear);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ThinkToolsContentVisibility oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _controller.duration = widget.duration;
+    if (oldWidget.visible == widget.visible) {
+      return;
+    }
+    if (widget.visible) {
+      setState(() {
+        _present = true;
+      });
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_present) {
+      return const SizedBox.shrink();
+    }
+    return FadeTransition(opacity: _alpha, child: widget.child);
+  }
+}
+
+class _ThinkToolsGroupAlpha extends StatefulWidget {
+  const _ThinkToolsGroupAlpha({
+    required this.visible,
+    required this.duration,
+    required this.child,
+  });
+
+  final bool visible;
+  final Duration duration;
+  final Widget child;
+
+  @override
+  State<_ThinkToolsGroupAlpha> createState() => _ThinkToolsGroupAlphaState();
+}
+
+class _ThinkToolsGroupAlphaState extends State<_ThinkToolsGroupAlpha>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _alpha;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+      value: widget.visible ? 1 : 0,
+    );
+    _alpha = CurvedAnimation(parent: _controller, curve: Curves.linear);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ThinkToolsGroupAlpha oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _controller.duration = widget.duration;
+    if (oldWidget.visible == widget.visible) {
+      return;
+    }
+    if (widget.visible) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _alpha,
+      child: RepaintBoundary(child: widget.child),
+    );
   }
 }
 

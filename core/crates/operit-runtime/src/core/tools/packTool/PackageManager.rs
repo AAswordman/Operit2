@@ -13,7 +13,7 @@ use crate::core::tools::packTool::PackageManagerToolPkgFacade::PackageManagerToo
 use crate::core::tools::packTool::ToolPkgLoader::ToolPkgLoader;
 use crate::core::tools::packTool::ToolPkgManager::{ToolPkgManager, ToolPkgRuntimeChangeListener};
 use crate::core::tools::packTool::ToolPkgParser::{
-    ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSubpackageRuntime,
+    ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::ToolPackage::{
@@ -261,6 +261,38 @@ impl PackageManager {
             return format!("Successfully disabled package: {}", normalizedPackageName);
         }
         format!("Package is already disabled: {}", normalizedPackageName)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn deletePackage(&mut self, packageName: &str) -> bool {
+        let normalizedPackageName = self.normalizePackageName(packageName);
+
+        if self
+            .toolPkgManager
+            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+            .is_some()
+        {
+            self.disablePackage(&normalizedPackageName);
+            return true;
+        }
+
+        let packageFile = self.findPackageFile(&normalizedPackageName);
+
+        if packageFile.as_ref().is_none_or(|file| !file.exists()) {
+            self.disablePackage(&normalizedPackageName);
+            self.removeFromCachesAfterDelete(&normalizedPackageName);
+            return true;
+        }
+
+        let packageFile = packageFile.expect("checked package file presence");
+        match fs::remove_file(&packageFile) {
+            Ok(_) => {
+                self.disablePackage(&normalizedPackageName);
+                self.removeFromCachesAfterDelete(&normalizedPackageName);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -829,6 +861,63 @@ impl PackageManager {
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey(ENABLED_PACKAGES_KEY), updatedJson);
         })
+    }
+
+    #[allow(non_snake_case)]
+    fn removeFromCachesAfterDelete(&mut self, packageName: &str) {
+        if let Some(container) = self.toolPkgManager.removeToolPkgContainer(packageName) {
+            self.availablePackages.remove(packageName);
+            for subpackage in container.subpackages {
+                self.availablePackages.remove(&subpackage.packageName);
+            }
+            return;
+        }
+
+        self.availablePackages.remove(packageName);
+    }
+
+    #[allow(non_snake_case)]
+    fn findPackageFile(&mut self, packageName: &str) -> Option<PathBuf> {
+        let normalizedPackageName = self.normalizePackageName(packageName);
+        let packagesDir = self.storePaths.packages_dir();
+        if !packagesDir.exists() {
+            return None;
+        }
+
+        if let Some(containerRuntime) = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedPackageName)
+        {
+            if containerRuntime.sourceType == ToolPkgSourceType::EXTERNAL {
+                let candidate = PathBuf::from(containerRuntime.sourcePath);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        let jsFile = packagesDir.join(format!("{}.js", normalizedPackageName));
+        if jsFile.exists() {
+            return Some(jsFile);
+        }
+
+        let entries = fs::read_dir(&packagesDir).ok()?;
+        for entry in entries.flatten() {
+            let file = entry.path();
+            if !file.is_file() {
+                continue;
+            }
+            let lowerName = file.to_string_lossy().to_ascii_lowercase();
+            if lowerName.ends_with(".js") {
+                if let Some(loadedPackage) = self.loadPackageFromJsFile(&file) {
+                    if loadedPackage.name == normalizedPackageName {
+                        return Some(file);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     #[allow(non_snake_case)]

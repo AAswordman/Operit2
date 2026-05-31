@@ -5,7 +5,6 @@ import 'downloads/WorkspaceBrowserDownloadStore.dart';
 import 'history/WorkspaceBrowserHistoryStore.dart';
 import '../../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
-import 'tabs/WorkspaceBrowserTabStore.dart';
 import 'userscripts/WorkspaceUserscriptRuntime.dart';
 import 'userscripts/WorkspaceUserscriptStore.dart';
 
@@ -16,7 +15,6 @@ class WorkspaceBrowserStores {
     userscripts = WorkspaceUserscriptStore(runtimeStorage: runtimeStorage);
     history = WorkspaceBrowserHistoryStore(runtimeStorage: runtimeStorage);
     bookmarks = WorkspaceBrowserBookmarkStore(runtimeStorage: runtimeStorage);
-    tabs = WorkspaceBrowserTabStore(runtimeStorage: runtimeStorage);
     downloads = WorkspaceBrowserDownloadStore(runtimeStorage: runtimeStorage);
     userscriptRuntime = WorkspaceUserscriptRuntime(store: userscripts);
   }
@@ -24,7 +22,6 @@ class WorkspaceBrowserStores {
   final GeneratedCoreProxyClients _clients;
   late final WorkspaceBrowserHistoryStore history;
   late final WorkspaceBrowserBookmarkStore bookmarks;
-  late final WorkspaceBrowserTabStore tabs;
   late final WorkspaceBrowserDownloadStore downloads;
   late final WorkspaceUserscriptStore userscripts;
   late final WorkspaceUserscriptRuntime userscriptRuntime;

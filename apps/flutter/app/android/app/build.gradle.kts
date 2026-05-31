@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,10 +8,27 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+localProperties.load(FileInputStream(localPropertiesFile))
+
+fun requiredLocalProperty(name: String): String =
+    localProperties.getProperty(name)
+        ?: throw GradleException("Missing Android release signing property: $name")
+
 android {
-    namespace = "com.operit.operit2"
+    namespace = "com.ai.assistance.operit2"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(requiredLocalProperty("RELEASE_STORE_FILE"))
+            storePassword = requiredLocalProperty("RELEASE_STORE_PASSWORD")
+            keyAlias = requiredLocalProperty("RELEASE_KEY_ALIAS")
+            keyPassword = requiredLocalProperty("RELEASE_KEY_PASSWORD")
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -21,23 +41,18 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.operit.operit2"
+        applicationId = "com.ai.assistance.operit2"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
-        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
@@ -65,6 +80,7 @@ val operitLibclangDir = operitRepoRoot
 fun File.clangPath(): String = absolutePath.replace('\\', '/')
 val operitRustTargets = listOf(
     Triple("arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
+    Triple("armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
     Triple("x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
 )
 
@@ -89,7 +105,12 @@ val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarge
             .resolve("prebuilt")
             .resolve("windows-x86_64")
             .resolve("bin")
-        val linker = ndkToolchain.resolve("${clangPrefix}${apiLevel}-clang.cmd")
+        val linkerPrefix = if (rustTarget == "armv7-linux-androideabi") {
+            "armv7a-linux-androideabi"
+        } else {
+            clangPrefix
+        }
+        val linker = ndkToolchain.resolve("${linkerPrefix}${apiLevel}-clang.cmd")
         val ar = ndkToolchain.resolve("llvm-ar.exe")
         val clangResourceDir = ndkToolchain
             .parentFile

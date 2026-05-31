@@ -15,8 +15,7 @@ use operit_host_windows_native::{
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
-    WindowsTerminalHost as NativeTerminalHost,
-    WindowsWebVisitHost as NativeWebVisitHost,
+    WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
@@ -45,10 +44,8 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     }
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
-        let output = operit_command_core::run_core_command_with_context(
-            commandContext.clone(),
-            &args,
-        )?;
+        let output =
+            operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
         Ok(output.stdout)
     })))
 }

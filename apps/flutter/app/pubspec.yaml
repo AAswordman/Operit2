@@ -49,6 +49,7 @@ dependencies:
   xml: ^6.6.1
   webview_all: ^1.0.3
   url_launcher: ^6.3.2
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:
@@ -77,7 +78,6 @@ flutter:
   assets:
     - android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
     - assets/images/operit_avatar.png
-    - assets/images/operit_logo_transparent.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

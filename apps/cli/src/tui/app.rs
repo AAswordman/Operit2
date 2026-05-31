@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Stdout};
+use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crossterm::event::{
@@ -28,6 +30,9 @@ use operit_runtime::data::model::ModelConfigData::{
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_runtime::util::AppLogger::AppLogger;
+use operit_runtime::util::GithubReleaseUtil::{
+    FullUpdateProgressEvent, FullUpdateStage, ReleaseInfo,
+};
 use serde::Deserialize;
 
 use super::approval::TuiApprovalBridge;
@@ -75,6 +80,7 @@ pub(super) struct OperitTui {
         HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) show_help: bool,
+    pub(super) startup_update_prompt: Option<StartupUpdatePrompt>,
     pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
     pub(super) should_quit: bool,
 }
@@ -102,6 +108,41 @@ pub(super) struct ModelChoiceItem {
 pub(super) struct StartupWorkspacePrompt {
     pub(super) path: String,
     pub(super) accept_selected: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct StartupUpdatePrompt {
+    pub(super) release_info: Option<ReleaseInfo>,
+    pub(super) download_selected: bool,
+    pub(super) download_state: FullUpdateDownloadState,
+    pub(super) progress_rx: Option<mpsc::Receiver<FullUpdateDownloadMessage>>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum FullUpdateDownloadState {
+    Ready,
+    Downloading {
+        stage: FullUpdateStage,
+        message: String,
+        read_bytes: u64,
+        total_bytes: u64,
+        speed_bytes_per_sec: u64,
+    },
+    Complete {
+        package_path: PathBuf,
+    },
+    Error {
+        message: String,
+    },
+    CheckError {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum FullUpdateDownloadMessage {
+    Progress(FullUpdateProgressEvent),
+    Complete(Result<PathBuf, String>),
 }
 
 #[derive(Clone, Debug)]
@@ -139,6 +180,7 @@ impl OperitTui {
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
         approval_bridge: TuiApprovalBridge,
+        startup_update_prompt: Option<StartupUpdatePrompt>,
         startup_workspace_prompt_path: Option<String>,
     ) -> Result<Self, String> {
         let chat_histories = core
@@ -228,6 +270,7 @@ impl OperitTui {
             response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
             show_help: false,
+            startup_update_prompt,
             startup_workspace_prompt: startup_workspace_prompt_path.map(|path| {
                 StartupWorkspacePrompt {
                     path,
@@ -317,6 +360,11 @@ impl OperitTui {
         }
 
         self.ctrl_c_pending = false;
+
+        if self.startup_update_prompt.is_some() {
+            self.handle_startup_update_prompt_key(key).await?;
+            return Ok(());
+        }
 
         if self.startup_workspace_prompt.is_some() {
             self.handle_startup_workspace_prompt_key(key).await?;
@@ -554,6 +602,102 @@ impl OperitTui {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    async fn handle_startup_update_prompt_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let state = self
+            .startup_update_prompt
+            .as_ref()
+            .map(|prompt| prompt.download_state.clone());
+        match state {
+            Some(FullUpdateDownloadState::Downloading { .. }) => return Ok(()),
+            Some(FullUpdateDownloadState::Complete { .. })
+            | Some(FullUpdateDownloadState::Error { .. })
+            | Some(FullUpdateDownloadState::CheckError { .. }) => {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc | KeyCode::Char('1') => {
+                        self.startup_update_prompt = None;
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+            Some(FullUpdateDownloadState::Ready) => {}
+            None => return Ok(()),
+        }
+
+        match key.code {
+            KeyCode::Left | KeyCode::Up => {
+                if let Some(prompt) = self.startup_update_prompt.as_mut() {
+                    prompt.download_selected = true;
+                }
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                if let Some(prompt) = self.startup_update_prompt.as_mut() {
+                    prompt.download_selected = false;
+                }
+            }
+            KeyCode::Char('1') | KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.start_full_update_download()?;
+            }
+            KeyCode::Char('2') | KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Esc => {
+                self.startup_update_prompt = None;
+                self.status_message = "update skipped".to_string();
+            }
+            KeyCode::Enter => {
+                let Some(download_selected) = self
+                    .startup_update_prompt
+                    .as_ref()
+                    .map(|prompt| prompt.download_selected)
+                else {
+                    return Ok(());
+                };
+                if download_selected {
+                    self.start_full_update_download()?;
+                } else {
+                    self.startup_update_prompt = None;
+                    self.status_message = "update skipped".to_string();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn start_full_update_download(&mut self) -> Result<(), String> {
+        let Some(prompt) = self.startup_update_prompt.as_mut() else {
+            return Ok(());
+        };
+        let Some(release_info) = prompt.release_info.as_ref() else {
+            return Ok(());
+        };
+        let (tx, rx) = mpsc::channel::<FullUpdateDownloadMessage>();
+        let package_url = release_info.downloadUrl.clone();
+        let package_file_name = release_info.assetName.clone();
+        let work_dir = std::env::temp_dir().join("operit2").join("full_update");
+        prompt.progress_rx = Some(rx);
+        prompt.download_state = FullUpdateDownloadState::Downloading {
+            stage: FullUpdateStage::DownloadingPackage,
+            message: "Downloading full update package".to_string(),
+            read_bytes: 0,
+            total_bytes: 0,
+            speed_bytes_per_sec: 0,
+        };
+        self.status_message = "downloading full update package".to_string();
+        tokio::spawn(async move {
+            let progress_tx = tx.clone();
+            let result = operit_runtime::util::GithubReleaseUtil::GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
+                package_url,
+                package_file_name,
+                work_dir,
+                move |event| {
+                    let _ = progress_tx.send(FullUpdateDownloadMessage::Progress(event));
+                },
+            )
+            .await;
+            let _ = tx.send(FullUpdateDownloadMessage::Complete(result));
+        });
         Ok(())
     }
 
@@ -1378,6 +1522,7 @@ impl OperitTui {
     }
 
     fn apply_pushed_events(&mut self) {
+        self.apply_full_update_download_events();
         for event in self.core.drainEvents() {
             match event.propertyName.as_str() {
                 "currentChatIdFlow" => {
@@ -1425,6 +1570,73 @@ impl OperitTui {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn apply_full_update_download_events(&mut self) {
+        let Some(prompt) = self.startup_update_prompt.as_mut() else {
+            return;
+        };
+        let Some(rx) = prompt.progress_rx.as_ref() else {
+            return;
+        };
+        while let Ok(message) = rx.try_recv() {
+            match message {
+                FullUpdateDownloadMessage::Progress(event) => match event {
+                    FullUpdateProgressEvent::StageChanged { stage, message } => {
+                        let current = match prompt.download_state.clone() {
+                            FullUpdateDownloadState::Downloading {
+                                read_bytes,
+                                total_bytes,
+                                speed_bytes_per_sec,
+                                ..
+                            } => (read_bytes, total_bytes, speed_bytes_per_sec),
+                            _ => (0, 0, 0),
+                        };
+                        prompt.download_state = FullUpdateDownloadState::Downloading {
+                            stage,
+                            message,
+                            read_bytes: current.0,
+                            total_bytes: current.1,
+                            speed_bytes_per_sec: current.2,
+                        };
+                    }
+                    FullUpdateProgressEvent::DownloadProgress {
+                        readBytes,
+                        totalBytes,
+                        speedBytesPerSec,
+                    } => {
+                        let current = match prompt.download_state.clone() {
+                            FullUpdateDownloadState::Downloading { stage, message, .. } => {
+                                (stage, message)
+                            }
+                            _ => (
+                                FullUpdateStage::DownloadingPackage,
+                                "Downloading full update package".to_string(),
+                            ),
+                        };
+                        prompt.download_state = FullUpdateDownloadState::Downloading {
+                            stage: current.0,
+                            message: current.1,
+                            read_bytes: readBytes,
+                            total_bytes: totalBytes,
+                            speed_bytes_per_sec: speedBytesPerSec,
+                        };
+                    }
+                },
+                FullUpdateDownloadMessage::Complete(Ok(package_path)) => {
+                    prompt.download_state = FullUpdateDownloadState::Complete { package_path };
+                    prompt.progress_rx = None;
+                    self.status_message = "full update package ready".to_string();
+                    break;
+                }
+                FullUpdateDownloadMessage::Complete(Err(message)) => {
+                    prompt.download_state = FullUpdateDownloadState::Error { message };
+                    prompt.progress_rx = None;
+                    self.status_message = "full update failed".to_string();
+                    break;
+                }
             }
         }
     }

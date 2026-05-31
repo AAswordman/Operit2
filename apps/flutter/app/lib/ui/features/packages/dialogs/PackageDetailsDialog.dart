@@ -132,11 +132,15 @@ class PackageDetailsDialog extends StatelessWidget {
     required this.package,
     required this.enabled,
     required this.onEnabledChanged,
+    required this.onDeletePackage,
+    required this.onRunTool,
   });
 
   final core_proxy.ToolPackage package;
   final bool enabled;
   final ValueChanged<bool> onEnabledChanged;
+  final VoidCallback onDeletePackage;
+  final ValueChanged<core_proxy.PackageTool> onRunTool;
 
   @override
   Widget build(BuildContext context) {
@@ -204,7 +208,8 @@ class PackageDetailsDialog extends StatelessWidget {
               if (package.tools.isEmpty)
                 _EmptyCard(message: l10n.packageNoTools)
               else
-                for (final tool in package.tools) _ToolTile(tool: tool),
+                for (final tool in package.tools)
+                  _ToolTile(tool: tool, onRun: () => onRunTool(tool)),
             ],
           ),
         ),
@@ -214,6 +219,15 @@ class PackageDetailsDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.close),
         ),
+        if (!package.isBuiltIn)
+          OutlinedButton.icon(
+            onPressed: onDeletePackage,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('删除'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+          ),
         FilledButton.icon(
           onPressed: () => onEnabledChanged(!enabled),
           icon: Icon(enabled ? Icons.toggle_off_outlined : Icons.toggle_on),
@@ -225,9 +239,10 @@ class PackageDetailsDialog extends StatelessWidget {
 }
 
 class _ToolTile extends StatelessWidget {
-  const _ToolTile({required this.tool});
+  const _ToolTile({required this.tool, required this.onRun});
 
   final core_proxy.PackageTool tool;
+  final VoidCallback onRun;
 
   @override
   Widget build(BuildContext context) {
@@ -235,6 +250,15 @@ class _ToolTile extends StatelessWidget {
       title: tool.name,
       subtitle: localizedText(tool.description),
       icon: Icons.build_outlined,
+      trailing: FilledButton.tonalIcon(
+        onPressed: onRun,
+        icon: const Icon(Icons.play_arrow, size: 18),
+        label: const Text('运行'),
+        style: FilledButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        ),
+      ),
       footer: tool.parameters.isEmpty
           ? null
           : Wrap(

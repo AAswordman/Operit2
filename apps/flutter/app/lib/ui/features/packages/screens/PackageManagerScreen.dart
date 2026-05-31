@@ -10,6 +10,8 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/EmptyState.dart';
 import '../components/PackageTab.dart';
 import '../dialogs/PackageDetailsDialog.dart';
+import '../dialogs/PackageImportDialog.dart';
+import '../dialogs/PackageToolRunDialog.dart';
 import '../model/PackageManagerModels.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'MCPConfigScreen.dart';
@@ -31,10 +33,12 @@ class PackageManagerScreen extends StatefulWidget {
 class _PackageManagerScreenState extends State<PackageManagerScreen> {
   PackageTab _selectedTab = PackageTab.plugins;
   bool _loading = true;
+  bool _tabPreparing = false;
   bool _searchFiltering = false;
   String? _errorMessage;
   String _searchInput = '';
   String _searchQuery = '';
+  int _contentReloadNonce = 0;
   PackageManagerSnapshot _snapshot = PackageManagerSnapshot.empty();
   Timer? _searchDebounce;
 
@@ -149,6 +153,52 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  Future<void> _deletePackage(core_proxy.ToolPackage package) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除包'),
+          content: Text('确定删除 ${toolPackageDisplayName(package)}？此操作不可撤销。'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      final deleted = await _packageManager.deletePackage(
+        packageName: package.name,
+      );
+      await _loadSnapshot();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(deleted ? '已删除 ${package.name}' : '删除失败：${package.name}');
+    } catch (error, stackTrace) {
+      debugPrint('Failed to delete package: $error\n$stackTrace');
+      await _loadSnapshot();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(error.toString());
+    }
+  }
+
   void _setOptimisticPluginEnabled(String packageName, bool enabled) {
     setState(() {
       final next = Set<String>.from(_snapshot.enabledPluginContainerNames);
@@ -191,13 +241,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             _PackageTabBar(
               selectedTab: _selectedTab,
               onTabSelected: (tab) {
+                if (tab == _selectedTab) {
+                  return;
+                }
                 setState(() {
                   _selectedTab = tab;
+                  _tabPreparing = _shouldPrepareTab(tab);
                   _searchInput = '';
                   _searchQuery = '';
                   _searchFiltering = false;
                   _searchDebounce?.cancel();
                 });
+                _completeTabPreparation(tab);
               },
             ),
             _PackageSearchBar(
@@ -235,6 +290,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         ),
       );
     }
+    if (_tabPreparing && _shouldPrepareTab(_selectedTab)) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
     return RefreshIndicator(
       onRefresh: _loadSnapshot,
@@ -259,10 +317,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           onPackageEnabledChanged: _setPackageEnabled,
         ),
         PackageTab.skills => SkillConfigScreen(
+          key: ValueKey<String>('skills-$_contentReloadNonce'),
           clients: widget.clients,
           searchQuery: _searchQuery,
         ),
         PackageTab.mcp => MCPConfigScreen(
+          key: ValueKey<String>('mcp-$_contentReloadNonce'),
           clients: widget.clients,
           searchQuery: _searchQuery,
         ),
@@ -283,9 +343,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         const SizedBox(height: 12),
         FloatingActionButton(
           heroTag: 'package-manager-import',
-          onPressed: () {
-            _showSnackBar('导入入口将在文件选择桥接补齐后对齐');
-          },
+          onPressed: _showImportDialog,
           tooltip: '导入',
           child: const Icon(Icons.add),
         ),
@@ -315,6 +373,24 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       setState(() {
         _searchQuery = _searchInput.trim();
         _searchFiltering = false;
+      });
+    });
+  }
+
+  bool _shouldPrepareTab(PackageTab tab) {
+    return tab == PackageTab.plugins || tab == PackageTab.packages;
+  }
+
+  void _completeTabPreparation(PackageTab tab) {
+    if (!_shouldPrepareTab(tab)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedTab != tab) {
+        return;
+      }
+      setState(() {
+        _tabPreparing = false;
       });
     });
   }
@@ -398,9 +474,45 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             Navigator.of(context).pop();
             _setPackageEnabled(package, enabled);
           },
+          onDeletePackage: () {
+            Navigator.of(context).pop();
+            _deletePackage(package);
+          },
+          onRunTool: (tool) {
+            showDialog<void>(
+              context: context,
+              builder: (context) {
+                return PackageToolRunDialog(
+                  packageName: package.name,
+                  tool: tool,
+                  clients: widget.clients,
+                );
+              },
+            );
+          },
         );
       },
     );
+  }
+
+  Future<void> _showImportDialog() async {
+    final result = await showDialog<PackageImportResult>(
+      context: context,
+      builder: (context) {
+        return PackageImportDialog(
+          clients: widget.clients,
+          initialTab: _selectedTab,
+        );
+      },
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    _showSnackBar(result.message);
+    setState(() {
+      _contentReloadNonce += 1;
+    });
+    await _loadSnapshot();
   }
 }
 
