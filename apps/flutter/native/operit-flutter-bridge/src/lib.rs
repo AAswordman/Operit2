@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, CStr, CString};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -26,6 +26,7 @@ use operit_host_android_native::{
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
+    AndroidTerminalHost as NativeTerminalHost,
     AndroidWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_os = "linux")]
@@ -33,7 +34,8 @@ use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
-    LinuxSystemOperationHost as NativeSystemOperationHost, LinuxWebVisitHost as NativeWebVisitHost,
+    LinuxSystemOperationHost as NativeSystemOperationHost,
+    LinuxTerminalHost as NativeTerminalHost, LinuxWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
@@ -48,6 +50,7 @@ use operit_host_windows_native::{
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
+    WindowsTerminalHost as NativeTerminalHost,
     WindowsWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_arch = "wasm32")]
@@ -60,9 +63,13 @@ pub struct OperitFlutterBridge {
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
     approvalBridge: FlutterApprovalBridge,
+    browserAutomationBridge: FlutterBrowserAutomationBridge,
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    terminalHost: Arc<NativeTerminalHost>,
 }
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
+const BROWSER_AUTOMATION_REQUEST_TIMEOUT_MS: u64 = 180_000;
 
 #[derive(Clone)]
 struct FlutterApprovalBridge {
@@ -173,6 +180,132 @@ impl FlutterApprovalBridge {
     }
 }
 
+#[derive(Clone)]
+struct FlutterBrowserAutomationBridge {
+    inner: Arc<BrowserAutomationInner>,
+}
+
+struct BrowserAutomationInner {
+    state: Mutex<BrowserAutomationState>,
+    changed: Condvar,
+}
+
+#[derive(Debug)]
+struct BrowserAutomationState {
+    queue: VecDeque<PendingBrowserAutomationRequest>,
+    responses: HashMap<String, BrowserAutomationToolResponse>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct PendingBrowserAutomationRequest {
+    requestId: String,
+    toolName: String,
+    chatId: String,
+    parametersJson: String,
+    requestedAtMillis: u64,
+}
+
+#[derive(Clone, Debug)]
+struct BrowserAutomationToolResponse {
+    success: bool,
+    result: String,
+    error: Option<String>,
+}
+
+impl FlutterBrowserAutomationBridge {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(BrowserAutomationInner {
+                state: Mutex::new(BrowserAutomationState {
+                    queue: VecDeque::new(),
+                    responses: HashMap::new(),
+                }),
+                changed: Condvar::new(),
+            }),
+        }
+    }
+
+    fn nextRequest(&self) -> Option<PendingBrowserAutomationRequest> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("browser automation state mutex poisoned");
+        state.queue.pop_front()
+    }
+
+    fn respond(&self, requestId: String, response: BrowserAutomationToolResponse) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("browser automation state mutex poisoned");
+        state.responses.insert(requestId, response);
+        self.inner.changed.notify_all();
+        true
+    }
+}
+
+impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
+    fn executeBrowserTool(
+        &self,
+        request: operit_host_api::BrowserAutomationRequest,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserAutomationResponse> {
+        let requestId = request.requestId.clone();
+        let pending = PendingBrowserAutomationRequest {
+            requestId: request.requestId,
+            toolName: request.toolName,
+            chatId: request.chatId,
+            parametersJson: request.parametersJson,
+            requestedAtMillis: current_time_millis_u64(),
+        };
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("browser automation state mutex poisoned");
+        state.queue.push_back(pending);
+        self.inner.changed.notify_all();
+
+        let timeout = Duration::from_millis(BROWSER_AUTOMATION_REQUEST_TIMEOUT_MS);
+        let startedAt = Instant::now();
+        loop {
+            if let Some(response) = state.responses.remove(&requestId) {
+                if response.success {
+                    return Ok(operit_host_api::BrowserAutomationResponse {
+                        output: response.result,
+                    });
+                }
+                return Err(operit_host_api::HostError::new(
+                    response
+                        .error
+                        .unwrap_or_else(|| "Browser automation failed".to_string()),
+                ));
+            }
+            let elapsed = startedAt.elapsed();
+            if elapsed >= timeout {
+                state.queue.retain(|item| item.requestId != requestId);
+                return Err(operit_host_api::HostError::new(format!(
+                    "Browser automation request timed out: {requestId}"
+                )));
+            }
+            let wait = timeout.saturating_sub(elapsed);
+            let (nextState, result) = self
+                .inner
+                .changed
+                .wait_timeout(state, wait)
+                .expect("browser automation state mutex poisoned");
+            state = nextState;
+            if result.timed_out() {
+                state.queue.retain(|item| item.requestId != requestId);
+                return Err(operit_host_api::HostError::new(format!(
+                    "Browser automation request timed out: {requestId}"
+                )));
+            }
+        }
+    }
+}
+
 impl OperitFlutterBridge {
     fn new() -> Result<Self, String> {
         Self::new_with_storage_root(None)
@@ -187,9 +320,17 @@ impl OperitFlutterBridge {
                 .build()
                 .map_err(|error| error.to_string())?
         };
-        let mut core = create_local_core(storage_root)?;
-        core.localApplicationMut().onCreate()?;
         let approvalBridge = FlutterApprovalBridge::new();
+        let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
+        #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+        let terminalHost = Arc::new(NativeTerminalHost::new());
+        let mut core = create_local_core(
+            storage_root,
+            Some(Arc::new(browserAutomationBridge.clone())),
+            #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+            terminalHost.clone(),
+        )?;
+        core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core, approvalBridge.clone());
         let mainCore = core
             .localApplicationMut()
@@ -203,6 +344,9 @@ impl OperitFlutterBridge {
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
             approvalBridge,
+            browserAutomationBridge,
+            #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+            terminalHost,
         })
     }
 
@@ -272,8 +416,10 @@ impl OperitFlutterBridge {
             "webVisitHost": context.webVisitHost.is_some(),
             "systemOperationHost": context.systemOperationHost.is_some(),
             "managedRuntimeHost": context.managedRuntimeHost.is_some(),
+            "terminalHost": context.terminalHost.is_some(),
             "runtimeStorageHost": context.runtimeStorageHost.is_some(),
             "runtimeSqliteHost": context.runtimeSqliteHost.is_some(),
+            "browserAutomationHost": context.browserAutomationHost.is_some(),
         })
     }
 
@@ -345,6 +491,140 @@ impl OperitFlutterBridge {
         };
         serde_json::json!({ "ok": self.approvalBridge.respond(response) }).to_string()
     }
+
+    fn nextBrowserAutomationRequest(&self) -> String {
+        json_string(&self.browserAutomationBridge.nextRequest())
+    }
+
+    fn handleBrowserAutomationResult(&self, resultJson: &str) -> String {
+        match parse_browser_automation_result(resultJson) {
+            Ok((requestId, response)) => serde_json::json!({
+                "ok": self.browserAutomationBridge.respond(requestId, response)
+            })
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    fn startTerminalPty(&self, workingDir: &str, rows: u16, cols: u16) -> String {
+        #[cfg(target_os = "android")]
+        {
+            return match self.terminalHost.startPtySession(workingDir, rows, cols) {
+                Ok(sessionId) => serde_json::json!({
+                    "ok": true,
+                    "sessionId": sessionId
+                })
+                .to_string(),
+                Err(error) => serde_json::json!({
+                    "ok": false,
+                    "error": error.message
+                })
+                .to_string(),
+            };
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (workingDir, rows, cols);
+            serde_json::json!({
+                "ok": false,
+                "error": "PTY bridge is implemented by the platform terminal host on Android"
+            })
+            .to_string()
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn readTerminalPty(&self, sessionId: &str) -> String {
+        match self.terminalHost.readPtySession(sessionId) {
+            Ok(data) => serde_json::json!({
+                "ok": true,
+                "data": data
+            })
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn writeTerminalPty(&self, sessionId: &str, data: &[u8]) -> String {
+        match self.terminalHost.writePtySession(sessionId, data) {
+            Ok(count) => serde_json::json!({
+                "ok": true,
+                "count": count
+            })
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn resizeTerminalPty(&self, sessionId: &str, rows: u16, cols: u16) -> String {
+        match self.terminalHost.resizePtySession(sessionId, rows, cols) {
+            Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn pollTerminalPtyExit(&self, sessionId: &str) -> String {
+        match self.terminalHost.pollPtyExitCode(sessionId) {
+            Ok(exitCode) => serde_json::json!({
+                "ok": true,
+                "exitCode": exitCode
+            })
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn closeTerminalPty(&self, sessionId: &str) -> String {
+        match self.terminalHost.closePtySession(sessionId) {
+            Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn terminalDebugInfo(&self, workingDir: &str) -> String {
+        match self.terminalHost.terminalDebugInfo(workingDir) {
+            Ok(info) => serde_json::json!({
+                "ok": true,
+                "info": info
+            })
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
+        }
+    }
 }
 
 fn install_permission_requester(core: &mut LocalCoreProxy, approvalBridge: FlutterApprovalBridge) {
@@ -356,14 +636,18 @@ fn install_permission_requester(core: &mut LocalCoreProxy, approvalBridge: Flutt
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-fn create_local_core(storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
+fn create_local_core(
+    storage_root: Option<PathBuf>,
+    browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    terminalHost: Arc<NativeTerminalHost>,
+) -> Result<LocalCoreProxy, String> {
     let root_dir = match storage_root {
         Some(root_dir) => root_dir,
         None => default_native_storage_root()?,
     };
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let application = OperitApplication::newWithContext(
+    let mut context =
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
@@ -372,8 +656,12 @@ fn create_local_core(storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, St
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
-        ),
-    );
+        );
+    if let Some(host) = browserAutomationHost {
+        context = context.withBrowserAutomationHost(host);
+    }
+    context = context.withTerminalHost(terminalHost);
+    let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
 
@@ -388,10 +676,13 @@ fn default_native_storage_root() -> Result<PathBuf, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
+fn create_local_core(
+    _storage_root: Option<PathBuf>,
+    browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let application = OperitApplication::newWithContext(
+    let mut context =
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
@@ -400,8 +691,11 @@ fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, S
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
-        ),
-    );
+        );
+    if let Some(host) = browserAutomationHost {
+        context = context.withBrowserAutomationHost(host);
+    }
+    let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
 
@@ -411,7 +705,12 @@ fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, S
     target_os = "android",
     target_arch = "wasm32"
 )))]
-fn create_local_core(_storage_root: Option<PathBuf>) -> Result<LocalCoreProxy, String> {
+fn create_local_core(
+    _storage_root: Option<PathBuf>,
+    _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    _terminalHost: Arc<NativeTerminalHost>,
+) -> Result<LocalCoreProxy, String> {
     Err("operit flutter native runtime bridge is not available for this target".to_string())
 }
 
@@ -708,6 +1007,42 @@ pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_next_browser_automation_request(
+    handle: *mut OperitFlutterBridge,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr("null");
+    }
+    string_to_ptr((*handle).nextBrowserAutomationRequest())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_handle_browser_automation_result(
+    handle: *mut OperitFlutterBridge,
+    result_ptr: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
+    }
+    if result_ptr.is_null() {
+        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
+    }
+    let resultJson = match CStr::from_ptr(result_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("browser automation result is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).handleBrowserAutomationResult(resultJson))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn operit_flutter_bridge_free_string(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));
@@ -773,10 +1108,56 @@ impl OperitFlutterBridgeWasm {
     pub fn handlePermissionResult(&self, result: &str) -> String {
         self.inner.handlePermissionResult(result)
     }
+
+    #[allow(non_snake_case)]
+    pub fn nextBrowserAutomationRequest(&self) -> String {
+        self.inner.nextBrowserAutomationRequest()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn handleBrowserAutomationResult(&self, resultJson: &str) -> String {
+        self.inner.handleBrowserAutomationResult(resultJson)
+    }
 }
 
 fn error_response(requestId: impl Into<String>, message: impl Into<String>) -> *mut c_char {
     string_to_ptr(error_response_string(requestId, message))
+}
+
+fn parse_browser_automation_result(
+    resultJson: &str,
+) -> Result<(String, BrowserAutomationToolResponse), String> {
+    let value =
+        serde_json::from_str::<serde_json::Value>(resultJson).map_err(|error| error.to_string())?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "browser automation result must be a JSON object".to_string())?;
+    let requestId = object
+        .get("requestId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "browser automation result is missing requestId".to_string())?;
+    let success = object
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| "browser automation result is missing success".to_string())?;
+    let result = object
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "browser automation result is missing result".to_string())?;
+    let error = object
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Ok((
+        requestId,
+        BrowserAutomationToolResponse {
+            success,
+            result,
+            error,
+        },
+    ))
 }
 
 fn error_response_string(requestId: impl Into<String>, message: impl Into<String>) -> String {
@@ -829,7 +1210,7 @@ mod android_jni {
     use jni::JNIEnv;
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_create(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_create(
         mut env: JNIEnv,
         _class: JClass,
         storage_root: JString,
@@ -851,7 +1232,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_createError(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_createError(
         env: JNIEnv,
         _class: JClass,
     ) -> jstring {
@@ -865,7 +1246,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_destroy(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_destroy(
         _env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -874,7 +1255,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_call(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_call(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -902,7 +1283,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_watchSnapshot(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_watchSnapshot(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -933,7 +1314,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_watchStream(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_watchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -964,7 +1345,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_pollWatchStream(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_pollWatchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -999,7 +1380,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_closeWatchStream(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_closeWatchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -1014,7 +1395,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_hostDescriptor(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_hostDescriptor(
         env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -1026,7 +1407,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_currentPermissionRequest(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_currentPermissionRequest(
         env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -1038,7 +1419,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_operit_operit2_OperitRuntimeNative_handlePermissionResult(
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_handlePermissionResult(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -1054,6 +1435,299 @@ mod android_jni {
             }
         };
         new_java_string(env, &bridge.handlePermissionResult(&permissionResult))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_nextBrowserAutomationRequest(
+        env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(env, "null");
+        };
+        new_java_string(env, &bridge.nextBrowserAutomationRequest())
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_handleBrowserAutomationResult(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        resultJson: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
+        };
+        let resultJson = match env.get_string(&resultJson) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid JNI browser automation result: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.handleBrowserAutomationResult(&resultJson))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_startTerminalPty(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        workingDir: JString,
+        rows: jni::sys::jint,
+        cols: jni::sys::jint,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let workingDir = match env.get_string(&workingDir) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal working directory: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(
+            env,
+            &bridge.startTerminalPty(&workingDir, rows as u16, cols as u16),
+        )
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_readTerminalPty(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        sessionId: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let sessionId = match env.get_string(&sessionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal session id: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.readTerminalPty(&sessionId))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_writeTerminalPty(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        sessionId: JString,
+        data: JByteArray,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let sessionId = match env.get_string(&sessionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal session id: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        let data = match env.convert_byte_array(data) {
+            Ok(value) => value,
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal input bytes: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.writeTerminalPty(&sessionId, &data))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_resizeTerminalPty(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        sessionId: JString,
+        rows: jni::sys::jint,
+        cols: jni::sys::jint,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let sessionId = match env.get_string(&sessionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal session id: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(
+            env,
+            &bridge.resizeTerminalPty(&sessionId, rows as u16, cols as u16),
+        )
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_pollTerminalPtyExit(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        sessionId: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let sessionId = match env.get_string(&sessionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal session id: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.pollTerminalPtyExit(&sessionId))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_closeTerminalPty(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        sessionId: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let sessionId = match env.get_string(&sessionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal session id: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.closeTerminalPty(&sessionId))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_terminalDebugInfo(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        workingDir: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "runtime bridge is not initialized"
+                })
+                .to_string(),
+            );
+        };
+        let workingDir = match env.get_string(&workingDir) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid terminal working directory: {error}")
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        new_java_string(env, &bridge.terminalDebugInfo(&workingDir))
     }
 
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {

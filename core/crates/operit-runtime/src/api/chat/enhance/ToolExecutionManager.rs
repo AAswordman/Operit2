@@ -33,6 +33,7 @@ pub enum ToolExposureMode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolRuntimeContext {
+    pub callerChatId: Option<String>,
     pub callerCardId: Option<String>,
     pub toolExposureMode: ToolExposureMode,
 }
@@ -223,6 +224,7 @@ impl ToolExecutionManager {
         let previousRuntimeContext = Self::currentToolRuntimeContext();
         TOOL_RUNTIME_CONTEXT.with(|value| {
             *value.borrow_mut() = Some(ToolRuntimeContext {
+                callerChatId: callerChatId.clone(),
                 callerCardId: callerCardId.clone(),
                 toolExposureMode: toolExposureMode.clone(),
             });

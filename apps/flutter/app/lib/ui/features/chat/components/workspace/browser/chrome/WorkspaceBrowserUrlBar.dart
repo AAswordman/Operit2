@@ -77,6 +77,7 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
       elevation: 4,
       shadowColor: theme.colorScheme.shadow.withValues(alpha: 0.12),
       child: SafeArea(
+        top: false,
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -134,8 +135,9 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
                                         vertical: 7,
                                       ),
                                     ),
-                                    style: theme.textTheme.bodyMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600),
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 IconButton(
@@ -143,11 +145,10 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
                                   onPressed: _submit,
                                   icon: const Icon(Icons.check, size: 20),
                                   visualDensity: VisualDensity.compact,
-                                  constraints:
-                                      const BoxConstraints.tightFor(
-                                        width: 30,
-                                        height: 30,
-                                      ),
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 30,
+                                    height: 30,
+                                  ),
                                   padding: EdgeInsets.zero,
                                 ),
                               ],
@@ -167,8 +168,7 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
                                           ? Icons.lock
                                           : Icons.language,
                                       size: 18,
-                                      color:
-                                          theme.colorScheme.onSurfaceVariant,
+                                      color: theme.colorScheme.onSurfaceVariant,
                                     ),
                                     const SizedBox(width: 7),
                                     Expanded(

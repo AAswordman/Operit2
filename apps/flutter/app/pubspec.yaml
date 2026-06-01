@@ -50,6 +50,9 @@ dependencies:
   webview_all: ^1.0.3
   url_launcher: ^6.3.2
   file_selector: ^1.1.0
+  xterm:
+    path: ../thirdparty/xterm
+  flutter_pty: ^0.4.2
 
 dev_dependencies:
   flutter_test:

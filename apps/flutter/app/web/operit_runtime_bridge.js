@@ -574,5 +574,11 @@
     async handlePermissionResult(result) {
       return (await bridge()).handlePermissionResult(result);
     },
+    async nextBrowserAutomationRequest() {
+      return (await bridge()).nextBrowserAutomationRequest();
+    },
+    async handleBrowserAutomationResult(result) {
+      return (await bridge()).handleBrowserAutomationResult(result);
+    },
   };
 })();

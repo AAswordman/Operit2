@@ -14,6 +14,7 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 
 class MainActivity : FlutterActivity() {
+    private val runtimeLock = Any()
     private var runtimeHandle: Long = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,15 +46,29 @@ class MainActivity : FlutterActivity() {
                         OperitRuntimeNative.currentPermissionRequest(ensureRuntimeHandle())
                     }
                     "handlePermissionResult" -> handlePermissionResult(call, result)
+                    "nextBrowserAutomationRequest" -> runRuntime(result) {
+                        OperitRuntimeNative.nextBrowserAutomationRequest(ensureRuntimeHandle())
+                    }
+                    "handleBrowserAutomationResult" -> handleBrowserAutomationResult(call, result)
+                    "androidRuntimePaths" -> androidRuntimePaths(result)
+                    "startTerminalPty" -> startTerminalPty(call, result)
+                    "readTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::readTerminalPty)
+                    "pollTerminalPtyExit" -> terminalPtySessionCall(call, result, OperitRuntimeNative::pollTerminalPtyExit)
+                    "closeTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::closeTerminalPty)
+                    "terminalDebugInfo" -> terminalDebugInfo(call, result)
+                    "writeTerminalPty" -> writeTerminalPty(call, result)
+                    "resizeTerminalPty" -> resizeTerminalPty(call, result)
                     else -> result.notImplemented()
                 }
             }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
-        if (runtimeHandle != 0L) {
-            OperitRuntimeNative.destroy(runtimeHandle)
-            runtimeHandle = 0
+        synchronized(runtimeLock) {
+            if (runtimeHandle != 0L) {
+                OperitRuntimeNative.destroy(runtimeHandle)
+                runtimeHandle = 0
+            }
         }
         super.cleanUpFlutterEngine(flutterEngine)
     }
@@ -119,17 +134,133 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun handleBrowserAutomationResult(call: MethodCall, result: MethodChannel.Result) {
+        val browserResult = call.arguments as? String
+        if (browserResult == null) {
+            result.error("INVALID_ARGS", "handleBrowserAutomationResult expects a JSON string", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.handleBrowserAutomationResult(ensureRuntimeHandle(), browserResult)
+        }
+    }
+
     private fun ensureRuntimeHandle(): Long {
-        if (runtimeHandle != 0L) {
+        synchronized(runtimeLock) {
+            if (runtimeHandle != 0L) {
+                return runtimeHandle
+            }
+            val root = prepareAndroidRuntimePaths().storageRoot
+            runtimeHandle = OperitRuntimeNative.create(root.absolutePath)
+            if (runtimeHandle == 0L) {
+                throw IllegalStateException(OperitRuntimeNative.createError())
+            }
             return runtimeHandle
         }
+    }
+
+    private fun androidRuntimePaths(result: MethodChannel.Result) {
+        Thread {
+            try {
+                val paths = prepareAndroidRuntimePaths()
+                val response = mapOf(
+                    "abi" to paths.abi,
+                    "runtimeDir" to paths.runtimeDir.absolutePath,
+                    "rootfsDir" to paths.rootfsDir.absolutePath,
+                    "busybox" to paths.busybox.absolutePath,
+                    "bash" to paths.bash.absolutePath,
+                    "proot" to paths.proot.absolutePath,
+                    "loader" to paths.loader.absolutePath,
+                    "nativeLibraryDir" to paths.nativeLibraryDir.absolutePath,
+                    "storageRoot" to paths.storageRoot.absolutePath,
+                    "internalRoot" to paths.internalRoot.absolutePath,
+                    "tmpDir" to paths.tmpDir.absolutePath,
+                )
+                runOnUiThread { result.success(response) }
+            } catch (error: Throwable) {
+                runOnUiThread {
+                    result.error("RUNTIME_BRIDGE_ERROR", error.message, null)
+                }
+            }
+        }.start()
+    }
+
+    private fun prepareAndroidRuntimePaths(): AndroidRuntimePaths {
         val root = File(applicationContext.filesDir, "operit-runtime")
         root.mkdirs()
-        runtimeHandle = OperitRuntimeNative.create(root.absolutePath)
-        if (runtimeHandle == 0L) {
-            throw IllegalStateException(OperitRuntimeNative.createError())
+        return AndroidRuntimeAssets.prepare(applicationContext, root)
+    }
+
+    private fun startTerminalPty(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val workingDirectory = args?.get("workingDirectory") as? String
+        val rows = args?.get("rows") as? Int
+        val columns = args?.get("columns") as? Int
+        if (workingDirectory == null || rows == null || columns == null) {
+            result.error("INVALID_ARGS", "startTerminalPty expects workingDirectory, rows, columns", null)
+            return
         }
-        return runtimeHandle
+        runRuntime(result) {
+            OperitRuntimeNative.startTerminalPty(
+                ensureRuntimeHandle(),
+                workingDirectory,
+                rows,
+                columns,
+            )
+        }
+    }
+
+    private fun terminalPtySessionCall(
+        call: MethodCall,
+        result: MethodChannel.Result,
+        nativeCall: (Long, String) -> String,
+    ) {
+        val sessionId = call.arguments as? String
+        if (sessionId == null) {
+            result.error("INVALID_ARGS", "${call.method} expects a session id", null)
+            return
+        }
+        runRuntime(result) {
+            nativeCall(ensureRuntimeHandle(), sessionId)
+        }
+    }
+
+    private fun writeTerminalPty(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val sessionId = args?.get("sessionId") as? String
+        val data = args?.get("data") as? ByteArray
+        if (sessionId == null || data == null) {
+            result.error("INVALID_ARGS", "writeTerminalPty expects sessionId and data", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.writeTerminalPty(ensureRuntimeHandle(), sessionId, data)
+        }
+    }
+
+    private fun resizeTerminalPty(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val sessionId = args?.get("sessionId") as? String
+        val rows = args?.get("rows") as? Int
+        val columns = args?.get("columns") as? Int
+        if (sessionId == null || rows == null || columns == null) {
+            result.error("INVALID_ARGS", "resizeTerminalPty expects sessionId, rows, columns", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.resizeTerminalPty(ensureRuntimeHandle(), sessionId, rows, columns)
+        }
+    }
+
+    private fun terminalDebugInfo(call: MethodCall, result: MethodChannel.Result) {
+        val workingDirectory = call.arguments as? String
+        if (workingDirectory == null) {
+            result.error("INVALID_ARGS", "terminalDebugInfo expects a working directory", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.terminalDebugInfo(ensureRuntimeHandle(), workingDirectory)
+        }
     }
 
     private fun requestHighestRefreshRate() {
@@ -211,4 +342,13 @@ object OperitRuntimeNative {
     @JvmStatic external fun hostDescriptor(handle: Long): String
     @JvmStatic external fun currentPermissionRequest(handle: Long): String
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
+    @JvmStatic external fun nextBrowserAutomationRequest(handle: Long): String
+    @JvmStatic external fun handleBrowserAutomationResult(handle: Long, resultJson: String): String
+    @JvmStatic external fun startTerminalPty(handle: Long, workingDirectory: String, rows: Int, columns: Int): String
+    @JvmStatic external fun readTerminalPty(handle: Long, sessionId: String): String
+    @JvmStatic external fun writeTerminalPty(handle: Long, sessionId: String, data: ByteArray): String
+    @JvmStatic external fun resizeTerminalPty(handle: Long, sessionId: String, rows: Int, columns: Int): String
+    @JvmStatic external fun pollTerminalPtyExit(handle: Long, sessionId: String): String
+    @JvmStatic external fun closeTerminalPty(handle: Long, sessionId: String): String
+    @JvmStatic external fun terminalDebugInfo(handle: Long, workingDirectory: String): String
 }

@@ -344,6 +344,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       MaterialPageRoute<void>(
         builder: (context) => UnifiedMarketScreen(
           initialTab: initialTab,
+          showBackButton: true,
           clients: widget.clients,
         ),
       ),
@@ -355,14 +356,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         FloatingActionButton.small(
-          heroTag: 'package-manager-refresh',
+          heroTag: null,
           onPressed: _loadSnapshot,
           tooltip: '刷新',
           child: const Icon(Icons.refresh),
         ),
         const SizedBox(height: 12),
         FloatingActionButton(
-          heroTag: 'package-manager-import',
+          heroTag: null,
           onPressed: _handleAddAction,
           tooltip: _addActionTooltip,
           child: const Icon(Icons.add),

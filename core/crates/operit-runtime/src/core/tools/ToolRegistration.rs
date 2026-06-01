@@ -9,6 +9,9 @@ use crate::core::application::OperitApplicationContext::OperitApplicationContext
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
+use crate::core::tools::defaultTool::standard::StandardBrowserAutomationTools::{
+    BrowserAutomationToolExecutor, StandardBrowserAutomationTools,
+};
 use crate::core::tools::defaultTool::standard::StandardChatManagerTool::{
     ChatManagerToolExecutor, ChatManagerToolOperation, StandardChatManagerTool,
 };
@@ -573,6 +576,9 @@ fn registerTerminalTool(
 #[allow(non_snake_case)]
 fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicationContext) {
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
+    if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {
+        registerBrowserAutomationTools(handler, browserTools);
+    }
     registerMemoryInternalTools(handler);
 
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
@@ -770,6 +776,44 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
             }),
         }),
     );
+}
+
+#[allow(non_snake_case)]
+fn registerBrowserAutomationTools(
+    handler: &mut AIToolHandler,
+    browserTools: StandardBrowserAutomationTools,
+) {
+    for name in [
+        "browser_click",
+        "browser_close",
+        "browser_close_all",
+        "browser_console_messages",
+        "browser_drag",
+        "browser_evaluate",
+        "browser_file_upload",
+        "browser_fill_form",
+        "browser_handle_dialog",
+        "browser_hover",
+        "browser_navigate",
+        "browser_navigate_back",
+        "browser_network_requests",
+        "browser_press_key",
+        "browser_resize",
+        "browser_run_code",
+        "browser_select_option",
+        "browser_snapshot",
+        "browser_tabs",
+        "browser_take_screenshot",
+        "browser_type",
+        "browser_wait_for",
+    ] {
+        handler.registerInternalTool(
+            name.to_string(),
+            Box::new(BrowserAutomationToolExecutor {
+                tools: browserTools.clone(),
+            }),
+        );
+    }
 }
 
 #[allow(non_snake_case)]

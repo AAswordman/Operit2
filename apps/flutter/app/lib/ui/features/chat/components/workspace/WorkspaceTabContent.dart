@@ -11,11 +11,13 @@ import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
 import 'WorkspaceHomeContent.dart';
 import 'WorkspaceTabModels.dart';
+import 'WorkspaceTerminalContent.dart';
 
 class WorkspaceTabContent extends StatelessWidget {
   const WorkspaceTabContent({
     super.key,
     required this.tab,
+    required this.currentChatId,
     required this.workspacePath,
     required this.onListWorkspaceFiles,
     required this.onReadWorkspaceTextFile,
@@ -30,6 +32,7 @@ class WorkspaceTabContent extends StatelessWidget {
   });
 
   final WorkspaceTab tab;
+  final String currentChatId;
   final String? workspacePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
@@ -76,13 +79,18 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenFile: onOpenFile,
         );
       case WorkspaceTabKind.terminal:
-        return _WorkspaceSimplePane(
-          icon: Icons.terminal,
-          title: l10n.terminal,
-          subtitle: l10n.terminalSessionPlaceholder,
-        );
+        final rootPath = workspacePath?.trim();
+        if (rootPath == null || rootPath.isEmpty) {
+          return _WorkspaceSimplePane(
+            icon: Icons.terminal,
+            title: l10n.terminal,
+            subtitle: l10n.noWorkspaceBound,
+          );
+        }
+        return WorkspaceTerminalContent(workspacePath: rootPath);
       case WorkspaceTabKind.browser:
         return WorkspaceBrowserContent(
+          chatId: currentChatId,
           workspacePath: workspacePath,
           initialUrl: tab.url,
           initialFilePath: tab.absolutePath,

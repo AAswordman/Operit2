@@ -33,6 +33,7 @@ import 'userscripts/WorkspaceUserscriptSheet.dart';
 class WorkspaceBrowserContent extends StatefulWidget {
   const WorkspaceBrowserContent({
     super.key,
+    required this.chatId,
     this.initialUrl,
     this.initialFilePath,
     this.initialWorkspaceHtmlPath,
@@ -44,6 +45,7 @@ class WorkspaceBrowserContent extends StatefulWidget {
     required this.onOpenBrowserTab,
   });
 
+  final String chatId;
   final String? initialUrl;
   final String? initialFilePath;
   final String? initialWorkspaceHtmlPath;
@@ -95,19 +97,15 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
     );
     _stores.downloads.setWorkspaceSaver(widget.onWriteWorkspaceFileBytes);
-    _sessionRegistry.setControls(
-      createTab: (url) => widget.onOpenBrowserTab(url: url),
-      selectTab: _selectBrowserSession,
-      closeTab: _closeBrowserSession,
-      navigate: _navigateCurrent,
-      navigateBack: _goBack,
-    );
     _initialize();
   }
 
   @override
   void didUpdateWidget(covariant WorkspaceBrowserContent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.chatId != widget.chatId) {
+      _syncSessionRegistry();
+    }
     if (oldWidget.initialUrl != widget.initialUrl &&
         widget.initialUrl?.trim().isNotEmpty == true) {
       _addTab(widget.initialUrl!);
@@ -127,10 +125,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     _dismissMenuPopup();
     _dismissPanelPopup();
     for (final tab in _tabs) {
+      _sessionRegistry.unregister(tab.id);
       tab.dispose();
     }
     _htmlPreviewServer.stop();
-    _sessionRegistry.clearControls();
     super.dispose();
   }
 
@@ -265,11 +263,16 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     });
     _automation[tab.id] = automationController;
     _sessionRegistry.register(
+      chatId: widget.chatId,
       sessionId: tab.id,
       controller: automationController,
       title: tab.title,
       url: tab.url,
       active: true,
+      selectTab: _selectBrowserSession,
+      closeTab: _closeBrowserSession,
+      navigate: _navigateCurrent,
+      navigateBack: _goBack,
     );
     return tab;
   }
@@ -1006,6 +1009,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     for (var index = 0; index < _tabs.length; index += 1) {
       final tab = _tabs[index];
       _sessionRegistry.update(
+        chatId: widget.chatId,
         sessionId: tab.id,
         title: tab.title,
         url: tab.url,

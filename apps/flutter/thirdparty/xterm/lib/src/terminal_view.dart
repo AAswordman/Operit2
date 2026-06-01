@@ -265,7 +265,10 @@ class TerminalViewState extends State<TerminalView> {
         onComposing: _onComposing,
         onAction: (action) {
           _scrollToBottom();
-          if (action == TextInputAction.done) {
+          if (action == TextInputAction.done ||
+              action == TextInputAction.newline ||
+              action == TextInputAction.go ||
+              action == TextInputAction.send) {
             widget.terminal.keyInput(TerminalKey.enter);
           }
         },

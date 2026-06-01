@@ -13,7 +13,8 @@ use crate::core::tools::packTool::PackageManagerToolPkgFacade::PackageManagerToo
 use crate::core::tools::packTool::ToolPkgLoader::ToolPkgLoader;
 use crate::core::tools::packTool::ToolPkgManager::{ToolPkgManager, ToolPkgRuntimeChangeListener};
 use crate::core::tools::packTool::ToolPkgParser::{
-    ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
+    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType,
+    ToolPkgSubpackageRuntime,
 };
 use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::ToolPackage::{
@@ -25,6 +26,7 @@ use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use serde::{Deserialize, Serialize};
 
 const ENABLED_PACKAGES_KEY: &str = "imported_packages";
 
@@ -33,6 +35,22 @@ pub type CachedMcpToolInfo = crate::data::mcp::MCPLocalServer::CachedToolInfo;
 enum PackageLoadItem {
     ToolPackage(ToolPackage),
     ToolPkg(ToolPkgLoadResult),
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct PublishablePackageSource {
+    pub packageName: String,
+    pub displayName: String,
+    pub description: String,
+    pub author: Vec<String>,
+    pub sourcePath: String,
+    pub sourceFileName: String,
+    pub fileExtension: String,
+    pub isToolPkg: bool,
+    pub hasDeclaredAuthorField: bool,
+    pub declaredAuthorSlotCount: usize,
+    pub inferredVersion: Option<String>,
 }
 
 #[derive(Clone)]
@@ -539,6 +557,139 @@ impl PackageManager {
                 }
             }
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getPublishablePackageSources(&mut self) -> Vec<PublishablePackageSource> {
+        let mut sources = Vec::new();
+
+        for (packageName, toolPackage) in self.availablePackages.clone() {
+            if toolPackage.is_built_in
+                || self.toolPkgManager.hasSubpackage(&packageName)
+                || self.toolPkgManager.isToolPkgContainer(&packageName)
+            {
+                continue;
+            }
+            let Some(sourceFile) = self.findPackageFile(&packageName) else {
+                continue;
+            };
+            if !sourceFile.exists() || !sourceFile.is_file() {
+                continue;
+            }
+            let displayName = {
+                let resolved = toolPackage.display_name.resolve(false);
+                if resolved.trim().is_empty() {
+                    packageName.clone()
+                } else {
+                    resolved
+                }
+            };
+            let authorDeclaration = self.inspectStandalonePackageAuthorDeclaration(&sourceFile);
+            sources.push(PublishablePackageSource {
+                packageName,
+                displayName,
+                description: toolPackage.description.resolve(false),
+                author: toolPackage.author,
+                sourcePath: sourceFile.to_string_lossy().to_string(),
+                sourceFileName: sourceFile
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                fileExtension: sourceFile
+                    .extension()
+                    .map(|value| value.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default(),
+                isToolPkg: false,
+                hasDeclaredAuthorField: authorDeclaration.hasDeclaredAuthorField,
+                declaredAuthorSlotCount: authorDeclaration.declaredAuthorSlotCount,
+                inferredVersion: None,
+            });
+        }
+
+        for runtime in self.toolPkgManager.getToolPkgContainerRuntimes() {
+            if runtime.sourceType != ToolPkgSourceType::EXTERNAL {
+                continue;
+            }
+            let sourceFile = PathBuf::from(&runtime.sourcePath);
+            if !sourceFile.exists() || !sourceFile.is_file() {
+                continue;
+            }
+            let displayName = {
+                let resolved = runtime.displayName.resolve(false);
+                if resolved.trim().is_empty() {
+                    runtime.packageName.clone()
+                } else {
+                    resolved
+                }
+            };
+            let authorDeclaration = self.inspectToolPkgAuthorDeclaration(&sourceFile);
+            sources.push(PublishablePackageSource {
+                packageName: runtime.packageName,
+                displayName,
+                description: runtime.description.resolve(false),
+                author: runtime.author,
+                sourcePath: sourceFile.to_string_lossy().to_string(),
+                sourceFileName: sourceFile
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                fileExtension: sourceFile
+                    .extension()
+                    .map(|value| value.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default(),
+                isToolPkg: true,
+                hasDeclaredAuthorField: authorDeclaration.hasDeclaredAuthorField,
+                declaredAuthorSlotCount: authorDeclaration.declaredAuthorSlotCount,
+                inferredVersion: if runtime.version.trim().is_empty() {
+                    None
+                } else {
+                    Some(runtime.version)
+                },
+            });
+        }
+
+        sources.sort_by(|left, right| {
+            left.isToolPkg.cmp(&right.isToolPkg).then_with(|| {
+                left.displayName
+                    .to_lowercase()
+                    .cmp(&right.displayName.to_lowercase())
+            })
+        });
+        sources
+    }
+
+    #[allow(non_snake_case)]
+    fn inspectStandalonePackageAuthorDeclaration(&self, sourceFile: &Path) -> AuthorDeclaration {
+        let Ok(content) = fs::read_to_string(sourceFile) else {
+            return AuthorDeclaration::default();
+        };
+        let lowerPath = sourceFile.to_string_lossy().to_ascii_lowercase();
+        let metadataString = if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
+            self.extractMetadataFromJs(&content)
+        } else {
+            content
+        };
+        inspectAuthorDeclarationFromMetadata(&metadataString)
+    }
+
+    #[allow(non_snake_case)]
+    fn inspectToolPkgAuthorDeclaration(&self, sourceFile: &Path) -> AuthorDeclaration {
+        let Ok(file) = fs::File::open(sourceFile) else {
+            return AuthorDeclaration::default();
+        };
+        let Ok(mut archive) = zip::ZipArchive::new(file) else {
+            return AuthorDeclaration::default();
+        };
+        let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+        let Some(manifestEntryName) = findToolPkgManifestEntryName(&entryIndex.entryNames) else {
+            return AuthorDeclaration::default();
+        };
+        let Some(manifestText) =
+            ToolPkgArchiveParser::readZipEntryText(&mut archive, &entryIndex, &manifestEntryName)
+        else {
+            return AuthorDeclaration::default();
+        };
+        inspectAuthorDeclarationFromMetadata(&manifestText)
     }
 
     #[allow(non_snake_case)]
@@ -1189,6 +1340,74 @@ fn currentUseTime() -> String {
         .naive_local()
         .format("%Y-%m-%dT%H:%M:%S%.f")
         .to_string()
+}
+
+#[derive(Clone, Debug, Default)]
+#[allow(non_snake_case)]
+struct AuthorDeclaration {
+    hasDeclaredAuthorField: bool,
+    declaredAuthorSlotCount: usize,
+}
+
+#[allow(non_snake_case)]
+fn inspectAuthorDeclarationFromMetadata(metadataString: &str) -> AuthorDeclaration {
+    let normalized = normalizeHjsonLikeMetadata(metadataString);
+    let Ok(value) = json5::from_str::<serde_json::Value>(&normalized) else {
+        return AuthorDeclaration::default();
+    };
+    let Some(object) = value.as_object() else {
+        return AuthorDeclaration::default();
+    };
+    let author = object.get("author");
+    AuthorDeclaration {
+        hasDeclaredAuthorField: author.is_some(),
+        declaredAuthorSlotCount: countDeclaredAuthorSlots(author),
+    }
+}
+
+#[allow(non_snake_case)]
+fn countDeclaredAuthorSlots(value: Option<&serde_json::Value>) -> usize {
+    match value {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(serde_json::Value::Array(items)) => items.len(),
+        Some(_) => 1,
+    }
+}
+
+#[allow(non_snake_case)]
+fn findToolPkgManifestEntryName(entryNames: &BTreeSet<String>) -> Option<String> {
+    entryNames
+        .iter()
+        .find(|entry| entry.eq_ignore_ascii_case("manifest.hjson"))
+        .cloned()
+        .or_else(|| {
+            entryNames
+                .iter()
+                .find(|entry| entry.eq_ignore_ascii_case("manifest.json"))
+                .cloned()
+        })
+        .or_else(|| {
+            entryNames
+                .iter()
+                .find(|entry| {
+                    Path::new(entry)
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|fileName| fileName.eq_ignore_ascii_case("manifest.hjson"))
+                })
+                .cloned()
+        })
+        .or_else(|| {
+            entryNames
+                .iter()
+                .find(|entry| {
+                    Path::new(entry)
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|fileName| fileName.eq_ignore_ascii_case("manifest.json"))
+                })
+                .cloned()
+        })
 }
 
 #[allow(non_snake_case)]

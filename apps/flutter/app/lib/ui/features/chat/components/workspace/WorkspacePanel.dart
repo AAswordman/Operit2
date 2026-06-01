@@ -10,10 +10,12 @@ import 'WorkspaceProjectConfig.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceTabStrip.dart';
+import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 
 class WorkspacePanel extends StatefulWidget {
   const WorkspacePanel({
     super.key,
+    required this.currentChatId,
     required this.hasBoundWorkspace,
     required this.workspacePath,
     required this.onListWorkspaceFiles,
@@ -23,8 +25,10 @@ class WorkspacePanel extends StatefulWidget {
     required this.onOpenWorkspaceFile,
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
+    required this.onRevealRequested,
   });
 
+  final String? currentChatId;
   final bool hasBoundWorkspace;
   final String? workspacePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
@@ -37,12 +41,15 @@ class WorkspacePanel extends StatefulWidget {
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace, String? workspaceEnv)
   onBindWorkspace;
+  final VoidCallback onRevealRequested;
 
   @override
   State<WorkspacePanel> createState() => _WorkspacePanelState();
 }
 
 class _WorkspacePanelState extends State<WorkspacePanel> {
+  final WorkspaceBrowserSessionRegistry _browserSessionRegistry =
+      WorkspaceBrowserSessionRegistry.instance;
   final List<WorkspaceTab> _tabs = <WorkspaceTab>[
     const WorkspaceTab(
       kind: WorkspaceTabKind.home,
@@ -54,8 +61,37 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   int _selectedIndex = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _registerBrowserControls();
+  }
+
+  @override
+  void didUpdateWidget(covariant WorkspacePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId) {
+      _removeBrowserTabsForChatSwitch();
+      final oldChatId = oldWidget.currentChatId;
+      if (oldChatId != null && oldChatId.trim().isNotEmpty) {
+        _browserSessionRegistry.clearChatControls(oldChatId);
+      }
+      _registerBrowserControls();
+    }
+  }
+
+  @override
+  void dispose() {
+    final chatId = widget.currentChatId;
+    if (chatId != null && chatId.trim().isNotEmpty) {
+      _browserSessionRegistry.clearChatControls(chatId);
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final showTabs = widget.hasBoundWorkspace || _hasBrowserTabs;
     return Material(
       color: theme.colorScheme.surfaceContainerLowest,
       child: SizedBox.expand(
@@ -65,7 +101,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
               start: BorderSide(color: theme.colorScheme.outlineVariant),
             ),
           ),
-          child: widget.hasBoundWorkspace
+          child: showTabs
               ? Column(
                   children: <Widget>[
                     WorkspaceTabStrip(
@@ -97,6 +133,33 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
+  bool get _hasBrowserTabs {
+    return _tabs.any((tab) => tab.kind == WorkspaceTabKind.browser);
+  }
+
+  void _registerBrowserControls() {
+    final chatId = widget.currentChatId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return;
+    }
+    _browserSessionRegistry.setChatControls(
+      chatId: chatId,
+      openBrowserTab: _openBrowserTab,
+    );
+  }
+
+  void _removeBrowserTabsForChatSwitch() {
+    if (!_hasBrowserTabs) {
+      return;
+    }
+    setState(() {
+      _tabs.removeWhere((tab) => tab.kind == WorkspaceTabKind.browser);
+      if (_selectedIndex >= _tabs.length) {
+        _selectedIndex = _tabs.length - 1;
+      }
+    });
+  }
+
   void _selectTab(int index) {
     setState(() {
       _selectedIndex = index;
@@ -120,6 +183,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     String? localFilePath,
     String? workspaceHtmlPath,
   }) {
+    widget.onRevealRequested();
     final title = _browserTabTitle(
       url: url,
       localFilePath: localFilePath,
@@ -161,8 +225,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   Widget _buildTabContent(WorkspaceTab tab) {
+    final currentChatId = widget.currentChatId;
+    if (currentChatId == null || currentChatId.trim().isEmpty) {
+      return const Center(child: Icon(Icons.public_off_outlined, size: 40));
+    }
     return WorkspaceTabContent(
       tab: tab,
+      currentChatId: currentChatId,
       workspacePath: widget.workspacePath,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
       onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,

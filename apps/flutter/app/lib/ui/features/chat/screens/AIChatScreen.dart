@@ -686,6 +686,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     return WorkspaceShell(
       workspaceOpen: _workspaceOpen,
       onWorkspaceOpenChanged: _setWorkspaceOpen,
+      currentChatId: _currentChatId,
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
       workspacePath: _currentWorkspacePath,
       onListWorkspaceFiles: widget.viewModel.listWorkspaceFiles,

@@ -5,6 +5,7 @@ import 'package:dynamic_color/dynamic_color.dart';
 
 import 'Color.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../features/chat/components/workspace/browser/automation/WorkspaceBrowserAutomationHost.dart';
 import '../permissions/ToolApprovalHost.dart';
 
 class OperitTheme extends StatelessWidget {
@@ -26,7 +27,9 @@ class OperitTheme extends StatelessWidget {
           theme: _themeData(lightColorScheme),
           darkTheme: _themeData(darkColorScheme),
           themeMode: ThemeMode.system,
-          home: ToolApprovalHost(child: child),
+          home: WorkspaceBrowserAutomationHost(
+            child: ToolApprovalHost(child: child),
+          ),
         );
       },
     );

@@ -1,8 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    FileSystemHost, HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost,
-    RuntimeStorageHost, SystemOperationHost, TerminalHost, WebVisitHost,
+    BrowserAutomationHost, FileSystemHost, HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost,
+    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -26,6 +26,7 @@ pub fn defaultHttpHost() -> Arc<dyn HttpHost> {
 pub struct OperitApplicationContext {
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
+    pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
@@ -41,6 +42,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: None,
             webVisitHost: None,
+            browserAutomationHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -58,6 +60,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(host),
             webVisitHost: None,
+            browserAutomationHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -78,6 +81,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            browserAutomationHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -99,6 +103,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            browserAutomationHost: None,
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: None,
@@ -124,6 +129,7 @@ impl OperitApplicationContext {
         Self {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
+            browserAutomationHost: None,
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: Some(managedRuntimeHost),
@@ -144,6 +150,15 @@ impl OperitApplicationContext {
     #[allow(non_snake_case)]
     pub fn withTerminalHost(mut self, terminalHost: Arc<dyn TerminalHost>) -> Self {
         self.terminalHost = Some(terminalHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withBrowserAutomationHost(
+        mut self,
+        browserAutomationHost: Arc<dyn BrowserAutomationHost>,
+    ) -> Self {
+        self.browserAutomationHost = Some(browserAutomationHost);
         self
     }
 }

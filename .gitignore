@@ -78,6 +78,7 @@ desktop.ini
 **/.cxx/
 **/local.properties
 **/android/app/src/main/jniLibs/**/*.so
+apps/flutter/app/android/app/src/main/assets/android-runtime/
 
 # Apple tooling
 DerivedData/
@@ -132,6 +133,16 @@ workspace-data/
 local-data/
 cache/
 tmp/
+tools/android-runtime/*
+!tools/android-runtime/
+!tools/android-runtime/*.md
+!tools/android-runtime/*.ps1
+!tools/android-runtime/*.sh
+!tools/android-runtime/patches/
+!tools/android-runtime/patches/*.patch
+tools/android-runtime/build/
+tools/android-runtime/downloads/
+tools/android-runtime/sources/
 
 # Plugin packaging outputs
 plugins/**/*.toolpkg

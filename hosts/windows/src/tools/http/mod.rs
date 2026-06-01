@@ -16,6 +16,13 @@ impl WindowsHttpHost {
 
 impl HttpHost for WindowsHttpHost {
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
+        std::thread::spawn(move || executeHttpRequestOnBlockingThread(request))
+            .join()
+            .map_err(|_| HostError::new("windows HTTP request thread panicked"))?
+    }
+}
+
+fn executeHttpRequestOnBlockingThread(request: HttpRequestData) -> HostResult<HttpResponseData> {
         let method = Method::from_bytes(request.method.as_bytes())
             .map_err(|error| HostError::new(error.to_string()))?;
         let mut builder = Client::builder()
@@ -69,7 +76,6 @@ impl HttpHost for WindowsHttpHost {
             headers,
             body,
         })
-    }
 }
 
 fn headersToReqwest(headers: &[(String, String)]) -> HostResult<HeaderMap> {

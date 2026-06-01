@@ -49,6 +49,9 @@ impl HostEnvironmentDescriptor {
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
+                "runtime.process".to_string(),
+                "runtime.storage".to_string(),
+                "runtime.sqlite".to_string(),
             ],
         }
     }
@@ -279,6 +282,26 @@ pub struct WebVisitResult {
 
 pub trait WebVisitHost: Send + Sync {
     fn visitWeb(&self, request: WebVisitRequest) -> HostResult<WebVisitResult>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserAutomationRequest {
+    pub requestId: String,
+    pub toolName: String,
+    pub chatId: String,
+    pub parametersJson: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserAutomationResponse {
+    pub output: String,
+}
+
+pub trait BrowserAutomationHost: Send + Sync {
+    fn executeBrowserTool(
+        &self,
+        request: BrowserAutomationRequest,
+    ) -> HostResult<BrowserAutomationResponse>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

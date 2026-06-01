@@ -1,0 +1,153 @@
+--- a/src/arch.h
++++ b/src/arch.h
+@@ -31,7 +31,11 @@
+ typedef unsigned long word_t;
+ typedef unsigned char byte_t;
+ 
++#if defined(__ANDROID__) && defined(__aarch64__)
++#define SYSCALL_AVOIDER ((word_t) 172)
++#else
+ #define SYSCALL_AVOIDER ((word_t) -1)
++#endif
+ #define SYSTRAP_NUM SYSARG_NUM
+ #define STACK_ALIGNMENT 16
+ 
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -121,6 +121,27 @@
+ 		status = 0;
+ 		break;
+ 
++#if defined(__ANDROID__) && defined(ARCH_ARM64)
++	case PR_rseq:
++	case PR_io_uring_setup:
++	case PR_io_uring_enter:
++	case PR_io_uring_register:
++	case PR_pidfd_open:
++	case PR_clone3:
++	case PR_close_range:
++	case PR_openat2:
++	case PR_pidfd_getfd:
++	case PR_process_madvise:
++	case PR_epoll_pwait2:
++	case PR_landlock_create_ruleset:
++	case PR_landlock_add_rule:
++	case PR_landlock_restrict_self:
++	case PR_futex_waitv:
++	case PR_fchmodat2:
++		status = -ENOSYS;
++		break;
++#endif
++
+ 	case PR_execve:
+ 		status = translate_execve_enter(tracee);
+ 		break;
+@@ -429,6 +450,11 @@
+ 			break;
+ 
+ 		status = translate_path2(tracee, dirfd, path, SYSARG_2, REGULAR);
++#if defined(__ANDROID__) && defined(ARCH_ARM64)
++			if (status >= 0 && syscall_number == PR_faccessat2) {
++				set_sysnum(tracee, PR_faccessat);
++			}
++#endif
+ 		break;
+ 
+ 	case PR_inotify_add_watch:
+@@ -589,4 +615,3 @@
+ 
+ 	return status;
+ }
+-
+--- a/src/syscall/sysnum.c
++++ b/src/syscall/sysnum.c
+@@ -127,7 +127,12 @@
+  */
+ Sysnum get_sysnum(const Tracee *tracee, RegVersion version)
+ {
+-	return translate_sysnum(get_abi(tracee), peek_reg(tracee, version, SYSARG_NUM));
++	word_t sysnum = peek_reg(tracee, version, SYSARG_NUM);
++
++	if (version != ORIGINAL && tracee->void_syscall && sysnum == SYSCALL_AVOIDER)
++		return PR_void;
++
++	return translate_sysnum(get_abi(tracee), sysnum);
+ }
+ 
+ /**
+@@ -137,6 +142,7 @@
+  */
+ void set_sysnum(Tracee *tracee, Sysnum sysnum)
+ {
++	tracee->void_syscall = (sysnum == PR_void);
+ 	poke_reg(tracee, SYSARG_NUM, detranslate_sysnum(get_abi(tracee), sysnum));
+ }
+ 
+--- a/src/syscall/sysnums-arm64.h
++++ b/src/syscall/sysnums-arm64.h
+@@ -264,4 +264,21 @@
+ 	[ 275 ] = PR_sched_getattr,
+ 	[ 276 ] = PR_renameat2,
+ 	[ 291 ] = PR_statx,
++	[ 293 ] = PR_rseq,
++	[ 425 ] = PR_io_uring_setup,
++	[ 426 ] = PR_io_uring_enter,
++	[ 427 ] = PR_io_uring_register,
++	[ 434 ] = PR_pidfd_open,
++	[ 435 ] = PR_clone3,
++	[ 436 ] = PR_close_range,
++	[ 437 ] = PR_openat2,
++	[ 438 ] = PR_pidfd_getfd,
++	[ 439 ] = PR_faccessat2,
++	[ 440 ] = PR_process_madvise,
++	[ 441 ] = PR_epoll_pwait2,
++	[ 444 ] = PR_landlock_create_ruleset,
++	[ 445 ] = PR_landlock_add_rule,
++	[ 446 ] = PR_landlock_restrict_self,
++	[ 449 ] = PR_futex_waitv,
++	[ 452 ] = PR_fchmodat2,
+ };
+--- a/src/syscall/sysnums.list
++++ b/src/syscall/sysnums.list
+@@ -431,3 +431,19 @@
+ SYSNUM(x32_writev)
+ SYSNUM(statx)
+ SYSNUM(utimensat_time64)
++SYSNUM(rseq)
++SYSNUM(io_uring_setup)
++SYSNUM(io_uring_enter)
++SYSNUM(io_uring_register)
++SYSNUM(pidfd_open)
++SYSNUM(clone3)
++SYSNUM(close_range)
++SYSNUM(openat2)
++SYSNUM(pidfd_getfd)
++SYSNUM(process_madvise)
++SYSNUM(epoll_pwait2)
++SYSNUM(landlock_create_ruleset)
++SYSNUM(landlock_add_rule)
++SYSNUM(landlock_restrict_self)
++SYSNUM(futex_waitv)
++SYSNUM(fchmodat2)
+--- a/src/syscall/syscall.c
++++ b/src/syscall/syscall.c
+@@ -166,6 +166,7 @@
+ 
+ 		/* Reset the tracee's status. */
+ 		tracee->status = 0;
++		tracee->void_syscall = false;
+ 
+ 		/* Insert the next chained syscall, if any.  */
+ 		if (tracee->chain.syscalls != NULL)
+--- a/src/tracee/tracee.h
++++ b/src/tracee/tracee.h
+@@ -220,6 +220,9 @@
+ 	/* Ensure the sysexit stage is always hit under seccomp.  */
+ 	bool sysexit_pending;
+ 
++	/* The current syscall was changed to PR_void. */
++	bool void_syscall;
++
+ 
+ 	/**********************************************************************
+ 	 * Shared or private resources, depending on the CLONE_FS/VM flags.   *

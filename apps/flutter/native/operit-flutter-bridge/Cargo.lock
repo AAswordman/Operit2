@@ -1425,6 +1425,7 @@ dependencies = [
 name = "operit-host-android-native"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "operit-host-api",
  "operit-host-linux-native",
 ]

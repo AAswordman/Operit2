@@ -7,6 +7,9 @@ pub mod StandardHttpTools;
 #[path = "StandardChatManagerTool.rs"]
 pub mod StandardChatManagerTool;
 
+#[path = "StandardBrowserAutomationTools.rs"]
+pub mod StandardBrowserAutomationTools;
+
 #[path = "StandardMemoryTools.rs"]
 pub mod StandardMemoryTools;
 

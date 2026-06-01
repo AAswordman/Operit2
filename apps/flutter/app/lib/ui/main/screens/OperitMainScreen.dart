@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../components/AppContent.dart';
 import '../layout/NavigationLayoutMetrics.dart';
@@ -10,6 +11,7 @@ import '../TopBarController.dart';
 import '../layout/TabletLayout.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../navigation/AppRouteCatalog.dart';
+import 'OperitScreens.dart';
 
 class OperitMainScreen extends StatefulWidget {
   const OperitMainScreen({super.key});
@@ -19,12 +21,15 @@ class OperitMainScreen extends StatefulWidget {
 }
 
 class _OperitMainScreenState extends State<OperitMainScreen> {
+  static const int _backPressedIntervalMs = 2000;
+
   late AppNavigationModel _navigationModel;
   late final AppRouterState _routerState;
   late final TopBarController _topBarController;
   bool _drawerOpen = false;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
+  int _backPressedTime = 0;
   NavigationTransitionSource _navigationTransitionSource =
       NavigationTransitionSource.defaultSource;
 
@@ -141,6 +146,68 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     }, RouteEntrySource.drawer);
   }
 
+  void _goBack() {
+    _isNavigatingBack = true;
+    _navigationTransitionSource = NavigationTransitionSource.defaultSource;
+    _topBarController.clear();
+    _routerState.pop();
+  }
+
+  void _resetToConversationFromBack() {
+    final entry = _navigationModel.navigationEntriesById['main.ai_chat'];
+    if (entry == null) {
+      throw StateError('Unknown navigation entry: main.ai_chat');
+    }
+    _isNavigatingBack = true;
+    _navigationTransitionSource = NavigationTransitionSource.defaultSource;
+    _topBarController.clear();
+    _routerState.resetTo(
+      RouteEntry(
+        routeId: entry.routeId,
+        args: <String, Object?>{
+          'conversationActivatedAt': DateTime.now().microsecondsSinceEpoch,
+        },
+        source: RouteEntrySource.defaultSource,
+      ),
+    );
+  }
+
+  void _handleExitBackPress() {
+    final currentTime = DateTime.now().millisecondsSinceEpoch;
+    if (currentTime - _backPressedTime > _backPressedIntervalMs) {
+      _backPressedTime = currentTime;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('再按一次退出应用'),
+          duration: Duration(milliseconds: _backPressedIntervalMs),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      SystemNavigator.pop();
+    }
+  }
+
+  void _handleSystemBack(OperitScreen currentScreen) {
+    if (_drawerOpen) {
+      setState(() {
+        _drawerOpen = false;
+      });
+      return;
+    }
+    if (_routerState.canPop) {
+      _goBack();
+      return;
+    }
+    if (currentScreen is! AiChatScreenRoute) {
+      _resetToConversationFromBack();
+      return;
+    }
+    _handleExitBackPress();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -169,13 +236,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           navigationTransitionSource: _navigationTransitionSource,
           isNavigatingBack: _isNavigatingBack,
           topBarController: _topBarController,
-          onGoBack: () {
-            _isNavigatingBack = true;
-            _navigationTransitionSource =
-                NavigationTransitionSource.defaultSource;
-            _topBarController.clear();
-            _routerState.pop();
-          },
+          onGoBack: _goBack,
           onNavigationButtonPressed: () {
             if (useTabletLayout) {
               setState(() {
@@ -192,22 +253,15 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         return TopBarScope(
           controller: _topBarController,
           child: PopScope(
-            canPop: !_drawerOpen && !_routerState.canPop,
+            canPop:
+                defaultTargetPlatform != TargetPlatform.android &&
+                !_drawerOpen &&
+                !_routerState.canPop,
             onPopInvokedWithResult: (didPop, result) {
               if (didPop) {
                 return;
               }
-              if (_drawerOpen) {
-                setState(() {
-                  _drawerOpen = false;
-                });
-              } else {
-                _isNavigatingBack = true;
-                _navigationTransitionSource =
-                    NavigationTransitionSource.defaultSource;
-                _topBarController.clear();
-                _routerState.pop();
-              }
+              _handleSystemBack(currentScreen);
             },
             child: Scaffold(
               body: useTabletLayout

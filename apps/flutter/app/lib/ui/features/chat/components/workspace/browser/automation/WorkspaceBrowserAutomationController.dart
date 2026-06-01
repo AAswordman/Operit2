@@ -21,6 +21,16 @@ class WorkspaceBrowserAutomationController {
     return controller.runJavaScriptReturningResult(expression);
   }
 
+  Future<Object> evaluateFunction(String function, {String? selector}) {
+    final target = selector?.trim();
+    if (target == null || target.isEmpty) {
+      return controller.runJavaScriptReturningResult('($function)()');
+    }
+    return controller.runJavaScriptReturningResult(
+      '($function)(${_resolverScript(target)})',
+    );
+  }
+
   Future<Object> runCode(String code) {
     return controller.runJavaScriptReturningResult(code);
   }
@@ -206,6 +216,25 @@ new Promise(function(resolve) {
   const startedAt = Date.now();
   const timer = setInterval(function() {
     if (document.body && document.body.innerText.indexOf(target) >= 0) {
+      clearInterval(timer);
+      resolve(true);
+    }
+    if (Date.now() - startedAt > 10000) {
+      clearInterval(timer);
+      resolve(false);
+    }
+  }, 100);
+})
+''');
+  }
+
+  Future<Object> waitForTextGone(String text) {
+    return controller.runJavaScriptReturningResult('''
+new Promise(function(resolve) {
+  const target = ${jsonEncode(text)};
+  const startedAt = Date.now();
+  const timer = setInterval(function() {
+    if (!document.body || document.body.innerText.indexOf(target) < 0) {
       clearInterval(timer);
       resolve(true);
     }

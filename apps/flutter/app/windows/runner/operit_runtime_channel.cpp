@@ -6,7 +6,9 @@
 #include <windows.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <variant>
 
 namespace {
@@ -23,6 +25,8 @@ using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
 using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
 using BridgeHandlePermissionResult = char* (*)(BridgeHandle, const char*);
+using BridgeNextBrowserAutomationRequest = char* (*)(BridgeHandle);
+using BridgeHandleBrowserAutomationResult = char* (*)(BridgeHandle, const char*);
 using BridgeFreeString = void (*)(char*);
 
 class OperitRuntimeLibrary {
@@ -71,13 +75,20 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_current_permission_request"));
       handle_permission_result_ = reinterpret_cast<BridgeHandlePermissionResult>(
           GetProcAddress(library_, "operit_flutter_bridge_handle_permission_result"));
+      next_browser_automation_request_ = reinterpret_cast<BridgeNextBrowserAutomationRequest>(
+          GetProcAddress(library_, "operit_flutter_bridge_next_browser_automation_request"));
+      handle_browser_automation_result_ = reinterpret_cast<BridgeHandleBrowserAutomationResult>(
+          GetProcAddress(library_, "operit_flutter_bridge_handle_browser_automation_result"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           poll_watch_stream_ == nullptr || close_watch_stream_ == nullptr ||
           host_descriptor_ == nullptr || current_permission_request_ == nullptr ||
-          handle_permission_result_ == nullptr || free_string_ == nullptr) {
+          handle_permission_result_ == nullptr ||
+          next_browser_automation_request_ == nullptr ||
+          handle_browser_automation_result_ == nullptr ||
+          free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
@@ -92,6 +103,7 @@ class OperitRuntimeLibrary {
 
   bool Call(const std::string& request, std::string* response,
             std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -103,6 +115,7 @@ class OperitRuntimeLibrary {
 
   bool WatchSnapshot(const std::string& request, std::string* response,
                      std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -114,6 +127,7 @@ class OperitRuntimeLibrary {
 
   bool WatchStream(const std::string& request, std::string* response,
                    std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -125,6 +139,7 @@ class OperitRuntimeLibrary {
 
   bool PollWatchStream(const std::string& subscription, std::string* response,
                        std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -134,6 +149,7 @@ class OperitRuntimeLibrary {
 
   bool CloseWatchStream(const std::string& subscription, std::string* response,
                         std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -142,6 +158,7 @@ class OperitRuntimeLibrary {
   }
 
   bool HostDescriptor(std::string* response, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -150,6 +167,7 @@ class OperitRuntimeLibrary {
   }
 
   bool CurrentPermissionRequest(std::string* response, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
@@ -159,10 +177,32 @@ class OperitRuntimeLibrary {
 
   bool HandlePermissionResult(const std::string& permission_result,
                               std::string* response, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!EnsureReady(error)) {
       return false;
     }
     char* raw_response = handle_permission_result_(handle_, permission_result.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool NextBrowserAutomationRequest(std::string* response, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = next_browser_automation_request_(handle_);
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool HandleBrowserAutomationResult(const std::string& browser_result,
+                                     std::string* response,
+                                     std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response =
+        handle_browser_automation_result_(handle_, browser_result.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -200,6 +240,7 @@ class OperitRuntimeLibrary {
 
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
+  std::mutex mutex_;
   BridgeCreate create_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
@@ -211,6 +252,8 @@ class OperitRuntimeLibrary {
   BridgeHostDescriptor host_descriptor_ = nullptr;
   BridgeCurrentPermissionRequest current_permission_request_ = nullptr;
   BridgeHandlePermissionResult handle_permission_result_ = nullptr;
+  BridgeNextBrowserAutomationRequest next_browser_automation_request_ = nullptr;
+  BridgeHandleBrowserAutomationResult handle_browser_automation_result_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
@@ -225,6 +268,22 @@ const std::string* StringArgument(
     return nullptr;
   }
   return std::get_if<std::string>(arguments);
+}
+
+void RespondRuntimeCallAsync(
+    std::string request,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  auto library = g_operit_runtime_library;
+  std::thread([library, request = std::move(request),
+               result = std::move(result)]() mutable {
+    std::string response;
+    std::string error;
+    if (library->Call(request, &response, &error)) {
+      result->Success(flutter::EncodableValue(response));
+    } else {
+      result->Error("RUNTIME_BRIDGE_ERROR", error);
+    }
+  }).detach();
 }
 
 }  // namespace
@@ -248,11 +307,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
             result->Error("INVALID_ARGS", "call expects a JSON string");
             return;
           }
-          if (g_operit_runtime_library->Call(*request, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeCallAsync(*request, std::move(result));
           return;
         }
         if (method_call.method_name().compare("watchSnapshot") == 0) {
@@ -337,6 +392,30 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
           }
           if (g_operit_runtime_library->HandlePermissionResult(
                   *permission_result, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("nextBrowserAutomationRequest") == 0) {
+          if (g_operit_runtime_library->NextBrowserAutomationRequest(
+                  &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("handleBrowserAutomationResult") == 0) {
+          const std::string* browser_result = StringArgument(method_call);
+          if (browser_result == nullptr) {
+            result->Error("INVALID_ARGS",
+                          "handleBrowserAutomationResult expects a JSON string");
+            return;
+          }
+          if (g_operit_runtime_library->HandleBrowserAutomationResult(
+                  *browser_result, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
