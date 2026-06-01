@@ -1,0 +1,4 @@
+linter:
+  rules:
+    prefer_function_declarations_over_variables: false
+    prefer_conditional_assignment: false
