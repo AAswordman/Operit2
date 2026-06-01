@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -7,7 +8,8 @@ use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::data::mcp::plugins::MCPBridge::MCPBridge;
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
-use crate::data::mcp::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer};
+use crate::data::mcp::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer, PluginMetadata};
+use crate::data::mcp::MCPRepository::MCPRepository;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginInitStatus {
@@ -52,7 +54,24 @@ impl MCPStarter {
     where
         F: FnMut(StartStatus),
     {
-        self.startPluginInternal(pluginId, &mut statusCallback)
+        self.startPluginInternal(
+            pluginId,
+            MCPBridgeClient::DEFAULT_SPAWN_TIMEOUT_MS,
+            &mut statusCallback,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn startPluginWithTimeout<F>(
+        &self,
+        pluginId: &str,
+        timeoutMs: u64,
+        mut statusCallback: F,
+    ) -> bool
+    where
+        F: FnMut(StartStatus),
+    {
+        self.startPluginInternal(pluginId, timeoutMs, &mut statusCallback)
     }
 
     #[allow(non_snake_case)]
@@ -73,7 +92,33 @@ impl MCPStarter {
     }
 
     #[allow(non_snake_case)]
-    fn startPluginInternal<F>(&self, pluginId: &str, statusCallback: &mut F) -> bool
+    pub fn startAllDeployedPluginsWithTimeout(
+        &self,
+        timeoutSeconds: i32,
+    ) -> (usize, usize, PluginInitStatus) {
+        let localServer = MCPLocalServer::getInstance(&self.context);
+        let plugins = localServer
+            .getAllPluginMetadata()
+            .into_keys()
+            .filter(|pluginId| localServer.isServerEnabled(pluginId))
+            .collect::<Vec<_>>();
+        let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
+        let timeoutDuration = Duration::from_millis(timeoutMs);
+        let mut successCount = 0usize;
+        for pluginId in &plugins {
+            let startedAt = Instant::now();
+            if self.startPluginWithTimeout(pluginId, timeoutMs, |_| {}) {
+                successCount += 1;
+            }
+            if startedAt.elapsed() >= timeoutDuration {
+                break;
+            }
+        }
+        (successCount, plugins.len(), PluginInitStatus::SUCCESS)
+    }
+
+    #[allow(non_snake_case)]
+    fn startPluginInternal<F>(&self, pluginId: &str, timeoutMs: u64, statusCallback: &mut F) -> bool
     where
         F: FnMut(StartStatus),
     {
@@ -157,7 +202,7 @@ impl MCPStarter {
         }
 
         let client = MCPBridgeClient::new(self.context.clone(), actualServiceName.clone());
-        if !client.connect() {
+        if !client.connectWithSpawnTimeoutMs(timeoutMs) {
             statusCallback(StartStatus::Error(
                 client
                     .getLastConnectionFailureDetail()
@@ -193,6 +238,15 @@ impl MCPStarter {
             let _ = bridge.cacheTools(actualServiceName.clone(), tools);
         }
 
+        let pluginInfo = if pluginInfo.description.trim().is_empty() {
+            match generateMissingDescription(&self.context, pluginId, &pluginInfo) {
+                Some(updated) => updated,
+                None => pluginInfo,
+            }
+        } else {
+            pluginInfo
+        };
+
         MCPManager::getInstance(self.context.clone()).registerServer(
             actualServiceName.clone(),
             MCPServerConfig {
@@ -222,20 +276,6 @@ impl MCPStarter {
 }
 
 #[allow(non_snake_case)]
-fn normalizedServerName(pluginName: &str, pluginId: &str) -> String {
-    let normalized = pluginName.replace(' ', "_").to_ascii_lowercase();
-    if normalized.is_empty() {
-        pluginId
-            .split('/')
-            .last()
-            .unwrap_or(pluginId)
-            .to_ascii_lowercase()
-    } else {
-        normalized
-    }
-}
-
-#[allow(non_snake_case)]
 fn extractServerNameFromConfig(configJson: &str) -> Option<String> {
     if configJson.trim().is_empty() {
         return None;
@@ -260,4 +300,29 @@ fn parseConfigJson(configJson: &str) -> Option<MCPConfig> {
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
+}
+
+#[allow(non_snake_case)]
+fn generateMissingDescription(
+    context: &OperitApplicationContext,
+    pluginId: &str,
+    pluginInfo: &PluginMetadata,
+) -> Option<PluginMetadata> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let repository = MCPRepository::getInstance(context);
+    let generatedDescription = runtime
+        .block_on(repository.generatePluginDescription(pluginId, &pluginInfo.name))
+        .ok()?;
+    if generatedDescription.trim().is_empty() {
+        return None;
+    }
+    let mut updated = pluginInfo.clone();
+    updated.description = generatedDescription;
+    MCPLocalServer::getInstance(context)
+        .addOrUpdatePluginMetadata(pluginId, updated.clone())
+        .ok()?;
+    Some(updated)
 }

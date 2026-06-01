@@ -30,6 +30,8 @@ pub fn run_mcp_command(
         Some("config") => print_mcp_config(context, args, output),
         Some("config-set") => save_mcp_config(context, args, output),
         Some("local-set") => save_local_mcp_server(context, args, output),
+        Some("install-github") => install_mcp_from_github(context, args, output),
+        Some("install-zip") => install_mcp_from_zip(context, args, output),
         Some("meta") => print_mcp_metadata(context, args, output),
         Some("meta-set") => save_mcp_metadata(context, args, output),
         Some("describe") => generate_mcp_description(context, args, output),
@@ -257,6 +259,58 @@ fn save_local_mcp_server(
     Ok(())
 }
 
+fn install_mcp_from_github(
+    context: OperitApplicationContext,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let usage = "operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]";
+    let id = required_arg(args, 1, usage)?.to_string();
+    let repoUrl = required_arg(args, 2, usage)?.to_string();
+    let metadata = metadata_from_install_args(args, usage)?;
+    let mcpConfig = optional_content_arg(args.get(7))?;
+    match MCPRepository::getInstance(&context).installMCPServerWithObject(
+        id.clone(),
+        repoUrl,
+        metadata,
+        mcpConfig,
+        |_| {},
+    ) {
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+            output.push_stdout_line(format!("installed={id}"));
+            output.push_stdout_line(format!("path={pluginPath}"));
+            Ok(())
+        }
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+    }
+}
+
+fn install_mcp_from_zip(
+    context: OperitApplicationContext,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let usage = "operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]";
+    let id = required_arg(args, 1, usage)?.to_string();
+    let zipPath = required_arg(args, 2, usage)?.to_string();
+    let metadata = metadata_from_install_args(args, usage)?;
+    let mcpConfig = optional_content_arg(args.get(7))?;
+    match MCPRepository::getInstance(&context).installMCPServerFromZip(
+        id.clone(),
+        zipPath,
+        metadata,
+        mcpConfig,
+        |_| {},
+    ) {
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+            output.push_stdout_line(format!("installed={id}"));
+            output.push_stdout_line(format!("path={pluginPath}"));
+            Ok(())
+        }
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+    }
+}
+
 fn print_mcp_metadata(
     context: OperitApplicationContext,
     args: &[String],
@@ -386,6 +440,22 @@ fn parse_key_value(value: &str) -> Result<(String, String), String> {
     Ok((key, value[separator + 1..].to_string()))
 }
 
+fn metadata_from_install_args(args: &[String], usage: &str) -> Result<PluginMetadata, String> {
+    Ok(PluginMetadata {
+        name: required_arg(args, 3, usage)?.to_string(),
+        description: read_content_arg(required_arg(args, 4, usage)?)?,
+        author: required_arg(args, 5, usage)?.to_string(),
+        version: required_arg(args, 6, usage)?.to_string(),
+    })
+}
+
+fn optional_content_arg(value: Option<&String>) -> Result<String, String> {
+    value
+        .map(|item| read_content_arg(item))
+        .transpose()
+        .map(|item| item.unwrap_or_default())
+}
+
 fn require_mcp_server(context: &OperitApplicationContext, id: &str) -> Result<(), String> {
     mcp_local_server(context)
         .getMCPServer(id)
@@ -437,6 +507,8 @@ fn print_mcp_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 mcp config <id>");
     output.push_stdout_line("operit2 mcp config-set <id> <json-or-@file>");
     output.push_stdout_line("operit2 mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]");
+    output.push_stdout_line("operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]");
+    output.push_stdout_line("operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]");
     output.push_stdout_line("operit2 mcp meta <id>");
     output.push_stdout_line(
         "operit2 mcp meta-set <id> <name> <description-or-@file> <author> <version>",

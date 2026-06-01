@@ -52,6 +52,27 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
 
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleInputChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant AgentChatInputSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleInputChanged);
+      widget.controller.addListener(_handleInputChanged);
+    }
+  }
+
+  void _handleInputChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _toggleSettingsPopup() {
     widget.onModelSelector?.call();
     if (_modelPopupEntry == null) {
@@ -208,6 +229,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_handleInputChanged);
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
     super.dispose();

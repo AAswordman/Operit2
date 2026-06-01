@@ -26,12 +26,42 @@ class AIChatScreen extends StatefulWidget {
   State<AIChatScreen> createState() => _AIChatScreenState();
 }
 
+class _ChatContentData {
+  const _ChatContentData({
+    required this.messages,
+    required this.loading,
+    required this.errorMessage,
+    required this.inputProcessingState,
+    required this.currentChatId,
+    required this.hasOlderDisplayHistory,
+    required this.hasNewerDisplayHistory,
+    required this.isLoadingDisplayWindow,
+    required this.isMultiSelectMode,
+    required this.selectedMessageIndices,
+  });
+
+  final List<ChatUiMessage> messages;
+  final bool loading;
+  final String? errorMessage;
+  final ChatInputProcessingState inputProcessingState;
+  final String? currentChatId;
+  final bool hasOlderDisplayHistory;
+  final bool hasNewerDisplayHistory;
+  final bool isLoadingDisplayWindow;
+  final bool isMultiSelectMode;
+  final Set<int> selectedMessageIndices;
+}
+
 class _AIChatScreenState extends State<AIChatScreen>
     with WidgetsBindingObserver {
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
+  late final ValueNotifier<_ChatContentData> _chatContentDataNotifier;
+  late final ValueNotifier<bool> _autoScrollToBottomNotifier;
+  late final ValueNotifier<String> _modelLabelNotifier;
+  late final ValueNotifier<String?> _toastMessageNotifier;
 
   bool _loading = true;
   ChatInputProcessingState _inputProcessingState =
@@ -67,11 +97,16 @@ class _AIChatScreenState extends State<AIChatScreen>
   @override
   void initState() {
     super.initState();
+    _chatContentDataNotifier = ValueNotifier<_ChatContentData>(
+      _currentChatContentData(),
+    );
+    _autoScrollToBottomNotifier = ValueNotifier<bool>(_autoScrollToBottom);
+    _modelLabelNotifier = ValueNotifier<String>(_modelLabel);
+    _toastMessageNotifier = ValueNotifier<String?>(_toastMessage);
     WidgetsBinding.instance.addObserver(this);
     _workspaceOpen = _chatWorkspaceOpen;
     _watchMainState();
     _watchToastEvent();
-    _messageController.addListener(_onInputChanged);
     _inputFocusNode.addListener(_onInputFocusChanged);
   }
 
@@ -85,11 +120,14 @@ class _AIChatScreenState extends State<AIChatScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _messageController.removeListener(_onInputChanged);
     _inputFocusNode.removeListener(_onInputFocusChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
     _scrollController.dispose();
+    _chatContentDataNotifier.dispose();
+    _autoScrollToBottomNotifier.dispose();
+    _modelLabelNotifier.dispose();
+    _toastMessageNotifier.dispose();
     _mainStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
     _topBarController?.clearActions(owner: _topBarActionsOwner);
@@ -112,9 +150,8 @@ class _AIChatScreenState extends State<AIChatScreen>
         if (!mounted || message == null || message.trim().isEmpty) {
           return;
         }
-        setState(() {
-          _toastMessage = message;
-        });
+        _toastMessage = message;
+        _toastMessageNotifier.value = message;
       },
       onError: (Object error, StackTrace stackTrace) {
         debugPrint('Failed to watch toast event: $error\n$stackTrace');
@@ -124,9 +161,8 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   void _dismissToast() {
     if (mounted) {
-      setState(() {
-        _toastMessage = null;
-      });
+      _toastMessage = null;
+      _toastMessageNotifier.value = null;
     }
     widget.viewModel.clearToastEvent().catchError((
       Object error,
@@ -153,10 +189,9 @@ class _AIChatScreenState extends State<AIChatScreen>
         if (!mounted) {
           return;
         }
-        setState(() {
-          _errorMessage = error.toString();
-          _loading = false;
-        });
+        _errorMessage = error.toString();
+        _loading = false;
+        _publishChatContentData();
       },
     );
   }
@@ -164,7 +199,7 @@ class _AIChatScreenState extends State<AIChatScreen>
   Future<ChatViewModelSnapshot?> _loadSnapshot({
     bool showLoading = true,
   }) async {
-    setState(() {
+    _mutateChatContentData(() {
       if (showLoading) {
         _loading = true;
       }
@@ -186,7 +221,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       if (!mounted) {
         return null;
       }
-      setState(() {
+      _mutateChatContentData(() {
         _errorMessage = error.toString();
         _loading = false;
       });
@@ -195,7 +230,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _applySnapshot(ChatViewModelSnapshot snapshot) {
-    setState(() {
+    final workspaceChanged =
+        _currentChatId != snapshot.currentChatId ||
+        _currentWorkspacePath != snapshot.currentWorkspacePath;
+    _mutateChatContentData(() {
       final chatChanged =
           _currentChatId != null &&
           snapshot.currentChatId != null &&
@@ -228,6 +266,9 @@ class _AIChatScreenState extends State<AIChatScreen>
         }).toSet();
       }
     });
+    if (workspaceChanged && mounted) {
+      setState(() {});
+    }
   }
 
   void _sendMessage() {
@@ -237,8 +278,9 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
 
     _messageController.clear();
-    setState(() {
+    _mutateChatContentData(() {
       _autoScrollToBottom = true;
+      _autoScrollToBottomNotifier.value = true;
       _errorMessage = null;
       _loading = true;
       _inputProcessingState = const ChatInputProcessingState(
@@ -268,7 +310,7 @@ class _AIChatScreenState extends State<AIChatScreen>
             if (!mounted) {
               return null;
             }
-            setState(() {
+            _mutateChatContentData(() {
               _errorMessage = error.toString();
               _loading = false;
               _inputProcessingState = ChatInputProcessingState(
@@ -290,12 +332,6 @@ class _AIChatScreenState extends State<AIChatScreen>
     ) {
       debugPrint('Failed to cancel chat message: $error\n$stackTrace');
     });
-  }
-
-  void _onInputChanged() {
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   void _onInputFocusChanged() {
@@ -350,9 +386,8 @@ class _AIChatScreenState extends State<AIChatScreen>
     if (_autoScrollToBottom == value) {
       return;
     }
-    setState(() {
-      _autoScrollToBottom = value;
-    });
+    _autoScrollToBottom = value;
+    _autoScrollToBottomNotifier.value = value;
   }
 
   Future<List<ChatMessageLocatorPreview>> _loadMessageLocatorEntries(
@@ -367,7 +402,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     if (!mounted) {
       return;
     }
-    setState(() {
+    _mutateChatContentData(() {
       for (var index = 0; index < _messages.length; index++) {
         final message = _messages[index];
         if (message.timestamp == timestamp) {
@@ -475,21 +510,21 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _replyToMessageTarget(ChatUiMessage message) {
-    setState(() {
+    _mutateChatContentData(() {
       _replyToMessage = message;
     });
     _inputFocusNode.requestFocus();
   }
 
   void _toggleMultiSelectMode(int index) {
-    setState(() {
+    _mutateChatContentData(() {
       _isMultiSelectMode = true;
       _selectedMessageIndices = <int>{index};
     });
   }
 
   void _toggleMessageSelection(int index) {
-    setState(() {
+    _mutateChatContentData(() {
       final next = Set<int>.of(_selectedMessageIndices);
       if (next.contains(index)) {
         next.remove(index);
@@ -501,20 +536,20 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _exitMultiSelectMode() {
-    setState(() {
+    _mutateChatContentData(() {
       _isMultiSelectMode = false;
       _selectedMessageIndices = const <int>{};
     });
   }
 
   void _clearMessageSelection() {
-    setState(() {
+    _mutateChatContentData(() {
       _selectedMessageIndices = const <int>{};
     });
   }
 
   void _selectAllMessages() {
-    setState(() {
+    _mutateChatContentData(() {
       _isMultiSelectMode = true;
       _selectedMessageIndices = Set<int>.from(
         List<int>.generate(_messages.length, (index) => index).where((index) {
@@ -570,11 +605,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _setModelLabel(String modelName) {
-    setState(() {
-      _modelLabel = modelName.length > 26
-          ? '${modelName.substring(0, 26)}...'
-          : modelName;
-    });
+    _modelLabel = modelName.length > 26
+        ? '${modelName.substring(0, 26)}...'
+        : modelName;
+    _modelLabelNotifier.value = _modelLabel;
   }
 
   void _updateTopBarTitle() {
@@ -661,52 +695,81 @@ class _AIChatScreenState extends State<AIChatScreen>
       onOpenWorkspaceFile: widget.viewModel.openWorkspaceFile,
       onCreateDefaultWorkspace: _createDefaultWorkspace,
       onBindWorkspace: _bindWorkspace,
-      child: ChatScreenContent(
-        messages: List<ChatUiMessage>.unmodifiable(_messages),
-        loading: _loading,
-        errorMessage: _errorMessage,
-        messageController: _messageController,
-        inputFocusNode: _inputFocusNode,
-        scrollController: _scrollController,
-        inputProcessingState: _inputProcessingState,
-        modelLabel: _modelLabel,
-        viewModel: widget.viewModel,
-        currentChatId: _currentChatId,
-        autoScrollToBottom: _autoScrollToBottom,
-        hasOlderDisplayHistory: _hasOlderDisplayHistory,
-        hasNewerDisplayHistory: _hasNewerDisplayHistory,
-        isLoadingDisplayWindow: _isLoadingDisplayWindow,
-        loadLocatorEntries: _loadMessageLocatorEntries,
-        onAutoScrollToBottomChanged: _setAutoScrollToBottom,
-        onLoadOlderDisplayWindow: _loadOlderDisplayWindow,
-        onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
-        onShowLatestDisplayWindow: _showLatestDisplayWindow,
-        onToggleFavoriteMessage: _setMessageFavorite,
-        onDeleteMessage: _deleteMessage,
-        onDeleteMessagesFrom: _deleteMessagesFrom,
-        onDeleteMessageVariant: _deleteMessageVariant,
-        onRollbackToMessage: _requestRollbackToMessage,
-        onSelectMessageToEdit: _selectMessageToEdit,
-        onRegenerateMessage: _regenerateMessage,
-        onInsertSummary: _insertSummary,
-        onCreateBranch: _createBranch,
-        onReplyToMessage: _replyToMessageTarget,
-        onToggleMultiSelectMode: _toggleMultiSelectMode,
-        onToggleMessageSelection: _toggleMessageSelection,
-        onExitMultiSelectMode: _exitMultiSelectMode,
-        onSelectAllMessages: _selectAllMessages,
-        onClearMessageSelection: _clearMessageSelection,
-        onDeleteSelectedMessages: _deleteSelectedMessages,
-        onRefreshRequested: () =>
-            _loadSnapshot(showLoading: false).then((_) {}),
-        isMultiSelectMode: _isMultiSelectMode,
-        selectedMessageIndices: _selectedMessageIndices,
-        onSendMessage: _sendMessage,
-        onCancelMessage: _cancelMessage,
-        onModelChanged: _setModelLabel,
-        toastMessage: _toastMessage,
-        onDismissToast: _dismissToast,
+      child: ValueListenableBuilder<_ChatContentData>(
+        valueListenable: _chatContentDataNotifier,
+        builder: (context, data, _) {
+          return ChatScreenContent(
+            messages: data.messages,
+            loading: data.loading,
+            errorMessage: data.errorMessage,
+            messageController: _messageController,
+            inputFocusNode: _inputFocusNode,
+            scrollController: _scrollController,
+            inputProcessingState: data.inputProcessingState,
+            modelLabelListenable: _modelLabelNotifier,
+            viewModel: widget.viewModel,
+            currentChatId: data.currentChatId,
+            autoScrollToBottomListenable: _autoScrollToBottomNotifier,
+            hasOlderDisplayHistory: data.hasOlderDisplayHistory,
+            hasNewerDisplayHistory: data.hasNewerDisplayHistory,
+            isLoadingDisplayWindow: data.isLoadingDisplayWindow,
+            loadLocatorEntries: _loadMessageLocatorEntries,
+            onAutoScrollToBottomChanged: _setAutoScrollToBottom,
+            onLoadOlderDisplayWindow: _loadOlderDisplayWindow,
+            onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
+            onShowLatestDisplayWindow: _showLatestDisplayWindow,
+            onToggleFavoriteMessage: _setMessageFavorite,
+            onDeleteMessage: _deleteMessage,
+            onDeleteMessagesFrom: _deleteMessagesFrom,
+            onDeleteMessageVariant: _deleteMessageVariant,
+            onRollbackToMessage: _requestRollbackToMessage,
+            onSelectMessageToEdit: _selectMessageToEdit,
+            onRegenerateMessage: _regenerateMessage,
+            onInsertSummary: _insertSummary,
+            onCreateBranch: _createBranch,
+            onReplyToMessage: _replyToMessageTarget,
+            onToggleMultiSelectMode: _toggleMultiSelectMode,
+            onToggleMessageSelection: _toggleMessageSelection,
+            onExitMultiSelectMode: _exitMultiSelectMode,
+            onSelectAllMessages: _selectAllMessages,
+            onClearMessageSelection: _clearMessageSelection,
+            onDeleteSelectedMessages: _deleteSelectedMessages,
+            onRefreshRequested: () =>
+                _loadSnapshot(showLoading: false).then((_) {}),
+            isMultiSelectMode: data.isMultiSelectMode,
+            selectedMessageIndices: data.selectedMessageIndices,
+            onSendMessage: _sendMessage,
+            onCancelMessage: _cancelMessage,
+            onModelChanged: _setModelLabel,
+            toastMessageListenable: _toastMessageNotifier,
+            onDismissToast: _dismissToast,
+          );
+        },
       ),
+    );
+  }
+
+  void _mutateChatContentData(VoidCallback mutate) {
+    mutate();
+    _publishChatContentData();
+  }
+
+  void _publishChatContentData() {
+    _chatContentDataNotifier.value = _currentChatContentData();
+  }
+
+  _ChatContentData _currentChatContentData() {
+    return _ChatContentData(
+      messages: List<ChatUiMessage>.unmodifiable(_messages),
+      loading: _loading,
+      errorMessage: _errorMessage,
+      inputProcessingState: _inputProcessingState,
+      currentChatId: _currentChatId,
+      hasOlderDisplayHistory: _hasOlderDisplayHistory,
+      hasNewerDisplayHistory: _hasNewerDisplayHistory,
+      isLoadingDisplayWindow: _isLoadingDisplayWindow,
+      isMultiSelectMode: _isMultiSelectMode,
+      selectedMessageIndices: _selectedMessageIndices,
     );
   }
 

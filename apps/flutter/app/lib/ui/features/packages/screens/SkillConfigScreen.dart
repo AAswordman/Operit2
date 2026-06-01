@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/EmptyState.dart';
+import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 
@@ -14,10 +15,12 @@ class SkillConfigScreen extends StatefulWidget {
     super.key,
     required this.clients,
     required this.searchQuery,
+    required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
+  final VoidCallback onOpenMarket;
 
   @override
   State<SkillConfigScreen> createState() => _SkillConfigScreenState();
@@ -91,6 +94,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   }
 
   Future<void> _setSkillVisible(String skillName, bool visible) async {
+    final previous = _visibleSkillNames.contains(skillName);
     setState(() {
       final next = Set<String>.from(_visibleSkillNames);
       if (visible) {
@@ -107,10 +111,18 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
       );
     } catch (error, stackTrace) {
       debugPrint('Failed to update skill visibility: $error\n$stackTrace');
-      await _loadSkills();
       if (!mounted) {
         return;
       }
+      setState(() {
+        final next = Set<String>.from(_visibleSkillNames);
+        if (previous) {
+          next.add(skillName);
+        } else {
+          next.remove(skillName);
+        }
+        _visibleSkillNames = next;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(error.toString()),
@@ -213,6 +225,15 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                     : () => _showLoadErrors(_loadErrors),
               ),
               const SizedBox(height: 12),
+              if (widget.searchQuery.trim().isEmpty) ...<Widget>[
+                MarketEntryCard(
+                  icon: Icons.store_outlined,
+                  title: '打开技能市场',
+                  subtitle: '浏览、下载和管理社区发布的技能。',
+                  onTap: widget.onOpenMarket,
+                ),
+                const SizedBox(height: 12),
+              ],
               if (displayedSkills.isEmpty)
                 EmptyState(
                   icon: Icons.build_outlined,
@@ -232,9 +253,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                       icon: Icons.build_outlined,
                       title: skill.name,
                       subtitle: skill.description,
-                      metadata: <String>[
-                        visible ? 'AI 可见' : 'AI 隐藏',
-                      ],
+                      metadata: <String>[visible ? 'AI 可见' : 'AI 隐藏'],
                       enabled: visible,
                       onTap: () => _showSkillDetails(skill),
                       onEnabledChanged: (value) =>

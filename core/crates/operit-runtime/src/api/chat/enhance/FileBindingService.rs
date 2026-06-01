@@ -41,6 +41,39 @@ struct MatchSearchResult {
     lcsCalculations: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum UnifiedDiffLine {
+    Context {
+        oldLine: usize,
+        newLine: usize,
+        text: String,
+    },
+    Delete {
+        oldLine: usize,
+        text: String,
+    },
+    Insert {
+        newLine: usize,
+        text: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DiffOp {
+    Equal(String),
+    Delete(String),
+    Insert(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UnifiedDiffHunk {
+    oldStart: usize,
+    oldCount: usize,
+    newStart: usize,
+    newCount: usize,
+    lines: Vec<UnifiedDiffLine>,
+}
+
 impl FileBindingService {
     pub fn processFileBinding(
         &self,
@@ -135,50 +168,44 @@ impl FileBindingService {
     }
 
     pub fn generateUnifiedDiff(&self, original: &str, modified: &str) -> String {
-        let originalLines: Vec<&str> = if original.is_empty() {
-            Vec::new()
-        } else {
-            original.lines().collect()
-        };
-        let modifiedLines: Vec<&str> = if modified.is_empty() {
-            Vec::new()
-        } else {
-            modified.lines().collect()
-        };
+        let originalLines = kotlinLines(original);
+        let modifiedLines = kotlinLines(modified);
+        let diffOps = buildDiffOps(&originalLines, &modifiedLines);
 
-        if originalLines == modifiedLines {
+        if diffOps.iter().all(|op| matches!(op, DiffOp::Equal(_))) {
             return "No changes detected (files are identical)".to_string();
         }
 
         let mut additions = 0;
         let mut deletions = 0;
-        let max_len = originalLines.len().max(modifiedLines.len());
+        for op in &diffOps {
+            match op {
+                DiffOp::Insert(_) => additions += 1,
+                DiffOp::Delete(_) => deletions += 1,
+                DiffOp::Equal(_) => {}
+            }
+        }
+
+        let annotatedLines = annotateDiffOps(&diffOps);
+        let hunks = buildUnifiedDiffHunks(&annotatedLines, 3);
         let mut resultLines = Vec::new();
-        resultLines.push(format!(
-            "@@ -1,{} +1,{} @@",
-            originalLines.len(),
-            modifiedLines.len()
-        ));
-        for index in 0..max_len {
-            match (originalLines.get(index), modifiedLines.get(index)) {
-                (Some(left), Some(right)) if left == right => {
-                    resultLines.push(format!(" {:<4}|{}", index + 1, left));
+        for hunk in hunks {
+            resultLines.push(format!(
+                "@@ -{},{} +{},{} @@",
+                hunk.oldStart, hunk.oldCount, hunk.newStart, hunk.newCount
+            ));
+            for line in hunk.lines {
+                match line {
+                    UnifiedDiffLine::Context { oldLine, text, .. } => {
+                        resultLines.push(format!(" {:<4}|{}", oldLine, text));
+                    }
+                    UnifiedDiffLine::Delete { oldLine, text } => {
+                        resultLines.push(format!("-{:<4}|{}", oldLine, text));
+                    }
+                    UnifiedDiffLine::Insert { newLine, text } => {
+                        resultLines.push(format!("+{:<4}|{}", newLine, text));
+                    }
                 }
-                (Some(left), Some(right)) => {
-                    deletions += 1;
-                    additions += 1;
-                    resultLines.push(format!("-{:<4}|{}", index + 1, left));
-                    resultLines.push(format!("+{:<4}|{}", index + 1, right));
-                }
-                (Some(left), None) => {
-                    deletions += 1;
-                    resultLines.push(format!("-{:<4}|{}", index + 1, left));
-                }
-                (None, Some(right)) => {
-                    additions += 1;
-                    resultLines.push(format!("+{:<4}|{}", index + 1, right));
-                }
-                (None, None) => {}
             }
         }
 
@@ -511,6 +538,172 @@ impl FileBindingService {
             search_start += index + normalizedOld.len();
         }
         false
+    }
+}
+
+#[allow(non_snake_case)]
+fn kotlinLines(value: &str) -> Vec<String> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        value
+            .split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+            .collect()
+    }
+}
+
+#[allow(non_snake_case)]
+fn buildDiffOps(originalLines: &[String], modifiedLines: &[String]) -> Vec<DiffOp> {
+    let originalLen = originalLines.len();
+    let modifiedLen = modifiedLines.len();
+    let mut table = vec![vec![0usize; modifiedLen + 1]; originalLen + 1];
+
+    for i in 0..originalLen {
+        for (j, modifiedLine) in modifiedLines.iter().enumerate() {
+            if originalLines[i] == *modifiedLine {
+                table[i + 1][j + 1] = table[i][j] + 1;
+            } else {
+                table[i + 1][j + 1] = table[i][j + 1].max(table[i + 1][j]);
+            }
+        }
+    }
+
+    let mut reversed = Vec::new();
+    let mut i = originalLen;
+    let mut j = modifiedLen;
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && originalLines[i - 1] == modifiedLines[j - 1] {
+            reversed.push(DiffOp::Equal(originalLines[i - 1].clone()));
+            i -= 1;
+            j -= 1;
+        } else if i > 0 && (j == 0 || table[i - 1][j] >= table[i][j - 1]) {
+            reversed.push(DiffOp::Delete(originalLines[i - 1].clone()));
+            i -= 1;
+        } else {
+            reversed.push(DiffOp::Insert(modifiedLines[j - 1].clone()));
+            j -= 1;
+        }
+    }
+
+    reversed.reverse();
+    reversed
+}
+
+#[allow(non_snake_case)]
+fn annotateDiffOps(diffOps: &[DiffOp]) -> Vec<UnifiedDiffLine> {
+    let mut lines = Vec::new();
+    let mut oldLine = 1usize;
+    let mut newLine = 1usize;
+
+    for op in diffOps {
+        match op {
+            DiffOp::Equal(text) => {
+                lines.push(UnifiedDiffLine::Context {
+                    oldLine,
+                    newLine,
+                    text: text.clone(),
+                });
+                oldLine += 1;
+                newLine += 1;
+            }
+            DiffOp::Delete(text) => {
+                lines.push(UnifiedDiffLine::Delete {
+                    oldLine,
+                    text: text.clone(),
+                });
+                oldLine += 1;
+            }
+            DiffOp::Insert(text) => {
+                lines.push(UnifiedDiffLine::Insert {
+                    newLine,
+                    text: text.clone(),
+                });
+                newLine += 1;
+            }
+        }
+    }
+
+    lines
+}
+
+#[allow(non_snake_case)]
+fn buildUnifiedDiffHunks(lines: &[UnifiedDiffLine], context: usize) -> Vec<UnifiedDiffHunk> {
+    let changeIndexes = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            if matches!(line, UnifiedDiffLine::Context { .. }) {
+                None
+            } else {
+                Some(index)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut ranges = Vec::<(usize, usize)>::new();
+    for changeIndex in changeIndexes {
+        let start = changeIndex.saturating_sub(context);
+        let end = (changeIndex + context).min(lines.len().saturating_sub(1));
+        if let Some((_, previousEnd)) = ranges.last_mut() {
+            if start <= *previousEnd + 1 {
+                *previousEnd = (*previousEnd).max(end);
+                continue;
+            }
+        }
+        ranges.push((start, end));
+    }
+
+    ranges
+        .into_iter()
+        .map(|(start, end)| buildUnifiedDiffHunk(lines[start..=end].to_vec()))
+        .collect()
+}
+
+#[allow(non_snake_case)]
+fn buildUnifiedDiffHunk(lines: Vec<UnifiedDiffLine>) -> UnifiedDiffHunk {
+    let oldStart = lines
+        .iter()
+        .find_map(|line| match line {
+            UnifiedDiffLine::Context { oldLine, .. } | UnifiedDiffLine::Delete { oldLine, .. } => {
+                Some(*oldLine)
+            }
+            UnifiedDiffLine::Insert { .. } => None,
+        })
+        .unwrap_or(1);
+    let newStart = lines
+        .iter()
+        .find_map(|line| match line {
+            UnifiedDiffLine::Context { newLine, .. } => Some(*newLine),
+            UnifiedDiffLine::Insert { newLine, .. } => Some(*newLine),
+            UnifiedDiffLine::Delete { .. } => None,
+        })
+        .unwrap_or(1);
+    let oldCount = lines
+        .iter()
+        .filter(|line| {
+            matches!(
+                line,
+                UnifiedDiffLine::Context { .. } | UnifiedDiffLine::Delete { .. }
+            )
+        })
+        .count();
+    let newCount = lines
+        .iter()
+        .filter(|line| {
+            matches!(
+                line,
+                UnifiedDiffLine::Context { .. } | UnifiedDiffLine::Insert { .. }
+            )
+        })
+        .count();
+
+    UnifiedDiffHunk {
+        oldStart,
+        oldCount,
+        newStart,
+        newCount,
+        lines,
     }
 }
 

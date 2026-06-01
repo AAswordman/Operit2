@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -9,15 +10,17 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/EmptyState.dart';
 import '../components/PackageTab.dart';
+import '../dialogs/MCPImportDialog.dart';
 import '../dialogs/PackageDetailsDialog.dart';
-import '../dialogs/PackageImportDialog.dart';
 import '../dialogs/PackageToolRunDialog.dart';
+import '../dialogs/SkillImportDialog.dart';
 import '../model/PackageManagerModels.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'MCPConfigScreen.dart';
 import 'PackageTabContent.dart';
 import 'PluginTabContent.dart';
 import 'SkillConfigScreen.dart';
+import 'UnifiedMarketScreen.dart';
 
 class PackageManagerScreen extends StatefulWidget {
   const PackageManagerScreen({super.key, GeneratedCoreProxyClients? clients})
@@ -109,6 +112,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     core_proxy.ToolPkgContainerRuntime plugin,
     bool enabled,
   ) async {
+    final previous = _snapshot.enabledPluginContainerNames.contains(
+      plugin.packageName,
+    );
     _setOptimisticPluginEnabled(plugin.packageName, enabled);
     try {
       if (enabled) {
@@ -120,13 +126,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           containerPackageName: plugin.packageName,
         );
       }
-      await _loadSnapshot();
     } catch (error, stackTrace) {
       debugPrint('Failed to update plugin state: $error\n$stackTrace');
-      await _loadSnapshot();
       if (!mounted) {
         return;
       }
+      _setOptimisticPluginEnabled(plugin.packageName, previous);
       _showSnackBar(error.toString());
     }
   }
@@ -135,6 +140,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     core_proxy.ToolPackage package,
     bool enabled,
   ) async {
+    final previous = _snapshot.enabledPackageNames.contains(package.name);
     _setOptimisticPackageEnabled(package.name, enabled);
     try {
       if (enabled) {
@@ -142,13 +148,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       } else {
         await _packageManager.disablePackage(packageName: package.name);
       }
-      await _loadSnapshot();
     } catch (error, stackTrace) {
       debugPrint('Failed to update package state: $error\n$stackTrace');
-      await _loadSnapshot();
       if (!mounted) {
         return;
       }
+      _setOptimisticPackageEnabled(package.name, previous);
       _showSnackBar(error.toString());
     }
   }
@@ -302,6 +307,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           enabledPluginNames: _snapshot.enabledPluginContainerNames,
           isLoading: _loading || _searchFiltering,
           isSearchActive: _searchQuery.trim().isNotEmpty,
+          onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
           onPluginTap: _showPluginDetails,
           onPluginEnabledChanged: _setPluginEnabled,
         ),
@@ -310,6 +316,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           enabledPackageNames: _snapshot.enabledPackageNames,
           isLoading: _loading || _searchFiltering,
           isSearchActive: _searchQuery.trim().isNotEmpty,
+          onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
           onQuickPluginCreatorClick: () {
             _showSnackBar('Quick Plugin Creator');
           },
@@ -320,13 +327,26 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           key: ValueKey<String>('skills-$_contentReloadNonce'),
           clients: widget.clients,
           searchQuery: _searchQuery,
+          onOpenMarket: () => _openMarket(MarketHomeTab.skill),
         ),
         PackageTab.mcp => MCPConfigScreen(
           key: ValueKey<String>('mcp-$_contentReloadNonce'),
           clients: widget.clients,
           searchQuery: _searchQuery,
+          onOpenMarket: () => _openMarket(MarketHomeTab.mcp),
         ),
       },
+    );
+  }
+
+  Future<void> _openMarket(MarketHomeTab initialTab) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => UnifiedMarketScreen(
+          initialTab: initialTab,
+          clients: widget.clients,
+        ),
+      ),
     );
   }
 
@@ -343,8 +363,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         const SizedBox(height: 12),
         FloatingActionButton(
           heroTag: 'package-manager-import',
-          onPressed: _showImportDialog,
-          tooltip: '导入',
+          onPressed: _handleAddAction,
+          tooltip: _addActionTooltip,
           child: const Icon(Icons.add),
         ),
       ],
@@ -357,6 +377,15 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       PackageTab.packages => '搜索包',
       PackageTab.skills => '搜索技能',
       PackageTab.mcp => '搜索 MCP',
+    };
+  }
+
+  String get _addActionTooltip {
+    return switch (_selectedTab) {
+      PackageTab.plugins => '导入插件',
+      PackageTab.packages => '导入包',
+      PackageTab.skills => '添加技能',
+      PackageTab.mcp => '添加 MCP',
     };
   }
 
@@ -495,14 +524,59 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     );
   }
 
-  Future<void> _showImportDialog() async {
-    final result = await showDialog<PackageImportResult>(
+  Future<void> _handleAddAction() async {
+    switch (_selectedTab) {
+      case PackageTab.plugins:
+        await _importPlugin();
+      case PackageTab.packages:
+        await _importPackage();
+      case PackageTab.skills:
+        await _showSkillImportDialog();
+      case PackageTab.mcp:
+        await _showMcpImportDialog();
+    }
+  }
+
+  Future<void> _importPlugin() async {
+    final file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(label: 'ToolPkg', extensions: <String>['toolpkg']),
+      ],
+    );
+    if (file == null) {
+      return;
+    }
+    await _runAddAction(
+      () => _packageManager.addPackageFileFromExternalStorage(
+        filePath: file.path,
+      ),
+    );
+  }
+
+  Future<void> _importPackage() async {
+    final file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'Operit package',
+          extensions: <String>['toolpkg', 'hjson', 'js', 'ts'],
+        ),
+      ],
+    );
+    if (file == null) {
+      return;
+    }
+    await _runAddAction(
+      () => _packageManager.addPackageFileFromExternalStorage(
+        filePath: file.path,
+      ),
+    );
+  }
+
+  Future<void> _showMcpImportDialog() async {
+    final result = await showDialog<MCPImportResult>(
       context: context,
       builder: (context) {
-        return PackageImportDialog(
-          clients: widget.clients,
-          initialTab: _selectedTab,
-        );
+        return MCPImportDialog(clients: widget.clients);
       },
     );
     if (result == null || !mounted) {
@@ -513,6 +587,48 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       _contentReloadNonce += 1;
     });
     await _loadSnapshot();
+  }
+
+  Future<void> _showSkillImportDialog() async {
+    final result = await showDialog<SkillImportResult>(
+      context: context,
+      builder: (context) {
+        return SkillImportDialog(clients: widget.clients);
+      },
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    _showSnackBar(result.message);
+    setState(() {
+      _contentReloadNonce += 1;
+    });
+    await _loadSnapshot();
+  }
+
+  Future<void> _runAddAction(
+    Future<String> Function() action, {
+    bool reloadSnapshot = true,
+  }) async {
+    try {
+      final message = await action();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(message);
+      setState(() {
+        _contentReloadNonce += 1;
+      });
+      if (reloadSnapshot) {
+        await _loadSnapshot();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to run package add action: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(error.toString());
+    }
   }
 }
 

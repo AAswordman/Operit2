@@ -848,15 +848,16 @@ impl StandardFileSystemTools {
             return vec![match self.host.writeFile(&path, &newContent, false) {
                 Ok(()) => {
                     let diffContent = FileBindingService.generateUnifiedDiff("", &newContent);
+                    let details = format!("Successfully created new file: {path}");
                     success(
                         tool,
-                        format!(
-                            "{}\n{}",
-                            fileOperationDataToString(
-                                self.envLabel(),
-                                &format!("Successfully created new file: {path}")
-                            ),
-                            diffContent
+                        fileApplyResultDataToString(
+                            self.envLabel(),
+                            "create",
+                            &path,
+                            &details,
+                            "",
+                            Some(&diffContent),
                         ),
                     )
                 }
@@ -955,7 +956,22 @@ impl StandardFileSystemTools {
             )];
         }
         vec![match self.host.writeFile(&path, &mergedContent, false) {
-            Ok(()) => success(tool, aiInstructions),
+            Ok(()) => {
+                let details = format!("Successfully applied AI code to file: {path}");
+                let diffContent =
+                    FileBindingService.generateUnifiedDiff(&originalContent, &mergedContent);
+                success(
+                    tool,
+                    fileApplyResultDataToString(
+                        self.envLabel(),
+                        "apply",
+                        &path,
+                        &details,
+                        &aiInstructions,
+                        Some(&diffContent),
+                    ),
+                )
+            }
             Err(error) => {
                 let message = format!("Failed to write merged file: {}", error.message);
                 toolError(
@@ -1351,6 +1367,76 @@ fn fileInfoDataToString(env: &str, info: &FileInfo) -> String {
 
 fn fileOperationDataToString(env: &str, details: &str) -> String {
     format!("[{env}] {details}")
+}
+
+#[allow(non_snake_case)]
+fn fileApplyResultDataToString(
+    env: &str,
+    _operation: &str,
+    path: &str,
+    details: &str,
+    aiDiffInstructions: &str,
+    diffContent: Option<&str>,
+) -> String {
+    let operationText = fileOperationDataToString(env, details);
+    let mut output = String::new();
+    output.push_str(&operationText);
+    output.push('\n');
+
+    if let Some(diff) = diffContent {
+        output.push_str(&format!(
+            "<file-diff path=\"{}\" details=\"{}\"><![CDATA[{}]]></file-diff>",
+            path, details, diff
+        ));
+    }
+
+    let requestContent =
+        buildFileApplyRequestContent(&operationText, diffContent, aiDiffInstructions);
+    if !requestContent.trim().is_empty() {
+        output.push_str(&format!(
+            "<file-request-content><![CDATA[{}]]></file-request-content>",
+            requestContent
+        ));
+    }
+
+    if !aiDiffInstructions.is_empty() && !aiDiffInstructions.starts_with("Error") {
+        output.push_str("\n--- AI-Generated Diff ---\n");
+        output.push_str(aiDiffInstructions);
+        output.push('\n');
+    }
+
+    output
+}
+
+#[allow(non_snake_case)]
+fn buildFileApplyRequestContent(
+    operationText: &str,
+    diffContent: Option<&str>,
+    aiDiffInstructions: &str,
+) -> String {
+    let mut sections = vec![operationText.to_string()];
+    if let Some(summary) = extractDiffSummaryLine(diffContent, aiDiffInstructions) {
+        sections.push(summary);
+    }
+    sections.join("\n")
+}
+
+#[allow(non_snake_case)]
+fn extractDiffSummaryLine(diffContent: Option<&str>, aiDiffInstructions: &str) -> Option<String> {
+    for candidate in diffContent
+        .into_iter()
+        .chain(std::iter::once(aiDiffInstructions))
+    {
+        for line in candidate.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("Changes: +")
+                || trimmed.eq_ignore_ascii_case("No changes detected (files are identical)")
+            {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn filePartContentDataToString(

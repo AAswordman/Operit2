@@ -124,6 +124,11 @@ impl MCPBridgeClient {
 
     #[allow(non_snake_case)]
     pub fn connect(&self) -> bool {
+        self.connectWithSpawnTimeoutMs(Self::DEFAULT_SPAWN_TIMEOUT_MS)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn connectWithSpawnTimeoutMs(&self, spawnTimeoutMs: u64) -> bool {
         if self.ping() {
             self.isConnected.store(true, Ordering::SeqCst);
             self.setLastConnectionFailureDetail(None);
@@ -144,11 +149,8 @@ impl MCPBridgeClient {
             return true;
         }
 
-        let spawnResponse = bridge.spawnMcpService(
-            &self.context,
-            &self.serviceName,
-            Some(Self::DEFAULT_SPAWN_TIMEOUT_MS),
-        );
+        let spawnResponse =
+            bridge.spawnMcpService(&self.context, &self.serviceName, Some(spawnTimeoutMs));
         if spawnResponse
             .get("success")
             .and_then(Value::as_bool)

@@ -8,6 +8,10 @@ import { HttpResponseData, VisitWebResultData, StringResultData } from './result
  * Network operations namespace
  */
 export namespace Net {
+    interface BrowserChatOptions {
+        chat_id?: string;
+    }
+
     /**
      * Perform HTTP GET request
      * @param url - URL to request
@@ -43,6 +47,7 @@ export namespace Net {
      * Returns StringResultData whose `value` is a JSON string payload.
      */
     function startBrowser(options?: {
+        chat_id?: string;
         url?: string;
         headers?: Record<string, string> | string;
         user_agent?: string;
@@ -54,6 +59,7 @@ export namespace Net {
      * Returns StringResultData whose `value` is a JSON string payload.
      */
     function stopBrowser(sessionIdOrOptions?: string | {
+        chat_id?: string;
         session_id?: string;
         close_all?: boolean;
     }): Promise<StringResultData>;
@@ -63,6 +69,7 @@ export namespace Net {
      */
     function browserNavigate(
         urlOrOptions: string | {
+            chat_id?: string;
             url: string;
             headers?: Record<string, string> | string;
         }
@@ -71,13 +78,14 @@ export namespace Net {
     /**
      * Go back in browser history.
      */
-    function browserNavigateBack(options?: Record<string, unknown>): Promise<StringResultData>;
+    function browserNavigateBack(options?: BrowserChatOptions): Promise<StringResultData>;
 
     /**
      * Click an element by snapshot ref or selector.
      * Only accepts one options object.
      */
     function browserClick(options: {
+        chat_id?: string;
         session_id?: string;
         ref?: string;
         selector?: string;
@@ -90,17 +98,18 @@ export namespace Net {
     /**
      * Close the current browser tab.
      */
-    function browserClose(options?: Record<string, unknown>): Promise<StringResultData>;
+    function browserClose(options?: BrowserChatOptions): Promise<StringResultData>;
 
     /**
      * Close all browser tabs.
      */
-    function browserCloseAll(options?: Record<string, unknown>): Promise<StringResultData>;
+    function browserCloseAll(options?: BrowserChatOptions): Promise<StringResultData>;
 
     /**
      * Read console messages from the browser session.
      */
     function browserConsoleMessages(options?: {
+        chat_id?: string;
         level?: string;
         filename?: string;
     }): Promise<StringResultData>;
@@ -109,6 +118,7 @@ export namespace Net {
      * Drag between two elements by snapshot refs.
      */
     function browserDrag(options: {
+        chat_id?: string;
         startElement: string;
         startRef: string;
         endElement: string;
@@ -119,6 +129,7 @@ export namespace Net {
      * Evaluate JavaScript in the browser session.
      */
     function browserEvaluate(options: {
+        chat_id?: string;
         function: string;
         ref?: string;
         element?: string;
@@ -129,6 +140,7 @@ export namespace Net {
      * If `paths` is omitted, the file chooser is cancelled.
      */
     function browserFileUpload(options?: {
+        chat_id?: string;
         paths?: string[];
     }): Promise<StringResultData>;
 
@@ -136,6 +148,7 @@ export namespace Net {
      * Fill multiple form fields in the browser session.
      */
     function browserFillForm(options: {
+        chat_id?: string;
         fields: Array<{
             name: string;
             type: string;
@@ -149,6 +162,7 @@ export namespace Net {
      * Handle an active dialog.
      */
     function browserHandleDialog(options: {
+        chat_id?: string;
         accept: boolean;
         promptText?: string;
     }): Promise<StringResultData>;
@@ -157,6 +171,7 @@ export namespace Net {
      * Hover over an element by snapshot ref.
      */
     function browserHover(options: {
+        chat_id?: string;
         ref: string;
         element?: string;
     }): Promise<StringResultData>;
@@ -165,6 +180,7 @@ export namespace Net {
      * Read network requests from the browser session.
      */
     function browserNetworkRequests(options?: {
+        chat_id?: string;
         includeStatic?: boolean;
         filename?: string;
     }): Promise<StringResultData>;
@@ -173,6 +189,7 @@ export namespace Net {
      * Press a keyboard key in the browser session.
      */
     function browserPressKey(keyOrOptions: string | {
+        chat_id?: string;
         key: string;
     }): Promise<StringResultData>;
 
@@ -180,6 +197,7 @@ export namespace Net {
      * Resize the browser viewport.
      */
     function browserResize(options: {
+        chat_id?: string;
         width: number;
         height: number;
     }): Promise<StringResultData>;
@@ -188,6 +206,7 @@ export namespace Net {
      * Run Playwright-style code in the browser session.
      */
     function browserRunCode(options: {
+        chat_id?: string;
         code: string;
     }): Promise<StringResultData>;
 
@@ -195,6 +214,7 @@ export namespace Net {
      * Select options in a dropdown by snapshot ref.
      */
     function browserSelectOption(options: {
+        chat_id?: string;
         ref: string;
         values: string[];
         element?: string;
@@ -204,15 +224,29 @@ export namespace Net {
      * Capture a text snapshot of current page.
      */
     function browserSnapshot(options?: {
+        chat_id?: string;
         filename?: string;
         selector?: string;
         depth?: number;
     }): Promise<StringResultData>;
 
     /**
+     * Take a screenshot of the current page or a target element.
+     */
+    function browserTakeScreenshot(options: {
+        chat_id?: string;
+        type?: 'png' | 'jpeg';
+        filename?: string;
+        element?: string;
+        ref?: string;
+        fullPage?: boolean;
+    }): Promise<StringResultData>;
+
+    /**
      * Manage browser tabs.
      */
     function browserTabs(options: {
+        chat_id?: string;
         action: string;
         index?: number;
     }): Promise<StringResultData>;
@@ -221,6 +255,7 @@ export namespace Net {
      * Type text into an element by snapshot ref.
      */
     function browserType(options: {
+        chat_id?: string;
         ref: string;
         text: string;
         element?: string;
@@ -232,6 +267,7 @@ export namespace Net {
      * Wait for text or time in the browser session.
      */
     function browserWaitFor(options: {
+        chat_id?: string;
         time?: number;
         text?: string;
         textGone?: string;
@@ -241,6 +277,7 @@ export namespace Net {
      * List installed browser session userscripts.
      */
     function browserUserscriptList(options?: {
+        chat_id?: string;
         include_disabled?: boolean;
     }): Promise<StringResultData>;
 
@@ -249,6 +286,7 @@ export namespace Net {
      * Exactly one of `url`, `path`, or `source` is required.
      */
     function browserUserscriptInstall(options: {
+        chat_id?: string;
         url?: string;
         path?: string;
         source?: string;
@@ -260,6 +298,7 @@ export namespace Net {
      * Enable an installed browser session userscript.
      */
     function browserUserscriptStart(options: {
+        chat_id?: string;
         script_id?: string | number;
         name?: string;
         namespace?: string;
@@ -270,6 +309,7 @@ export namespace Net {
      * Disable an installed browser session userscript.
      */
     function browserUserscriptStop(options: {
+        chat_id?: string;
         script_id?: string | number;
         name?: string;
         namespace?: string;
@@ -280,6 +320,7 @@ export namespace Net {
      * Uninstall an installed browser session userscript.
      */
     function browserUserscriptUninstall(options: {
+        chat_id?: string;
         script_id?: string | number;
         name?: string;
         namespace?: string;

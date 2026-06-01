@@ -8,6 +8,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../common/OperitLogoMark.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../screens/ScreenRouteRegistry.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
@@ -48,6 +49,16 @@ class CollapsedDrawerContent extends StatelessWidget {
       }
     }
     throw StateError('Unknown navigation entry: main.package_manager');
+  }
+
+  void _openSettings() {
+    for (final entry in navigationEntries) {
+      if (entry.entryId == 'main.settings') {
+        onNavigationEntrySelected(entry);
+        return;
+      }
+    }
+    throw StateError('Unknown navigation entry: main.settings');
   }
 
   @override
@@ -98,10 +109,10 @@ class CollapsedDrawerContent extends StatelessWidget {
         const SizedBox(height: 8),
         Center(
           child: _RoundDrawerButton(
-            selected: false,
+            selected: selectedRouteId == _settingsRouteId,
             appearance: appearance,
             icon: Icons.settings_outlined,
-            onClick: () {},
+            onClick: _openSettings,
           ),
         ),
       ],
@@ -115,6 +126,10 @@ class CollapsedDrawerContent extends StatelessWidget {
       }
     }
     throw StateError('Unknown navigation entry: main.package_manager');
+  }
+
+  String get _settingsRouteId {
+    return ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.settings);
   }
 }
 

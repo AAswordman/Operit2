@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/EmptyState.dart';
+import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 import '../dialogs/MCPDetailsDialog.dart';
@@ -14,10 +15,12 @@ class MCPConfigScreen extends StatefulWidget {
     super.key,
     required this.clients,
     required this.searchQuery,
+    required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
+  final VoidCallback onOpenMarket;
 
   @override
   State<MCPConfigScreen> createState() => _MCPConfigScreenState();
@@ -79,6 +82,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
 
   Future<void> _setServerEnabled(String serverId, bool enabled) async {
     final current = _servers[serverId];
+    final previous = current != null && !current.disabled;
     if (current != null) {
       setState(() {
         _servers = <String, core_proxy.ServerConfig>{
@@ -98,12 +102,27 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     }
     try {
       await _localServer.setServerEnabled(serverId: serverId, enabled: enabled);
-      await _loadMcp();
     } catch (error, stackTrace) {
       debugPrint('Failed to update MCP enabled state: $error\n$stackTrace');
-      await _loadMcp();
       if (!mounted) {
         return;
+      }
+      if (current != null) {
+        setState(() {
+          _servers = <String, core_proxy.ServerConfig>{
+            ..._servers,
+            serverId: core_proxy.ServerConfig(
+              command: current.command,
+              args: current.args,
+              url: current.url,
+              type: current.type,
+              headers: current.headers,
+              disabled: !previous,
+              autoApprove: current.autoApprove,
+              env: current.env,
+            ),
+          };
+        });
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -166,6 +185,15 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
             children: <Widget>[
               _MCPHeaderCard(directory: _configDirectory, onRefresh: _loadMcp),
               const SizedBox(height: 12),
+              if (widget.searchQuery.trim().isEmpty) ...<Widget>[
+                MarketEntryCard(
+                  icon: Icons.store_outlined,
+                  title: '打开 MCP 市场',
+                  subtitle: '查找、安装和管理社区发布的 MCP 服务。',
+                  onTap: widget.onOpenMarket,
+                ),
+                const SizedBox(height: 12),
+              ],
               if (ids.isEmpty)
                 EmptyState(
                   icon: Icons.extension_outlined,

@@ -182,6 +182,16 @@ class _DrawerContentState extends State<DrawerContent> {
     throw StateError('Unknown navigation entry: main.package_manager');
   }
 
+  void _openSettings() {
+    for (final entry in widget.navigationEntries) {
+      if (entry.entryId == 'main.settings') {
+        widget.onNavigationEntrySelected(entry);
+        return;
+      }
+    }
+    throw StateError('Unknown navigation entry: main.settings');
+  }
+
   void _toggleSearchExpanded() {
     setState(() {
       _searchExpanded = !_searchExpanded;
@@ -778,6 +788,9 @@ class _DrawerContentState extends State<DrawerContent> {
     final packageManagerRouteId = ScreenRouteRegistry.routeIdOf(
       ScreenRouteRegistry.packageManager,
     );
+    final settingsRouteId = ScreenRouteRegistry.routeIdOf(
+      ScreenRouteRegistry.settings,
+    );
     final conversationSelectionEnabled =
         widget.selectedRouteId == aiChatRouteId;
     return Column(
@@ -981,7 +994,8 @@ class _DrawerContentState extends State<DrawerContent> {
                   icon: Icons.settings_outlined,
                   label: '设置',
                   appearance: widget.appearance,
-                  onClick: () {},
+                  selected: widget.selectedRouteId == settingsRouteId,
+                  onClick: _openSettings,
                 ),
               ),
             ],

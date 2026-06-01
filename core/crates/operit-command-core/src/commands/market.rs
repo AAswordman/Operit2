@@ -2,7 +2,6 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,12 +32,6 @@ macro_rules! println {
     };
 }
 
-macro_rules! eprintln {
-    ($($arg:tt)*) => {
-        market_stderr_line(format!($($arg)*))
-    };
-}
-
 thread_local! {
     static MARKET_OUTPUT: Cell<*mut CoreCommandOutput> = Cell::new(std::ptr::null_mut());
 }
@@ -55,22 +48,13 @@ fn market_stdout_line(line: impl AsRef<str>) {
     });
 }
 
-fn market_stderr_line(line: impl AsRef<str>) {
-    MARKET_OUTPUT.with(|slot| {
-        let output = slot.get();
-        assert!(!output.is_null(), "market command output is not set");
-        unsafe { (&mut *output).push_stderr_line(line.as_ref()) };
-    });
-}
-
-struct MarketCommand<'a> {
+struct MarketCommand {
     context: OperitApplicationContext,
-    output: &'a mut CoreCommandOutput,
 }
 
-impl<'a> MarketCommand<'a> {
-    fn new(context: OperitApplicationContext, output: &'a mut CoreCommandOutput) -> Self {
-        Self { context, output }
+impl MarketCommand {
+    fn new(context: OperitApplicationContext) -> Self {
+        Self { context }
     }
 
     fn api_market_stats_api_service(&self) -> MarketStatsApiService {
@@ -121,7 +105,7 @@ pub fn run_market_command(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     set_market_output(output);
-    let core = &mut MarketCommand::new(context, output);
+    let core = &mut MarketCommand::new(context);
     if args.is_empty() {
         print_market_usage();
         return Ok(());
@@ -281,7 +265,7 @@ pub fn run_market_command(
     }
 }
 
-fn run_market_auth_command(core: &mut MarketCommand<'_>, args: &[String]) -> Result<(), String> {
+fn run_market_auth_command(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("status") | None => {
             ensure_env_auth_token_saved(core)?;
@@ -355,7 +339,7 @@ fn parse_optional_i32_arg(value: Option<&String>, defaultValue: i32) -> Result<i
 }
 
 fn print_market_rank(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     metric: &str,
     page: i32,
@@ -379,7 +363,7 @@ fn print_market_rank(
 }
 
 fn print_artifact_rank(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     metric: &str,
     page: i32,
@@ -444,7 +428,7 @@ fn print_artifact_rank(
 }
 
 fn search_issue_market(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     query: &str,
     page: i32,
@@ -465,7 +449,7 @@ fn search_issue_market(
 }
 
 fn show_market_item(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     target: &str,
 ) -> Result<(), String> {
@@ -502,7 +486,7 @@ fn show_market_item(
 }
 
 fn install_market_item(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     target: &str,
     nodeId: Option<&str>,
@@ -515,7 +499,7 @@ fn install_market_item(
     }
 }
 
-fn install_market_skill(core: &mut MarketCommand<'_>, target: &str) -> Result<(), String> {
+fn install_market_skill(core: &mut MarketCommand, target: &str) -> Result<(), String> {
     let repoUrl = if looks_like_url(target) {
         target.to_string()
     } else {
@@ -542,7 +526,7 @@ fn install_market_skill(core: &mut MarketCommand<'_>, target: &str) -> Result<()
     Ok(())
 }
 
-fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), String> {
+fn install_market_mcp(core: &mut MarketCommand, target: &str) -> Result<(), String> {
     if target.trim_start().starts_with('{') {
         let count = core
             .mcp_local_server()
@@ -552,7 +536,8 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
         return Ok(());
     }
 
-    let (pluginId, metadata, issueUrl, statsId, installConfig) = if looks_like_url(target) {
+    let (pluginId, metadata, repoUrl, issueUrl, statsId, installConfig) = if looks_like_url(target)
+    {
         let pluginId = mcp_id_from_title(target);
         (
             pluginId.clone(),
@@ -562,6 +547,7 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
                 author: "Unknown".to_string(),
                 version: "1.0.0".to_string(),
             },
+            target.to_string(),
             target.to_string(),
             normalizeMarketArtifactId(target),
             String::new(),
@@ -590,41 +576,47 @@ fn install_market_mcp(core: &mut MarketCommand<'_>, target: &str) -> Result<(), 
         (
             pluginId,
             metadata,
+            info.repositoryUrl,
             entry.issue.html_url,
             statsId,
             info.installConfig,
         )
     };
 
-    if !installConfig.trim().is_empty() {
-        let _ = core
-            .api_market_stats_api_service()
-            .trackDownload("mcp", &statsId, &issueUrl);
-        if !core
-            .mcp_repository()
-            .checkConfigNeedsPhysicalInstallation(&installConfig)
-        {
-            let count = core
-                .mcp_local_server()
-                .mergeConfigFromJson(&installConfig)
-                .map_err(|error| error.to_string())?;
-            println!("imported={count}");
-            return Ok(());
-        }
-    }
-
     let _ = core
         .api_market_stats_api_service()
         .trackDownload("mcp", &statsId, &issueUrl);
-    core.mcp_local_server()
-        .addOrUpdatePluginMetadata(&pluginId, metadata)
-        .map_err(|error| error.to_string())?;
-    println!("registered={pluginId}");
-    Ok(())
+    if repoUrl.trim().is_empty() {
+        if installConfig.trim().is_empty() {
+            return Err(format!(
+                "mcp entry has no repositoryUrl or installConfig: {target}"
+            ));
+        }
+        let count = core
+            .mcp_local_server()
+            .mergeConfigFromJson(&installConfig)
+            .map_err(|error| error.to_string())?;
+        println!("imported={count}");
+        return Ok(());
+    }
+    match core.mcp_repository().installMCPServerWithObject(
+        pluginId.clone(),
+        repoUrl,
+        metadata,
+        installConfig,
+        |_| {},
+    ) {
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+            println!("installed={pluginId}");
+            println!("path={pluginPath}");
+            Ok(())
+        }
+        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+    }
 }
 
 fn install_market_artifact(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     projectId: &str,
     nodeId: Option<&str>,
@@ -985,7 +977,7 @@ fn print_github_issue(issue: &GitHubIssue) {
 }
 
 fn find_issue_rank_entry(
-    core: &mut MarketCommand<'_>,
+    core: &mut MarketCommand,
     marketType: &str,
     target: &str,
 ) -> Result<MarketRankIssueEntryResponse, String> {
@@ -1072,7 +1064,7 @@ fn env_auth_token() -> Option<String> {
         .filter(|token| !token.trim().is_empty())
 }
 
-fn ensure_env_auth_token_saved(core: &mut MarketCommand<'_>) -> Result<(), String> {
+fn ensure_env_auth_token_saved(core: &mut MarketCommand) -> Result<(), String> {
     if let Some(token) = env_auth_token() {
         if core
             .preferences_git_hub_auth_preferences()
@@ -1088,7 +1080,7 @@ fn ensure_env_auth_token_saved(core: &mut MarketCommand<'_>) -> Result<(), Strin
     Ok(())
 }
 
-fn require_github_login(core: &mut MarketCommand<'_>) -> Result<(), String> {
+fn require_github_login(core: &mut MarketCommand) -> Result<(), String> {
     ensure_env_auth_token_saved(core)?;
     if core
         .preferences_git_hub_auth_preferences()

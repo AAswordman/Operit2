@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import '../../features/chat/screens/AIChatScreen.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
+import '../../features/settings/screens/SettingsScreen.dart';
 
 abstract class OperitScreen {
   const OperitScreen({
@@ -61,5 +62,15 @@ class MarketScreenRoute extends OperitScreen {
   @override
   Widget build(BuildContext context) {
     return UnifiedMarketScreen();
+  }
+}
+
+class SettingsScreenRoute extends OperitScreen {
+  const SettingsScreenRoute()
+    : super(routeTypeName: 'Settings', title: '设置', keepAlive: true);
+
+  @override
+  Widget build(BuildContext context) {
+    return const SettingsScreen();
   }
 }

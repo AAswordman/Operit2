@@ -10,7 +10,9 @@ use crate::core::application::OperitApplicationContext::OperitApplicationContext
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
-use crate::data::mcp::MCPLocalServer::{MCPConfig, MCPLocalServer, PluginMetadata};
+use crate::data::mcp::plugins::MCPConfigGenerator::MCPConfigGenerator;
+use crate::data::mcp::plugins::MCPProjectAnalyzer::MCPProjectAnalyzer;
+use crate::data::mcp::MCPLocalServer::{MCPConfig, MCPLocalServer, PluginMetadata, ServerConfig};
 use crate::data::model::FunctionType::FunctionType;
 use crate::util::ChatUtils::ChatUtils;
 use operit_host_api::HttpRequestData;
@@ -59,11 +61,14 @@ impl MCPRepository {
         pluginId: String,
         repoUrl: String,
         server: PluginMetadata,
+        mcpConfig: String,
         progressCallback: impl Fn(InstallProgress),
     ) -> InstallResult {
         let result = self.installPluginInternal(&pluginId, &repoUrl, &progressCallback);
         if let InstallResult::Success { pluginPath } = &result {
-            if let Err(error) = self.savePluginMetadata(&pluginId, &server, pluginPath) {
+            if let Err(error) =
+                self.deployInstalledPlugin(&pluginId, pluginPath, &server, &mcpConfig)
+            {
                 return InstallResult::Error { message: error };
             }
         }
@@ -71,17 +76,65 @@ impl MCPRepository {
     }
 
     #[allow(non_snake_case)]
-    pub fn checkConfigNeedsPhysicalInstallation(&self, jsonConfig: &str) -> bool {
-        let Ok(config) = serde_json::from_str::<MCPConfig>(jsonConfig) else {
-            return true;
-        };
-        if config.mcpServers.is_empty() {
-            return true;
+    pub fn installMCPServerFromZip(
+        &self,
+        pluginId: String,
+        zipPath: String,
+        server: PluginMetadata,
+        mcpConfig: String,
+        progressCallback: impl Fn(InstallProgress),
+    ) -> InstallResult {
+        let result = self.installPluginFromZipInternal(&pluginId, &zipPath, &progressCallback);
+        if let InstallResult::Success { pluginPath } = &result {
+            if let Err(error) =
+                self.deployInstalledPlugin(&pluginId, pluginPath, &server, &mcpConfig)
+            {
+                return InstallResult::Error { message: error };
+            }
         }
-        config
-            .mcpServers
-            .values()
-            .any(|serverConfig| commandNeedsPhysicalInstallation(&serverConfig.command))
+        result
+    }
+
+    #[allow(non_snake_case)]
+    pub fn installMCPServerWithObjectForFlutter(
+        &self,
+        pluginId: String,
+        repoUrl: String,
+        name: String,
+        description: String,
+        mcpConfig: String,
+    ) -> Result<String, String> {
+        let server = PluginMetadata {
+            name,
+            description,
+            author: String::new(),
+            version: String::new(),
+        };
+        match self.installMCPServerWithObject(pluginId, repoUrl, server, mcpConfig, |_| {}) {
+            InstallResult::Success { pluginPath } => Ok(pluginPath),
+            InstallResult::Error { message } => Err(message),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn installMCPServerFromZipForFlutter(
+        &self,
+        pluginId: String,
+        zipPath: String,
+        name: String,
+        description: String,
+        mcpConfig: String,
+    ) -> Result<String, String> {
+        let server = PluginMetadata {
+            name,
+            description,
+            author: String::new(),
+            version: String::new(),
+        };
+        match self.installMCPServerFromZip(pluginId, zipPath, server, mcpConfig, |_| {}) {
+            InstallResult::Success { pluginPath } => Ok(pluginPath),
+            InstallResult::Error { message } => Err(message),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -145,6 +198,66 @@ impl MCPRepository {
     }
 
     #[allow(non_snake_case)]
+    fn installPluginFromZipInternal(
+        &self,
+        pluginId: &str,
+        zipPath: &str,
+        progressCallback: &impl Fn(InstallProgress),
+    ) -> InstallResult {
+        progressCallback(InstallProgress::Preparing);
+
+        let zipFile = PathBuf::from(zipPath);
+        if !zipFile.is_file() {
+            return InstallResult::Error {
+                message: format!("MCP zip file not found: {zipPath}"),
+            };
+        }
+        if zipFile
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| !value.eq_ignore_ascii_case("zip"))
+            .unwrap_or(true)
+        {
+            return InstallResult::Error {
+                message: "Only .zip files are supported".to_string(),
+            };
+        }
+
+        let pluginDir = self.pluginsBaseDir.join(pluginId);
+        if pluginDir.exists() {
+            let _ = fs::remove_dir_all(&pluginDir);
+        }
+        if let Err(error) = fs::create_dir_all(&pluginDir) {
+            return InstallResult::Error {
+                message: format!("Failed to create plugin directory: {error}"),
+            };
+        }
+
+        progressCallback(InstallProgress::Extracting(0));
+        if let Err(error) = extractZipFile(&zipFile, &pluginDir, progressCallback) {
+            let _ = fs::remove_dir_all(&pluginDir);
+            return InstallResult::Error {
+                message: format!("Failed to extract MCP zip: {error}"),
+            };
+        }
+
+        let mainDir = fs::read_dir(&pluginDir)
+            .ok()
+            .and_then(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .find(|path| path.is_dir())
+            })
+            .unwrap_or(pluginDir);
+
+        progressCallback(InstallProgress::Finished);
+        InstallResult::Success {
+            pluginPath: mainDir.to_string_lossy().to_string(),
+        }
+    }
+
+    #[allow(non_snake_case)]
     fn downloadRepositoryZip(
         &self,
         owner: &str,
@@ -169,6 +282,52 @@ impl MCPRepository {
     ) -> Result<(), String> {
         self.mcpLocalServer
             .addOrUpdatePluginMetadata(pluginId, server.clone())
+    }
+
+    #[allow(non_snake_case)]
+    fn deployInstalledPlugin(
+        &self,
+        pluginId: &str,
+        pluginPath: &str,
+        server: &PluginMetadata,
+        mcpConfig: &str,
+    ) -> Result<(), String> {
+        let configJson = if mcpConfig.trim().is_empty() {
+            self.generateConfigFromProject(pluginId, pluginPath)?
+        } else {
+            mcpConfig.to_string()
+        };
+        let serverConfig = firstServerConfigFromJson(&configJson)?;
+        self.mcpLocalServer
+            .addOrUpdateMCPServerConfig(pluginId.to_string(), serverConfig)?;
+        self.savePluginMetadata(pluginId, server, pluginPath)?;
+        self.mcpLocalServer.reloadConfigurations()
+    }
+
+    #[allow(non_snake_case)]
+    fn generateConfigFromProject(
+        &self,
+        pluginId: &str,
+        pluginPath: &str,
+    ) -> Result<String, String> {
+        let pluginDir = PathBuf::from(pluginPath);
+        if !pluginDir.is_dir() {
+            return Err(format!("MCP plugin directory not found: {pluginPath}"));
+        }
+        let analyzer = MCPProjectAnalyzer;
+        let readmeContent = analyzer
+            .findReadmeFile(&pluginDir)
+            .map(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
+            .transpose()?
+            .unwrap_or_default();
+        let projectStructure = analyzer.analyzeProjectStructure(&pluginDir, &readmeContent);
+        let configGenerator = MCPConfigGenerator;
+        Ok(configGenerator.generateMcpConfig(
+            pluginId,
+            &projectStructure,
+            Default::default(),
+            Some(&self.mcpLocalServer.getPluginRuntimeDirectory(pluginId)),
+        ))
     }
 
     #[allow(non_snake_case)]
@@ -295,14 +454,6 @@ async fn generatePackageDescription(
 }
 
 #[allow(non_snake_case)]
-fn commandNeedsPhysicalInstallation(command: &str) -> bool {
-    !matches!(
-        command.trim().to_ascii_lowercase().as_str(),
-        "npx" | "uvx" | "uv"
-    )
-}
-
-#[allow(non_snake_case)]
 fn extractOwnerAndRepo(repoUrl: &str) -> Option<(String, String)> {
     let normalized = repoUrl.trim().trim_end_matches(".git");
     let url = if normalized.starts_with("http://") || normalized.starts_with("https://") {
@@ -327,6 +478,17 @@ fn extractOwnerAndRepo(repoUrl: &str) -> Option<(String, String)> {
     } else {
         Some((owner, repo))
     }
+}
+
+#[allow(non_snake_case)]
+fn firstServerConfigFromJson(configJson: &str) -> Result<ServerConfig, String> {
+    let config =
+        serde_json::from_str::<MCPConfig>(configJson).map_err(|error| error.to_string())?;
+    config
+        .mcpServers
+        .into_values()
+        .next()
+        .ok_or_else(|| "MCP config has no mcpServers entry".to_string())
 }
 
 #[allow(non_snake_case)]

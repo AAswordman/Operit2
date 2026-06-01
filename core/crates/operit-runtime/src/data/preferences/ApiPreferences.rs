@@ -23,6 +23,7 @@ impl ApiPreferences {
     pub const DEFAULT_ENABLE_TOOLS: bool = true;
     pub const DEFAULT_DISABLE_STREAM_OUTPUT: bool = false;
     pub const DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION: bool = false;
+    pub const DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS: i32 = 10;
     pub const DEFAULT_TOOL_PROMPT_VISIBILITY_JSON: &'static str = "{}";
     pub const DEFAULT_FEATURE_TOGGLES_JSON: &'static str = "{}";
 
@@ -156,6 +157,16 @@ impl ApiPreferences {
                 .get(&stringPreferencesKey("max_media_history_user_turns"))
                 .and_then(|value| value.parse::<i32>().ok())
                 .unwrap_or(1)
+        })
+    }
+
+    pub fn mcpStartupTimeoutSecondsFlow(&self) -> Flow<i32> {
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
+                .get(&stringPreferencesKey("mcp_startup_timeout_seconds"))
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
+                .clamp(1, 10)
         })
     }
 
@@ -323,6 +334,27 @@ impl ApiPreferences {
                 maxMediaHistoryUserTurns.to_string(),
             );
         })
+    }
+
+    pub fn saveMcpStartupTimeoutSeconds(
+        &self,
+        seconds: i32,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.apiDataStore.edit(|preferences| {
+            preferences.set(
+                &stringPreferencesKey("mcp_startup_timeout_seconds"),
+                seconds.clamp(1, 10).to_string(),
+            );
+        })
+    }
+
+    pub fn getMcpStartupTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
+        let preferences = self.apiDataStore.data()?;
+        Ok(preferences
+            .get(&stringPreferencesKey("mcp_startup_timeout_seconds"))
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
+            .clamp(1, 10))
     }
 
     pub fn updateThinkingSettings(

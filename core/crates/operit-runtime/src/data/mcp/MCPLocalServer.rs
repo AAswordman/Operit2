@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -191,12 +190,49 @@ impl MCPLocalServer {
     }
 
     #[allow(non_snake_case)]
+    pub fn addOrUpdateMCPServerConfig(
+        &self,
+        serverId: String,
+        serverConfig: ServerConfig,
+    ) -> Result<(), String> {
+        let Some(sanitizedServer) =
+            self.sanitizeServerConfig(&serverId, serverConfig, "addOrUpdateMCPServerConfig")
+        else {
+            return Err(format!("MCP server {serverId} config is invalid"));
+        };
+        let mut config = self.readMCPConfig()?;
+        config.mcpServers.insert(serverId, sanitizedServer);
+        self.writeMCPConfig(&config)
+    }
+
+    #[allow(non_snake_case)]
     pub fn removeMCPServer(&self, serverId: &str) -> Result<(), String> {
         let mut config = self.readMCPConfig()?;
         config.mcpServers.remove(serverId);
         config.pluginMetadata.remove(serverId);
         self.writeMCPConfig(&config)?;
-        self.removeServerStatus(serverId)
+        self.removeServerStatus(serverId)?;
+
+        let pluginsDir = self.storePaths.mcp_plugins_dir();
+        let pluginDir = pluginsDir.join(serverId.split('/').last().unwrap_or(serverId));
+        if pluginDir.exists() {
+            let pluginsDir = pluginsDir.canonicalize().map_err(|error| {
+                format!("Failed to canonicalize MCP plugins directory: {error}")
+            })?;
+            let pluginDir = pluginDir
+                .canonicalize()
+                .map_err(|error| format!("Failed to canonicalize MCP plugin directory: {error}"))?;
+            if !pluginDir.starts_with(&pluginsDir) {
+                return Err(format!(
+                    "MCP plugin path is outside mcp_plugins: {serverId}"
+                ));
+            }
+            if pluginDir.is_dir() {
+                fs::remove_dir_all(&pluginDir)
+                    .map_err(|error| format!("Failed to remove MCP plugin files: {error}"))?;
+            }
+        }
+        Ok(())
     }
 
     #[allow(non_snake_case)]
@@ -412,30 +448,6 @@ impl MCPLocalServer {
     }
 
     #[allow(non_snake_case)]
-    pub fn isPluginRuntimeReady(&self, pluginId: &str) -> bool {
-        if self.getPluginMetadata(pluginId).is_none() {
-            return false;
-        }
-        if self
-            .getMCPServer(pluginId)
-            .map(|config| isRemoteServerConfig(&config))
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        let dir = PathBuf::from(self.getPluginRuntimeDirectory(pluginId));
-        if !dir.is_dir() {
-            return false;
-        }
-        if !self.pluginRuntimeRequiresFiles(pluginId) {
-            return true;
-        }
-        fs::read_dir(dir)
-            .map(|mut entries| entries.next().is_some())
-            .unwrap_or(false)
-    }
-
-    #[allow(non_snake_case)]
     pub fn getPluginConfig(&self, pluginId: &str) -> String {
         if let Some(serverConfig) = self.getMCPServer(pluginId) {
             let mut config = MCPConfig::default();
@@ -495,40 +507,6 @@ impl MCPLocalServer {
             self.writeServerStatus(&status)?;
         }
         Ok(true)
-    }
-
-    #[allow(non_snake_case)]
-    pub fn cleanupInvalidConfigurations(&self) -> Result<(), String> {
-        let mut config = self.readMCPConfig()?;
-        let validPluginIds = config.pluginMetadata.keys().cloned().collect::<Vec<_>>();
-        config
-            .mcpServers
-            .retain(|serverId, _| validPluginIds.iter().any(|id| id == serverId));
-        self.writeMCPConfig(&config)?;
-        let mut status = self.readServerStatus()?;
-        status.retain(|serverId, _| validPluginIds.iter().any(|id| id == serverId));
-        self.writeServerStatus(&status)
-    }
-
-    #[allow(non_snake_case)]
-    fn pluginRuntimeRequiresFiles(&self, pluginId: &str) -> bool {
-        match self.getPluginCommandName(pluginId).as_deref() {
-            Some("npx") | Some("uvx") | Some("uv") => false,
-            _ => true,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    fn getPluginCommandName(&self, pluginId: &str) -> Option<String> {
-        self.getMCPServer(pluginId).map(|config| {
-            config
-                .command
-                .trim()
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or_default()
-                .to_ascii_lowercase()
-        })
     }
 
     #[allow(non_snake_case)]
@@ -696,15 +674,6 @@ fn cleanEnv(env: BTreeMap<String, String>) -> BTreeMap<String, String> {
     env.into_iter()
         .filter(|(key, _)| !key.trim().is_empty())
         .collect()
-}
-
-#[allow(non_snake_case)]
-fn isRemoteServerConfig(serverConfig: &ServerConfig) -> bool {
-    serverConfig
-        .url
-        .as_ref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
 }
 
 #[allow(non_snake_case)]

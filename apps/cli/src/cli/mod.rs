@@ -271,7 +271,7 @@ pub(crate) fn print_root_usage() {
 fn print_cli_usage() {
     println!("operit2 cli --link <session> <version|chat|workspace>");
     println!("operit2 cli version");
-    println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history>");
+    println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli memory <profile|kv|item>");
     println!("operit2 cli export <memory|chat|snapshot>");
@@ -373,6 +373,7 @@ fn print_prefs_usage() {
     println!("operit2 cli prefs thinking-quality <1-4>");
     println!("operit2 cli prefs stream <on|off>");
     println!("operit2 cli prefs media-history <image-user-turns> <media-user-turns>");
+    println!("operit2 cli prefs mcp-timeout <seconds>");
 }
 
 fn print_host_usage() {

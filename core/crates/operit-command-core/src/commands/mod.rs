@@ -95,12 +95,14 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     output
         .push_stdout_line("operit2 skill <dir|list|show|create|import-zip|delete|visible|errors>");
     output
-        .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
+        .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
     output.push_stdout_line(
         "operit2 market <auth|stats|rank|search|show|install|comments|comment|reactions|react>",
     );
     output.push_stdout_line("operit2 host <show|capabilities|paths>");
-    output.push_stdout_line("operit2 prefs <show|thinking|thinking-quality|stream|media-history>");
+    output.push_stdout_line(
+        "operit2 prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>",
+    );
     output.push_stdout_line("operit2 approval <status|list|allow|ask|forbid|tool>");
     output.push_stdout_line("operit2 tag <list|show|create|update|delete>");
     output.push_stdout_line("operit2 memory <profile|kv|item>");

@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -23,10 +24,10 @@ class ChatScreenContent extends StatelessWidget {
     required this.inputFocusNode,
     required this.scrollController,
     required this.inputProcessingState,
-    required this.modelLabel,
+    required this.modelLabelListenable,
     required this.viewModel,
     required this.currentChatId,
-    required this.autoScrollToBottom,
+    required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
@@ -55,7 +56,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onSendMessage,
     required this.onCancelMessage,
     required this.onModelChanged,
-    required this.toastMessage,
+    required this.toastMessageListenable,
     required this.onDismissToast,
     required this.isMultiSelectMode,
     this.selectedMessageIndices = const <int>{},
@@ -68,10 +69,10 @@ class ChatScreenContent extends StatelessWidget {
   final FocusNode inputFocusNode;
   final ScrollController scrollController;
   final ChatInputProcessingState inputProcessingState;
-  final String modelLabel;
+  final ValueListenable<String> modelLabelListenable;
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final bool autoScrollToBottom;
+  final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
@@ -100,7 +101,7 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onSendMessage;
   final VoidCallback onCancelMessage;
   final ValueChanged<String> onModelChanged;
-  final String? toastMessage;
+  final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageIndices;
@@ -119,7 +120,7 @@ class ChatScreenContent extends StatelessWidget {
                 errorMessage: errorMessage,
                 scrollController: scrollController,
                 currentChatId: currentChatId,
-                autoScrollToBottom: autoScrollToBottom,
+                autoScrollToBottomListenable: autoScrollToBottomListenable,
                 hasOlderDisplayHistory: hasOlderDisplayHistory,
                 hasNewerDisplayHistory: hasNewerDisplayHistory,
                 isLoadingDisplayWindow: isLoadingDisplayWindow,
@@ -170,27 +171,37 @@ class ChatScreenContent extends StatelessWidget {
                     : () => _confirmDeleteSelected(context),
               )
             else
-              AgentChatInputSection(
-                controller: messageController,
-                focusNode: inputFocusNode,
-                isLoading: loading,
-                inputState: inputProcessingState,
-                modelLabel: modelLabel,
-                viewModel: viewModel,
-                currentChatId: currentChatId,
-                onSendMessage: onSendMessage,
-                onCancelMessage: onCancelMessage,
-                onModelChanged: onModelChanged,
+              ValueListenableBuilder<String>(
+                valueListenable: modelLabelListenable,
+                builder: (context, modelLabel, _) {
+                  return AgentChatInputSection(
+                    controller: messageController,
+                    focusNode: inputFocusNode,
+                    isLoading: loading,
+                    inputState: inputProcessingState,
+                    modelLabel: modelLabel,
+                    viewModel: viewModel,
+                    currentChatId: currentChatId,
+                    onSendMessage: onSendMessage,
+                    onCancelMessage: onCancelMessage,
+                    onModelChanged: onModelChanged,
+                  );
+                },
               ),
           ],
         ),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: ChatToastHost(
-              message: toastMessage,
-              onDismiss: onDismissToast,
-              maxHeight: 280,
+            child: ValueListenableBuilder<String?>(
+              valueListenable: toastMessageListenable,
+              builder: (context, toastMessage, _) {
+                return ChatToastHost(
+                  message: toastMessage,
+                  onDismiss: onDismissToast,
+                  maxHeight: 280,
+                );
+              },
             ),
           ),
         ),

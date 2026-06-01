@@ -146,6 +146,203 @@ pub fn getJsToolsDefinition() -> &'static str {
                     }
                     return toolCall("visit_web", params || {});
                 },
+                browserNavigate: function(urlOrOptions) {
+                    var params = typeof urlOrOptions === 'string' ? { url: urlOrOptions } : Object.assign({}, urlOrOptions || {});
+                    if (!params.url) throw new Error("browserNavigate requires url");
+                    if (params.headers !== undefined && typeof params.headers === 'object') params.headers = JSON.stringify(params.headers);
+                    return toolCall("browser_navigate", params);
+                },
+                browserNavigateBack: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserNavigateBack only accepts one options object");
+                    return toolCall("browser_navigate_back", options || {});
+                },
+                browserClick: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserClick only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (params.selector !== undefined && params.selector !== null) {
+                        params.selector = String(params.selector).trim();
+                        if (!params.selector) delete params.selector;
+                    }
+                    if (!params.ref && !params.selector) throw new Error("browserClick requires ref or selector");
+                    if (params.element !== undefined && params.element !== null) {
+                        params.element = String(params.element).trim();
+                        if (!params.element) delete params.element;
+                    }
+                    if (params.button !== undefined && params.button !== null) {
+                        var button = String(params.button).trim();
+                        if (button !== 'left' && button !== 'right' && button !== 'middle') throw new Error("button must be one of: left, right, middle");
+                        params.button = button;
+                    }
+                    if (params.modifiers !== undefined) {
+                        if (!Array.isArray(params.modifiers)) throw new Error("modifiers must be an array");
+                        var allowedModifiers = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'];
+                        var normalizedModifiers = params.modifiers.map(function(modifier) { return String(modifier).trim(); });
+                        var invalidModifiers = normalizedModifiers.filter(function(modifier) { return allowedModifiers.indexOf(modifier) < 0; });
+                        if (invalidModifiers.length > 0) throw new Error("Invalid modifiers: " + invalidModifiers.join(', '));
+                        params.modifiers = normalizedModifiers;
+                    }
+                    if (params.doubleClick !== undefined) params.doubleClick = !!params.doubleClick;
+                    return toolCall("browser_click", params);
+                },
+                browserClose: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserClose only accepts one options object");
+                    return toolCall("browser_close", options || {});
+                },
+                browserCloseAll: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserCloseAll only accepts one options object");
+                    return toolCall("browser_close_all", options || {});
+                },
+                browserConsoleMessages: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserConsoleMessages only accepts one options object");
+                    var params = Object.assign({}, options || {});
+                    if (params.level !== undefined && params.level !== null) params.level = String(params.level).trim();
+                    if (!params.level) params.level = "info";
+                    if (params.filename !== undefined && params.filename !== null) params.filename = String(params.filename);
+                    return toolCall("browser_console_messages", params);
+                },
+                browserDrag: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserDrag only accepts one options object");
+                    var params = Object.assign({}, options);
+                    ['startElement', 'startRef', 'endElement', 'endRef'].forEach(function(key) {
+                        if (params[key] !== undefined && params[key] !== null) params[key] = String(params[key]).trim();
+                        if (!params[key]) throw new Error("browserDrag requires " + key);
+                    });
+                    return toolCall("browser_drag", params);
+                },
+                browserEvaluate: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserEvaluate only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.function !== undefined && params.function !== null) params.function = String(params.function);
+                    if (!params.function) throw new Error("browserEvaluate requires function");
+                    if (params.element !== undefined && params.element !== null) params.element = String(params.element);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (params.element && !params.ref) throw new Error("ref is required when element is provided");
+                    return toolCall("browser_evaluate", params);
+                },
+                browserFileUpload: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserFileUpload only accepts one options object");
+                    var params = Object.assign({}, options || {});
+                    if (params.paths !== undefined) {
+                        if (!Array.isArray(params.paths)) throw new Error("paths must be an array");
+                        params.paths = params.paths.map(function(path) { return String(path); });
+                    }
+                    return toolCall("browser_file_upload", params);
+                },
+                browserFillForm: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserFillForm only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (!Array.isArray(params.fields) || params.fields.length === 0) throw new Error("browserFillForm requires a non-empty fields array");
+                    return toolCall("browser_fill_form", params);
+                },
+                browserHandleDialog: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserHandleDialog only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (typeof params.accept !== 'boolean') throw new Error("accept must be a boolean");
+                    if (params.promptText !== undefined && params.promptText !== null) params.promptText = String(params.promptText);
+                    return toolCall("browser_handle_dialog", params);
+                },
+                browserHover: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserHover only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (!params.ref) throw new Error("browserHover requires ref");
+                    if (params.element !== undefined && params.element !== null) params.element = String(params.element);
+                    return toolCall("browser_hover", params);
+                },
+                browserNetworkRequests: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserNetworkRequests only accepts one options object");
+                    var params = Object.assign({}, options || {});
+                    if (params.includeStatic !== undefined) params.includeStatic = !!params.includeStatic;
+                    if (params.filename !== undefined && params.filename !== null) params.filename = String(params.filename);
+                    return toolCall("browser_network_requests", params);
+                },
+                browserPressKey: function(keyOrOptions) {
+                    var params = typeof keyOrOptions === 'string' ? { key: keyOrOptions } : Object.assign({}, keyOrOptions || {});
+                    if (params.key !== undefined && params.key !== null) params.key = String(params.key).trim();
+                    if (!params.key) throw new Error("browserPressKey requires key");
+                    return toolCall("browser_press_key", params);
+                },
+                browserResize: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserResize only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.width === undefined || params.height === undefined) throw new Error("browserResize requires width and height");
+                    return toolCall("browser_resize", params);
+                },
+                browserRunCode: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserRunCode only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.code !== undefined && params.code !== null) params.code = String(params.code);
+                    if (!params.code) throw new Error("browserRunCode requires code");
+                    return toolCall("browser_run_code", params);
+                },
+                browserSelectOption: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserSelectOption only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (!params.ref) throw new Error("browserSelectOption requires ref");
+                    if (!Array.isArray(params.values) || params.values.length === 0) throw new Error("browserSelectOption requires a non-empty values array");
+                    params.values = params.values.map(function(value) { return String(value); });
+                    if (params.element !== undefined && params.element !== null) params.element = String(params.element);
+                    return toolCall("browser_select_option", params);
+                },
+                browserSnapshot: function(options) {
+                    if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) throw new Error("browserSnapshot only accepts one options object");
+                    var params = Object.assign({}, options || {});
+                    if (params.filename !== undefined && params.filename !== null) {
+                        params.filename = String(params.filename).trim();
+                        if (!params.filename) delete params.filename;
+                    }
+                    if (params.selector !== undefined && params.selector !== null) {
+                        params.selector = String(params.selector).trim();
+                        if (!params.selector) delete params.selector;
+                    }
+                    if (params.depth !== undefined && params.depth !== null) {
+                        var depth = Number(params.depth);
+                        if (!Number.isInteger(depth) || depth < 0) throw new Error("browserSnapshot depth must be a non-negative integer");
+                        params.depth = depth;
+                    }
+                    return toolCall("browser_snapshot", params);
+                },
+                browserTabs: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserTabs only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.action !== undefined && params.action !== null) params.action = String(params.action).trim();
+                    if (!params.action) throw new Error("browserTabs requires action");
+                    return toolCall("browser_tabs", params);
+                },
+                browserTakeScreenshot: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserTakeScreenshot only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.type !== undefined && params.type !== null) params.type = String(params.type).trim();
+                    if (!params.type) params.type = "png";
+                    if (params.element !== undefined && params.element !== null) params.element = String(params.element);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (params.ref && !params.element) throw new Error("element is required when ref is provided");
+                    if (params.element && !params.ref) throw new Error("ref is required when element is provided");
+                    if (params.fullPage !== undefined) params.fullPage = !!params.fullPage;
+                    return toolCall("browser_take_screenshot", params);
+                },
+                browserType: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserType only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.ref !== undefined && params.ref !== null) params.ref = String(params.ref).trim();
+                    if (!params.ref) throw new Error("browserType requires ref");
+                    if (params.text === undefined || params.text === null) throw new Error("browserType requires text");
+                    params.text = String(params.text);
+                    if (params.element !== undefined && params.element !== null) params.element = String(params.element);
+                    if (params.submit !== undefined) params.submit = !!params.submit;
+                    if (params.slowly !== undefined) params.slowly = !!params.slowly;
+                    return toolCall("browser_type", params);
+                },
+                browserWaitFor: function(options) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error("browserWaitFor only accepts one options object");
+                    var params = Object.assign({}, options);
+                    if (params.time === undefined && params.text === undefined && params.textGone === undefined) throw new Error("browserWaitFor requires one of: time, text, textGone");
+                    if (params.text !== undefined && params.text !== null) params.text = String(params.text);
+                    if (params.textGone !== undefined && params.textGone !== null) params.textGone = String(params.textGone);
+                    return toolCall("browser_wait_for", params);
+                },
                 http: function(options) {
                     var params = Object.assign({}, options || {});
                     if (params.body !== undefined && typeof params.body === 'object') params.body = JSON.stringify(params.body);

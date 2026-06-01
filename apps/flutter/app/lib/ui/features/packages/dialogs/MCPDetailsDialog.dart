@@ -32,9 +32,15 @@ class MCPDetailsDialog extends StatefulWidget {
 
 class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
   bool _busy = false;
+  bool _regeneratingDescription = false;
   String? _error;
+  core_proxy.PluginMetadata? _metadataOverride;
 
   core_proxy.PluginMetadata get _metadata {
+    final override = _metadataOverride;
+    if (override != null) {
+      return override;
+    }
     final current = widget.metadata;
     if (current != null) {
       return current;
@@ -86,6 +92,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
                 metadata: metadata,
                 onEdit: _busy ? null : () => _showMetadataEditDialog(context),
                 onRegenerate: _busy ? null : _regenerateDescription,
+                regenerating: _regeneratingDescription,
               ),
               const SizedBox(height: 16),
               Row(
@@ -200,6 +207,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
   Future<void> _regenerateDescription() async {
     setState(() {
       _busy = true;
+      _regeneratingDescription = true;
       _error = null;
     });
     try {
@@ -209,20 +217,25 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
             pluginId: widget.serverId,
             pluginName: metadata.name,
           );
+      final updatedMetadata = core_proxy.PluginMetadata(
+        name: metadata.name,
+        description: generated,
+        author: metadata.author,
+        version: metadata.version,
+      );
       await widget.clients.mcpLocalServer.addOrUpdatePluginMetadata(
         pluginId: widget.serverId,
-        metadata: core_proxy.PluginMetadata(
-          name: metadata.name,
-          description: generated,
-          author: metadata.author,
-          version: metadata.version,
-        ),
+        metadata: updatedMetadata,
       );
       await widget.onConfigSaved();
       if (!mounted) {
         return;
       }
-      Navigator.of(context).pop();
+      setState(() {
+        _metadataOverride = updatedMetadata;
+        _busy = false;
+        _regeneratingDescription = false;
+      });
     } catch (error, stackTrace) {
       debugPrint('Failed to regenerate MCP description: $error\n$stackTrace');
       if (!mounted) {
@@ -230,6 +243,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
       }
       setState(() {
         _busy = false;
+        _regeneratingDescription = false;
         _error = error.toString();
       });
     }
@@ -242,7 +256,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
         return AlertDialog(
           icon: const Icon(Icons.delete_outline),
           title: Text('删除 ${widget.serverId}'),
-          content: const Text('删除后会移除此 MCP 的配置、简介和状态。'),
+          content: const Text('删除后会移除此 MCP 的配置、简介、状态和本地插件文件。'),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -291,11 +305,13 @@ class _Description extends StatelessWidget {
     required this.metadata,
     required this.onEdit,
     required this.onRegenerate,
+    required this.regenerating,
   });
 
   final core_proxy.PluginMetadata metadata;
   final VoidCallback? onEdit;
   final VoidCallback? onRegenerate;
+  final bool regenerating;
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +337,13 @@ class _Description extends StatelessWidget {
                 IconButton(
                   tooltip: '重新生成简介',
                   onPressed: onRegenerate,
-                  icon: const Icon(Icons.auto_fix_high_outlined),
+                  icon: regenerating
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_fix_high_outlined),
                 ),
               ],
             ),
@@ -587,128 +609,137 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
     return AlertDialog(
       icon: const Icon(Icons.tune_outlined),
       title: Text('编辑 ${widget.serverId}'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              SegmentedButton<bool>(
-                segments: const <ButtonSegment<bool>>[
-                  ButtonSegment<bool>(
-                    value: false,
-                    label: Text('本地'),
-                    icon: Icon(Icons.terminal_outlined),
+      content: SizedBox(
+        width: 560,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 620),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SegmentedButton<bool>(
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('本地'),
+                        icon: Icon(Icons.terminal_outlined),
+                      ),
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('远程'),
+                        icon: Icon(Icons.public_outlined),
+                      ),
+                    ],
+                    selected: <bool>{_remote},
+                    onSelectionChanged: (value) {
+                      setState(() {
+                        _remote = value.first;
+                      });
+                    },
                   ),
-                  ButtonSegment<bool>(
-                    value: true,
-                    label: Text('远程'),
-                    icon: Icon(Icons.public_outlined),
+                ),
+                const SizedBox(height: 16),
+                if (_remote) ...<Widget>[
+                  TextField(
+                    controller: _urlController,
+                    decoration: const InputDecoration(
+                      labelText: 'URL',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: _type,
+                    decoration: const InputDecoration(
+                      labelText: '传输',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem<String>(
+                        value: 'streamable-http',
+                        child: Text('streamable-http'),
+                      ),
+                      DropdownMenuItem<String>(
+                        value: 'sse',
+                        child: Text('sse'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _type = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _headersController,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Headers',
+                      helperText: '每行一个，格式：Name: Value',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ] else ...<Widget>[
+                  TextField(
+                    controller: _commandController,
+                    decoration: const InputDecoration(
+                      labelText: '命令',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _argsController,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: '参数',
+                      helperText: '每行一个参数',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _envController,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: '环境变量',
+                      helperText: '每行一个，格式：Name: Value',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                 ],
-                selected: <bool>{_remote},
-                onSelectionChanged: (value) {
-                  setState(() {
-                    _remote = value.first;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              if (_remote) ...<Widget>[
+                const SizedBox(height: 10),
                 TextField(
-                  controller: _urlController,
+                  controller: _autoApproveController,
+                  minLines: 2,
+                  maxLines: 5,
                   decoration: const InputDecoration(
-                    labelText: 'URL',
+                    labelText: '自动批准工具',
+                    helperText: '每行一个工具名',
                     border: OutlineInputBorder(),
                   ),
                 ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: _type,
-                  decoration: const InputDecoration(
-                    labelText: '传输',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem<String>(
-                      value: 'streamable-http',
-                      child: Text('streamable-http'),
+                if (_error != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(
+                    _error!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.error,
                     ),
-                    DropdownMenuItem<String>(value: 'sse', child: Text('sse')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() {
-                      _type = value;
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _headersController,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: 'Headers',
-                    helperText: '每行一个，格式：Name: Value',
-                    border: OutlineInputBorder(),
                   ),
-                ),
-              ] else ...<Widget>[
-                TextField(
-                  controller: _commandController,
-                  decoration: const InputDecoration(
-                    labelText: '命令',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _argsController,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: '参数',
-                    helperText: '每行一个参数',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _envController,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: '环境变量',
-                    helperText: '每行一个，格式：Name: Value',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
+                ],
               ],
-              const SizedBox(height: 10),
-              TextField(
-                controller: _autoApproveController,
-                minLines: 2,
-                maxLines: 5,
-                decoration: const InputDecoration(
-                  labelText: '自动批准工具',
-                  helperText: '每行一个工具名',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              if (_error != null) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.error,
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),

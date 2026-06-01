@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -22,7 +23,7 @@ class ChatArea extends StatefulWidget {
     required this.errorMessage,
     required this.scrollController,
     required this.currentChatId,
-    required this.autoScrollToBottom,
+    required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
@@ -53,7 +54,7 @@ class ChatArea extends StatefulWidget {
   final String? errorMessage;
   final ScrollController scrollController;
   final String? currentChatId;
-  final bool autoScrollToBottom;
+  final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
@@ -85,10 +86,16 @@ class ChatArea extends StatefulWidget {
 class _ChatAreaState extends State<ChatArea> {
   final GlobalKey _viewportKey = GlobalKey();
   final Map<int, GlobalKey> _messageKeys = <int, GlobalKey>{};
-  Map<int, ChatScrollMessageAnchor> _messageAnchors =
-      const <int, ChatScrollMessageAnchor>{};
+  final ValueNotifier<Map<int, ChatScrollMessageAnchor>>
+  _messageAnchorsNotifier = ValueNotifier<Map<int, ChatScrollMessageAnchor>>(
+    const <int, ChatScrollMessageAnchor>{},
+  );
+  final ValueNotifier<bool> _showNavigatorChipNotifier = ValueNotifier<bool>(
+    false,
+  );
+  final Map<int, _CachedMessageRow> _messageRowCache =
+      <int, _CachedMessageRow>{};
   Timer? _navigatorHideTimer;
-  bool _showNavigatorChip = false;
   bool _userScrollSessionActive = false;
   double _viewportHeight = 0;
   bool _bottomFollowScheduled = false;
@@ -146,47 +153,7 @@ class _ChatAreaState extends State<ChatArea> {
                         final message =
                             widget.messages[index - messageStartIndex];
                         final messageIndex = index - messageStartIndex;
-                        final messageContent = _SelectableMessageFrame(
-                          selected: widget.selectedMessageIndices.contains(
-                            messageIndex,
-                          ),
-                          selectionMode: widget.isMultiSelectMode,
-                          child: CursorStyleChatMessage(
-                            key: ValueKey<String>(message.stableKey),
-                            message: message,
-                            isStreaming: _isStreamingMessage(messageIndex),
-                          ),
-                        );
-                        if (widget.isMultiSelectMode) {
-                          child = GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTap: () =>
-                                widget.onToggleMessageSelection(messageIndex),
-                            child: messageContent,
-                          );
-                        } else {
-                          child = MessageContextMenu(
-                            key: ValueKey<String>('menu-${message.stableKey}'),
-                            index: messageIndex,
-                            message: message,
-                            onToggleFavoriteMessage:
-                                widget.onToggleFavoriteMessage,
-                            onDeleteMessage: widget.onDeleteMessage,
-                            onDeleteMessagesFrom: widget.onDeleteMessagesFrom,
-                            onDeleteMessageVariant:
-                                widget.onDeleteMessageVariant,
-                            onRollbackToMessage: widget.onRollbackToMessage,
-                            onSelectMessageToEdit: widget.onSelectMessageToEdit,
-                            onRegenerateMessage: widget.onRegenerateMessage,
-                            onInsertSummary: widget.onInsertSummary,
-                            onCreateBranch: widget.onCreateBranch,
-                            onReplyToMessage: widget.onReplyToMessage,
-                            onToggleMultiSelectMode:
-                                widget.onToggleMultiSelectMode,
-                            onRefresh: widget.onRefreshRequested,
-                            child: messageContent,
-                          );
-                        }
+                        child = _messageRowFor(messageIndex, message);
                       } else if (widget.hasNewerDisplayHistory &&
                           index == messageEndIndex) {
                         child = _DisplayWindowAction(
@@ -227,26 +194,42 @@ class _ChatAreaState extends State<ChatArea> {
                 ),
               ),
             ),
-            ChatScrollNavigator(
-              messages: widget.messages,
-              currentChatId: widget.currentChatId,
-              scrollController: widget.scrollController,
-              messageAnchors: _messageAnchors,
-              viewportHeight: _viewportHeight,
-              autoScrollToBottom: widget.autoScrollToBottom,
-              hasNewerDisplayHistory: widget.hasNewerDisplayHistory,
-              loadLocatorEntries: widget.loadLocatorEntries,
-              onRequestLatestMessages: widget.onShowLatestDisplayWindow,
-              onAutoScrollToBottomChanged: widget.onAutoScrollToBottomChanged,
-              onJumpToMessage: _jumpToMessageTimestamp,
-              onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
-              onRequestScrollToBottom: _scrollToBottomFromNavigator,
-              showNavigatorChip: _showNavigatorChip,
-              onNavigatorChipHidden: () {
-                setState(() {
-                  _showNavigatorChip = false;
-                  _userScrollSessionActive = false;
-                });
+            ValueListenableBuilder<Map<int, ChatScrollMessageAnchor>>(
+              valueListenable: _messageAnchorsNotifier,
+              builder: (context, messageAnchors, _) {
+                return ValueListenableBuilder<bool>(
+                  valueListenable: widget.autoScrollToBottomListenable,
+                  builder: (context, autoScrollToBottom, _) {
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: _showNavigatorChipNotifier,
+                      builder: (context, showNavigatorChip, _) {
+                        return ChatScrollNavigator(
+                          messages: widget.messages,
+                          currentChatId: widget.currentChatId,
+                          scrollController: widget.scrollController,
+                          messageAnchors: messageAnchors,
+                          viewportHeight: _viewportHeight,
+                          autoScrollToBottom: autoScrollToBottom,
+                          hasNewerDisplayHistory: widget.hasNewerDisplayHistory,
+                          loadLocatorEntries: widget.loadLocatorEntries,
+                          onRequestLatestMessages:
+                              widget.onShowLatestDisplayWindow,
+                          onAutoScrollToBottomChanged:
+                              widget.onAutoScrollToBottomChanged,
+                          onJumpToMessage: _jumpToMessageTimestamp,
+                          onToggleFavoriteMessage:
+                              widget.onToggleFavoriteMessage,
+                          onRequestScrollToBottom: _scrollToBottomFromNavigator,
+                          showNavigatorChip: showNavigatorChip,
+                          onNavigatorChipHidden: () {
+                            _showNavigatorChipNotifier.value = false;
+                            _userScrollSessionActive = false;
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
               },
             ),
           ],
@@ -267,13 +250,11 @@ class _ChatAreaState extends State<ChatArea> {
     if (notification is UserScrollNotification) {
       if (notification.direction != ScrollDirection.idle) {
         _userScrollSessionActive = true;
-        if (!_showNavigatorChip) {
-          setState(() {
-            _showNavigatorChip = true;
-          });
+        if (!_showNavigatorChipNotifier.value) {
+          _showNavigatorChipNotifier.value = true;
         }
         if (notification.direction == ScrollDirection.forward &&
-            widget.autoScrollToBottom &&
+            widget.autoScrollToBottomListenable.value &&
             !_isAtBottom(notification.metrics)) {
           widget.onAutoScrollToBottomChanged(false);
         }
@@ -284,16 +265,15 @@ class _ChatAreaState extends State<ChatArea> {
 
     if (notification is ScrollUpdateNotification) {
       if (notification.dragDetails != null) {
-        if (!_showNavigatorChip) {
+        if (!_showNavigatorChipNotifier.value) {
           _userScrollSessionActive = true;
-          setState(() {
-            _showNavigatorChip = true;
-          });
+          _showNavigatorChipNotifier.value = true;
         }
         _scheduleNavigatorHide();
       }
       _collectMessageAnchors();
-      if (_isAtBottom(notification.metrics) && !widget.autoScrollToBottom) {
+      if (_isAtBottom(notification.metrics) &&
+          !widget.autoScrollToBottomListenable.value) {
         widget.onAutoScrollToBottomChanged(true);
       }
     }
@@ -308,10 +288,8 @@ class _ChatAreaState extends State<ChatArea> {
         _scheduleNavigatorHide();
         return;
       }
-      setState(() {
-        _showNavigatorChip = false;
-        _userScrollSessionActive = false;
-      });
+      _showNavigatorChipNotifier.value = false;
+      _userScrollSessionActive = false;
     });
   }
 
@@ -321,7 +299,7 @@ class _ChatAreaState extends State<ChatArea> {
 
   void _scheduleBottomFollow() {
     if (_bottomFollowScheduled ||
-        !widget.autoScrollToBottom ||
+        !widget.autoScrollToBottomListenable.value ||
         widget.hasNewerDisplayHistory ||
         widget.isLoadingDisplayWindow ||
         !widget.scrollController.hasClients) {
@@ -331,7 +309,7 @@ class _ChatAreaState extends State<ChatArea> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bottomFollowScheduled = false;
       if (!mounted ||
-          !widget.autoScrollToBottom ||
+          !widget.autoScrollToBottomListenable.value ||
           widget.hasNewerDisplayHistory ||
           widget.isLoadingDisplayWindow ||
           !widget.scrollController.hasClients) {
@@ -368,7 +346,7 @@ class _ChatAreaState extends State<ChatArea> {
       return;
     }
     _collectMessageAnchors();
-    final anchor = _messageAnchors[timestamp];
+    final anchor = _messageAnchorsNotifier.value[timestamp];
     if (anchor == null) {
       return;
     }
@@ -413,14 +391,7 @@ class _ChatAreaState extends State<ChatArea> {
         heightPx: rowBox.size.height,
       );
     }
-    if (anchors.length != _messageAnchors.length ||
-        anchors.keys.any((key) => !_messageAnchors.containsKey(key))) {
-      setState(() {
-        _messageAnchors = anchors;
-      });
-    } else {
-      _messageAnchors = anchors;
-    }
+    _messageAnchorsNotifier.value = anchors;
   }
 
   GlobalKey _keyForMessage(int timestamp) {
@@ -460,13 +431,77 @@ class _ChatAreaState extends State<ChatArea> {
     _messageKeys.removeWhere(
       (timestamp, key) => !timestamps.contains(timestamp),
     );
+    _messageRowCache.removeWhere(
+      (timestamp, row) => !timestamps.contains(timestamp),
+    );
   }
 
   @override
   void dispose() {
     _navigatorHideTimer?.cancel();
+    _messageAnchorsNotifier.dispose();
+    _showNavigatorChipNotifier.dispose();
     _messageKeys.clear();
+    _messageRowCache.clear();
     super.dispose();
+  }
+
+  Widget _messageRowFor(int messageIndex, ChatUiMessage message) {
+    final selected = widget.selectedMessageIndices.contains(messageIndex);
+    final selectionMode = widget.isMultiSelectMode;
+    final isStreaming = _isStreamingMessage(messageIndex);
+    final cached = _messageRowCache[message.timestamp];
+    if (cached != null &&
+        cached.index == messageIndex &&
+        cached.selected == selected &&
+        cached.selectionMode == selectionMode &&
+        cached.isStreaming == isStreaming &&
+        _sameMessageForRender(cached.message, message)) {
+      return cached.widget;
+    }
+
+    final messageContent = _SelectableMessageFrame(
+      selected: selected,
+      selectionMode: selectionMode,
+      child: CursorStyleChatMessage(
+        key: ValueKey<String>(message.stableKey),
+        message: message,
+        isStreaming: isStreaming,
+      ),
+    );
+    final row = selectionMode
+        ? GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => widget.onToggleMessageSelection(messageIndex),
+            child: messageContent,
+          )
+        : MessageContextMenu(
+            key: ValueKey<String>('menu-${message.stableKey}'),
+            index: messageIndex,
+            message: message,
+            onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
+            onDeleteMessage: widget.onDeleteMessage,
+            onDeleteMessagesFrom: widget.onDeleteMessagesFrom,
+            onDeleteMessageVariant: widget.onDeleteMessageVariant,
+            onRollbackToMessage: widget.onRollbackToMessage,
+            onSelectMessageToEdit: widget.onSelectMessageToEdit,
+            onRegenerateMessage: widget.onRegenerateMessage,
+            onInsertSummary: widget.onInsertSummary,
+            onCreateBranch: widget.onCreateBranch,
+            onReplyToMessage: widget.onReplyToMessage,
+            onToggleMultiSelectMode: widget.onToggleMultiSelectMode,
+            onRefresh: widget.onRefreshRequested,
+            child: messageContent,
+          );
+    _messageRowCache[message.timestamp] = _CachedMessageRow(
+      index: messageIndex,
+      message: message,
+      selected: selected,
+      selectionMode: selectionMode,
+      isStreaming: isStreaming,
+      widget: row,
+    );
+    return row;
   }
 
   bool _shouldShowLoadingIndicator() {
@@ -617,6 +652,46 @@ class _SelectableMessageFrame extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CachedMessageRow {
+  const _CachedMessageRow({
+    required this.index,
+    required this.message,
+    required this.selected,
+    required this.selectionMode,
+    required this.isStreaming,
+    required this.widget,
+  });
+
+  final int index;
+  final ChatUiMessage message;
+  final bool selected;
+  final bool selectionMode;
+  final bool isStreaming;
+  final Widget widget;
+}
+
+bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
+  return left.sender == right.sender &&
+      left.content == right.content &&
+      left.timestamp == right.timestamp &&
+      left.roleName == right.roleName &&
+      left.selectedVariantIndex == right.selectedVariantIndex &&
+      left.variantCount == right.variantCount &&
+      left.provider == right.provider &&
+      left.modelName == right.modelName &&
+      left.inputTokens == right.inputTokens &&
+      left.outputTokens == right.outputTokens &&
+      left.cachedInputTokens == right.cachedInputTokens &&
+      left.sentAt == right.sentAt &&
+      left.outputDurationMs == right.outputDurationMs &&
+      left.waitDurationMs == right.waitDurationMs &&
+      left.displayMode == right.displayMode &&
+      left.isFavorite == right.isFavorite &&
+      left.isVariantPreview == right.isVariantPreview &&
+      left.completedAt == right.completedAt &&
+      identical(left.contentStream, right.contentStream);
 }
 
 class _EmptyChatArea extends StatelessWidget {

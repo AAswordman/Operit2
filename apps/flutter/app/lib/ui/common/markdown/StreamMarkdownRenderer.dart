@@ -443,7 +443,7 @@ MarkdownNodeType _nodeTypeFromLabel(String? label) {
   };
 }
 
-class _MarkdownNodeColumn extends StatelessWidget {
+class _MarkdownNodeColumn extends StatefulWidget {
   const _MarkdownNodeColumn({
     required this.nodes,
     required this.rendererId,
@@ -465,16 +465,44 @@ class _MarkdownNodeColumn extends StatelessWidget {
   final void Function(String url)? onLinkClick;
 
   @override
+  State<_MarkdownNodeColumn> createState() => _MarkdownNodeColumnState();
+}
+
+class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
+  final Map<String, _CachedSingleMarkdownNode> _singleNodeCache =
+      <String, _CachedSingleMarkdownNode>{};
+  final Map<String, _CachedMarkdownGroup> _groupCache =
+      <String, _CachedMarkdownGroup>{};
+
+  @override
+  void didUpdateWidget(covariant _MarkdownNodeColumn oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.rendererId != widget.rendererId ||
+        oldWidget.textColor != widget.textColor ||
+        oldWidget.backgroundColor != widget.backgroundColor ||
+        oldWidget.nodeGrouper.runtimeType != widget.nodeGrouper.runtimeType ||
+        oldWidget.onLinkClick != widget.onLinkClick) {
+      _singleNodeCache.clear();
+      _groupCache.clear();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final groupedItems = nodeGrouper.group(nodes, rendererId);
-    final lastRenderableIndex = _lastRenderableNodeIndex(nodes);
+    final groupedItems = widget.nodeGrouper.group(
+      widget.nodes,
+      widget.rendererId,
+    );
+    final lastRenderableIndex = _lastRenderableNodeIndex(widget.nodes);
+    final liveSingleKeys = <String>{};
+    final liveGroupKeys = <String>{};
 
     bool isVisibleAt(int index) {
-      final states = nodeAnimationStates;
+      final states = widget.nodeAnimationStates;
       if (states == null) {
         return true;
       }
-      final key = _nodeKeyForIndex(rendererId, index);
+      final key = _nodeKeyForIndex(widget.rendererId, index);
       return states.containsKey(key) ? states[key] == true : true;
     }
 
@@ -497,60 +525,199 @@ class _MarkdownNodeColumn extends StatelessWidget {
     }
 
     Widget renderNodeAt(int index) {
-      final node = nodes[index];
+      final node = widget.nodes[index];
       if (node.type == MarkdownNodeType.xmlBlock) {
         return renderXmlContent(
           xmlContent: node.content,
           isStreaming: node.isStreaming,
-          textColor: textColor,
-          xmlStream: xmlNodeStreams[index],
+          textColor: widget.textColor,
+          xmlStream: widget.xmlNodeStreams[index],
         );
       }
       return CanvasMarkdownNodeRenderer(
-        key: ValueKey<String>(_nodeKeyForIndex(rendererId, index)),
-        nodeKey: _nodeKeyForIndex(rendererId, index),
+        key: ValueKey<String>(_nodeKeyForIndex(widget.rendererId, index)),
+        nodeKey: _nodeKeyForIndex(widget.rendererId, index),
         node: node,
-        textColor: textColor,
-        backgroundColor: backgroundColor,
+        textColor: widget.textColor,
+        backgroundColor: widget.backgroundColor,
         isLastNode: index == lastRenderableIndex,
-        onLinkClick: onLinkClick,
+        onLinkClick: widget.onLinkClick,
       );
     }
 
     Widget renderAnimatedNodeAt(int index) {
-      final node = nodes[index];
-      if (_canTypewriteNode(node.type)) {
-        return renderNodeAt(index);
+      final node = widget.nodes[index];
+      final cacheKey = _nodeKeyForIndex(widget.rendererId, index);
+      liveSingleKeys.add(cacheKey);
+      final isVisible = isVisibleAt(index);
+      final isLastNode = index == lastRenderableIndex;
+      final xmlStream = widget.xmlNodeStreams[index];
+      final cached = _singleNodeCache[cacheKey];
+      if (cached != null &&
+          cached.node == node &&
+          cached.isVisible == isVisible &&
+          cached.isLastNode == isLastNode &&
+          identical(cached.xmlStream, xmlStream)) {
+        return cached.widget;
       }
-      return _AnimatedMarkdownNode(
-        isVisible: isVisibleAt(index),
-        child: renderNodeAt(index),
+      late final Widget rendered;
+      if (_canTypewriteNode(node.type)) {
+        rendered = renderNodeAt(index);
+      } else {
+        rendered = _AnimatedMarkdownNode(
+          isVisible: isVisible,
+          child: renderNodeAt(index),
+        );
+      }
+      _singleNodeCache[cacheKey] = _CachedSingleMarkdownNode(
+        node: node,
+        isVisible: isVisible,
+        isLastNode: isLastNode,
+        xmlStream: xmlStream,
+        widget: rendered,
       );
+      return rendered;
     }
+
+    Widget renderGroupItem(MarkdownGroupItem group) {
+      final cacheKey = 'group-${widget.rendererId}-${group.stableKey}';
+      liveGroupKeys.add(cacheKey);
+      final isVisible = isVisibleAt(group.startIndex);
+      final isLastNode = group.endIndexInclusive == lastRenderableIndex;
+      final slice = <MarkdownNodeStable>[
+        for (
+          var index = group.startIndex;
+          index <= group.endIndexInclusive;
+          index++
+        )
+          widget.nodes[index],
+      ];
+      final xmlStreams = <Stream<String>?>[
+        for (
+          var index = group.startIndex;
+          index <= group.endIndexInclusive;
+          index++
+        )
+          widget.xmlNodeStreams[index],
+      ];
+      final cached = _groupCache[cacheKey];
+      if (cached != null &&
+          cached.group.startIndex == group.startIndex &&
+          cached.group.endIndexInclusive == group.endIndexInclusive &&
+          cached.group.stableKey == group.stableKey &&
+          cached.isVisible == isVisible &&
+          cached.isLastNode == isLastNode &&
+          _markdownNodeListEquals(cached.nodes, slice) &&
+          _streamListIdentical(cached.xmlStreams, xmlStreams)) {
+        return cached.widget;
+      }
+      final rendered = widget.nodeGrouper.renderGroup(
+        group: group,
+        nodes: widget.nodes,
+        rendererId: widget.rendererId,
+        isVisible: isVisible,
+        isLastNode: isLastNode,
+        textColor: widget.textColor,
+        xmlRenderer: renderXmlContent,
+        xmlStreamResolver: (index) => widget.xmlNodeStreams[index],
+        onLinkClick: widget.onLinkClick,
+        fillMaxWidth: true,
+        fontSize: 14,
+      );
+      _groupCache[cacheKey] = _CachedMarkdownGroup(
+        group: group,
+        nodes: List<MarkdownNodeStable>.unmodifiable(slice),
+        xmlStreams: List<Stream<String>?>.unmodifiable(xmlStreams),
+        isVisible: isVisible,
+        isLastNode: isLastNode,
+        widget: rendered,
+      );
+      return rendered;
+    }
+
+    final children = <Widget>[
+      for (final item in groupedItems)
+        if (item is MarkdownSingleItem)
+          renderAnimatedNodeAt(item.index)
+        else if (item is MarkdownGroupItem)
+          renderGroupItem(item),
+    ];
+
+    _singleNodeCache.removeWhere((key, value) => !liveSingleKeys.contains(key));
+    _groupCache.removeWhere((key, value) => !liveGroupKeys.contains(key));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final item in groupedItems)
-          if (item is MarkdownSingleItem)
-            renderAnimatedNodeAt(item.index)
-          else if (item is MarkdownGroupItem)
-            nodeGrouper.renderGroup(
-              group: item,
-              nodes: nodes,
-              rendererId: rendererId,
-              isVisible: isVisibleAt(item.startIndex),
-              isLastNode: item.endIndexInclusive == lastRenderableIndex,
-              textColor: textColor,
-              xmlRenderer: renderXmlContent,
-              xmlStreamResolver: (index) => xmlNodeStreams[index],
-              onLinkClick: onLinkClick,
-              fillMaxWidth: true,
-              fontSize: 14,
-            ),
-      ],
+      children: children,
     );
   }
+}
+
+class _CachedSingleMarkdownNode {
+  const _CachedSingleMarkdownNode({
+    required this.node,
+    required this.isVisible,
+    required this.isLastNode,
+    required this.xmlStream,
+    required this.widget,
+  });
+
+  final MarkdownNodeStable node;
+  final bool isVisible;
+  final bool isLastNode;
+  final Stream<String>? xmlStream;
+  final Widget widget;
+}
+
+class _CachedMarkdownGroup {
+  const _CachedMarkdownGroup({
+    required this.group,
+    required this.nodes,
+    required this.xmlStreams,
+    required this.isVisible,
+    required this.isLastNode,
+    required this.widget,
+  });
+
+  final MarkdownGroupItem group;
+  final List<MarkdownNodeStable> nodes;
+  final List<Stream<String>?> xmlStreams;
+  final bool isVisible;
+  final bool isLastNode;
+  final Widget widget;
+}
+
+bool _streamListIdentical(
+  List<Stream<String>?> left,
+  List<Stream<String>?> right,
+) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (!identical(left[index], right[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _markdownNodeListEquals(
+  List<MarkdownNodeStable> left,
+  List<MarkdownNodeStable> right,
+) {
+  if (identical(left, right)) {
+    return true;
+  }
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 String _nodeKeyForIndex(String rendererId, int index) {

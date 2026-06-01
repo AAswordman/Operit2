@@ -10,6 +10,7 @@ use crate::data::backup::RawSnapshotBackupManager::{
 use crate::data::db::AppDatabase::AppDatabase;
 use crate::data::mcp::plugins::MCPStarter::MCPStarter;
 use crate::data::model::Memory::{Memory, MemoryLink};
+use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
@@ -124,7 +125,10 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn initMcpPlugins(&self) {
         let starter = MCPStarter::new(self.applicationContext.clone());
-        let _ = starter.startAllDeployedPlugins();
+        let timeoutSeconds = ApiPreferences::getInstance()
+            .getMcpStartupTimeoutSeconds()
+            .expect("api preferences must provide mcp startup timeout seconds");
+        let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
     }
 
     #[allow(non_snake_case)]

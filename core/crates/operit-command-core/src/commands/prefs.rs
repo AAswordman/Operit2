@@ -63,6 +63,17 @@ pub fn run_prefs_command(
             ));
             Ok(())
         }
+        "mcp-timeout" => {
+            let seconds = parse_i32_arg(args.get(1), "usage: operit2 prefs mcp-timeout <seconds>")?;
+            if seconds < 1 {
+                return Err("mcp-timeout seconds must be at least 1".to_string());
+            }
+            preferences
+                .saveMcpStartupTimeoutSeconds(seconds)
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("mcpStartupTimeoutSeconds={seconds}"));
+            Ok(())
+        }
         _ => {
             print_prefs_usage(output);
             Ok(())
@@ -94,6 +105,10 @@ fn print_api_preferences(
         .maxMediaHistoryUserTurnsFlow()
         .first()
         .map_err(|error| error.to_string())?;
+    let mcpStartupTimeoutSeconds = preferences
+        .mcpStartupTimeoutSecondsFlow()
+        .first()
+        .map_err(|error| error.to_string())?;
     output.push_stdout_line(format!("enableThinkingMode={enableThinkingMode}"));
     output.push_stdout_line(format!("thinkingQualityLevel={thinkingQualityLevel}"));
     output.push_stdout_line(format!(
@@ -106,6 +121,9 @@ fn print_api_preferences(
     output.push_stdout_line(format!(
         "maxMediaHistoryUserTurns={maxMediaHistoryUserTurns}"
     ));
+    output.push_stdout_line(format!(
+        "mcpStartupTimeoutSeconds={mcpStartupTimeoutSeconds}"
+    ));
     Ok(())
 }
 
@@ -115,4 +133,5 @@ fn print_prefs_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 prefs thinking-quality <1-4>");
     output.push_stdout_line("operit2 prefs stream <on|off>");
     output.push_stdout_line("operit2 prefs media-history <image-user-turns> <media-user-turns>");
+    output.push_stdout_line("operit2 prefs mcp-timeout <seconds>");
 }
