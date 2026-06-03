@@ -944,6 +944,24 @@ abstract class AppLocalizations {
   /// **'Scripts'**
   String get scripts;
 
+  /// No description provided for @zoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom'**
+  String get zoom;
+
+  /// No description provided for @zoomIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom in'**
+  String get zoomIn;
+
+  /// No description provided for @zoomOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom out'**
+  String get zoomOut;
+
   /// No description provided for @desktopMode.
   ///
   /// In en, this message translates to:

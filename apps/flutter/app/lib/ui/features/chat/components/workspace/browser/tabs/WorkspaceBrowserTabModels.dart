@@ -29,11 +29,13 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
   bool isLoading = false;
   bool canGoBack = false;
   bool canGoForward = false;
-  bool desktopMode = false;
+  bool desktopMode = true;
+  double zoomFactor = 0.4;
   int progress = 0;
   bool _disposed = false;
 
   bool get isDisposed => _disposed;
+  int get zoomPercent => (zoomFactor * 100).round();
 
   String get siteHost {
     final uri = Uri.tryParse(url);
@@ -68,6 +70,7 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
     bool? canGoBack,
     bool? canGoForward,
     bool? desktopMode,
+    double? zoomFactor,
     int? progress,
   }) {
     if (_disposed) {
@@ -95,6 +98,9 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
     }
     if (desktopMode != null) {
       this.desktopMode = desktopMode;
+    }
+    if (zoomFactor != null) {
+      this.zoomFactor = zoomFactor;
     }
     if (progress != null) {
       this.progress = progress;

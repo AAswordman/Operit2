@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/M3LoadingIndicator.dart';
 import '../components/EmptyState.dart';
 import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
@@ -15,11 +16,13 @@ class MCPConfigScreen extends StatefulWidget {
     super.key,
     required this.clients,
     required this.searchQuery,
+    required this.reloadRevision,
     required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
+  final int reloadRevision;
   final VoidCallback onOpenMarket;
 
   @override
@@ -44,6 +47,14 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
   void initState() {
     super.initState();
     _loadMcp();
+  }
+
+  @override
+  void didUpdateWidget(covariant MCPConfigScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reloadRevision != widget.reloadRevision) {
+      _loadMcp();
+    }
   }
 
   Future<void> _loadMcp() async {
@@ -159,7 +170,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
   Widget build(BuildContext context) {
     final error = _errorMessage;
     if (_loading && _servers.isEmpty && _metadata.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const M3LoadingPane();
     }
     if (error != null && _servers.isEmpty && _metadata.isEmpty) {
       return EmptyState(
@@ -240,7 +251,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
           ),
         ),
         if (_loading && (_servers.isNotEmpty || _metadata.isNotEmpty))
-          const Center(child: CircularProgressIndicator()),
+          const Positioned.fill(child: M3LoadingOverlay()),
       ],
     );
   }

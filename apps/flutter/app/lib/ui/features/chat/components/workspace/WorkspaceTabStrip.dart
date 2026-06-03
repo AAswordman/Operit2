@@ -24,9 +24,9 @@ class WorkspaceTabStrip extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     return ColoredBox(
-      color: theme.colorScheme.surfaceContainerLow,
+      color: theme.colorScheme.surface,
       child: SizedBox(
-        height: 44,
+        height: 42,
         child: Stack(
           children: <Widget>[
             PositionedDirectional(
@@ -36,12 +36,12 @@ class WorkspaceTabStrip extends StatelessWidget {
               child: Divider(
                 height: 1,
                 thickness: 1,
-                color: theme.colorScheme.outlineVariant,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
               ),
             ),
             ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsetsDirectional.fromSTEB(8, 6, 8, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(10, 5, 10, 0),
               itemCount: tabs.length,
               separatorBuilder: (context, index) => const SizedBox(width: 4),
               itemBuilder: (context, index) {
@@ -100,7 +100,7 @@ class _WorkspaceTabButton extends StatelessWidget {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
         onTap: onTap,
         child: Container(
-          height: 38,
+          height: 36,
           padding: const EdgeInsetsDirectional.only(start: 10, end: 6),
           decoration: selected
               ? BoxDecoration(
@@ -109,9 +109,21 @@ class _WorkspaceTabButton extends StatelessWidget {
                     top: Radius.circular(8),
                   ),
                   border: Border(
-                    top: BorderSide(color: theme.colorScheme.outlineVariant),
-                    left: BorderSide(color: theme.colorScheme.outlineVariant),
-                    right: BorderSide(color: theme.colorScheme.outlineVariant),
+                    top: BorderSide(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.45,
+                      ),
+                    ),
+                    left: BorderSide(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.45,
+                      ),
+                    ),
+                    right: BorderSide(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.45,
+                      ),
+                    ),
                   ),
                 )
               : null,

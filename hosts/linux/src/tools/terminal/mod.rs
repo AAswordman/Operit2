@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -12,8 +12,10 @@ use operit_host_api::{
     TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
     TerminalTypeInfo,
 };
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 
 #[derive(Clone, Default)]
 pub struct LinuxTerminalHost {
@@ -25,6 +27,7 @@ struct TerminalState {
     sessions: BTreeMap<String, TerminalSession>,
     sessionNameToId: BTreeMap<String, String>,
     hiddenExecutorKeyToSessionId: BTreeMap<String, String>,
+    ptySessions: BTreeMap<String, PtySession>,
 }
 
 struct TerminalSession {
@@ -37,6 +40,20 @@ struct TerminalSession {
     stderrLines: Arc<Mutex<VecDeque<String>>>,
     screenLines: VecDeque<String>,
     commandRunning: bool,
+}
+
+struct PtySession {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    output: Arc<Mutex<VecDeque<u8>>>,
+    exitCode: Option<i32>,
+}
+
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
 }
 
 impl LinuxTerminalHost {
@@ -56,6 +73,109 @@ impl TerminalHost for LinuxTerminalHost {
                 description: "Linux sh terminal".to_string(),
             }],
         })
+    }
+
+    fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String> {
+        let workDir = nonBlank(workingDir, "working_directory")?;
+        let ptySystem = native_pty_system();
+        let pair = ptySystem
+            .openpty(ptySize(rows, cols))
+            .map_err(toHostError)?;
+        let command = linuxPtyCommand(&workDir);
+        let child = pair.slave.spawn_command(command).map_err(toHostError)?;
+        let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
+        let writer = pair.master.take_writer().map_err(toHostError)?;
+        let output = Arc::new(Mutex::new(VecDeque::new()));
+        let outputForThread = output.clone();
+        thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => appendPtyOutput(&outputForThread, &buffer[..count]),
+                    Err(_) => break,
+                }
+            }
+        });
+        let sessionId = nextSessionId();
+        let mut state = self.lockState()?;
+        state.ptySessions.insert(
+            sessionId.clone(),
+            PtySession {
+                child,
+                master: pair.master,
+                writer,
+                output,
+                exitCode: None,
+            },
+        );
+        Ok(sessionId)
+    }
+
+    fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
+        let mut state = self.lockState()?;
+        let session = state
+            .ptySessions
+            .get_mut(sessionId)
+            .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+        let mut output = session
+            .output
+            .lock()
+            .map_err(|_| HostError::new("pty output mutex poisoned"))?;
+        Ok(output.drain(..).collect())
+    }
+
+    fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
+        let mut state = self.lockState()?;
+        let session = state
+            .ptySessions
+            .get_mut(sessionId)
+            .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+        session.writer.write_all(data)?;
+        session.writer.flush()?;
+        Ok(data.len())
+    }
+
+    fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
+        let state = self.lockState()?;
+        let session = state
+            .ptySessions
+            .get(sessionId)
+            .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+        session
+            .master
+            .resize(ptySize(rows, cols))
+            .map_err(toHostError)
+    }
+
+    fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
+        let mut state = self.lockState()?;
+        let session = state
+            .ptySessions
+            .get_mut(sessionId)
+            .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+        if session.exitCode.is_some() {
+            return Ok(session.exitCode);
+        }
+        match session.child.try_wait()? {
+            Some(status) => {
+                let code = status.exit_code() as i32;
+                session.exitCode = Some(code);
+                Ok(Some(code))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
+        let mut state = self.lockState()?;
+        let removed = state.ptySessions.remove(sessionId);
+        match removed {
+            Some(_) => Ok(()),
+            None => Err(HostError::new(format!(
+                "PTY session does not exist: {sessionId}"
+            ))),
+        }
     }
 
     fn createOrGetSession(
@@ -79,11 +199,12 @@ impl TerminalHost for LinuxTerminalHost {
             state.sessionNameToId.remove(&sessionKey);
         }
 
-        let session = createShellSession(normalizedSessionName.clone(), normalizedTerminalType.clone())?;
+        let session = createShellSession(
+            normalizedSessionName.clone(),
+            normalizedTerminalType.clone(),
+        )?;
         let sessionId = session.id.clone();
-        state
-            .sessionNameToId
-            .insert(sessionKey, sessionId.clone());
+        state.sessionNameToId.insert(sessionKey, sessionId.clone());
         state.sessions.insert(sessionId.clone(), session);
         Ok(TerminalSessionInfo {
             sessionId,
@@ -105,7 +226,9 @@ impl TerminalHost for LinuxTerminalHost {
         let session = state
             .sessions
             .get_mut(&normalizedSessionId)
-            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+            .ok_or_else(|| {
+                HostError::new(format!("Terminal session does not exist: {sessionId}"))
+            })?;
         let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
@@ -165,10 +288,9 @@ impl TerminalHost for LinuxTerminalHost {
                 sessionId
             }
         };
-        let session = state
-            .sessions
-            .get_mut(&sessionId)
-            .ok_or_else(|| HostError::new(format!("Hidden terminal session missing: {sessionId}")))?;
+        let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
+            HostError::new(format!("Hidden terminal session missing: {sessionId}"))
+        })?;
         let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
         Ok(HiddenTerminalCommandOutput {
             command: normalizedCommand,
@@ -188,13 +310,17 @@ impl TerminalHost for LinuxTerminalHost {
     ) -> HostResult<TerminalInputOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         if input.is_none() && control.and_then(normalizeControl).is_none() {
-            return Err(HostError::new("At least one of input or control is required"));
+            return Err(HostError::new(
+                "At least one of input or control is required",
+            ));
         }
         let mut state = self.lockState()?;
         let session = state
             .sessions
             .get_mut(&normalizedSessionId)
-            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+            .ok_or_else(|| {
+                HostError::new(format!("Terminal session does not exist: {sessionId}"))
+            })?;
         let acceptedChars = applyTerminalInput(session, input, control.and_then(normalizeControl))?;
         Ok(TerminalInputOutput {
             sessionId: normalizedSessionId,
@@ -205,10 +331,9 @@ impl TerminalHost for LinuxTerminalHost {
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let mut state = self.lockState()?;
-        let mut session = state
-            .sessions
-            .remove(&normalizedSessionId)
-            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let mut session = state.sessions.remove(&normalizedSessionId).ok_or_else(|| {
+            HostError::new(format!("Terminal session does not exist: {sessionId}"))
+        })?;
         let _ = session.child.kill();
         state
             .sessionNameToId
@@ -226,10 +351,9 @@ impl TerminalHost for LinuxTerminalHost {
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let state = self.lockState()?;
-        let session = state
-            .sessions
-            .get(&normalizedSessionId)
-            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {sessionId}")))?;
+        let session = state.sessions.get(&normalizedSessionId).ok_or_else(|| {
+            HostError::new(format!("Terminal session does not exist: {sessionId}"))
+        })?;
         let content = session
             .screenLines
             .iter()
@@ -320,6 +444,41 @@ fn createShellSession(name: String, terminalType: String) -> HostResult<Terminal
 }
 
 #[allow(non_snake_case)]
+fn linuxPtyCommand(workingDir: &str) -> CommandBuilder {
+    let mut command = CommandBuilder::new("sh");
+    command.cwd(workingDir);
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("LANG", "C.UTF-8");
+    command
+}
+
+#[allow(non_snake_case)]
+fn ptySize(rows: u16, cols: u16) -> PtySize {
+    PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+#[allow(non_snake_case)]
+fn appendPtyOutput(output: &Arc<Mutex<VecDeque<u8>>>, data: &[u8]) {
+    if let Ok(mut buffer) = output.lock() {
+        buffer.extend(data.iter().copied());
+        while buffer.len() > PTY_OUTPUT_LIMIT {
+            buffer.pop_front();
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn toHostError(error: impl std::fmt::Display) -> HostError {
+    HostError::new(error.to_string())
+}
+
+#[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<String> {
     match terminalType.trim() {
         "" | "linux" => Ok("linux".to_string()),
@@ -340,7 +499,10 @@ fn executeShellCommandInSession(
     command: &str,
     timeoutMs: u64,
 ) -> HostResult<SessionCommandResult> {
-    let marker = format!("__OPERIT_TERMINAL_{}__", NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst));
+    let marker = format!(
+        "__OPERIT_TERMINAL_{}__",
+        NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst)
+    );
     let endMarkerPrefix = format!("{marker}_END:");
     let script = format!(
         "printf '%s\\n' '{marker}_START'\n{{\n{command}\n}}\n__operit_exit_code=$?\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
@@ -375,7 +537,10 @@ fn executeShellCommandInSession(
                 }
                 if sawStart && line.starts_with(&endMarkerPrefix) {
                     session.commandRunning = false;
-                    let exitCode = line[endMarkerPrefix.len()..].trim().parse::<i32>().unwrap_or(-1);
+                    let exitCode = line[endMarkerPrefix.len()..]
+                        .trim()
+                        .parse::<i32>()
+                        .unwrap_or(-1);
                     let output = joinOutput(outputLines, drainStderr(session)?);
                     appendScreenLines(session, &output);
                     return Ok(SessionCommandResult {
@@ -468,7 +633,9 @@ fn controlToSequence(control: &str, input: Option<&str>) -> HostResult<String> {
         "ctrl" | "control" => ctrlSequence(input),
         "alt" | "meta" | "cmd" => Ok(format!("\x1b{}", input.unwrap_or(""))),
         "shift" => Ok(input.unwrap_or("").to_uppercase()),
-        other => Err(HostError::new(format!("Unsupported terminal control: {other}"))),
+        other => Err(HostError::new(format!(
+            "Unsupported terminal control: {other}"
+        ))),
     }
 }
 
@@ -480,7 +647,9 @@ fn ctrlSequence(input: Option<&str>) -> HostResult<String> {
         .next()
         .ok_or_else(|| HostError::new("ctrl control requires input"))?;
     if chars.next().is_some() {
-        return Err(HostError::new("ctrl control input must be a single character"));
+        return Err(HostError::new(
+            "ctrl control input must be a single character",
+        ));
     }
     let code = match value.to_ascii_uppercase() {
         'A'..='Z' => value.to_ascii_uppercase() as u8 - b'A' + 1,

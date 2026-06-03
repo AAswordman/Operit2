@@ -7,9 +7,11 @@
 
 #include <memory>
 #include <mutex>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -27,6 +29,12 @@ using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
 using BridgeHandlePermissionResult = char* (*)(BridgeHandle, const char*);
 using BridgeNextBrowserAutomationRequest = char* (*)(BridgeHandle);
 using BridgeHandleBrowserAutomationResult = char* (*)(BridgeHandle, const char*);
+using BridgeStartTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
+using BridgeReadTerminalPty = char* (*)(BridgeHandle, const char*);
+using BridgeWriteTerminalPty = char* (*)(BridgeHandle, const char*, const uint8_t*, size_t);
+using BridgeResizeTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
+using BridgePollTerminalPtyExit = char* (*)(BridgeHandle, const char*);
+using BridgeCloseTerminalPty = char* (*)(BridgeHandle, const char*);
 using BridgeFreeString = void (*)(char*);
 
 class OperitRuntimeLibrary {
@@ -79,6 +87,18 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_next_browser_automation_request"));
       handle_browser_automation_result_ = reinterpret_cast<BridgeHandleBrowserAutomationResult>(
           GetProcAddress(library_, "operit_flutter_bridge_handle_browser_automation_result"));
+      start_terminal_pty_ = reinterpret_cast<BridgeStartTerminalPty>(
+          GetProcAddress(library_, "operit_flutter_bridge_start_terminal_pty"));
+      read_terminal_pty_ = reinterpret_cast<BridgeReadTerminalPty>(
+          GetProcAddress(library_, "operit_flutter_bridge_read_terminal_pty"));
+      write_terminal_pty_ = reinterpret_cast<BridgeWriteTerminalPty>(
+          GetProcAddress(library_, "operit_flutter_bridge_write_terminal_pty"));
+      resize_terminal_pty_ = reinterpret_cast<BridgeResizeTerminalPty>(
+          GetProcAddress(library_, "operit_flutter_bridge_resize_terminal_pty"));
+      poll_terminal_pty_exit_ = reinterpret_cast<BridgePollTerminalPtyExit>(
+          GetProcAddress(library_, "operit_flutter_bridge_poll_terminal_pty_exit"));
+      close_terminal_pty_ = reinterpret_cast<BridgeCloseTerminalPty>(
+          GetProcAddress(library_, "operit_flutter_bridge_close_terminal_pty"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
@@ -88,6 +108,9 @@ class OperitRuntimeLibrary {
           handle_permission_result_ == nullptr ||
           next_browser_automation_request_ == nullptr ||
           handle_browser_automation_result_ == nullptr ||
+          start_terminal_pty_ == nullptr || read_terminal_pty_ == nullptr ||
+          write_terminal_pty_ == nullptr || resize_terminal_pty_ == nullptr ||
+          poll_terminal_pty_exit_ == nullptr || close_terminal_pty_ == nullptr ||
           free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
@@ -103,8 +126,7 @@ class OperitRuntimeLibrary {
 
   bool Call(const std::string& request, std::string* response,
             std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = call_(
@@ -115,8 +137,7 @@ class OperitRuntimeLibrary {
 
   bool WatchSnapshot(const std::string& request, std::string* response,
                      std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = watch_snapshot_(
@@ -127,8 +148,7 @@ class OperitRuntimeLibrary {
 
   bool WatchStream(const std::string& request, std::string* response,
                    std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = watch_stream_(
@@ -139,8 +159,7 @@ class OperitRuntimeLibrary {
 
   bool PollWatchStream(const std::string& subscription, std::string* response,
                        std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = poll_watch_stream_(handle_, subscription.c_str());
@@ -149,8 +168,7 @@ class OperitRuntimeLibrary {
 
   bool CloseWatchStream(const std::string& subscription, std::string* response,
                         std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = close_watch_stream_(handle_, subscription.c_str());
@@ -158,8 +176,7 @@ class OperitRuntimeLibrary {
   }
 
   bool HostDescriptor(std::string* response, std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = host_descriptor_(handle_);
@@ -167,8 +184,7 @@ class OperitRuntimeLibrary {
   }
 
   bool CurrentPermissionRequest(std::string* response, std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = current_permission_request_(handle_);
@@ -177,8 +193,7 @@ class OperitRuntimeLibrary {
 
   bool HandlePermissionResult(const std::string& permission_result,
                               std::string* response, std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = handle_permission_result_(handle_, permission_result.c_str());
@@ -186,8 +201,7 @@ class OperitRuntimeLibrary {
   }
 
   bool NextBrowserAutomationRequest(std::string* response, std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response = next_browser_automation_request_(handle_);
@@ -197,8 +211,7 @@ class OperitRuntimeLibrary {
   bool HandleBrowserAutomationResult(const std::string& browser_result,
                                      std::string* response,
                                      std::string* error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!EnsureReady(error)) {
+    if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response =
@@ -206,7 +219,73 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  bool StartTerminalPty(const std::string& working_directory, int rows,
+                        int columns, std::string* response,
+                        std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = start_terminal_pty_(
+        handle_, working_directory.c_str(), static_cast<uint16_t>(rows),
+        static_cast<uint16_t>(columns));
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool ReadTerminalPty(const std::string& session_id, std::string* response,
+                       std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = read_terminal_pty_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool WriteTerminalPty(const std::string& session_id,
+                        const std::vector<uint8_t>& data,
+                        std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response =
+        write_terminal_pty_(handle_, session_id.c_str(), data.data(), data.size());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool ResizeTerminalPty(const std::string& session_id, int rows, int columns,
+                         std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = resize_terminal_pty_(
+        handle_, session_id.c_str(), static_cast<uint16_t>(rows),
+        static_cast<uint16_t>(columns));
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool PollTerminalPtyExit(const std::string& session_id,
+                           std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = poll_terminal_pty_exit_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool CloseTerminalPty(const std::string& session_id,
+                        std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = close_terminal_pty_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
  private:
+  bool EnsureReadyThreadSafe(std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return EnsureReady(error);
+  }
+
   static void AssignError(std::string* target, const std::string& value) {
     if (target != nullptr) {
       *target = value;
@@ -254,6 +333,12 @@ class OperitRuntimeLibrary {
   BridgeHandlePermissionResult handle_permission_result_ = nullptr;
   BridgeNextBrowserAutomationRequest next_browser_automation_request_ = nullptr;
   BridgeHandleBrowserAutomationResult handle_browser_automation_result_ = nullptr;
+  BridgeStartTerminalPty start_terminal_pty_ = nullptr;
+  BridgeReadTerminalPty read_terminal_pty_ = nullptr;
+  BridgeWriteTerminalPty write_terminal_pty_ = nullptr;
+  BridgeResizeTerminalPty resize_terminal_pty_ = nullptr;
+  BridgePollTerminalPtyExit poll_terminal_pty_exit_ = nullptr;
+  BridgeCloseTerminalPty close_terminal_pty_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
@@ -268,6 +353,58 @@ const std::string* StringArgument(
     return nullptr;
   }
   return std::get_if<std::string>(arguments);
+}
+
+const flutter::EncodableMap* MapArgument(
+    const flutter::MethodCall<flutter::EncodableValue>& method_call) {
+  const flutter::EncodableValue* arguments = method_call.arguments();
+  if (arguments == nullptr) {
+    return nullptr;
+  }
+  return std::get_if<flutter::EncodableMap>(arguments);
+}
+
+const flutter::EncodableValue* MapValue(const flutter::EncodableMap& map,
+                                        const char* key) {
+  auto iterator = map.find(flutter::EncodableValue(std::string(key)));
+  if (iterator == map.end()) {
+    return nullptr;
+  }
+  return &iterator->second;
+}
+
+const std::string* StringMapValue(const flutter::EncodableMap& map,
+                                  const char* key) {
+  const flutter::EncodableValue* value = MapValue(map, key);
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return std::get_if<std::string>(value);
+}
+
+bool IntMapValue(const flutter::EncodableMap& map, const char* key, int* output) {
+  const flutter::EncodableValue* value = MapValue(map, key);
+  if (value == nullptr || output == nullptr) {
+    return false;
+  }
+  if (const int32_t* int32_value = std::get_if<int32_t>(value)) {
+    *output = *int32_value;
+    return true;
+  }
+  if (const int64_t* int64_value = std::get_if<int64_t>(value)) {
+    *output = static_cast<int>(*int64_value);
+    return true;
+  }
+  return false;
+}
+
+const std::vector<uint8_t>* Uint8ListMapValue(const flutter::EncodableMap& map,
+                                              const char* key) {
+  const flutter::EncodableValue* value = MapValue(map, key);
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return std::get_if<std::vector<uint8_t>>(value);
 }
 
 void RespondRuntimeCallAsync(
@@ -416,6 +553,110 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
           }
           if (g_operit_runtime_library->HandleBrowserAutomationResult(
                   *browser_result, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("startTerminalPty") == 0) {
+          const flutter::EncodableMap* args = MapArgument(method_call);
+          const std::string* working_directory =
+              args == nullptr ? nullptr : StringMapValue(*args, "workingDirectory");
+          int rows = 0;
+          int columns = 0;
+          if (args == nullptr || working_directory == nullptr ||
+              !IntMapValue(*args, "rows", &rows) ||
+              !IntMapValue(*args, "columns", &columns)) {
+            result->Error("INVALID_ARGS",
+                          "startTerminalPty expects workingDirectory, rows, columns");
+            return;
+          }
+          if (g_operit_runtime_library->StartTerminalPty(
+                  *working_directory, rows, columns, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("readTerminalPty") == 0) {
+          const std::string* session_id = StringArgument(method_call);
+          if (session_id == nullptr) {
+            result->Error("INVALID_ARGS", "readTerminalPty expects a session id");
+            return;
+          }
+          if (g_operit_runtime_library->ReadTerminalPty(
+                  *session_id, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("writeTerminalPty") == 0) {
+          const flutter::EncodableMap* args = MapArgument(method_call);
+          const std::string* session_id =
+              args == nullptr ? nullptr : StringMapValue(*args, "sessionId");
+          const std::vector<uint8_t>* data =
+              args == nullptr ? nullptr : Uint8ListMapValue(*args, "data");
+          if (args == nullptr || session_id == nullptr || data == nullptr) {
+            result->Error("INVALID_ARGS",
+                          "writeTerminalPty expects sessionId and data");
+            return;
+          }
+          if (g_operit_runtime_library->WriteTerminalPty(
+                  *session_id, *data, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("resizeTerminalPty") == 0) {
+          const flutter::EncodableMap* args = MapArgument(method_call);
+          const std::string* session_id =
+              args == nullptr ? nullptr : StringMapValue(*args, "sessionId");
+          int rows = 0;
+          int columns = 0;
+          if (args == nullptr || session_id == nullptr ||
+              !IntMapValue(*args, "rows", &rows) ||
+              !IntMapValue(*args, "columns", &columns)) {
+            result->Error("INVALID_ARGS",
+                          "resizeTerminalPty expects sessionId, rows, columns");
+            return;
+          }
+          if (g_operit_runtime_library->ResizeTerminalPty(
+                  *session_id, rows, columns, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("pollTerminalPtyExit") == 0) {
+          const std::string* session_id = StringArgument(method_call);
+          if (session_id == nullptr) {
+            result->Error("INVALID_ARGS",
+                          "pollTerminalPtyExit expects a session id");
+            return;
+          }
+          if (g_operit_runtime_library->PollTerminalPtyExit(
+                  *session_id, &response, &error)) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+          return;
+        }
+        if (method_call.method_name().compare("closeTerminalPty") == 0) {
+          const std::string* session_id = StringArgument(method_call);
+          if (session_id == nullptr) {
+            result->Error("INVALID_ARGS", "closeTerminalPty expects a session id");
+            return;
+          }
+          if (g_operit_runtime_library->CloseTerminalPty(
+                  *session_id, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);

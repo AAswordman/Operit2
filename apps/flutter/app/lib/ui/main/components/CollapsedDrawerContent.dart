@@ -179,11 +179,13 @@ class NewConversationButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shape = BorderRadius.circular(16);
+    final actionColor = appearance.selectedContainerColor;
+    final actionContentColor = appearance.selectedContentColor;
     return Row(
       children: <Widget>[
         Expanded(
           child: Material(
-            color: appearance.selectedContainerColor.withValues(alpha: 0.30),
+            color: actionColor,
             borderRadius: shape,
             child: InkWell(
               borderRadius: shape,
@@ -195,7 +197,7 @@ class NewConversationButton extends StatelessWidget {
                 ),
                 child: Row(
                   children: <Widget>[
-                    Icon(Icons.add, size: 21, color: appearance.itemColor),
+                    Icon(Icons.add, size: 21, color: actionContentColor),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -203,7 +205,7 @@ class NewConversationButton extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: appearance.itemColor,
+                          color: actionContentColor,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -232,8 +234,8 @@ class NewConversationButton extends StatelessWidget {
               style: IconButton.styleFrom(
                 shape: const CircleBorder(),
                 backgroundColor: Colors.transparent,
-                foregroundColor: appearance.titleColor,
-                overlayColor: appearance.selectedContainerColor.withValues(
+                foregroundColor: appearance.itemColor,
+                overlayColor: appearance.statusAvailableColor.withValues(
                   alpha: 0.20,
                 ),
               ),
@@ -277,7 +279,7 @@ class ConversationSearchField extends StatelessWidget {
           color: appearance.itemColor.withValues(alpha: 0.72),
         ),
         filled: true,
-        fillColor: appearance.selectedContainerColor.withValues(alpha: 0.16),
+        fillColor: appearance.buttonContainerColor,
         border: OutlineInputBorder(
           borderRadius: shape,
           borderSide: BorderSide.none,
@@ -288,7 +290,7 @@ class ConversationSearchField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: shape,
-          borderSide: BorderSide(color: appearance.selectedContainerColor),
+          borderSide: BorderSide(color: appearance.statusAvailableColor),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 12,
@@ -319,7 +321,7 @@ class HistoryRail extends StatelessWidget {
           width: 2,
           height: height,
           decoration: BoxDecoration(
-            color: appearance.selectedContainerColor.withValues(alpha: 0.36),
+            color: appearance.dividerColor,
             borderRadius: BorderRadius.circular(1),
           ),
         ),
@@ -354,6 +356,8 @@ class ConversationDrawerItem extends StatelessWidget {
   final ValueChanged<core_proxy.ChatHistory> onMoveTo;
   final bool nested;
 
+  static const double _endPadding = 12;
+
   @override
   Widget build(BuildContext context) {
     final itemShape = BorderRadius.circular(12);
@@ -365,7 +369,7 @@ class ConversationDrawerItem extends StatelessWidget {
         return Padding(
           padding: EdgeInsetsDirectional.only(
             start: nested ? 22 : 12,
-            end: 0,
+            end: _endPadding,
             bottom: 3,
           ),
           child: Row(
@@ -377,7 +381,7 @@ class ConversationDrawerItem extends StatelessWidget {
                     borderRadius: itemShape,
                     border: dragHovering
                         ? Border.all(
-                            color: appearance.selectedContentColor.withValues(
+                            color: appearance.statusAvailableColor.withValues(
                               alpha: 0.55,
                             ),
                           )
@@ -553,35 +557,42 @@ class BottomSidebarAction extends StatelessWidget {
     final shape = BorderRadius.circular(14);
     final backgroundColor = selected
         ? appearance.selectedContainerColor
-        : appearance.selectedContainerColor.withValues(alpha: 0.18);
+        : Colors.transparent;
     final contentColor = selected
         ? appearance.selectedContentColor
         : appearance.itemColor;
-    return Material(
-      color: backgroundColor,
-      borderRadius: shape,
-      child: InkWell(
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor,
         borderRadius: shape,
-        onTap: onClick,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(icon, size: 18, color: contentColor),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: contentColor,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+        border: selected ? null : Border.all(color: appearance.dividerColor),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: shape,
+        child: InkWell(
+          borderRadius: shape,
+          onTap: onClick,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(icon, size: 18, color: contentColor),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: contentColor,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

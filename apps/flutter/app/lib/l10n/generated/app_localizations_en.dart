@@ -480,6 +480,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get scripts => 'Scripts';
 
   @override
+  String get zoom => 'Zoom';
+
+  @override
+  String get zoomIn => 'Zoom in';
+
+  @override
+  String get zoomOut => 'Zoom out';
+
+  @override
   String get desktopMode => 'Desktop mode';
 
   @override

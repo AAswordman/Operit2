@@ -1,6 +1,8 @@
 // ignore_for_file: file_names
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 import '../viewmodel/ChatViewModel.dart';
@@ -375,39 +377,45 @@ class _InputBody extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        TextField(
+        _DesktopEnterSendShortcuts(
           controller: controller,
-          focusNode: focusNode,
-          minLines: 1,
-          maxLines: 6,
-          enabled: true,
-          textInputAction: TextInputAction.newline,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontSize: 14,
-            height: 20 / 14,
-          ),
-          decoration: InputDecoration(
-            hintText: l10n.askOperitHint,
-            hintStyle: theme.textTheme.bodyMedium?.copyWith(
-              color: colorScheme.onSurfaceVariant,
+          hasDraftText: hasDraftText,
+          processing: processing,
+          onSendMessage: onSendMessage,
+          child: TextField(
+            controller: controller,
+            focusNode: focusNode,
+            minLines: 1,
+            maxLines: 6,
+            enabled: true,
+            textInputAction: TextInputAction.newline,
+            style: theme.textTheme.bodyMedium?.copyWith(
               fontSize: 14,
+              height: 20 / 14,
             ),
-            suffixIcon: IconButton(
-              onPressed: () {},
-              icon: const Icon(Icons.fullscreen),
-              color: colorScheme.onSurfaceVariant,
-              tooltip: l10n.fullscreenInput,
+            decoration: InputDecoration(
+              hintText: l10n.askOperitHint,
+              hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 14,
+              ),
+              suffixIcon: IconButton(
+                onPressed: () {},
+                icon: const Icon(Icons.fullscreen),
+                color: colorScheme.onSurfaceVariant,
+                tooltip: l10n.fullscreenInput,
+              ),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
             ),
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            contentPadding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+            onSubmitted: (_) {
+              if (hasDraftText && !processing) {
+                onSendMessage();
+              }
+            },
           ),
-          onSubmitted: (_) {
-            if (hasDraftText && !processing) {
-              onSendMessage();
-            }
-          },
         ),
         const SizedBox(height: 8),
         Row(
@@ -514,6 +522,66 @@ class _InputBody extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _DesktopEnterSendShortcuts extends StatelessWidget {
+  const _DesktopEnterSendShortcuts({
+    required this.controller,
+    required this.hasDraftText,
+    required this.processing,
+    required this.onSendMessage,
+    required this.child,
+  });
+
+  final TextEditingController controller;
+  final bool hasDraftText;
+  final bool processing;
+  final VoidCallback onSendMessage;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_usesDesktopEnterSend) {
+      return child;
+    }
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter): _sendIfReady,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter): _sendIfReady,
+        const SingleActivator(LogicalKeyboardKey.enter, control: true):
+            _insertNewline,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true):
+            _insertNewline,
+      },
+      child: child,
+    );
+  }
+
+  bool get _usesDesktopEnterSend {
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
+
+  void _sendIfReady() {
+    if (hasDraftText && !processing) {
+      onSendMessage();
+    }
+  }
+
+  void _insertNewline() {
+    final value = controller.value;
+    final text = value.text;
+    final selection = value.selection;
+    final range = selection.isValid
+        ? selection
+        : TextSelection.collapsed(offset: text.length);
+    final nextText = text.replaceRange(range.start, range.end, '\n');
+    controller.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: range.start + 1),
+      composing: TextRange.empty,
     );
   }
 }

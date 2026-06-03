@@ -93,7 +93,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     final theme = Theme.of(context);
     final showTabs = widget.hasBoundWorkspace || _hasBrowserTabs;
     return Material(
-      color: theme.colorScheme.surfaceContainerLowest,
+      color: theme.colorScheme.surface,
       child: SizedBox.expand(
         child: DecoratedBox(
           decoration: BoxDecoration(

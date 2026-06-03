@@ -2,20 +2,49 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../main/TopBarController.dart';
+import '../../../main/navigation/AppNavigationModels.dart';
+import '../../../main/screens/OperitScreens.dart';
+import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../components/SettingsCategoryList.dart';
 import '../components/SettingsDetailView.dart';
 import '../models/SettingsModels.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.initialCategory});
+
+  final SettingsCategory? initialCategory;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  SettingsCategory? _phoneSelectedCategory;
+  late SettingsCategory? _phoneSelectedCategory = widget.initialCategory;
   SettingsCategory _wideSelectedCategory = SettingsCategory.model;
+  TopBarController? _topBarController;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _topBarController = TopBarScope.of(context);
+    _syncTopBarTitle();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialCategory != widget.initialCategory) {
+      _phoneSelectedCategory = widget.initialCategory;
+      _syncTopBarTitle();
+    }
+  }
+
+  @override
+  void dispose() {
+    _topBarController?.clearTitleContent(owner: this);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,23 +66,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (selectedCategory == null) {
           return SettingsCategoryList(
             selectedCategory: null,
-            onCategorySelected: (category) {
-              setState(() {
-                _phoneSelectedCategory = category;
-              });
-            },
+            onCategorySelected: _openPhoneCategory,
           );
         }
 
-        return _SettingsPhoneDetail(
-          category: selectedCategory,
-          onBack: () {
-            setState(() {
-              _phoneSelectedCategory = null;
-            });
-          },
-        );
+        return SettingsDetailView(category: selectedCategory);
       },
+    );
+  }
+
+  void _openPhoneCategory(SettingsCategory category) {
+    final entry = ScreenRouteRegistry.toEntry(
+      screen: SettingsScreenRoute(category: category),
+    );
+    AppRouterGateway.navigate(
+      routeId: entry.routeId,
+      args: entry.args,
+      source: entry.source,
+    );
+  }
+
+  void _syncTopBarTitle() {
+    final controller = _topBarController;
+    if (controller == null) {
+      return;
+    }
+    final category = widget.initialCategory;
+    if (category == null) {
+      controller.clearTitleContent(owner: this);
+      return;
+    }
+    final spec = SettingsCategorySpec.of(category);
+    controller.setTitleContent(
+      TopBarTitleContent(
+        (context) => Text(
+          spec.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurface,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      owner: this,
     );
   }
 }
@@ -76,7 +133,7 @@ class _SettingsWideLayout extends StatelessWidget {
           width: 260,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerLowest,
+              color: colorScheme.surface,
               border: Border(
                 right: BorderSide(
                   color: colorScheme.outlineVariant.withValues(alpha: 0.45),
@@ -90,56 +147,6 @@ class _SettingsWideLayout extends StatelessWidget {
           ),
         ),
         Expanded(child: SettingsDetailView(category: selectedCategory)),
-      ],
-    );
-  }
-}
-
-class _SettingsPhoneDetail extends StatelessWidget {
-  const _SettingsPhoneDetail({required this.category, required this.onBack});
-
-  final SettingsCategory category;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    final spec = SettingsCategorySpec.of(category);
-    return Column(
-      children: <Widget>[
-        Material(
-          color: Theme.of(context).colorScheme.surface,
-          child: SafeArea(
-            bottom: false,
-            child: SizedBox(
-              height: 52,
-              child: Row(
-                children: <Widget>[
-                  IconButton(
-                    onPressed: onBack,
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: '返回设置',
-                  ),
-                  Icon(spec.icon, size: 21),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      spec.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: SettingsDetailView(category: category, showHeader: false),
-        ),
       ],
     );
   }

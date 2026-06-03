@@ -12,12 +12,10 @@ struct BuildinAsset {
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("operit-runtime crate must be under core/crates/operit-runtime");
-    let source_dir = repo_root.join("plugins").join("buildin");
+    let source_dir = manifest_dir
+        .join("assets")
+        .join("plugins")
+        .join("buildin");
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
@@ -27,7 +25,7 @@ fn main() {
     let mut assets = Vec::new();
     if source_dir.is_dir() {
         let mut entries = fs::read_dir(&source_dir)
-            .expect("read plugins/buildin")
+            .expect("read assets/plugins/buildin")
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .collect::<Vec<_>>();

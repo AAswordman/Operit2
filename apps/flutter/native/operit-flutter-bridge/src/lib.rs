@@ -7,6 +7,8 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use operit_core_proxy::LocalCoreProxy;
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+use operit_host_api::TerminalHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
     CoreRequestId, CoreWatchRequest,
@@ -26,16 +28,15 @@ use operit_host_android_native::{
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
-    AndroidTerminalHost as NativeTerminalHost,
-    AndroidWebVisitHost as NativeWebVisitHost,
+    AndroidTerminalHost as NativeTerminalHost, AndroidWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
-    LinuxSystemOperationHost as NativeSystemOperationHost,
-    LinuxTerminalHost as NativeTerminalHost, LinuxWebVisitHost as NativeWebVisitHost,
+    LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
+    LinuxWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
@@ -50,8 +51,7 @@ use operit_host_windows_native::{
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
-    WindowsTerminalHost as NativeTerminalHost,
-    WindowsWebVisitHost as NativeWebVisitHost,
+    WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -512,33 +512,21 @@ impl OperitFlutterBridge {
 
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn startTerminalPty(&self, workingDir: &str, rows: u16, cols: u16) -> String {
-        #[cfg(target_os = "android")]
-        {
-            return match self.terminalHost.startPtySession(workingDir, rows, cols) {
-                Ok(sessionId) => serde_json::json!({
-                    "ok": true,
-                    "sessionId": sessionId
-                })
-                .to_string(),
-                Err(error) => serde_json::json!({
-                    "ok": false,
-                    "error": error.message
-                })
-                .to_string(),
-            };
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (workingDir, rows, cols);
-            serde_json::json!({
-                "ok": false,
-                "error": "PTY bridge is implemented by the platform terminal host on Android"
+        match self.terminalHost.startPtySession(workingDir, rows, cols) {
+            Ok(sessionId) => serde_json::json!({
+                "ok": true,
+                "sessionId": sessionId
             })
-            .to_string()
+            .to_string(),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.message
+            })
+            .to_string(),
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn readTerminalPty(&self, sessionId: &str) -> String {
         match self.terminalHost.readPtySession(sessionId) {
             Ok(data) => serde_json::json!({
@@ -554,7 +542,7 @@ impl OperitFlutterBridge {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn writeTerminalPty(&self, sessionId: &str, data: &[u8]) -> String {
         match self.terminalHost.writePtySession(sessionId, data) {
             Ok(count) => serde_json::json!({
@@ -570,7 +558,7 @@ impl OperitFlutterBridge {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn resizeTerminalPty(&self, sessionId: &str, rows: u16, cols: u16) -> String {
         match self.terminalHost.resizePtySession(sessionId, rows, cols) {
             Ok(()) => serde_json::json!({ "ok": true }).to_string(),
@@ -582,7 +570,7 @@ impl OperitFlutterBridge {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn pollTerminalPtyExit(&self, sessionId: &str) -> String {
         match self.terminalHost.pollPtyExitCode(sessionId) {
             Ok(exitCode) => serde_json::json!({
@@ -598,7 +586,7 @@ impl OperitFlutterBridge {
         }
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn closeTerminalPty(&self, sessionId: &str) -> String {
         match self.terminalHost.closePtySession(sessionId) {
             Ok(()) => serde_json::json!({ "ok": true }).to_string(),
@@ -708,8 +696,9 @@ fn create_local_core(
 fn create_local_core(
     _storage_root: Option<PathBuf>,
     _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
-    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-    _terminalHost: Arc<NativeTerminalHost>,
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))] _terminalHost: Arc<
+        NativeTerminalHost,
+    >,
 ) -> Result<LocalCoreProxy, String> {
     Err("operit flutter native runtime bridge is not available for this target".to_string())
 }
@@ -1040,6 +1029,260 @@ pub unsafe extern "C" fn operit_flutter_bridge_handle_browser_automation_result(
         }
     };
     string_to_ptr((*handle).handleBrowserAutomationResult(resultJson))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_start_terminal_pty(
+    handle: *mut OperitFlutterBridge,
+    working_dir_ptr: *const c_char,
+    rows: u16,
+    cols: u16,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if working_dir_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal working directory pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let workingDir = match CStr::from_ptr(working_dir_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal working directory is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).startTerminalPty(workingDir, rows, cols))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_read_terminal_pty(
+    handle: *mut OperitFlutterBridge,
+    session_id_ptr: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if session_id_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal session id pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let sessionId = match CStr::from_ptr(session_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal session id is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).readTerminalPty(sessionId))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_write_terminal_pty(
+    handle: *mut OperitFlutterBridge,
+    session_id_ptr: *const c_char,
+    data_ptr: *const u8,
+    data_len: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if session_id_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal session id pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    if data_len > 0 && data_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal input pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let sessionId = match CStr::from_ptr(session_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal session id is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    let data = if data_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data_ptr, data_len)
+    };
+    string_to_ptr((*handle).writeTerminalPty(sessionId, data))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_resize_terminal_pty(
+    handle: *mut OperitFlutterBridge,
+    session_id_ptr: *const c_char,
+    rows: u16,
+    cols: u16,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if session_id_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal session id pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let sessionId = match CStr::from_ptr(session_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal session id is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).resizeTerminalPty(sessionId, rows, cols))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_poll_terminal_pty_exit(
+    handle: *mut OperitFlutterBridge,
+    session_id_ptr: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if session_id_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal session id pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let sessionId = match CStr::from_ptr(session_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal session id is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).pollTerminalPtyExit(sessionId))
+}
+
+#[no_mangle]
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+pub unsafe extern "C" fn operit_flutter_bridge_close_terminal_pty(
+    handle: *mut OperitFlutterBridge,
+    session_id_ptr: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized"
+            })
+            .to_string(),
+        );
+    }
+    if session_id_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "terminal session id pointer is null"
+            })
+            .to_string(),
+        );
+    }
+    let sessionId = match CStr::from_ptr(session_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("terminal session id is not valid UTF-8: {error}")
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).closeTerminalPty(sessionId))
 }
 
 #[no_mangle]

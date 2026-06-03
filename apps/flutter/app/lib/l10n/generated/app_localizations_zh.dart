@@ -471,6 +471,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get scripts => '脚本';
 
   @override
+  String get zoom => '缩放';
+
+  @override
+  String get zoomIn => '放大';
+
+  @override
+  String get zoomOut => '缩小';
+
+  @override
   String get desktopMode => '桌面模式';
 
   @override

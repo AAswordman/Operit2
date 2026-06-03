@@ -30,16 +30,15 @@ class NavigationDrawerAppearance {
 
 NavigationDrawerAppearance navigationDrawerAppearanceOf(BuildContext context) {
   final colorScheme = Theme.of(context).colorScheme;
-  final defaultTitleColor = colorScheme.primary;
   return NavigationDrawerAppearance(
-    containerColor: colorScheme.surfaceContainerLowest,
-    titleColor: defaultTitleColor,
+    containerColor: colorScheme.surface,
+    titleColor: colorScheme.onSurface,
     statusAvailableColor: colorScheme.primary,
     itemColor: colorScheme.onSurfaceVariant,
-    buttonContainerColor: colorScheme.surfaceContainerHighest,
-    selectedContainerColor: colorScheme.primaryContainer,
-    selectedContentColor: colorScheme.primary,
-    dividerColor: defaultTitleColor.withValues(alpha: 0.42),
+    buttonContainerColor: colorScheme.surfaceContainerLow,
+    selectedContainerColor: colorScheme.secondaryContainer,
+    selectedContentColor: colorScheme.onSecondaryContainer,
+    dividerColor: colorScheme.outlineVariant,
     waterGlassEnabled: false,
     buttonLiquidGlassEnabled: false,
   );

@@ -66,6 +66,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
   Offset? _menuPosition;
   Offset? _longPressStartPosition;
   Timer? _longPressTimer;
+  bool _isPressing = false;
 
   bool get _isActionable {
     return widget.message.sender == 'user' || widget.message.sender == 'ai';
@@ -87,7 +88,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
               }
             : null,
         onSecondaryTap: _isActionable ? _showContextMenu : null,
-        child: widget.child,
+        child: _PressFeedback(isPressing: _isPressing, child: widget.child),
       ),
     );
   }
@@ -98,6 +99,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     }
     _longPressStartPosition = event.position;
     _menuPosition = event.position;
+    _setPressing(true);
     _longPressTimer?.cancel();
     _longPressTimer = Timer(_longPressDuration, () {
       _longPressTimer = null;
@@ -122,6 +124,16 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     _longPressTimer?.cancel();
     _longPressTimer = null;
     _longPressStartPosition = null;
+    _setPressing(false);
+  }
+
+  void _setPressing(bool value) {
+    if (_isPressing == value || !mounted) {
+      return;
+    }
+    setState(() {
+      _isPressing = value;
+    });
   }
 
   @override
@@ -368,6 +380,42 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           ],
         );
       },
+    );
+  }
+}
+
+class _PressFeedback extends StatelessWidget {
+  const _PressFeedback({required this.isPressing, required this.child});
+
+  final bool isPressing;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return AnimatedScale(
+      scale: isPressing ? 0.99 : 1,
+      duration: const Duration(milliseconds: 80),
+      curve: Curves.easeOut,
+      child: Stack(
+        children: <Widget>[
+          child,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: isPressing ? 1 : 0,
+                duration: const Duration(milliseconds: 80),
+                curve: Curves.easeOut,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.onSurface.withValues(alpha: 0.06),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

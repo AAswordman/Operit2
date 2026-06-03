@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/M3LoadingIndicator.dart';
 import '../components/EmptyState.dart';
 import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
@@ -15,11 +16,13 @@ class SkillConfigScreen extends StatefulWidget {
     super.key,
     required this.clients,
     required this.searchQuery,
+    required this.reloadRevision,
     required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
+  final int reloadRevision;
   final VoidCallback onOpenMarket;
 
   @override
@@ -42,6 +45,14 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   void initState() {
     super.initState();
     _loadSkills();
+  }
+
+  @override
+  void didUpdateWidget(covariant SkillConfigScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reloadRevision != widget.reloadRevision) {
+      _loadSkills();
+    }
   }
 
   Future<void> _loadSkills() async {
@@ -141,11 +152,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
           content: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              M3LoadingIndicator(size: 18),
               SizedBox(width: 12),
               Text('加载技能详情'),
             ],
@@ -192,7 +199,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   Widget build(BuildContext context) {
     final error = _errorMessage;
     if (_loading && _skills.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const M3LoadingPane();
     }
     if (error != null && _skills.isEmpty) {
       return EmptyState(
@@ -265,7 +272,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
           ),
         ),
         if (_loading && _skills.isNotEmpty)
-          const Center(child: CircularProgressIndicator()),
+          const Positioned.fill(child: M3LoadingOverlay()),
       ],
     );
   }

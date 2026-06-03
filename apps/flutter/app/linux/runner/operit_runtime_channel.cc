@@ -1,6 +1,7 @@
 #include "operit_runtime_channel.h"
 
 #include <dlfcn.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <memory>
@@ -18,6 +19,12 @@ using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePollWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
+using BridgeStartTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
+using BridgeReadTerminalPty = char* (*)(BridgeHandle, const char*);
+using BridgeWriteTerminalPty = char* (*)(BridgeHandle, const char*, const uint8_t*, size_t);
+using BridgeResizeTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
+using BridgePollTerminalPtyExit = char* (*)(BridgeHandle, const char*);
+using BridgeCloseTerminalPty = char* (*)(BridgeHandle, const char*);
 using BridgeFreeString = void (*)(char*);
 
 class OperitRuntimeLibrary {
@@ -62,12 +69,28 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_close_watch_stream"));
       host_descriptor_ = reinterpret_cast<BridgeHostDescriptor>(
           dlsym(library_, "operit_flutter_bridge_host_descriptor"));
+      start_terminal_pty_ = reinterpret_cast<BridgeStartTerminalPty>(
+          dlsym(library_, "operit_flutter_bridge_start_terminal_pty"));
+      read_terminal_pty_ = reinterpret_cast<BridgeReadTerminalPty>(
+          dlsym(library_, "operit_flutter_bridge_read_terminal_pty"));
+      write_terminal_pty_ = reinterpret_cast<BridgeWriteTerminalPty>(
+          dlsym(library_, "operit_flutter_bridge_write_terminal_pty"));
+      resize_terminal_pty_ = reinterpret_cast<BridgeResizeTerminalPty>(
+          dlsym(library_, "operit_flutter_bridge_resize_terminal_pty"));
+      poll_terminal_pty_exit_ = reinterpret_cast<BridgePollTerminalPtyExit>(
+          dlsym(library_, "operit_flutter_bridge_poll_terminal_pty_exit"));
+      close_terminal_pty_ = reinterpret_cast<BridgeCloseTerminalPty>(
+          dlsym(library_, "operit_flutter_bridge_close_terminal_pty"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           dlsym(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           poll_watch_stream_ == nullptr || close_watch_stream_ == nullptr ||
-          host_descriptor_ == nullptr || free_string_ == nullptr) {
+          host_descriptor_ == nullptr || start_terminal_pty_ == nullptr ||
+          read_terminal_pty_ == nullptr || write_terminal_pty_ == nullptr ||
+          resize_terminal_pty_ == nullptr ||
+          poll_terminal_pty_exit_ == nullptr ||
+          close_terminal_pty_ == nullptr || free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
@@ -139,6 +162,67 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  bool StartTerminalPty(const std::string& working_directory, int rows,
+                        int columns, std::string* response,
+                        std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = start_terminal_pty_(
+        handle_, working_directory.c_str(), static_cast<uint16_t>(rows),
+        static_cast<uint16_t>(columns));
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool ReadTerminalPty(const std::string& session_id, std::string* response,
+                       std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = read_terminal_pty_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool WriteTerminalPty(const std::string& session_id, const uint8_t* data,
+                        size_t data_length, std::string* response,
+                        std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response =
+        write_terminal_pty_(handle_, session_id.c_str(), data, data_length);
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool ResizeTerminalPty(const std::string& session_id, int rows, int columns,
+                         std::string* response, std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = resize_terminal_pty_(
+        handle_, session_id.c_str(), static_cast<uint16_t>(rows),
+        static_cast<uint16_t>(columns));
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool PollTerminalPtyExit(const std::string& session_id,
+                           std::string* response, std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = poll_terminal_pty_exit_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool CloseTerminalPty(const std::string& session_id,
+                        std::string* response, std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = close_terminal_pty_(handle_, session_id.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
  private:
   static void AssignError(std::string* target, const char* value) {
     if (target != nullptr) {
@@ -188,6 +272,12 @@ class OperitRuntimeLibrary {
   BridgePollWatchStream poll_watch_stream_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeHostDescriptor host_descriptor_ = nullptr;
+  BridgeStartTerminalPty start_terminal_pty_ = nullptr;
+  BridgeReadTerminalPty read_terminal_pty_ = nullptr;
+  BridgeWriteTerminalPty write_terminal_pty_ = nullptr;
+  BridgeResizeTerminalPty resize_terminal_pty_ = nullptr;
+  BridgePollTerminalPtyExit poll_terminal_pty_exit_ = nullptr;
+  BridgeCloseTerminalPty close_terminal_pty_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
@@ -207,6 +297,35 @@ void respond_success(FlMethodCall* method_call, const std::string& value) {
   g_autoptr(FlMethodSuccessResponse) response =
       fl_method_success_response_new(result);
   fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
+}
+
+const gchar* string_map_value(FlValue* map, const char* key) {
+  FlValue* value = fl_value_lookup_string(map, key);
+  if (value == nullptr || fl_value_get_type(value) != FL_VALUE_TYPE_STRING) {
+    return nullptr;
+  }
+  return fl_value_get_string(value);
+}
+
+bool int_map_value(FlValue* map, const char* key, int* output) {
+  FlValue* value = fl_value_lookup_string(map, key);
+  if (value == nullptr || output == nullptr ||
+      fl_value_get_type(value) != FL_VALUE_TYPE_INT) {
+    return false;
+  }
+  *output = static_cast<int>(fl_value_get_int(value));
+  return true;
+}
+
+const uint8_t* uint8_list_map_value(FlValue* map, const char* key,
+                                    size_t* length) {
+  FlValue* value = fl_value_lookup_string(map, key);
+  if (value == nullptr || length == nullptr ||
+      fl_value_get_type(value) != FL_VALUE_TYPE_UINT8_LIST) {
+    return nullptr;
+  }
+  *length = fl_value_get_length(value);
+  return fl_value_get_uint8_list(value);
 }
 
 void operit_runtime_method_call_cb(FlMethodChannel* channel,
@@ -295,6 +414,125 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   }
   if (strcmp(method, "hostDescriptor") == 0) {
     if (g_operit_runtime_library->HostDescriptor(&response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "startTerminalPty") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "startTerminalPty expects workingDirectory, rows, columns");
+      return;
+    }
+    const gchar* working_directory = string_map_value(args, "workingDirectory");
+    int rows = 0;
+    int columns = 0;
+    if (working_directory == nullptr || !int_map_value(args, "rows", &rows) ||
+        !int_map_value(args, "columns", &columns)) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "startTerminalPty expects workingDirectory, rows, columns");
+      return;
+    }
+    if (g_operit_runtime_library->StartTerminalPty(
+            working_directory, rows, columns, &response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "readTerminalPty") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "readTerminalPty expects a session id");
+      return;
+    }
+    const gchar* session_id = fl_value_get_string(args);
+    if (g_operit_runtime_library->ReadTerminalPty(session_id, &response_text,
+                                                 &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "writeTerminalPty") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "writeTerminalPty expects sessionId and data");
+      return;
+    }
+    const gchar* session_id = string_map_value(args, "sessionId");
+    size_t data_length = 0;
+    const uint8_t* data = uint8_list_map_value(args, "data", &data_length);
+    if (session_id == nullptr || data == nullptr) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "writeTerminalPty expects sessionId and data");
+      return;
+    }
+    if (g_operit_runtime_library->WriteTerminalPty(
+            session_id, data, data_length, &response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "resizeTerminalPty") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "resizeTerminalPty expects sessionId, rows, columns");
+      return;
+    }
+    const gchar* session_id = string_map_value(args, "sessionId");
+    int rows = 0;
+    int columns = 0;
+    if (session_id == nullptr || !int_map_value(args, "rows", &rows) ||
+        !int_map_value(args, "columns", &columns)) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "resizeTerminalPty expects sessionId, rows, columns");
+      return;
+    }
+    if (g_operit_runtime_library->ResizeTerminalPty(
+            session_id, rows, columns, &response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "pollTerminalPtyExit") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "pollTerminalPtyExit expects a session id");
+      return;
+    }
+    const gchar* session_id = fl_value_get_string(args);
+    if (g_operit_runtime_library->PollTerminalPtyExit(
+            session_id, &response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
+  if (strcmp(method, "closeTerminalPty") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "closeTerminalPty expects a session id");
+      return;
+    }
+    const gchar* session_id = fl_value_get_string(args);
+    if (g_operit_runtime_library->CloseTerminalPty(session_id, &response_text,
+                                                  &error)) {
       respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);

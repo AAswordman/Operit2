@@ -8,6 +8,11 @@ import 'package:flutter/material.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/LazyIndexedStack.dart';
+import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../main/navigation/AppNavigationModels.dart';
+import '../../../main/screens/OperitScreens.dart';
+import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageTab.dart';
 import '../dialogs/MCPImportDialog.dart';
@@ -36,12 +41,12 @@ class PackageManagerScreen extends StatefulWidget {
 class _PackageManagerScreenState extends State<PackageManagerScreen> {
   PackageTab _selectedTab = PackageTab.plugins;
   bool _loading = true;
-  bool _tabPreparing = false;
   bool _searchFiltering = false;
   String? _errorMessage;
   String _searchInput = '';
   String _searchQuery = '';
-  int _contentReloadNonce = 0;
+  int _skillReloadRevision = 0;
+  int _mcpReloadRevision = 0;
   PackageManagerSnapshot _snapshot = PackageManagerSnapshot.empty();
   Timer? _searchDebounce;
 
@@ -251,13 +256,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
                 }
                 setState(() {
                   _selectedTab = tab;
-                  _tabPreparing = _shouldPrepareTab(tab);
                   _searchInput = '';
                   _searchQuery = '';
                   _searchFiltering = false;
                   _searchDebounce?.cancel();
                 });
-                _completeTabPreparation(tab);
               },
             ),
             _PackageSearchBar(
@@ -265,12 +268,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               hintText: _searchHintText,
               onChanged: _onSearchInputChanged,
             ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: _loading && !_snapshot.isEmpty
-                  ? const LinearProgressIndicator(minHeight: 2)
-                  : const SizedBox(height: 2),
-            ),
+            const SizedBox(height: 2),
             Expanded(child: _buildContent(context)),
           ],
         ),
@@ -281,7 +279,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   Widget _buildContent(BuildContext context) {
     final error = _errorMessage;
     if (_loading && _snapshot.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const M3LoadingPane();
     }
     if (error != null && _snapshot.isEmpty) {
       return EmptyState(
@@ -295,59 +293,60 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         ),
       );
     }
-    if (_tabPreparing && _shouldPrepareTab(_selectedTab)) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
     return RefreshIndicator(
       onRefresh: _loadSnapshot,
-      child: switch (_selectedTab) {
-        PackageTab.plugins => PluginTabContent(
-          plugins: _filteredPlugins,
-          enabledPluginNames: _snapshot.enabledPluginContainerNames,
-          isLoading: _loading || _searchFiltering,
-          isSearchActive: _searchQuery.trim().isNotEmpty,
-          onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
-          onPluginTap: _showPluginDetails,
-          onPluginEnabledChanged: _setPluginEnabled,
-        ),
-        PackageTab.packages => PackageTabContent(
-          packages: _filteredPackages,
-          enabledPackageNames: _snapshot.enabledPackageNames,
-          isLoading: _loading || _searchFiltering,
-          isSearchActive: _searchQuery.trim().isNotEmpty,
-          onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
-          onQuickPluginCreatorClick: () {
-            _showSnackBar('Quick Plugin Creator');
-          },
-          onPackageTap: _showPackageDetails,
-          onPackageEnabledChanged: _setPackageEnabled,
-        ),
-        PackageTab.skills => SkillConfigScreen(
-          key: ValueKey<String>('skills-$_contentReloadNonce'),
-          clients: widget.clients,
-          searchQuery: _searchQuery,
-          onOpenMarket: () => _openMarket(MarketHomeTab.skill),
-        ),
-        PackageTab.mcp => MCPConfigScreen(
-          key: ValueKey<String>('mcp-$_contentReloadNonce'),
-          clients: widget.clients,
-          searchQuery: _searchQuery,
-          onOpenMarket: () => _openMarket(MarketHomeTab.mcp),
-        ),
-      },
+      child: LazyIndexedStack(
+        index: _selectedTab.index,
+        itemCount: PackageTab.values.length,
+        itemBuilder: (context, index) {
+          return switch (PackageTab.values[index]) {
+            PackageTab.plugins => PluginTabContent(
+              plugins: _filteredPlugins,
+              enabledPluginNames: _snapshot.enabledPluginContainerNames,
+              isLoading: _loading || _searchFiltering,
+              isSearchActive: _searchQuery.trim().isNotEmpty,
+              onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
+              onPluginTap: _showPluginDetails,
+              onPluginEnabledChanged: _setPluginEnabled,
+            ),
+            PackageTab.packages => PackageTabContent(
+              packages: _filteredPackages,
+              enabledPackageNames: _snapshot.enabledPackageNames,
+              isLoading: _loading || _searchFiltering,
+              isSearchActive: _searchQuery.trim().isNotEmpty,
+              onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
+              onQuickPluginCreatorClick: () {
+                _showSnackBar('Quick Plugin Creator');
+              },
+              onPackageTap: _showPackageDetails,
+              onPackageEnabledChanged: _setPackageEnabled,
+            ),
+            PackageTab.skills => SkillConfigScreen(
+              clients: widget.clients,
+              searchQuery: _searchQuery,
+              reloadRevision: _skillReloadRevision,
+              onOpenMarket: () => _openMarket(MarketHomeTab.skill),
+            ),
+            PackageTab.mcp => MCPConfigScreen(
+              clients: widget.clients,
+              searchQuery: _searchQuery,
+              reloadRevision: _mcpReloadRevision,
+              onOpenMarket: () => _openMarket(MarketHomeTab.mcp),
+            ),
+          };
+        },
+      ),
     );
   }
 
   Future<void> _openMarket(MarketHomeTab initialTab) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (context) => UnifiedMarketScreen(
-          initialTab: initialTab,
-          showBackButton: true,
-          clients: widget.clients,
-        ),
-      ),
+    final entry = ScreenRouteRegistry.toEntry(
+      screen: MarketScreenRoute(initialTab: initialTab),
+    );
+    AppRouterGateway.navigate(
+      routeId: entry.routeId,
+      args: entry.args,
+      source: entry.source,
     );
   }
 
@@ -403,24 +402,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       setState(() {
         _searchQuery = _searchInput.trim();
         _searchFiltering = false;
-      });
-    });
-  }
-
-  bool _shouldPrepareTab(PackageTab tab) {
-    return tab == PackageTab.plugins || tab == PackageTab.packages;
-  }
-
-  void _completeTabPreparation(PackageTab tab) {
-    if (!_shouldPrepareTab(tab)) {
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _selectedTab != tab) {
-        return;
-      }
-      setState(() {
-        _tabPreparing = false;
       });
     });
   }
@@ -585,9 +566,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
     _showSnackBar(result.message);
     setState(() {
-      _contentReloadNonce += 1;
+      _mcpReloadRevision += 1;
     });
-    await _loadSnapshot();
   }
 
   Future<void> _showSkillImportDialog() async {
@@ -602,27 +582,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
     _showSnackBar(result.message);
     setState(() {
-      _contentReloadNonce += 1;
+      _skillReloadRevision += 1;
     });
-    await _loadSnapshot();
   }
 
-  Future<void> _runAddAction(
-    Future<String> Function() action, {
-    bool reloadSnapshot = true,
-  }) async {
+  Future<void> _runAddAction(Future<String> Function() action) async {
     try {
       final message = await action();
       if (!mounted) {
         return;
       }
       _showSnackBar(message);
-      setState(() {
-        _contentReloadNonce += 1;
-      });
-      if (reloadSnapshot) {
-        await _loadSnapshot();
-      }
+      await _loadSnapshot();
     } catch (error, stackTrace) {
       debugPrint('Failed to run package add action: $error\n$stackTrace');
       if (!mounted) {
@@ -650,43 +621,35 @@ class _PackageTabBar extends StatelessWidget {
         key: ValueKey<PackageTab>(selectedTab),
         length: PackageTab.values.length,
         initialIndex: selectedTab.index,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final scrollable = constraints.maxWidth < 420;
-            return TabBar(
-              isScrollable: scrollable,
-              tabAlignment: scrollable ? TabAlignment.start : TabAlignment.fill,
-              onTap: (index) => onTabSelected(PackageTab.values[index]),
-              dividerHeight: 1,
-              indicatorSize: TabBarIndicatorSize.tab,
-              tabs: <Widget>[
-                _PackageTabItem(
-                  selected: selectedTab == PackageTab.plugins,
-                  icon: Icons.apps,
-                  label: '插件',
-                  minWidth: scrollable ? 112 : null,
-                ),
-                _PackageTabItem(
-                  selected: selectedTab == PackageTab.packages,
-                  icon: Icons.extension,
-                  label: '包',
-                  minWidth: scrollable ? 112 : null,
-                ),
-                _PackageTabItem(
-                  selected: selectedTab == PackageTab.skills,
-                  icon: Icons.build,
-                  label: '技能',
-                  minWidth: scrollable ? 112 : null,
-                ),
-                _PackageTabItem(
-                  selected: selectedTab == PackageTab.mcp,
-                  icon: Icons.cloud,
-                  label: 'MCP',
-                  minWidth: scrollable ? 112 : null,
-                ),
-              ],
-            );
-          },
+        child: TabBar(
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          onTap: (index) => onTabSelected(PackageTab.values[index]),
+          dividerHeight: 1,
+          indicatorSize: TabBarIndicatorSize.label,
+          tabs: <Widget>[
+            _PackageTabItem(
+              selected: selectedTab == PackageTab.plugins,
+              icon: Icons.apps,
+              label: '插件',
+            ),
+            _PackageTabItem(
+              selected: selectedTab == PackageTab.packages,
+              icon: Icons.extension,
+              label: '包',
+            ),
+            _PackageTabItem(
+              selected: selectedTab == PackageTab.skills,
+              icon: Icons.build,
+              label: '技能',
+            ),
+            _PackageTabItem(
+              selected: selectedTab == PackageTab.mcp,
+              icon: Icons.cloud,
+              label: 'MCP',
+            ),
+          ],
         ),
       ),
     );
@@ -698,42 +661,36 @@ class _PackageTabItem extends StatelessWidget {
     required this.selected,
     required this.icon,
     required this.label,
-    this.minWidth,
   });
 
   final bool selected;
   final IconData icon;
   final String label;
-  final double? minWidth;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final color = selected ? colorScheme.primary : colorScheme.onSurfaceVariant;
-    return ConstrainedBox(
-      constraints: BoxConstraints(minWidth: minWidth ?? 0),
+    return SizedBox(
+      width: 86,
+      height: 48,
       child: Center(
-        child: SizedBox(
-          height: 48,
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                Icon(icon, size: 16, color: color),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  softWrap: false,
-                  overflow: TextOverflow.fade,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: color),
-                ),
-              ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              softWrap: false,
+              overflow: TextOverflow.fade,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: color),
             ),
-          ),
+          ],
         ),
       ),
     );
