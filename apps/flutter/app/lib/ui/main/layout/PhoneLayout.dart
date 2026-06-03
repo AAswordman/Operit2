@@ -120,59 +120,74 @@ class _PhoneLayoutState extends State<PhoneLayout>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _drawerProgressController,
-      builder: (context, _) {
-        final appearance = navigationDrawerAppearanceOf(context);
-        final drawerProgress = _drawerProgressController.value;
-        final contentTranslationX = widget.enableNavigationAnimation
-            ? widget.drawerWidth * (0.82 * drawerProgress)
-            : widget.drawerWidth * drawerProgress;
-        final contentTranslationY = widget.enableNavigationAnimation
-            ? 12.0 * drawerProgress
-            : 0.0;
-        final contentScale = widget.enableNavigationAnimation
-            ? 1.0 - (0.08 * drawerProgress)
-            : 1.0;
-        final contentRotationY = widget.enableNavigationAnimation
-            ? -7.0 * drawerProgress
-            : 0.0;
-        final contentCornerRadius = widget.enableNavigationAnimation
-            ? 24.0 * drawerProgress
-            : 0.0;
-        final contentShadowElevation = widget.enableNavigationAnimation
-            ? 18.0 * drawerProgress
-            : 0.0;
-        final drawerOffset = -widget.drawerWidth * (1.0 - drawerProgress);
-        final sidebarElevation = widget.enableNavigationAnimation
-            ? 16.0 * drawerProgress
-            : 3.0 * drawerProgress;
-        final drawerScale = widget.enableNavigationAnimation
-            ? 0.92 + (0.08 * drawerProgress)
-            : 1.0;
-        final drawerContentAlpha = widget.enableNavigationAnimation
-            ? 0.72 + (0.28 * drawerProgress)
-            : 0.8 + (0.2 * drawerProgress);
-        final clampedContentCornerRadius = math.max(
-          0.0,
-          math.min(contentCornerRadius, 30.0),
-        );
-        final clampedDrawerContentAlpha = math.max(
-          0.0,
-          math.min(drawerContentAlpha, 1.0),
-        );
-        final isDrawerOpen = widget.drawerOpen || drawerProgress > 0.001;
+    final appearance = navigationDrawerAppearanceOf(context);
+    final animatedChild = _PhoneLayoutAnimatedChild(
+      content: RepaintBoundary(child: widget.content),
+      drawerContent: RepaintBoundary(
+        child: DrawerContent(
+          navigationEntries: widget.navigationEntries,
+          selectedRouteId: widget.selectedRouteId,
+          appearance: appearance,
+          onNavigationEntrySelected: widget.onNavigationEntrySelected,
+          onConversationActivated: widget.onConversationActivated,
+        ),
+      ),
+    );
 
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: _handleHorizontalDragStart,
-          onHorizontalDragUpdate: _handleHorizontalDragUpdate,
-          onHorizontalDragEnd: _handleHorizontalDragEnd,
-          onHorizontalDragCancel: () {
-            _currentDrag = 0;
-            _verticalDrag = 0;
-          },
-          child: Stack(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: _handleHorizontalDragStart,
+      onHorizontalDragUpdate: _handleHorizontalDragUpdate,
+      onHorizontalDragEnd: _handleHorizontalDragEnd,
+      onHorizontalDragCancel: () {
+        _currentDrag = 0;
+        _verticalDrag = 0;
+      },
+      child: AnimatedBuilder(
+        animation: _drawerProgressController,
+        child: animatedChild,
+        builder: (context, child) {
+          final animatedChild = child! as _PhoneLayoutAnimatedChild;
+          final drawerProgress = _drawerProgressController.value;
+          final contentTranslationX = widget.enableNavigationAnimation
+              ? widget.drawerWidth * (0.82 * drawerProgress)
+              : widget.drawerWidth * drawerProgress;
+          final contentTranslationY = widget.enableNavigationAnimation
+              ? 12.0 * drawerProgress
+              : 0.0;
+          final contentScale = widget.enableNavigationAnimation
+              ? 1.0 - (0.08 * drawerProgress)
+              : 1.0;
+          final contentRotationY = widget.enableNavigationAnimation
+              ? -7.0 * drawerProgress
+              : 0.0;
+          final contentCornerRadius = widget.enableNavigationAnimation
+              ? 24.0 * drawerProgress
+              : 0.0;
+          final contentShadowElevation = widget.enableNavigationAnimation
+              ? 18.0 * drawerProgress
+              : 0.0;
+          final drawerOffset = -widget.drawerWidth * (1.0 - drawerProgress);
+          final sidebarElevation = widget.enableNavigationAnimation
+              ? 16.0 * drawerProgress
+              : 3.0 * drawerProgress;
+          final drawerScale = widget.enableNavigationAnimation
+              ? 0.92 + (0.08 * drawerProgress)
+              : 1.0;
+          final drawerContentAlpha = widget.enableNavigationAnimation
+              ? 0.72 + (0.28 * drawerProgress)
+              : 0.8 + (0.2 * drawerProgress);
+          final clampedContentCornerRadius = math.max(
+            0.0,
+            math.min(contentCornerRadius, 30.0),
+          );
+          final clampedDrawerContentAlpha = math.max(
+            0.0,
+            math.min(drawerContentAlpha, 1.0),
+          );
+          final isDrawerOpen = widget.drawerOpen || drawerProgress > 0.001;
+
+          return Stack(
             children: <Widget>[
               Positioned.fill(
                 child: Transform.translate(
@@ -201,7 +216,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
                           borderRadius: BorderRadius.circular(
                             clampedContentCornerRadius,
                           ),
-                          child: RepaintBoundary(child: widget.content),
+                          child: animatedChild.content,
                         ),
                       ),
                     ),
@@ -235,25 +250,30 @@ class _PhoneLayoutState extends State<PhoneLayout>
                         bottomEnd: Radius.circular(16),
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: RepaintBoundary(
-                        child: DrawerContent(
-                          navigationEntries: widget.navigationEntries,
-                          selectedRouteId: widget.selectedRouteId,
-                          appearance: appearance,
-                          onNavigationEntrySelected:
-                              widget.onNavigationEntrySelected,
-                          onConversationActivated:
-                              widget.onConversationActivated,
-                        ),
-                      ),
+                      child: animatedChild.drawerContent,
                     ),
                   ),
                 ),
               ),
             ],
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
+  }
+}
+
+class _PhoneLayoutAnimatedChild extends StatelessWidget {
+  const _PhoneLayoutAnimatedChild({
+    required this.content,
+    required this.drawerContent,
+  });
+
+  final Widget content;
+  final Widget drawerContent;
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.shrink();
   }
 }

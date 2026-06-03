@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import '../../features/chat/screens/AIChatScreen.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
+import '../../features/settings/models/SettingsModels.dart';
 import '../../features/settings/screens/SettingsScreen.dart';
 
 abstract class OperitScreen {
@@ -19,6 +20,10 @@ abstract class OperitScreen {
   final String? title;
   final bool participatesInCrossfadeTransition;
   final bool keepAlive;
+
+  Map<String, Object?> routeArgs() {
+    return const <String, Object?>{};
+  }
 
   String? stableScreenKey() {
     return null;
@@ -56,21 +61,38 @@ class PackageManagerScreenRoute extends OperitScreen {
 }
 
 class MarketScreenRoute extends OperitScreen {
-  const MarketScreenRoute()
+  const MarketScreenRoute({this.initialTab = MarketHomeTab.artifact})
     : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
+
+  final MarketHomeTab initialTab;
+
+  @override
+  Map<String, Object?> routeArgs() {
+    return <String, Object?>{'initialTab': initialTab.name};
+  }
 
   @override
   Widget build(BuildContext context) {
-    return UnifiedMarketScreen();
+    return UnifiedMarketScreen(initialTab: initialTab);
   }
 }
 
 class SettingsScreenRoute extends OperitScreen {
-  const SettingsScreenRoute()
+  const SettingsScreenRoute({this.category})
     : super(routeTypeName: 'Settings', title: '设置', keepAlive: true);
+
+  final SettingsCategory? category;
+
+  @override
+  Map<String, Object?> routeArgs() {
+    final selectedCategory = category;
+    return <String, Object?>{
+      if (selectedCategory != null) 'category': selectedCategory.name,
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const SettingsScreen();
+    return SettingsScreen(initialCategory: category);
   }
 }

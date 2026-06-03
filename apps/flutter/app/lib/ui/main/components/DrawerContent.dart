@@ -12,6 +12,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
+import '../../theme/OperitTheme.dart';
 import 'CollapsedDrawerContent.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
@@ -40,6 +41,7 @@ class DrawerContent extends StatefulWidget {
 
 class _DrawerContentState extends State<DrawerContent> {
   static const int _collapsedHistoryLimit = 4;
+  static const double _contentEndPadding = 12;
   static final Set<String> _rememberedCollapsedCharacterSections = <String>{};
   static final Set<String> _rememberedCollapsedGroupSections = <String>{};
 
@@ -793,6 +795,8 @@ class _DrawerContentState extends State<DrawerContent> {
     );
     final conversationSelectionEnabled =
         widget.selectedRouteId == aiChatRouteId;
+    final themeController = OperitTheme.of(context);
+    final darkThemeActive = themeController.isDark(context);
     return Column(
       children: <Widget>[
         Expanded(
@@ -804,7 +808,12 @@ class _DrawerContentState extends State<DrawerContent> {
                 primary: false,
                 slivers: <Widget>[
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(0, 30, 8, 0),
+                    padding: const EdgeInsets.fromLTRB(
+                      0,
+                      30,
+                      _contentEndPadding,
+                      0,
+                    ),
                     sliver: SliverToBoxAdapter(
                       child: SidebarInfoCard(
                         brandName: 'Operit',
@@ -817,7 +826,7 @@ class _DrawerContentState extends State<DrawerContent> {
                     child: Padding(
                       padding: const EdgeInsetsDirectional.only(
                         start: 28,
-                        end: 12,
+                        end: _contentEndPadding,
                         bottom: 2,
                       ),
                       child: Row(
@@ -834,6 +843,18 @@ class _DrawerContentState extends State<DrawerContent> {
                             ),
                           ),
                           IconButton(
+                            onPressed: () => themeController.toggle(context),
+                            visualDensity: VisualDensity.compact,
+                            tooltip: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
+                            icon: Icon(
+                              darkThemeActive
+                                  ? Icons.light_mode_outlined
+                                  : Icons.dark_mode_outlined,
+                              size: 20,
+                              color: widget.appearance.itemColor,
+                            ),
+                          ),
+                          IconButton(
                             onPressed: _toggleSearchExpanded,
                             visualDensity: VisualDensity.compact,
                             tooltip: _searchExpanded ? '收起搜索' : '搜索对话',
@@ -841,7 +862,7 @@ class _DrawerContentState extends State<DrawerContent> {
                               _searchExpanded ? Icons.search_off : Icons.search,
                               size: 20,
                               color: _searchController.text.trim().isNotEmpty
-                                  ? widget.appearance.titleColor
+                                  ? widget.appearance.statusAvailableColor
                                   : widget.appearance.itemColor,
                             ),
                           ),
@@ -854,7 +875,7 @@ class _DrawerContentState extends State<DrawerContent> {
                     child: Padding(
                       padding: const EdgeInsetsDirectional.only(
                         start: 12,
-                        end: 0,
+                        end: _contentEndPadding,
                         bottom: 8,
                       ),
                       child: NewConversationButton(
@@ -872,7 +893,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           ? Padding(
                               padding: const EdgeInsetsDirectional.only(
                                 start: 12,
-                                end: 0,
+                                end: _contentEndPadding,
                                 bottom: 12,
                               ),
                               child: ConversationSearchField(
@@ -967,7 +988,7 @@ class _DrawerContentState extends State<DrawerContent> {
                   child: IgnorePointer(
                     child: Center(
                       child: CircularProgressIndicator(
-                        color: widget.appearance.selectedContainerColor,
+                        color: widget.appearance.statusAvailableColor,
                       ),
                     ),
                   ),
@@ -1101,6 +1122,7 @@ class _CharacterSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final avatarContainerColor = appearance.buttonContainerColor;
     return Padding(
       padding: const EdgeInsetsDirectional.only(
         start: 20,
@@ -1113,76 +1135,53 @@ class _CharacterSectionHeader extends StatelessWidget {
         onTap: onToggleExpanded,
         child: Row(
           children: <Widget>[
-            DecoratedBox(
+            Container(
+              width: 22,
+              height: 22,
               decoration: BoxDecoration(
-                color: appearance.selectedContainerColor.withValues(
-                  alpha: 0.24,
-                ),
-                borderRadius: const BorderRadiusDirectional.only(
-                  topStart: Radius.circular(5),
-                  bottomStart: Radius.circular(5),
-                  topEnd: Radius.circular(18),
-                  bottomEnd: Radius.circular(18),
+                shape: BoxShape.circle,
+                color: avatarContainerColor,
+              ),
+              alignment: Alignment.center,
+              child: label == 'Operit'
+                  ? ClipOval(
+                      child: ColoredBox(
+                        color: Colors.white,
+                        child: Image.asset(
+                          _operitAvatarAsset,
+                          width: 20,
+                          height: 20,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      label == '未绑定'
+                          ? Icons.account_tree_outlined
+                          : Icons.person_outline,
+                      size: 14,
+                      color: appearance.itemColor,
+                    ),
+            ),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 170),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: appearance.titleColor,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              child: Padding(
-                padding: const EdgeInsetsDirectional.fromSTEB(7, 4, 12, 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: appearance.selectedContainerColor.withValues(
-                          alpha: 0.38,
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: label == 'Operit'
-                          ? ClipOval(
-                              child: ColoredBox(
-                                color: Colors.white,
-                                child: Image.asset(
-                                  _operitAvatarAsset,
-                                  width: 20,
-                                  height: 20,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            )
-                          : Icon(
-                              label == '未绑定'
-                                  ? Icons.account_tree_outlined
-                                  : Icons.person_outline,
-                              size: 14,
-                              color: appearance.titleColor,
-                            ),
-                    ),
-                    const SizedBox(width: 8),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 170),
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: appearance.titleColor,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      count.toString(),
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: appearance.titleColor.withValues(alpha: 0.58),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              count.toString(),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: appearance.itemColor.withValues(alpha: 0.64),
+                fontWeight: FontWeight.w700,
               ),
             ),
             Expanded(
@@ -1192,7 +1191,7 @@ class _CharacterSectionHeader extends StatelessWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: <Color>[
-                      appearance.selectedContainerColor.withValues(alpha: 0.52),
+                      appearance.dividerColor,
                       Colors.transparent,
                     ],
                   ),
@@ -1226,12 +1225,14 @@ class _GroupSectionHeader extends StatelessWidget {
   final NavigationDrawerAppearance appearance;
   final VoidCallback onToggleExpanded;
 
+  static const double _endPadding = 12;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsetsDirectional.only(
         start: 22,
-        end: 0,
+        end: _endPadding,
         top: 4,
         bottom: expanded ? 3 : 0,
       ),
@@ -1239,69 +1240,51 @@ class _GroupSectionHeader extends StatelessWidget {
         children: <Widget>[
           HistoryRail(height: 30, appearance: appearance),
           Expanded(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: appearance.selectedContainerColor.withValues(
-                  alpha: 0.13,
-                ),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(
-                  color: appearance.selectedContainerColor.withValues(
-                    alpha: 0.12,
-                  ),
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(13),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(13),
-                  onTap: onToggleExpanded,
-                  child: Padding(
-                    padding: const EdgeInsetsDirectional.fromSTEB(10, 6, 9, 6),
-                    child: Row(
-                      children: <Widget>[
-                        Icon(
-                          Icons.folder_outlined,
-                          size: 16,
-                          color: appearance.titleColor.withValues(alpha: 0.78),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(
-                                  color: appearance.titleColor.withValues(
-                                    alpha: 0.86,
-                                  ),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          count.toString(),
-                          style: Theme.of(context).textTheme.labelSmall
+            child: Material(
+              color: appearance.buttonContainerColor,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onToggleExpanded,
+                child: Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(12, 7, 10, 7),
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 16,
+                        color: appearance.itemColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelLarge
                               ?.copyWith(
-                                color: appearance.itemColor.withValues(
-                                  alpha: 0.54,
-                                ),
+                                color: appearance.titleColor,
                                 fontWeight: FontWeight.w700,
                               ),
                         ),
-                        const SizedBox(width: 4),
-                        Icon(
-                          expanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 20,
-                          color: appearance.itemColor.withValues(alpha: 0.68),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        count.toString(),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: appearance.itemColor.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w700,
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        expanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 20,
+                        color: appearance.itemColor.withValues(alpha: 0.68),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1329,7 +1312,7 @@ class _HistoryLimitButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsetsDirectional.only(start: 24, end: 0, top: 2),
+      padding: const EdgeInsetsDirectional.only(start: 24, end: 12, top: 2),
       child: TextButton.icon(
         onPressed: onClick,
         icon: Icon(

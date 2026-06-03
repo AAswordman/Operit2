@@ -150,7 +150,10 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
                       widget.onNavigatorChipHidden();
                       _showLocatorDialog(activeMessageTimestamp);
                     },
-                    onScrollToBottom: widget.onRequestScrollToBottom,
+                    onScrollToBottom: () {
+                      widget.onNavigatorChipHidden();
+                      widget.onRequestScrollToBottom();
+                    },
                   )
                 : const SizedBox(
                     key: ValueKey<String>('chat-scroll-navigator-empty'),
@@ -283,64 +286,92 @@ class _NavigatorChip extends StatelessWidget {
       child: Stack(
         children: <Widget>[
           Positioned(
-            left: 4.5,
-            top: 28,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onOpenLocator,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Container(
-                    width: 20,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: bubbleColor,
-                      border: Border.all(color: borderColor),
-                      borderRadius: const BorderRadius.horizontal(
-                        left: Radius.circular(14),
-                        right: Radius.circular(10),
-                      ),
-                    ),
-                    child: Center(
-                      child: CustomPaint(
-                        size: const Size(8, 34),
-                        painter: _ProgressRailPainter(
-                          progress: progress,
-                          lineColor: lineColor,
-                          dotColor: dotColor,
+            left: 0,
+            top: 22,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  Feedback.forTap(context);
+                  onOpenLocator();
+                },
+                child: SizedBox(
+                  width: 34,
+                  height: 70,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Container(
+                          width: 20,
+                          height: 58,
+                          decoration: BoxDecoration(
+                            color: bubbleColor,
+                            border: Border.all(color: borderColor),
+                            borderRadius: const BorderRadius.horizontal(
+                              left: Radius.circular(14),
+                              right: Radius.circular(10),
+                            ),
+                          ),
+                          child: Center(
+                            child: CustomPaint(
+                              size: const Size(8, 34),
+                              painter: _ProgressRailPainter(
+                                progress: progress,
+                                lineColor: lineColor,
+                                dotColor: dotColor,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        Transform.translate(
+                          offset: const Offset(-1, 0),
+                          child: CustomPaint(
+                            size: const Size(9, 18),
+                            painter: _NavigatorArrowPainter(color: bubbleColor),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Transform.translate(
-                    offset: const Offset(-1, 0),
-                    child: CustomPaint(
-                      size: const Size(9, 18),
-                      painter: _NavigatorArrowPainter(color: bubbleColor),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
           Positioned(
-            left: 2.5,
-            top: 90,
-            child: GestureDetector(
-              onTap: onScrollToBottom,
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: borderColor),
-                ),
-                child: Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 16,
-                  color: theme.colorScheme.primary.withValues(alpha: 0.92),
+            left: 0,
+            top: 84,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  Feedback.forTap(context);
+                  onScrollToBottom();
+                },
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Center(
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: bubbleColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: borderColor),
+                      ),
+                      child: Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.92,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

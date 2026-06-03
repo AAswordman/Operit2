@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/M3LoadingIndicator.dart';
 import '../components/EmptyState.dart';
 import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
@@ -35,7 +36,7 @@ class PackageTabContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (packages.isEmpty && isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const M3LoadingPane();
     }
     final grouped = <String, List<core_proxy.ToolPackage>>{};
     for (final package in packages) {
@@ -100,7 +101,7 @@ class PackageTabContent extends StatelessWidget {
           ],
         ),
         if (packages.isNotEmpty && isLoading)
-          const Center(child: CircularProgressIndicator()),
+          const Positioned.fill(child: M3LoadingOverlay()),
       ],
     );
   }

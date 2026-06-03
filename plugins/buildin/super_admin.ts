@@ -1,5 +1,44 @@
-/*
-METADATA
+type SuperAdminParams = Record<string, unknown>;
+
+type TerminalParams = SuperAdminParams & {
+    command?: string;
+    background?: string;
+    timeoutMs?: string | number;
+};
+
+type TerminalWaitParams = SuperAdminParams & {
+    sessionId?: string;
+    timeoutMs?: string | number;
+};
+
+type TerminalInputParams = SuperAdminParams & {
+    input?: string;
+    control?: string;
+};
+
+type TerminalTimeoutScreen = {
+    sessionId: string;
+    rows?: number;
+    cols?: number;
+    content?: string;
+} | null;
+
+type PersistedTerminalOutput = {
+    command: string;
+    output: string;
+    exitCode: unknown;
+    sessionId: unknown;
+    context_preserved: boolean;
+    output_saved_to: string;
+    output_chars: number;
+    operit_clean_on_exit_dir: string;
+    hint: string;
+    terminalEnvironment?: unknown;
+    timeoutMsUsed?: number;
+    timeoutScreen?: TerminalTimeoutScreen;
+};
+
+/* METADATA
 {
     "name": "super_admin",
 
@@ -78,45 +117,6 @@ METADATA
         }
     ]
 }*/
-type SuperAdminParams = Record<string, unknown>;
-
-type TerminalParams = SuperAdminParams & {
-    command?: string;
-    background?: string;
-    timeoutMs?: string | number;
-};
-
-type TerminalWaitParams = SuperAdminParams & {
-    sessionId?: string;
-    timeoutMs?: string | number;
-};
-
-type TerminalInputParams = SuperAdminParams & {
-    input?: string;
-    control?: string;
-};
-
-type TerminalTimeoutScreen = {
-    sessionId: string;
-    rows?: number;
-    cols?: number;
-    content?: string;
-} | null;
-
-type PersistedTerminalOutput = {
-    command: string;
-    output: string;
-    exitCode: unknown;
-    sessionId: unknown;
-    context_preserved: boolean;
-    output_saved_to: string;
-    output_chars: number;
-    operit_clean_on_exit_dir: string;
-    hint: string;
-    terminalEnvironment?: unknown;
-    timeoutMsUsed?: number;
-    timeoutScreen?: TerminalTimeoutScreen;
-};
 
 const superAdmin = (function () {
     const MAX_INLINE_TERMINAL_OUTPUT_CHARS = 12000;

@@ -192,8 +192,6 @@ interface BrowserInternalChatPayload {
     chat_id: string;
 }
 
-declare const callRuntime: { getChatId: () => string | undefined };
-
 interface FilenamePayload {
     filename?: string;
 }
@@ -340,7 +338,7 @@ function buildLargeOutputFilename(prefix: string, extension: string): string {
 }
 
 function runtimeChatId(): string {
-    const value = callRuntime.getChatId();
+    const value = getChatId();
     if (value === undefined) {
         throw new Error("browser tool requires chat context");
     }
@@ -461,7 +459,11 @@ async function hover(params: HoverPayload) {
 
 async function goto(params: GotoPayload) {
     const result = await Tools.Net.browserNavigate(browserParams(params));
-    return maybePersistLargeBrowserResponse(result, "goto");
+    const text = browserResultText(result);
+    if (text.length > MAX_INLINE_BROWSER_TEXT_CHARS) {
+        return maybePersistLargeBrowserResponse(result, "goto");
+    }
+    return JSON.parse(text);
 }
 
 async function back() {

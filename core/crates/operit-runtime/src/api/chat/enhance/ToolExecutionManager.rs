@@ -293,20 +293,15 @@ impl ToolExecutionManager {
                 continue;
             }
 
-            let resolved = Self::resolveToolTarget(&invocation.tool);
-            let resolvedInvocation = ToolInvocation {
-                tool: resolved.tool.clone(),
-                rawText: invocation.rawText.clone(),
-                responseLocation: invocation.responseLocation,
-            };
-            if !toolHandler.getToolExecutorOrActivate(&resolvedInvocation.tool.name) {
-                let errorMessage = Self::buildToolNotAvailableErrorMessage(&resolved.tool.name);
+            let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
+            if !toolHandler.getToolExecutorOrActivate(&invocation.tool.name) {
+                let errorMessage = Self::buildToolNotAvailableErrorMessage(&invocation.tool.name);
                 let content = ConversationMarkupManager::createToolNotAvailableError(
-                    &resolved.tool.name,
+                    &invocation.tool.name,
                     Some(&errorMessage),
                 );
                 let deniedResult = ToolResult {
-                    toolName: resolved.displayName,
+                    toolName: displayToolName,
                     success: false,
                     result: String::new(),
                     error: Some(errorMessage),
@@ -318,7 +313,7 @@ impl ToolExecutionManager {
             }
             toolHandler.notifyToolExecutionStarted(&invocation.tool);
             let Some(collected) =
-                toolHandler.executeToolSafelyWithResolvedExecutor(&resolvedInvocation.tool)
+                toolHandler.executeToolSafelyWithResolvedExecutor(&invocation.tool)
             else {
                 toolHandler.notifyToolExecutionFinished(&invocation.tool);
                 continue;
@@ -331,7 +326,7 @@ impl ToolExecutionManager {
             }
             if collected.is_empty() {
                 let emptyResult = ToolResult {
-                    toolName: resolved.displayName,
+                    toolName: displayToolName,
                     success: false,
                     result: String::new(),
                     error: Some("The tool execution returned no results.".to_string()),
@@ -359,7 +354,7 @@ impl ToolExecutionManager {
                     .trim()
                     .to_string();
                 let finalResult = ToolResult {
-                    toolName: resolved.displayName,
+                    toolName: displayToolName,
                     success: last.success,
                     result: combinedResultString,
                     error: last.error.clone(),

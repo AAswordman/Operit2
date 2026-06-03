@@ -661,6 +661,30 @@ impl TerminalHost for AndroidTerminalHost {
         })
     }
 
+    fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String> {
+        AndroidTerminalHost::startPtySession(self, workingDir, rows, cols)
+    }
+
+    fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
+        AndroidTerminalHost::readPtySession(self, sessionId)
+    }
+
+    fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
+        AndroidTerminalHost::writePtySession(self, sessionId, data)
+    }
+
+    fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
+        AndroidTerminalHost::resizePtySession(self, sessionId, rows, cols)
+    }
+
+    fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
+        AndroidTerminalHost::pollPtyExitCode(self, sessionId)
+    }
+
+    fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
+        AndroidTerminalHost::closePtySession(self, sessionId)
+    }
+
     fn createOrGetSession(
         &self,
         sessionName: &str,

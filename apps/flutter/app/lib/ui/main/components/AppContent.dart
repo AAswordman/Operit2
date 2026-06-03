@@ -164,7 +164,7 @@ class _AppContentState extends State<AppContent> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final appBarColor = theme.colorScheme.surfaceContainerLowest;
+    final appBarColor = theme.colorScheme.surface;
     final contentColor = theme.colorScheme.surface;
     final appBarContentColor = theme.colorScheme.onSurface;
     final topPadding = MediaQuery.paddingOf(context).top;

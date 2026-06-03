@@ -1,38 +1,98 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
-import 'package:dynamic_color/dynamic_color.dart';
 
-import 'Color.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceBrowserAutomationHost.dart';
 import '../permissions/ToolApprovalHost.dart';
 
-class OperitTheme extends StatelessWidget {
+class OperitTheme extends StatefulWidget {
   const OperitTheme({super.key, required this.child});
 
   final Widget child;
 
+  static OperitThemeController of(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_OperitThemeScope>();
+    if (scope == null) {
+      throw StateError('OperitTheme scope not found');
+    }
+    return scope.controller;
+  }
+
+  @override
+  State<OperitTheme> createState() => _OperitThemeState();
+}
+
+class _OperitThemeState extends State<OperitTheme> {
+  late final OperitThemeController _controller = OperitThemeController(
+    onChanged: () => setState(() {}),
+  );
+
   @override
   Widget build(BuildContext context) {
-    return DynamicColorBuilder(
-      builder: (lightDynamic, darkDynamic) {
-        final lightColorScheme = lightDynamic ?? _lightColorScheme;
-        final darkColorScheme = darkDynamic ?? _darkColorScheme;
-        return MaterialApp(
-          title: 'Operit2',
-          debugShowCheckedModeBanner: false,
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          theme: _themeData(lightColorScheme),
-          darkTheme: _themeData(darkColorScheme),
-          themeMode: ThemeMode.system,
-          home: WorkspaceBrowserAutomationHost(
-            child: ToolApprovalHost(child: child),
-          ),
-        );
-      },
+    return _OperitThemeScope(
+      controller: _controller,
+      child: _OperitMaterialApp(
+        themeMode: _controller.themeMode,
+        child: widget.child,
+      ),
     );
+  }
+}
+
+class _OperitMaterialApp extends StatelessWidget {
+  const _OperitMaterialApp({required this.themeMode, required this.child});
+
+  final ThemeMode themeMode;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final lightColorScheme = _seedColorScheme(Brightness.light);
+    final darkColorScheme = _seedColorScheme(Brightness.dark);
+    return MaterialApp(
+      title: 'Operit2',
+      debugShowCheckedModeBanner: false,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      theme: _themeData(lightColorScheme),
+      darkTheme: _themeData(darkColorScheme),
+      themeMode: themeMode,
+      home: WorkspaceBrowserAutomationHost(
+        child: ToolApprovalHost(child: child),
+      ),
+    );
+  }
+}
+
+class OperitThemeController {
+  OperitThemeController({required VoidCallback onChanged})
+    : _onChanged = onChanged;
+
+  final VoidCallback _onChanged;
+  ThemeMode _themeMode = ThemeMode.system;
+
+  ThemeMode get themeMode => _themeMode;
+
+  bool isDark(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark;
+  }
+
+  void toggle(BuildContext context) {
+    _themeMode = isDark(context) ? ThemeMode.light : ThemeMode.dark;
+    _onChanged();
+  }
+}
+
+class _OperitThemeScope extends InheritedWidget {
+  const _OperitThemeScope({required this.controller, required super.child});
+
+  final OperitThemeController controller;
+
+  @override
+  bool updateShouldNotify(_OperitThemeScope oldWidget) {
+    return controller.themeMode != oldWidget.controller.themeMode;
   }
 }
 
@@ -41,6 +101,24 @@ ThemeData _themeData(ColorScheme colorScheme) {
     colorScheme: colorScheme,
     scaffoldBackgroundColor: colorScheme.surface,
     canvasColor: colorScheme.surface,
+    // ignore: deprecated_member_use
+    progressIndicatorTheme: const ProgressIndicatorThemeData(year2023: false),
+    appBarTheme: AppBarTheme(
+      backgroundColor: colorScheme.surface,
+      foregroundColor: colorScheme.onSurface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      toolbarHeight: 64,
+      titleTextStyle: TextStyle(
+        color: colorScheme.onSurface,
+        fontFamily: _fontFamily,
+        fontFamilyFallback: _fontFamilyFallback,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
     fontFamily: _fontFamily,
     fontFamilyFallback: _fontFamilyFallback,
     useMaterial3: true,
@@ -61,72 +139,12 @@ const List<String> _fontFamilyFallback = <String>[
   'Arial',
 ];
 
-const ColorScheme _darkColorScheme = ColorScheme.dark(
-  primary: purple80,
-  onPrimary: darkOnPrimary,
-  primaryContainer: darkPrimaryContainer,
-  onPrimaryContainer: darkOnPrimaryContainer,
-  secondary: purpleGrey80,
-  onSecondary: darkOnSecondary,
-  secondaryContainer: darkSecondaryContainer,
-  onSecondaryContainer: darkOnSecondaryContainer,
-  tertiary: pink80,
-  onTertiary: darkOnTertiary,
-  tertiaryContainer: darkTertiaryContainer,
-  onTertiaryContainer: darkOnTertiaryContainer,
-  error: darkError,
-  onError: darkOnError,
-  errorContainer: darkErrorContainer,
-  onErrorContainer: darkOnErrorContainer,
-  surface: darkSurface,
-  onSurface: darkOnSurface,
-  surfaceDim: darkSurfaceDim,
-  surfaceBright: darkSurfaceBright,
-  surfaceContainerLowest: darkSurfaceContainerLowest,
-  surfaceContainerLow: darkSurfaceContainerLow,
-  surfaceContainer: darkSurfaceContainer,
-  surfaceContainerHigh: darkSurfaceContainerHigh,
-  surfaceContainerHighest: darkSurfaceContainerHighest,
-  onSurfaceVariant: darkOnSurfaceVariant,
-  outline: darkOutline,
-  outlineVariant: darkOutlineVariant,
-  inverseSurface: darkInverseSurface,
-  onInverseSurface: darkOnInverseSurface,
-  inversePrimary: darkInversePrimary,
-  surfaceTint: purple80,
-);
+const Color _brandSeedColor = Color(0xFFBBDEFB);
 
-const ColorScheme _lightColorScheme = ColorScheme.light(
-  primary: purple40,
-  onPrimary: lightOnPrimary,
-  primaryContainer: lightPrimaryContainer,
-  onPrimaryContainer: lightOnPrimaryContainer,
-  secondary: purpleGrey40,
-  onSecondary: lightOnSecondary,
-  secondaryContainer: lightSecondaryContainer,
-  onSecondaryContainer: lightOnSecondaryContainer,
-  tertiary: pink40,
-  onTertiary: lightOnTertiary,
-  tertiaryContainer: lightTertiaryContainer,
-  onTertiaryContainer: lightOnTertiaryContainer,
-  error: lightError,
-  onError: lightOnError,
-  errorContainer: lightErrorContainer,
-  onErrorContainer: lightOnErrorContainer,
-  surface: lightSurface,
-  onSurface: lightOnSurface,
-  surfaceDim: lightSurfaceDim,
-  surfaceBright: lightSurfaceBright,
-  surfaceContainerLowest: lightSurfaceContainerLowest,
-  surfaceContainerLow: lightSurfaceContainerLow,
-  surfaceContainer: lightSurfaceContainer,
-  surfaceContainerHigh: lightSurfaceContainerHigh,
-  surfaceContainerHighest: lightSurfaceContainerHighest,
-  onSurfaceVariant: lightOnSurfaceVariant,
-  outline: lightOutline,
-  outlineVariant: lightOutlineVariant,
-  inverseSurface: lightInverseSurface,
-  onInverseSurface: lightOnInverseSurface,
-  inversePrimary: lightInversePrimary,
-  surfaceTint: purple40,
-);
+ColorScheme _seedColorScheme(Brightness brightness) {
+  return ColorScheme.fromSeed(
+    seedColor: _brandSeedColor,
+    brightness: brightness,
+    dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
+  );
+}

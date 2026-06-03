@@ -14,6 +14,10 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
     required this.onUserscripts,
     required this.onPermissions,
     required this.onClearStorage,
+    required this.zoomLabel,
+    required this.onZoomOut,
+    required this.onZoomReset,
+    required this.onZoomIn,
     required this.desktopMode,
     required this.onDesktopModeChanged,
     required this.onLoadMenuCommands,
@@ -27,6 +31,10 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
   final VoidCallback onUserscripts;
   final VoidCallback onPermissions;
   final VoidCallback onClearStorage;
+  final String zoomLabel;
+  final VoidCallback onZoomOut;
+  final VoidCallback onZoomReset;
+  final VoidCallback onZoomIn;
   final bool desktopMode;
   final ValueChanged<bool> onDesktopModeChanged;
   final Future<List<WorkspaceUserscriptMenuCommand>> Function()
@@ -106,6 +114,14 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
             title: l10n.permissionsTitle,
             onTap: widget.onPermissions,
           ),
+          _MenuActionRow(
+            icon: Icons.zoom_out_map_outlined,
+            title: l10n.zoom,
+            value: widget.zoomLabel,
+            onZoomOut: widget.onZoomOut,
+            onZoomReset: widget.onZoomReset,
+            onZoomIn: widget.onZoomIn,
+          ),
           _MenuTile(
             icon: Icons.desktop_windows_outlined,
             title: l10n.desktopMode,
@@ -119,6 +135,82 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
             onTap: widget.onClearStorage,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MenuActionRow extends StatelessWidget {
+  const _MenuActionRow({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.onZoomOut,
+    required this.onZoomReset,
+    required this.onZoomIn,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final VoidCallback onZoomOut;
+  final VoidCallback onZoomReset;
+  final VoidCallback onZoomIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 40),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 17, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: colorScheme.onSurface),
+              ),
+            ),
+            IconButton(
+              tooltip: AppLocalizations.of(context)!.zoomOut,
+              onPressed: onZoomOut,
+              icon: const Icon(Icons.remove, size: 18),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              padding: EdgeInsets.zero,
+            ),
+            const SizedBox(width: 4),
+            InkWell(
+              onTap: onZoomReset,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: AppLocalizations.of(context)!.zoomIn,
+              onPressed: onZoomIn,
+              icon: const Icon(Icons.add, size: 18),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              padding: EdgeInsets.zero,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -6,7 +6,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_all/webview_all.dart';
+import 'package:webview_all_windows/webview_all_windows.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
@@ -69,6 +71,13 @@ class WorkspaceBrowserContent extends StatefulWidget {
 
 class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   static const String _homeUrl = 'https://www.bing.com';
+  static const double _defaultZoomFactor = 0.4;
+  static const double _minZoomFactor = 0.1;
+  static const double _maxZoomFactor = 2.0;
+  static const double _zoomStep = 0.1;
+  static const String _mobileUserAgent =
+      'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
   static const String _desktopUserAgent =
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -82,6 +91,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       WorkspaceBrowserSessionRegistry.instance;
   final WorkspaceBrowserPermissionStore _permissionStore =
       WorkspaceBrowserPermissionStore();
+  final FocusNode _browserFocusNode = FocusNode();
   late final WorkspaceHtmlPreviewServer _htmlPreviewServer;
   final GlobalKey _menuButtonKey = GlobalKey();
   OverlayEntry? _menuPopupEntry;
@@ -108,11 +118,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     }
     if (oldWidget.initialUrl != widget.initialUrl &&
         widget.initialUrl?.trim().isNotEmpty == true) {
-      _addTab(widget.initialUrl!);
+      unawaited(_addTab(widget.initialUrl!));
     }
     if (oldWidget.initialFilePath != widget.initialFilePath &&
         widget.initialFilePath?.trim().isNotEmpty == true) {
-      _addTabForLocalFile(widget.initialFilePath!);
+      unawaited(_addTabForLocalFile(widget.initialFilePath!));
     }
     if (oldWidget.initialWorkspaceHtmlPath != widget.initialWorkspaceHtmlPath &&
         widget.initialWorkspaceHtmlPath?.trim().isNotEmpty == true) {
@@ -124,6 +134,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   void dispose() {
     _dismissMenuPopup();
     _dismissPanelPopup();
+    _browserFocusNode.dispose();
     for (final tab in _tabs) {
       _sessionRegistry.unregister(tab.id);
       tab.dispose();
@@ -142,35 +153,68 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     return AnimatedBuilder(
       animation: Listenable.merge(<Listenable>[tab, _stores.downloads]),
       builder: (context, child) {
-        return Column(
-          children: <Widget>[
-            WorkspaceBrowserUrlBar(
-              tab: tab,
-              isBookmarked: isBookmarked,
-              onSubmitted: _navigateCurrent,
-              onToggleBookmark: _toggleBookmark,
-              onBack: _goBack,
-              onForward: _goForward,
-              onRefreshOrStop: _refreshOrStop,
-              onOpenMenu: _toggleMenuPopup,
-              menuButtonKey: _menuButtonKey,
-            ),
-            Expanded(
-              child: Stack(
+        return Focus(
+          focusNode: _browserFocusNode,
+          autofocus: true,
+          child: CallbackShortcuts(
+            bindings: <ShortcutActivator, VoidCallback>{
+              const SingleActivator(LogicalKeyboardKey.minus, control: true):
+                  _zoomOut,
+              const SingleActivator(
+                LogicalKeyboardKey.numpadSubtract,
+                control: true,
+              ): _zoomOut,
+              const SingleActivator(LogicalKeyboardKey.equal, control: true):
+                  _zoomIn,
+              const SingleActivator(
+                LogicalKeyboardKey.equal,
+                control: true,
+                shift: true,
+              ): _zoomIn,
+              const SingleActivator(
+                LogicalKeyboardKey.numpadAdd,
+                control: true,
+              ): _zoomIn,
+              const SingleActivator(LogicalKeyboardKey.digit0, control: true):
+                  _resetZoom,
+              const SingleActivator(LogicalKeyboardKey.numpad0, control: true):
+                  _resetZoom,
+            },
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTapDown: (_) => _browserFocusNode.requestFocus(),
+              child: Column(
                 children: <Widget>[
-                  WebViewWidget(
-                    key: ValueKey<String>(tab.id),
-                    controller: tab.controller,
+                  WorkspaceBrowserUrlBar(
+                    tab: tab,
+                    isBookmarked: isBookmarked,
+                    onSubmitted: _navigateCurrent,
+                    onToggleBookmark: _toggleBookmark,
+                    onBack: _goBack,
+                    onForward: _goForward,
+                    onRefreshOrStop: _refreshOrStop,
+                    onOpenMenu: _toggleMenuPopup,
+                    menuButtonKey: _menuButtonKey,
                   ),
-                  if (tab.errorText != null)
-                    _BrowserErrorOverlay(
-                      message: tab.errorText!,
-                      onRetry: () => tab.controller.reload(),
+                  Expanded(
+                    child: Stack(
+                      children: <Widget>[
+                        WebViewWidget(
+                          key: ValueKey<String>(tab.id),
+                          controller: tab.controller,
+                        ),
+                        if (tab.errorText != null)
+                          _BrowserErrorOverlay(
+                            message: tab.errorText!,
+                            onRetry: () => tab.controller.reload(),
+                          ),
+                      ],
                     ),
+                  ),
                 ],
               ),
             ),
-          ],
+          ),
         );
       },
     );
@@ -187,7 +231,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   Future<void> _openInitialTab() async {
     final explicitFilePath = widget.initialFilePath;
     if (explicitFilePath != null && explicitFilePath.trim().isNotEmpty) {
-      _addTabForLocalFile(explicitFilePath);
+      await _addTabForLocalFile(explicitFilePath);
       return;
     }
     final explicitWorkspaceHtmlPath = widget.initialWorkspaceHtmlPath;
@@ -201,33 +245,35 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     }
     final explicitUrl = widget.initialUrl;
     if (explicitUrl != null && explicitUrl.trim().isNotEmpty) {
-      _addTab(explicitUrl);
+      await _addTab(explicitUrl);
       return;
     }
-    _addTab(_homeUrl);
+    await _addTab(_homeUrl);
   }
 
-  void _addTab(String rawUrl) {
+  Future<void> _addTab(String rawUrl) async {
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
     final tab = _createTab(url);
     _configureTab(tab);
+    await _applyUserAgentForTab(tab);
     setState(() {
       _tabs.add(tab);
       _selectedIndex = _tabs.length - 1;
     });
     _syncSessionRegistry();
-    tab.controller.loadRequest(Uri.parse(url));
+    await tab.controller.loadRequest(Uri.parse(url));
   }
 
-  void _addTabForLocalFile(String absolutePath) {
+  Future<void> _addTabForLocalFile(String absolutePath) async {
     final tab = _createTab('file://$absolutePath', localFilePath: absolutePath);
     _configureTab(tab);
+    await _applyUserAgentForTab(tab);
     setState(() {
       _tabs.add(tab);
       _selectedIndex = _tabs.length - 1;
     });
     _syncSessionRegistry();
-    tab.controller.loadFile(absolutePath);
+    await tab.controller.loadFile(absolutePath);
   }
 
   Future<void> _addTabForWorkspaceHtml(
@@ -238,7 +284,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     final url = initialUrl?.trim().isNotEmpty == true
         ? initialUrl!.trim()
         : uri.toString();
-    _addTab(url);
+    await _addTab(url);
   }
 
   WorkspaceBrowserTabState _createTab(String url, {String? localFilePath}) {
@@ -437,6 +483,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
         },
       ),
     );
+    unawaited(_applyZoomFactor(tab));
   }
 
   bool get _supportsJavaScriptDialogCallbacks {
@@ -743,6 +790,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                           _dismissMenuPopup();
                           _openSiteDataSheet();
                         },
+                        zoomLabel: '${_currentTab.zoomPercent}%',
+                        onZoomOut: _zoomOut,
+                        onZoomReset: _resetZoom,
+                        onZoomIn: _zoomIn,
                         desktopMode: _currentTab.desktopMode,
                         onDesktopModeChanged: (enabled) {
                           _dismissMenuPopup();
@@ -860,15 +911,69 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   Future<void> _setDesktopMode(bool enabled) async {
-    _currentTab.update(desktopMode: enabled);
-    if (enabled) {
-      await _currentTab.controller.setUserAgent(_desktopUserAgent);
-    } else if (_defaultUserAgents.containsKey(_currentTab.id)) {
-      await _currentTab.controller.setUserAgent(
-        _defaultUserAgents[_currentTab.id],
-      );
-    }
+    final tab = _currentTab;
+    tab.update(desktopMode: enabled);
+    await _applyUserAgentForTab(tab);
     await _currentTab.controller.reload();
+  }
+
+  bool get _usesMobileUserAgentByDefault {
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
+
+  String? _defaultUserAgentForTab(WorkspaceBrowserTabState tab) {
+    if (_usesMobileUserAgentByDefault) {
+      return _mobileUserAgent;
+    }
+    return _defaultUserAgents[tab.id];
+  }
+
+  Future<void> _applyUserAgentForTab(WorkspaceBrowserTabState tab) async {
+    final userAgent = tab.desktopMode
+        ? _desktopUserAgent
+        : _defaultUserAgentForTab(tab);
+    if (userAgent == null || userAgent.trim().isEmpty) {
+      return;
+    }
+    await tab.controller.setUserAgent(userAgent);
+  }
+
+  Future<void> _applyZoomFactor(WorkspaceBrowserTabState tab) async {
+    if (defaultTargetPlatform != TargetPlatform.windows) {
+      return;
+    }
+    final platform = tab.controller.platform;
+    if (platform is! WindowsWebViewController) {
+      return;
+    }
+    await platform.setZoomFactor(tab.zoomFactor);
+  }
+
+  Future<void> _setZoomFactor(double zoomFactor) async {
+    final tab = _currentTab;
+    final nextZoomFactor = zoomFactor
+        .clamp(_minZoomFactor, _maxZoomFactor)
+        .toDouble();
+    if ((tab.zoomFactor - nextZoomFactor).abs() < 0.0001) {
+      return;
+    }
+    tab.update(zoomFactor: nextZoomFactor);
+    _menuPopupEntry?.markNeedsBuild();
+    await _applyZoomFactor(tab);
+  }
+
+  void _zoomIn() {
+    unawaited(_setZoomFactor(_currentTab.zoomFactor + _zoomStep));
+  }
+
+  void _zoomOut() {
+    unawaited(_setZoomFactor(_currentTab.zoomFactor - _zoomStep));
+  }
+
+  void _resetZoom() {
+    unawaited(_setZoomFactor(_defaultZoomFactor));
   }
 
   Future<void> _applyDesktopViewport(WorkspaceBrowserTabState tab) {

@@ -29,6 +29,7 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
 const ENABLED_PACKAGES_KEY: &str = "imported_packages";
+const DISABLED_PACKAGES_KEY: &str = "disabled_packages";
 
 pub type CachedMcpToolInfo = crate::data::mcp::MCPLocalServer::CachedToolInfo;
 
@@ -220,7 +221,17 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn getEnabledPackageNames(&self) -> Vec<String> {
-        self.decodeEnabledPackageNamesFromPrefs()
+        let mut enabledPackageNames = BTreeSet::from_iter(self.decodeEnabledPackageNamesFromPrefs());
+        let disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
+        for toolPackage in self.availablePackages.values() {
+            if toolPackage.is_built_in
+                && toolPackage.enabled_by_default
+                && !disabledPackageNames.contains(&toolPackage.name)
+            {
+                enabledPackageNames.insert(toolPackage.name.clone());
+            }
+        }
+        enabledPackageNames.into_iter().collect()
     }
 
     #[allow(non_snake_case)]
@@ -258,6 +269,12 @@ impl PackageManager {
                 normalizedPackageName, error
             );
         }
+        if let Err(error) = self.removeFromDisabledPackages(&normalizedPackageName) {
+            return format!(
+                "Failed to enable package '{}': {}",
+                normalizedPackageName, error
+            );
+        }
         self.notifyToolPkgRuntimeChangeListeners();
         format!("Successfully enabled package: {}", normalizedPackageName)
     }
@@ -270,6 +287,12 @@ impl PackageManager {
         if enabledPackageNames.remove(&normalizedPackageName) {
             let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
             if let Err(error) = self.saveEnabledPackageNames(&names) {
+                return format!(
+                    "Failed to disable package '{}': {}",
+                    normalizedPackageName, error
+                );
+            }
+            if let Err(error) = self.addToDisabledIfDefaultEnabled(&normalizedPackageName) {
                 return format!(
                     "Failed to disable package '{}': {}",
                     normalizedPackageName, error
@@ -343,6 +366,12 @@ impl PackageManager {
                 normalizedContainerPackageName, error
             );
         }
+        if let Err(error) = self.removeFromDisabledPackages(&normalizedContainerPackageName) {
+            return format!(
+                "Failed to enable ToolPkg container '{}': {}",
+                normalizedContainerPackageName, error
+            );
+        }
         self.notifyToolPkgRuntimeChangeListeners();
         format!(
             "Successfully enabled ToolPkg container: {}",
@@ -376,6 +405,12 @@ impl PackageManager {
         }
         let names = enabledPackageNames.into_iter().collect::<Vec<_>>();
         if let Err(error) = self.saveEnabledPackageNames(&names) {
+            return format!(
+                "Failed to disable ToolPkg container '{}': {}",
+                normalizedContainerPackageName, error
+            );
+        }
+        if let Err(error) = self.addToDisabledIfDefaultEnabled(&normalizedContainerPackageName) {
             return format!(
                 "Failed to disable ToolPkg container '{}': {}",
                 normalizedContainerPackageName, error
@@ -1003,6 +1038,23 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
+    fn decodeDisabledPackageNamesFromPrefs(&self) -> Vec<String> {
+        let key = stringPreferencesKey(DISABLED_PACKAGES_KEY);
+        let preferences = match self.dataStore.data() {
+            Ok(preferences) => preferences,
+            Err(_) => return Vec::new(),
+        };
+        let Some(packagesJson) = preferences.get(&key) else {
+            return Vec::new();
+        };
+        let rawPackages = match serde_json::from_str::<Vec<String>>(packagesJson) {
+            Ok(rawPackages) => rawPackages,
+            Err(_) => return Vec::new(),
+        };
+        self.normalizeEnabledPackageNames(&rawPackages)
+    }
+
+    #[allow(non_snake_case)]
     fn saveEnabledPackageNames(
         &self,
         enabledPackageNames: &[String],
@@ -1012,6 +1064,52 @@ impl PackageManager {
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey(ENABLED_PACKAGES_KEY), updatedJson);
         })
+    }
+
+    #[allow(non_snake_case)]
+    fn saveDisabledPackageNames(
+        &self,
+        disabledPackageNames: &[String],
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedPackages = self.normalizeEnabledPackageNames(disabledPackageNames);
+        let updatedJson = serde_json::to_string(&normalizedPackages)?;
+        self.dataStore.edit(|preferences| {
+            preferences.set(&stringPreferencesKey(DISABLED_PACKAGES_KEY), updatedJson);
+        })
+    }
+
+    #[allow(non_snake_case)]
+    fn removeFromDisabledPackages(
+        &self,
+        packageName: &str,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedPackageName = self.normalizePackageName(packageName);
+        let mut disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
+        if disabledPackageNames.remove(&normalizedPackageName) {
+            let names = disabledPackageNames.into_iter().collect::<Vec<_>>();
+            self.saveDisabledPackageNames(&names)?;
+        }
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    fn addToDisabledIfDefaultEnabled(
+        &self,
+        packageName: &str,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedPackageName = self.normalizePackageName(packageName);
+        let Some(toolPackage) = self.availablePackages.get(&normalizedPackageName) else {
+            return Ok(());
+        };
+        if !toolPackage.is_built_in || !toolPackage.enabled_by_default {
+            return Ok(());
+        }
+        let mut disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
+        if disabledPackageNames.insert(normalizedPackageName) {
+            let names = disabledPackageNames.into_iter().collect::<Vec<_>>();
+            self.saveDisabledPackageNames(&names)?;
+        }
+        Ok(())
     }
 
     #[allow(non_snake_case)]
@@ -1237,16 +1335,13 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn extractMetadataFromJs(&self, jsContent: &str) -> String {
-        let Some(start) = jsContent.find("/* METADATA") else {
-            return "{}".to_string();
-        };
-        let contentStart = start + "/* METADATA".len();
-        let Some(endRelative) = jsContent[contentStart..].find("*/") else {
-            return "{}".to_string();
-        };
-        jsContent[contentStart..contentStart + endRelative]
-            .trim()
-            .to_string()
+        let metadataPattern =
+            regex::Regex::new(r"/\*\s*METADATA\s*([\s\S]*?)\*/").expect("valid metadata regex");
+        metadataPattern
+            .captures(jsContent)
+            .and_then(|captures| captures.get(1))
+            .map(|metadata| metadata.as_str().trim().to_string())
+            .unwrap_or_else(|| "{}".to_string())
     }
 
     #[allow(non_snake_case)]

@@ -2,43 +2,13 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:flutter_pty/flutter_pty.dart';
 import 'package:flutter/services.dart';
 
 import 'WorkspacePtyProcess.dart';
 
-class _FlutterWorkspacePtyProcess implements WorkspacePtyProcess {
-  _FlutterWorkspacePtyProcess(this._pty);
-
-  final Pty _pty;
-
-  @override
-  Stream<Uint8List> get output => _pty.output;
-
-  @override
-  Future<int> get exitCode => _pty.exitCode;
-
-  @override
-  void write(Uint8List data) {
-    _pty.write(data);
-  }
-
-  @override
-  void resize(int rows, int columns) {
-    _pty.resize(rows, columns);
-  }
-
-  @override
-  void kill() {
-    _pty.kill();
-  }
-}
-
-class _AndroidWorkspacePtyProcess implements WorkspacePtyProcess {
-  _AndroidWorkspacePtyProcess(this._channel, this._sessionId) {
+class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
+  _BridgeWorkspacePtyProcess(this._channel, this._sessionId) {
     _readTimer = Timer.periodic(
       const Duration(milliseconds: 40),
       (_) => unawaited(_readOutput()),
@@ -180,26 +150,14 @@ Future<WorkspacePtyProcess> startWorkspacePtyImpl({
   required int rows,
   required int columns,
 }) async {
-  if (Platform.isAndroid) {
-    return _startAndroidWorkspacePty(
-      workingDirectory: workingDirectory,
-      rows: rows,
-      columns: columns,
-    );
-  }
-  final shell = await _workspaceShell(workingDirectory);
-  final pty = Pty.start(
-    shell.executable,
-    arguments: shell.arguments,
-    workingDirectory: shell.workingDirectory,
+  return _startBridgeWorkspacePty(
+    workingDirectory: workingDirectory,
     rows: rows,
     columns: columns,
-    environment: shell.environment,
   );
-  return _FlutterWorkspacePtyProcess(pty);
 }
 
-Future<WorkspacePtyProcess> _startAndroidWorkspacePty({
+Future<WorkspacePtyProcess> _startBridgeWorkspacePty({
   required String workingDirectory,
   required int rows,
   required int columns,
@@ -227,49 +185,5 @@ Future<WorkspacePtyProcess> _startAndroidWorkspacePty({
   if (sessionId is! String || sessionId.isEmpty) {
     throw StateError('startTerminalPty missing sessionId');
   }
-  return _AndroidWorkspacePtyProcess(channel, sessionId);
-}
-
-Future<
-  ({
-    String executable,
-    List<String> arguments,
-    String workingDirectory,
-    Map<String, String> environment,
-  })
->
-_workspaceShell(String workingDirectory) async {
-  if (Platform.isWindows) {
-    return (
-      executable: 'powershell.exe',
-      arguments: <String>['-NoLogo', '-NoProfile'],
-      workingDirectory: workingDirectory,
-      environment: _workspaceTerminalEnvironment(),
-    );
-  }
-  return (
-    executable: Platform.environment['SHELL']?.trim().isNotEmpty == true
-        ? Platform.environment['SHELL']!
-        : 'sh',
-    arguments: const <String>[],
-    workingDirectory: workingDirectory,
-    environment: _workspaceTerminalEnvironment(),
-  );
-}
-
-Map<String, String> _workspaceTerminalEnvironment({
-  Map<String, String> extra = const <String, String>{},
-}) {
-  final environment = Platform.isWindows
-      ? Map<String, String>.of(Platform.environment)
-      : <String, String>{};
-  environment.addAll(<String, String>{
-    'TERM': 'xterm-256color',
-    'COLORTERM': 'truecolor',
-    'LANG': Platform.environment['LANG']?.trim().isNotEmpty == true
-        ? Platform.environment['LANG']!
-        : 'en_US.UTF-8',
-  });
-  environment.addAll(extra);
-  return environment;
+  return _BridgeWorkspacePtyProcess(channel, sessionId);
 }

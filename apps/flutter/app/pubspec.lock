@@ -315,14 +315,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.4"
-  flutter_pty:
-    dependency: "direct main"
-    description:
-      name: flutter_pty
-      sha256: c2f3b3160b519ac820fa3f6ef175361f2dfc52c557465643589542e9f229ad66
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.4.2"
   flutter_svg:
     dependency: transitive
     description:
@@ -915,7 +907,7 @@ packages:
     source: hosted
     version: "0.5.2"
   webview_all_windows:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: webview_all_windows
       sha256: "6bcd9173ea709976005c96dcef75d596d6e2a58192e859f574d305dbee9954b6"
