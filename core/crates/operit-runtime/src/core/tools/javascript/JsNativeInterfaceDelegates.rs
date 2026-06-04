@@ -382,11 +382,18 @@ fn serializeToolExecutionResult(
             serde_json::Value::String(result.error.clone().unwrap_or_default()),
         );
     }
-    object.insert(
-        "data".to_string(),
-        serde_json::Value::String(result.result.clone()),
-    );
+    object.insert("data".to_string(), serializeToolResultData(&result.result));
     serde_json::Value::Object(object).to_string()
+}
+
+#[allow(non_snake_case)]
+fn serializeToolResultData(result: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(result) {
+        Ok(serde_json::Value::Object(object)) if object.contains_key("__type") => {
+            serde_json::Value::Object(object)
+        }
+        _ => serde_json::Value::String(result.to_string()),
+    }
 }
 
 #[allow(non_snake_case)]

@@ -35,8 +35,9 @@ import 'userscripts/WorkspaceUserscriptSheet.dart';
 class WorkspaceBrowserContent extends StatefulWidget {
   const WorkspaceBrowserContent({
     super.key,
-    required this.chatId,
     this.initialUrl,
+    this.initialUserAgent,
+    this.initialHeaders,
     this.initialFilePath,
     this.initialWorkspaceHtmlPath,
     this.workspacePath,
@@ -45,10 +46,13 @@ class WorkspaceBrowserContent extends StatefulWidget {
     required this.onWriteWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onOpenBrowserTab,
+    required this.onActivateRequested,
+    required this.onCloseRequested,
   });
 
-  final String chatId;
   final String? initialUrl;
+  final String? initialUserAgent;
+  final Map<String, String>? initialHeaders;
   final String? initialFilePath;
   final String? initialWorkspaceHtmlPath;
   final String? workspacePath;
@@ -63,6 +67,8 @@ class WorkspaceBrowserContent extends StatefulWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowserTab;
+  final VoidCallback onActivateRequested;
+  final VoidCallback onCloseRequested;
 
   @override
   State<WorkspaceBrowserContent> createState() =>
@@ -113,12 +119,15 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   @override
   void didUpdateWidget(covariant WorkspaceBrowserContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.chatId != widget.chatId) {
-      _syncSessionRegistry();
-    }
     if (oldWidget.initialUrl != widget.initialUrl &&
         widget.initialUrl?.trim().isNotEmpty == true) {
-      unawaited(_addTab(widget.initialUrl!));
+      unawaited(
+        _addTab(
+          widget.initialUrl!,
+          userAgent: widget.initialUserAgent,
+          headers: widget.initialHeaders,
+        ),
+      );
     }
     if (oldWidget.initialFilePath != widget.initialFilePath &&
         widget.initialFilePath?.trim().isNotEmpty == true) {
@@ -245,15 +254,23 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     }
     final explicitUrl = widget.initialUrl;
     if (explicitUrl != null && explicitUrl.trim().isNotEmpty) {
-      await _addTab(explicitUrl);
+      await _addTab(
+        explicitUrl,
+        userAgent: widget.initialUserAgent,
+        headers: widget.initialHeaders,
+      );
       return;
     }
     await _addTab(_homeUrl);
   }
 
-  Future<void> _addTab(String rawUrl) async {
+  Future<void> _addTab(
+    String rawUrl, {
+    String? userAgent,
+    Map<String, String>? headers,
+  }) async {
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
-    final tab = _createTab(url);
+    final tab = _createTab(url, userAgent: userAgent);
     _configureTab(tab);
     await _applyUserAgentForTab(tab);
     setState(() {
@@ -261,7 +278,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       _selectedIndex = _tabs.length - 1;
     });
     _syncSessionRegistry();
-    await tab.controller.loadRequest(Uri.parse(url));
+    await tab.controller.loadRequest(
+      Uri.parse(url),
+      headers: headers ?? const <String, String>{},
+    );
   }
 
   Future<void> _addTabForLocalFile(String absolutePath) async {
@@ -287,7 +307,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     await _addTab(url);
   }
 
-  WorkspaceBrowserTabState _createTab(String url, {String? localFilePath}) {
+  WorkspaceBrowserTabState _createTab(
+    String url, {
+    String? localFilePath,
+    String? userAgent,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     final controller = WebViewController(
       onPermissionRequest: _handlePermissionRequest,
@@ -298,6 +322,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       controller: controller,
       title: l10n.newTab,
       localFilePath: localFilePath,
+      preferredUserAgent: userAgent,
     );
     final automationController = WorkspaceBrowserAutomationController(
       controller: tab.controller,
@@ -309,7 +334,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     });
     _automation[tab.id] = automationController;
     _sessionRegistry.register(
-      chatId: widget.chatId,
       sessionId: tab.id,
       controller: automationController,
       title: tab.title,
@@ -634,8 +658,8 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       widget.onOpenBrowserTab(url: url);
       return;
     }
-    if (action == 'close' && _tabs.length > 1) {
-      _closeTab(_selectedIndex);
+    if (action == 'close') {
+      _closeCurrentTabOrPanel();
     }
   }
 
@@ -686,11 +710,21 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     _syncSessionRegistry();
   }
 
+  void _closeCurrentTabOrPanel() {
+    if (_tabs.length <= 1) {
+      _sessionRegistry.unregister(_currentTab.id);
+      widget.onCloseRequested();
+      return;
+    }
+    _closeTab(_selectedIndex);
+  }
+
   void _selectBrowserSession(String sessionId) {
     final index = _tabs.indexWhere((tab) => tab.id == sessionId);
     if (index < 0) {
       return;
     }
+    widget.onActivateRequested();
     setState(() => _selectedIndex = index);
     _syncSessionRegistry();
   }
@@ -698,6 +732,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   void _closeBrowserSession(String sessionId) {
     final index = _tabs.indexWhere((tab) => tab.id == sessionId);
     if (index < 0) {
+      return;
+    }
+    if (_tabs.length <= 1) {
+      _sessionRegistry.unregister(sessionId);
+      widget.onCloseRequested();
       return;
     }
     _closeTab(index);
@@ -931,7 +970,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   Future<void> _applyUserAgentForTab(WorkspaceBrowserTabState tab) async {
-    final userAgent = tab.desktopMode
+    final preferredUserAgent = tab.preferredUserAgent?.trim();
+    final userAgent = preferredUserAgent != null && preferredUserAgent.isNotEmpty
+        ? preferredUserAgent
+        : tab.desktopMode
         ? _desktopUserAgent
         : _defaultUserAgentForTab(tab);
     if (userAgent == null || userAgent.trim().isEmpty) {
@@ -1114,7 +1156,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     for (var index = 0; index < _tabs.length; index += 1) {
       final tab = _tabs[index];
       _sessionRegistry.update(
-        chatId: widget.chatId,
         sessionId: tab.id,
         title: tab.title,
         url: tab.url,

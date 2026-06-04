@@ -1,24 +1,28 @@
 // ignore_for_file: file_names
 
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'browser/WorkspaceBrowserContent.dart';
+import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
+import 'browser/automation/WorkspaceWebVisitContent.dart';
 import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
 import 'WorkspaceHomeContent.dart';
+import 'WorkspaceSetupContent.dart';
 import 'WorkspaceTabModels.dart';
-import 'WorkspaceTerminalContent.dart';
+import 'terminal/WorkspaceTerminalContent.dart';
 
 class WorkspaceTabContent extends StatelessWidget {
   const WorkspaceTabContent({
     super.key,
     required this.tab,
-    required this.currentChatId,
     required this.workspacePath,
+    required this.terminalSessionCountListenable,
+    required this.browserSessionRegistry,
     required this.onListWorkspaceFiles,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
@@ -27,13 +31,20 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onOpenFile,
     required this.onOpenFiles,
     required this.onOpenTerminal,
+    required this.onOpenTerminalSessions,
+    required this.onOpenBrowserSessions,
     required this.onOpenBrowser,
-    required this.onOpenProjectBrowser,
+    required this.onFinishWebVisit,
+    required this.onActivateCurrentTab,
+    required this.onCloseCurrentTab,
+    required this.onCreateDefaultWorkspace,
+    required this.onBindWorkspace,
   });
 
   final WorkspaceTab tab;
-  final String currentChatId;
   final String? workspacePath;
+  final ValueListenable<int> terminalSessionCountListenable;
+  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
@@ -44,13 +55,21 @@ class WorkspaceTabContent extends StatelessWidget {
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenTerminal;
+  final VoidCallback onOpenTerminalSessions;
+  final VoidCallback onOpenBrowserSessions;
   final void Function({
     String? url,
     String? localFilePath,
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
-  final VoidCallback onOpenProjectBrowser;
+  final void Function(WorkspaceTab tab, WebVisitResponse response)
+  onFinishWebVisit;
+  final VoidCallback onActivateCurrentTab;
+  final VoidCallback onCloseCurrentTab;
+  final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
+  final Future<void> Function(String workspace, String? workspaceEnv)
+  onBindWorkspace;
 
   @override
   Widget build(BuildContext context) {
@@ -59,9 +78,18 @@ class WorkspaceTabContent extends StatelessWidget {
       case WorkspaceTabKind.home:
         return WorkspaceHomeContent(
           workspacePath: workspacePath,
+          terminalSessionCountListenable: terminalSessionCountListenable,
+          browserSessionRegistry: browserSessionRegistry,
           onOpenFiles: onOpenFiles,
           onOpenTerminal: onOpenTerminal,
-          onOpenBrowser: onOpenProjectBrowser,
+          onOpenTerminalSessions: onOpenTerminalSessions,
+          onOpenBrowserSessions: onOpenBrowserSessions,
+          onOpenBrowser: () => onOpenBrowser(),
+        );
+      case WorkspaceTabKind.setup:
+        return WorkspaceSetupContent(
+          onCreateDefaultWorkspace: onCreateDefaultWorkspace,
+          onBindWorkspace: onBindWorkspace,
         );
       case WorkspaceTabKind.files:
         final rootPath = workspacePath?.trim();
@@ -79,20 +107,28 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenFile: onOpenFile,
         );
       case WorkspaceTabKind.terminal:
-        final rootPath = workspacePath?.trim();
-        if (rootPath == null || rootPath.isEmpty) {
+        final sessionId = tab.terminalSessionId;
+        final sessionKind = tab.terminalSessionKind;
+        final terminalType = tab.terminalType;
+        if (sessionId == null || sessionKind == null || terminalType == null) {
           return _WorkspaceSimplePane(
             icon: Icons.terminal,
             title: l10n.terminal,
-            subtitle: l10n.noWorkspaceBound,
+            subtitle: '终端会话未指定。',
           );
         }
-        return WorkspaceTerminalContent(workspacePath: rootPath);
+        return WorkspaceTerminalContent(
+          sessionId: sessionId,
+          sessionKind: sessionKind,
+          terminalType: terminalType,
+          workingDir: tab.terminalWorkingDir ?? '',
+        );
       case WorkspaceTabKind.browser:
         return WorkspaceBrowserContent(
-          chatId: currentChatId,
           workspacePath: workspacePath,
           initialUrl: tab.url,
+          initialUserAgent: tab.userAgent,
+          initialHeaders: tab.headers,
           initialFilePath: tab.absolutePath,
           initialWorkspaceHtmlPath: tab.workspaceHtmlPath,
           onReadWorkspaceTextFile: onReadWorkspaceTextFile,
@@ -100,6 +136,21 @@ class WorkspaceTabContent extends StatelessWidget {
           onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
           onOpenWorkspaceFile: onOpenWorkspaceFile,
           onOpenBrowserTab: onOpenBrowser,
+          onActivateRequested: onActivateCurrentTab,
+          onCloseRequested: onCloseCurrentTab,
+        );
+      case WorkspaceTabKind.webVisit:
+        final request = tab.webVisitRequest;
+        if (request == null) {
+          return _WorkspaceSimplePane(
+            icon: Icons.travel_explore,
+            title: 'visit_web',
+            subtitle: 'visit_web 请求未指定。',
+          );
+        }
+        return WorkspaceWebVisitContent(
+          request: request,
+          onFinished: (response) => onFinishWebVisit(tab, response),
         );
       case WorkspaceTabKind.filePreview:
         return WorkspaceFilePreviewContent(

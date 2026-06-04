@@ -30,6 +30,9 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   bool _pollingExit = false;
 
   @override
+  String get sessionId => _sessionId;
+
+  @override
   Stream<Uint8List> get output => _output.stream;
 
   @override
@@ -70,7 +73,6 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     _closed = true;
     _readTimer?.cancel();
     _exitTimer?.cancel();
-    unawaited(_invokeJson('closeTerminalPty', _sessionId));
     unawaited(_output.close());
     if (!_exitCode.isCompleted) {
       _exitCode.complete(-1);
@@ -146,11 +148,13 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
 }
 
 Future<WorkspacePtyProcess> startWorkspacePtyImpl({
+  required String sessionName,
   required String workingDirectory,
   required int rows,
   required int columns,
 }) async {
   return _startBridgeWorkspacePty(
+    sessionName: sessionName,
     workingDirectory: workingDirectory,
     rows: rows,
     columns: columns,
@@ -158,19 +162,19 @@ Future<WorkspacePtyProcess> startWorkspacePtyImpl({
 }
 
 Future<WorkspacePtyProcess> _startBridgeWorkspacePty({
+  required String sessionName,
   required String workingDirectory,
   required int rows,
   required int columns,
 }) async {
   const channel = MethodChannel('operit/runtime');
-  final raw = await channel.invokeMethod<String>(
-    'startTerminalPty',
-    <String, Object>{
-      'workingDirectory': workingDirectory,
-      'rows': rows,
-      'columns': columns,
-    },
-  );
+  final raw = await channel
+      .invokeMethod<String>('startTerminalPty', <String, Object>{
+        'sessionName': sessionName,
+        'workingDirectory': workingDirectory,
+        'rows': rows,
+        'columns': columns,
+      });
   if (raw == null) {
     throw StateError('startTerminalPty returned null');
   }
@@ -185,5 +189,10 @@ Future<WorkspacePtyProcess> _startBridgeWorkspacePty({
   if (sessionId is! String || sessionId.isEmpty) {
     throw StateError('startTerminalPty missing sessionId');
   }
+  return _BridgeWorkspacePtyProcess(channel, sessionId);
+}
+
+WorkspacePtyProcess attachWorkspacePtyImpl(String sessionId) {
+  const channel = MethodChannel('operit/runtime');
   return _BridgeWorkspacePtyProcess(channel, sessionId);
 }

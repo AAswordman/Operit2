@@ -8,11 +8,21 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import 'WorkspacePtyProcess.dart';
+import 'WorkspaceTerminalSessions.dart';
 
 class WorkspaceTerminalContent extends StatefulWidget {
-  const WorkspaceTerminalContent({super.key, required this.workspacePath});
+  const WorkspaceTerminalContent({
+    super.key,
+    required this.sessionId,
+    required this.sessionKind,
+    required this.terminalType,
+    required this.workingDir,
+  });
 
-  final String workspacePath;
+  final String sessionId;
+  final String sessionKind;
+  final String terminalType;
+  final String workingDir;
 
   @override
   State<WorkspaceTerminalContent> createState() =>
@@ -23,11 +33,15 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   late final Terminal _terminal;
   late final TerminalController _controller;
   late final FocusNode _focusNode;
+  final WorkspaceTerminalSessions _terminalSessions =
+      const WorkspaceTerminalSessions();
   StreamSubscription<String>? _outputSubscription;
   WorkspacePtyProcess? _pty;
+  Timer? _screenTimer;
   Object? _startupError;
   int? _pendingRows;
   int? _pendingColumns;
+  String _lastShellContent = '';
   bool _exited = false;
 
   @override
@@ -36,7 +50,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     _terminal = Terminal(maxLines: 10000);
     _controller = TerminalController();
     _focusNode = FocusNode(debugLabel: 'WorkspaceTerminal');
-    _terminal.onOutput = _writeToPty;
+    _terminal.onOutput = _writeToSession;
     _terminal.onResize = (columns, rows, pixelWidth, pixelHeight) {
       _pendingRows = rows;
       _pendingColumns = columns;
@@ -45,7 +59,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     WidgetsBinding.instance.endOfFrame.then((_) {
       if (mounted) {
         _focusNode.requestFocus();
-        _startPty();
+        _attachSession();
       }
     });
   }
@@ -53,14 +67,16 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   @override
   void didUpdateWidget(covariant WorkspaceTerminalContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.workspacePath != widget.workspacePath) {
-      _restartPty();
+    if (oldWidget.sessionId != widget.sessionId ||
+        oldWidget.sessionKind != widget.sessionKind) {
+      _restartSession();
     }
   }
 
   @override
   void dispose() {
     _outputSubscription?.cancel();
+    _screenTimer?.cancel();
     _pty?.kill();
     _focusNode.dispose();
     super.dispose();
@@ -101,7 +117,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: _restartPty,
+                  onPressed: _restartSession,
                   icon: const Icon(Icons.refresh),
                   label: const Text('重试'),
                 ),
@@ -138,13 +154,24 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     );
   }
 
-  Future<void> _startPty() async {
+  Future<void> _attachSession() async {
+    if (widget.sessionKind == 'pty') {
+      await _attachPty();
+      return;
+    }
+    if (widget.sessionKind == 'shell') {
+      await _attachShell();
+      return;
+    }
+    _startupError = StateError('未知终端会话类型: ${widget.sessionKind}');
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _attachPty() async {
     try {
-      final pty = await startWorkspacePty(
-        workingDirectory: widget.workspacePath,
-        rows: _pendingRows ?? _terminal.viewHeight,
-        columns: _pendingColumns ?? _terminal.viewWidth,
-      );
+      final pty = attachWorkspacePty(widget.sessionId);
       _pty = pty;
       _syncPtySize();
       _exited = false;
@@ -172,22 +199,60 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     }
   }
 
-  Future<void> _restartPty() async {
+  Future<void> _attachShell() async {
+    try {
+      _startupError = null;
+      await _refreshShellScreen();
+      _screenTimer = Timer.periodic(
+        const Duration(milliseconds: 400),
+        (_) => unawaited(_refreshShellScreen()),
+      );
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (error) {
+      _startupError = error;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  Future<void> _restartSession() async {
     await _outputSubscription?.cancel();
     _outputSubscription = null;
+    _screenTimer?.cancel();
+    _screenTimer = null;
     _pty?.kill();
     _pty = null;
     _terminal.eraseDisplay();
     _startupError = null;
+    _lastShellContent = '';
     _exited = true;
     if (mounted) {
       setState(() {});
     }
-    await _startPty();
+    await _attachSession();
   }
 
-  void _writeToPty(String data) {
-    _pty?.write(const Utf8Encoder().convert(data));
+  void _writeToSession(String data) {
+    if (widget.sessionKind == 'pty') {
+      _pty?.write(const Utf8Encoder().convert(data));
+      return;
+    }
+    unawaited(
+      _terminalSessions.inputSession(sessionId: widget.sessionId, input: data),
+    );
+  }
+
+  Future<void> _refreshShellScreen() async {
+    final screen = await _terminalSessions.getSessionScreen(widget.sessionId);
+    if (screen.content == _lastShellContent) {
+      return;
+    }
+    _lastShellContent = screen.content;
+    _terminal.eraseDisplay();
+    _terminal.write(screen.content.replaceAll('\n', '\r\n'));
   }
 
   void _syncPtySize() {

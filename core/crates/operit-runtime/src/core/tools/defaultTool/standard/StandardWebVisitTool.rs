@@ -8,7 +8,7 @@ use reqwest::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{LinkData, VisitWebResultData};
+use crate::core::tools::ToolResultDataClasses::{LinkData, ToolResultData, VisitWebResultData};
 
 #[derive(Clone)]
 pub struct StandardWebVisitTool {
@@ -261,66 +261,9 @@ fn toolResultFromVisitWebData(tool: &AITool, result: VisitWebResultData) -> Tool
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result: visitWebResultToString(&result),
+        result: ToolResultData::VisitWebResultData(result).toJson(),
         error: None,
     }
-}
-
-#[allow(non_snake_case)]
-fn visitWebResultToString(result: &VisitWebResultData) -> String {
-    let mut sb = String::new();
-    if let Some(visitKey) = &result.visitKey {
-        sb.push_str(&format!("Visit key: {visitKey}\n\n"));
-    }
-    if !result.links.is_empty() {
-        sb.push_str("Results:\n");
-        for (index, link) in result.links.iter().take(120).enumerate() {
-            sb.push_str(&format!("[{}] {}\n", index + 1, link.text));
-        }
-        if result.links.len() > 120 {
-            sb.push_str(&format!(
-                "... ({} more links omitted from inline preview)\n",
-                result.links.len() - 120
-            ));
-        }
-        sb.push('\n');
-    }
-    if !result.imageLinks.is_empty() {
-        sb.push_str("Images:\n");
-        for (index, link) in result.imageLinks.iter().take(120).enumerate() {
-            let name = link
-                .rsplit('/')
-                .next()
-                .and_then(|part| part.split('?').next())
-                .filter(|part| !part.is_empty())
-                .unwrap_or("image");
-            sb.push_str(&format!("[{}] {}\n", index + 1, name));
-        }
-        if result.imageLinks.len() > 120 {
-            sb.push_str(&format!(
-                "... ({} more images omitted from inline preview)\n",
-                result.imageLinks.len() - 120
-            ));
-        }
-        sb.push('\n');
-    }
-    if let Some(savedTo) = &result.contentSavedTo {
-        sb.push_str(&format!("Full content saved to file: {savedTo}\n"));
-        if let Some(totalChars) = result.originalContentLength {
-            sb.push_str(&format!("Original content length: {totalChars} chars\n"));
-        }
-        if result.contentTruncated {
-            sb.push_str("Use read_file_part or grep_code to inspect the saved file.\n");
-        }
-        sb.push('\n');
-    }
-    if result.contentTruncated {
-        sb.push_str("Content Preview:\n");
-    } else {
-        sb.push_str("Content:\n");
-    }
-    sb.push_str(&result.content);
-    sb
 }
 
 #[allow(non_snake_case)]

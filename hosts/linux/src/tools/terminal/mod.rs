@@ -5,14 +5,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use operit_host_api::{
     HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
-    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
-    TerminalTypeInfo,
+    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput,
+    TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
 };
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use uuid::Uuid;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
@@ -43,6 +44,8 @@ struct TerminalSession {
 }
 
 struct PtySession {
+    sessionName: String,
+    workingDir: String,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -75,7 +78,14 @@ impl TerminalHost for LinuxTerminalHost {
         })
     }
 
-    fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String> {
+    fn startPtySession(
+        &self,
+        sessionName: &str,
+        workingDir: &str,
+        rows: u16,
+        cols: u16,
+    ) -> HostResult<String> {
+        let normalizedSessionName = nonBlank(sessionName, "session_name")?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let ptySystem = native_pty_system();
         let pair = ptySystem
@@ -102,6 +112,8 @@ impl TerminalHost for LinuxTerminalHost {
         state.ptySessions.insert(
             sessionId.clone(),
             PtySession {
+                sessionName: normalizedSessionName,
+                workingDir: workDir,
                 child,
                 master: pair.master,
                 writer,
@@ -176,6 +188,40 @@ impl TerminalHost for LinuxTerminalHost {
                 "PTY session does not exist: {sessionId}"
             ))),
         }
+    }
+
+    fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
+        let mut state = self.lockState()?;
+        let mut entries = Vec::new();
+        for session in state.sessions.values() {
+            entries.push(TerminalSessionListEntry {
+                sessionId: session.id.clone(),
+                sessionName: session.name.clone(),
+                terminalType: session.terminalType.clone(),
+                sessionKind: "shell".to_string(),
+                workingDir: String::new(),
+                commandRunning: session.commandRunning,
+            });
+        }
+        for (sessionId, session) in state.ptySessions.iter_mut() {
+            if session.exitCode.is_none() {
+                if let Some(status) = session.child.try_wait()? {
+                    session.exitCode = Some(status.exit_code() as i32);
+                }
+            }
+            if session.exitCode.is_some() {
+                continue;
+            }
+            entries.push(TerminalSessionListEntry {
+                sessionId: sessionId.clone(),
+                sessionName: session.sessionName.clone(),
+                terminalType: "pty".to_string(),
+                sessionKind: "pty".to_string(),
+                workingDir: session.workingDir.clone(),
+                commandRunning: true,
+            });
+        }
+        Ok(entries)
     }
 
     fn createOrGetSession(
@@ -350,10 +396,11 @@ impl TerminalHost for LinuxTerminalHost {
 
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        let state = self.lockState()?;
-        let session = state.sessions.get(&normalizedSessionId).ok_or_else(|| {
+        let mut state = self.lockState()?;
+        let session = state.sessions.get_mut(&normalizedSessionId).ok_or_else(|| {
             HostError::new(format!("Terminal session does not exist: {sessionId}"))
         })?;
+        drainLiveShellOutputToScreen(session)?;
         let content = session
             .screenLines
             .iter()
@@ -579,6 +626,18 @@ fn drainStderr(session: &TerminalSession) -> HostResult<Vec<String>> {
 }
 
 #[allow(non_snake_case)]
+fn drainLiveShellOutputToScreen(session: &mut TerminalSession) -> HostResult<()> {
+    while let Ok(line) = session.stdoutRx.try_recv() {
+        appendScreenLines(session, &line);
+    }
+    let stderrLines = drainStderr(session)?;
+    for line in stderrLines {
+        appendScreenLines(session, &line);
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
 fn joinOutput(mut stdoutLines: Vec<String>, stderrLines: Vec<String>) -> String {
     stdoutLines.extend(stderrLines);
     stdoutLines.join("\n")
@@ -714,10 +773,5 @@ fn nonBlank(value: &str, paramName: &str) -> HostResult<String> {
 
 #[allow(non_snake_case)]
 fn nextSessionId() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::from_millis(0))
-        .as_millis();
-    let sequence = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    format!("terminal-{millis}-{sequence}")
+    Uuid::new_v4().to_string()
 }

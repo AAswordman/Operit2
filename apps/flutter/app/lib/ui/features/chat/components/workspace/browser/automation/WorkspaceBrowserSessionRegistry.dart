@@ -2,18 +2,19 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
+
 import 'WorkspaceBrowserAutomationController.dart';
 
 class WorkspaceBrowserSessionInfo {
   const WorkspaceBrowserSessionInfo({
-    required this.chatId,
     required this.sessionId,
     required this.title,
     required this.url,
     required this.active,
   });
 
-  final String chatId;
   final String sessionId;
   final String title;
   final String url;
@@ -21,7 +22,6 @@ class WorkspaceBrowserSessionInfo {
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
-      'chatId': chatId,
       'sessionId': sessionId,
       'title': title,
       'url': url,
@@ -30,8 +30,10 @@ class WorkspaceBrowserSessionInfo {
   }
 }
 
-class _WorkspaceBrowserChatControls {
-  const _WorkspaceBrowserChatControls({required this.openBrowserTab});
+class _WorkspaceBrowserControls {
+  const _WorkspaceBrowserControls({
+    required this.openBrowserTab,
+  });
 
   final void Function({
     String? url,
@@ -39,6 +41,12 @@ class _WorkspaceBrowserChatControls {
     String? workspaceHtmlPath,
   })
   openBrowserTab;
+}
+
+class _WorkspaceBrowserOpenRequest {
+  const _WorkspaceBrowserOpenRequest({this.url});
+
+  final String? url;
 }
 
 class _WorkspaceBrowserSessionControls {
@@ -55,7 +63,7 @@ class _WorkspaceBrowserSessionControls {
   final void Function() navigateBack;
 }
 
-class WorkspaceBrowserSessionRegistry {
+class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
   WorkspaceBrowserSessionRegistry._();
 
   static final WorkspaceBrowserSessionRegistry instance =
@@ -65,14 +73,14 @@ class WorkspaceBrowserSessionRegistry {
       <String, WorkspaceBrowserAutomationController>{};
   final Map<String, WorkspaceBrowserSessionInfo> _sessions =
       <String, WorkspaceBrowserSessionInfo>{};
-  final Map<String, _WorkspaceBrowserChatControls> _chatControls =
-      <String, _WorkspaceBrowserChatControls>{};
+  _WorkspaceBrowserControls? _browserControls;
   final Map<String, _WorkspaceBrowserSessionControls> _sessionControls =
       <String, _WorkspaceBrowserSessionControls>{};
-  final Map<String, String> _activeSessionIdByChatId = <String, String>{};
-  final Map<String, List<Completer<void>>> _chatSessionWaiters =
-      <String, List<Completer<void>>>{};
+  final List<Completer<void>> _sessionWaiters = <Completer<void>>[];
+  final List<_WorkspaceBrowserOpenRequest> _pendingOpenRequests =
+      <_WorkspaceBrowserOpenRequest>[];
   String? _activeSessionId;
+  bool _notifyScheduled = false;
 
   String? get activeSessionId => _activeSessionId;
 
@@ -84,19 +92,10 @@ class WorkspaceBrowserSessionRegistry {
     return _controllers[sessionId];
   }
 
-  WorkspaceBrowserAutomationController? activeControllerForChat(String chatId) {
-    final sessionId = _activeSessionIdByChatId[chatId];
-    if (sessionId == null) {
-      return null;
-    }
-    return _controllers[sessionId];
-  }
-
   List<WorkspaceBrowserSessionInfo> get sessions =>
       List<WorkspaceBrowserSessionInfo>.unmodifiable(_sessions.values);
 
-  void setChatControls({
-    required String chatId,
+  void setBrowserControls({
     required void Function({
       String? url,
       String? localFilePath,
@@ -104,49 +103,49 @@ class WorkspaceBrowserSessionRegistry {
     })
     openBrowserTab,
   }) {
-    _chatControls[chatId] = _WorkspaceBrowserChatControls(
+    final controls = _WorkspaceBrowserControls(
       openBrowserTab: openBrowserTab,
     );
+    _browserControls = controls;
+    _drainPendingOpenRequests(controls);
   }
 
-  void clearChatControls(String chatId) {
-    _chatControls.remove(chatId);
+  void clearBrowserControls() {
+    _browserControls = null;
   }
 
-  bool hasChatControls(String chatId) {
-    return _chatControls.containsKey(chatId);
+  bool hasBrowserControls() {
+    return _browserControls != null;
   }
 
-  List<Map<String, Object?>> listTabs(String chatId) {
+  List<Map<String, Object?>> listTabs() {
     return sessions
-        .where((session) => session.chatId == chatId)
         .map((session) => session.toJson())
         .toList(growable: false);
   }
 
-  void openBrowserTab(String chatId, {String? url}) {
-    final controls = _chatControls[chatId];
+  void openBrowserTab({String? url}) {
+    final controls = _browserControls;
     if (controls == null) {
-      throw StateError('No browser panel registered for chat_id $chatId');
+      _pendingOpenRequests.add(_WorkspaceBrowserOpenRequest(url: url));
+      return;
     }
     controls.openBrowserTab(url: url);
   }
 
-  Future<void> waitForChatSession(String chatId, {required Duration timeout}) {
-    if (activeControllerForChat(chatId) != null) {
+  Future<void> waitForSession({required Duration timeout}) {
+    if (activeController != null) {
       return Future<void>.value();
     }
     final completer = Completer<void>();
-    _chatSessionWaiters
-        .putIfAbsent(chatId, () => <Completer<void>>[])
-        .add(completer);
+    _sessionWaiters.add(completer);
     return completer.future.timeout(timeout);
   }
 
-  void selectTab(String chatId, String sessionId) {
+  void selectTab(String sessionId) {
     final session = _sessions[sessionId];
-    if (session == null || session.chatId != chatId) {
-      throw StateError('Browser session does not belong to chat_id $chatId');
+    if (session == null) {
+      throw StateError('Browser session is not registered');
     }
     final controls = _sessionControls[sessionId];
     if (controls == null) {
@@ -155,10 +154,10 @@ class WorkspaceBrowserSessionRegistry {
     controls.selectTab(sessionId);
   }
 
-  void closeTab(String chatId, String sessionId) {
+  void closeTab(String sessionId) {
     final session = _sessions[sessionId];
-    if (session == null || session.chatId != chatId) {
-      throw StateError('Browser session does not belong to chat_id $chatId');
+    if (session == null) {
+      throw StateError('Browser session is not registered');
     }
     final controls = _sessionControls[sessionId];
     if (controls == null) {
@@ -167,30 +166,29 @@ class WorkspaceBrowserSessionRegistry {
     controls.closeTab(sessionId);
   }
 
-  void closeActiveTab(String chatId) {
-    final sessionId = _activeSessionIdByChatId[chatId];
+  void closeActiveTab() {
+    final sessionId = _activeSessionId;
     if (sessionId == null) {
-      throw StateError('No active browser session for chat_id $chatId');
+      throw StateError('No active browser session');
     }
-    closeTab(chatId, sessionId);
+    closeTab(sessionId);
   }
 
-  void closeAllTabs(String chatId) {
+  void closeAllTabs() {
     final sessionIds = _sessions.values
-        .where((session) => session.chatId == chatId)
         .map((session) => session.sessionId)
         .toList(growable: false);
     for (final sessionId in sessionIds) {
       if (_sessions.containsKey(sessionId)) {
-        closeTab(chatId, sessionId);
+        closeTab(sessionId);
       }
     }
   }
 
-  void navigate(String chatId, String url) {
-    final sessionId = _activeSessionIdByChatId[chatId];
+  void navigate(String url) {
+    final sessionId = _activeSessionId;
     if (sessionId == null) {
-      throw StateError('No active browser session for chat_id $chatId');
+      throw StateError('No active browser session');
     }
     final controls = _sessionControls[sessionId];
     if (controls == null) {
@@ -199,10 +197,10 @@ class WorkspaceBrowserSessionRegistry {
     controls.navigate(url);
   }
 
-  void navigateBack(String chatId) {
-    final sessionId = _activeSessionIdByChatId[chatId];
+  void navigateBack() {
+    final sessionId = _activeSessionId;
     if (sessionId == null) {
-      throw StateError('No active browser session for chat_id $chatId');
+      throw StateError('No active browser session');
     }
     final controls = _sessionControls[sessionId];
     if (controls == null) {
@@ -212,7 +210,6 @@ class WorkspaceBrowserSessionRegistry {
   }
 
   void register({
-    required String chatId,
     required String sessionId,
     required WorkspaceBrowserAutomationController controller,
     required String title,
@@ -231,21 +228,18 @@ class WorkspaceBrowserSessionRegistry {
       navigateBack: navigateBack,
     );
     _sessions[sessionId] = WorkspaceBrowserSessionInfo(
-      chatId: chatId,
       sessionId: sessionId,
       title: title,
       url: url,
-      active: active,
+      active: false,
     );
     if (active) {
-      _activeSessionId = sessionId;
-      _activeSessionIdByChatId[chatId] = sessionId;
-      _completeChatSessionWaiters(chatId);
+      _setActiveSession(sessionId);
     }
+    _scheduleNotifyListeners();
   }
 
   void update({
-    required String chatId,
     required String sessionId,
     required String title,
     required String url,
@@ -255,50 +249,76 @@ class WorkspaceBrowserSessionRegistry {
       return;
     }
     _sessions[sessionId] = WorkspaceBrowserSessionInfo(
-      chatId: chatId,
       sessionId: sessionId,
       title: title,
       url: url,
-      active: active,
+      active: false,
     );
     if (active) {
-      _activeSessionId = sessionId;
-      _activeSessionIdByChatId[chatId] = sessionId;
-      _completeChatSessionWaiters(chatId);
+      _setActiveSession(sessionId);
     }
+    _scheduleNotifyListeners();
   }
 
   void unregister(String sessionId) {
-    final session = _sessions[sessionId];
     _controllers.remove(sessionId);
     _sessionControls.remove(sessionId);
     _sessions.remove(sessionId);
     if (_activeSessionId == sessionId) {
-      _activeSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
-    }
-    final chatId = session?.chatId;
-    if (chatId != null && _activeSessionIdByChatId[chatId] == sessionId) {
-      final remaining = _sessions.values
-          .where((item) => item.chatId == chatId)
-          .map((item) => item.sessionId)
-          .toList(growable: false);
-      if (remaining.isEmpty) {
-        _activeSessionIdByChatId.remove(chatId);
-      } else {
-        _activeSessionIdByChatId[chatId] = remaining.last;
+      final nextSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
+      _activeSessionId = null;
+      if (nextSessionId != null) {
+        _setActiveSession(nextSessionId);
       }
     }
+    _scheduleNotifyListeners();
   }
 
-  void _completeChatSessionWaiters(String chatId) {
-    final waiters = _chatSessionWaiters.remove(chatId);
-    if (waiters == null) {
-      return;
+  void _setActiveSession(String sessionId) {
+    _activeSessionId = sessionId;
+    final entries = List<WorkspaceBrowserSessionInfo>.of(_sessions.values);
+    for (final session in entries) {
+      _sessions[session.sessionId] = WorkspaceBrowserSessionInfo(
+        sessionId: session.sessionId,
+        title: session.title,
+        url: session.url,
+        active: session.sessionId == sessionId,
+      );
     }
+    _completeSessionWaiters();
+  }
+
+  void _completeSessionWaiters() {
+    final waiters = List<Completer<void>>.of(_sessionWaiters);
+    _sessionWaiters.clear();
     for (final waiter in waiters) {
       if (!waiter.isCompleted) {
         waiter.complete();
       }
+    }
+  }
+
+  void _scheduleNotifyListeners() {
+    if (_notifyScheduled) {
+      return;
+    }
+    _notifyScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _notifyScheduled = false;
+      notifyListeners();
+    });
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
+
+  void _drainPendingOpenRequests(
+    _WorkspaceBrowserControls controls,
+  ) {
+    final requests = List<_WorkspaceBrowserOpenRequest>.of(
+      _pendingOpenRequests,
+    );
+    _pendingOpenRequests.clear();
+    for (final request in requests) {
+      controls.openBrowserTab(url: request.url);
     }
   }
 }

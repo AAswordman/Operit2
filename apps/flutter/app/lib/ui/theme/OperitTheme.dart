@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/generated/app_localizations.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceBrowserAutomationHost.dart';
+import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import '../permissions/ToolApprovalHost.dart';
 
 class OperitTheme extends StatefulWidget {
@@ -60,7 +61,9 @@ class _OperitMaterialApp extends StatelessWidget {
       darkTheme: _themeData(darkColorScheme),
       themeMode: themeMode,
       home: WorkspaceBrowserAutomationHost(
-        child: ToolApprovalHost(child: child),
+        child: WorkspaceWebVisitHost(
+          child: ToolApprovalHost(child: child),
+        ),
       ),
     );
   }

@@ -12,10 +12,7 @@ struct BuildinAsset {
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let source_dir = manifest_dir
-        .join("assets")
-        .join("plugins")
-        .join("buildin");
+    let source_dir = manifest_dir.join("assets").join("plugins").join("buildin");
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));

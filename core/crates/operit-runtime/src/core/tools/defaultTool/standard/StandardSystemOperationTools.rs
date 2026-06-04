@@ -1,12 +1,18 @@
 use std::sync::Arc;
 
 use operit_host_api::{
-    AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, LocationData,
-    NotificationData, SystemOperationHost, SystemSettingData,
+    AppListData as HostAppListData, AppOperationData as HostAppOperationData,
+    AppUsageTimeResultData as HostAppUsageTimeResultData, DeviceInfoData as HostDeviceInfoData,
+    LocationData as HostLocationData, NotificationData as HostNotificationData,
+    SystemOperationHost, SystemSettingData as HostSystemSettingData,
 };
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::core::tools::ToolResultDataClasses::{
+    AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoResultData,
+    LocationData, Notification, NotificationData, SystemSettingData, ToolResultData,
+};
 
 #[derive(Clone)]
 pub struct StandardSystemOperationTools {
@@ -98,7 +104,10 @@ impl StandardSystemOperationTools {
             .host()
             .and_then(|host| host.modifySystemSetting(&namespace, &setting, &value))
         {
-            Ok(data) => toolSuccess(tool, systemSettingDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::SystemSettingData(systemSettingData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error modifying system settings: {}", error.message),
@@ -124,7 +133,10 @@ impl StandardSystemOperationTools {
             .host()
             .and_then(|host| host.getSystemSetting(&namespace, &setting))
         {
-            Ok(data) => toolSuccess(tool, systemSettingDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::SystemSettingData(systemSettingData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error getting system settings: {}", error.message),
@@ -139,7 +151,10 @@ impl StandardSystemOperationTools {
             return toolError(tool, "Must provide installer file path".to_string());
         }
         match self.host().and_then(|host| host.installApp(&apkPath)) {
-            Ok(data) => toolSuccess(tool, appOperationDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::AppOperationData(appOperationData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error requesting app installation: {}", error.message),
@@ -154,7 +169,10 @@ impl StandardSystemOperationTools {
             return toolError(tool, "Must provide package_name parameter".to_string());
         }
         match self.host().and_then(|host| host.uninstallApp(&packageName)) {
-            Ok(data) => toolSuccess(tool, appOperationDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::AppOperationData(appOperationData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error requesting app uninstallation: {}", error.message),
@@ -170,7 +188,7 @@ impl StandardSystemOperationTools {
             .host()
             .and_then(|host| host.listInstalledApps(includeSystemApps))
         {
-            Ok(data) => toolSuccess(tool, appListDataToString(&data)),
+            Ok(data) => toolSuccessData(tool, ToolResultData::AppListData(appListData(data))),
             Err(error) => toolError(
                 tool,
                 format!("Error listing installed apps: {}", error.message),
@@ -185,7 +203,10 @@ impl StandardSystemOperationTools {
             return toolError(tool, "Must provide package_name parameter".to_string());
         }
         match self.host().and_then(|host| host.startApp(&packageName)) {
-            Ok(data) => toolSuccess(tool, appOperationDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::AppOperationData(appOperationData(data)),
+            ),
             Err(error) => toolError(tool, format!("Error starting app: {}", error.message)),
         }
     }
@@ -197,7 +218,10 @@ impl StandardSystemOperationTools {
             return toolError(tool, "Must provide package_name parameter".to_string());
         }
         match self.host().and_then(|host| host.stopApp(&packageName)) {
-            Ok(data) => toolSuccess(tool, appOperationDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::AppOperationData(appOperationData(data)),
+            ),
             Err(error) => toolError(tool, format!("Error stopping app: {}", error.message)),
         }
     }
@@ -213,7 +237,10 @@ impl StandardSystemOperationTools {
             .host()
             .and_then(|host| host.getNotifications(limit, includeOngoing))
         {
-            Ok(data) => toolSuccess(tool, notificationDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::NotificationData(notificationData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error getting notifications: {}", error.message),
@@ -241,7 +268,10 @@ impl StandardSystemOperationTools {
         match self.host().and_then(|host| {
             host.getAppUsageTime(&packageName, sinceHours, limit, includeSystemApps)
         }) {
-            Ok(data) => toolSuccess(tool, appUsageTimeResultDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::AppUsageTimeResultData(appUsageTimeResultData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error getting app usage time: {}", error.message),
@@ -262,7 +292,7 @@ impl StandardSystemOperationTools {
             .host()
             .and_then(|host| host.getDeviceLocation(timeout, highAccuracy, includeAddress))
         {
-            Ok(data) => toolSuccess(tool, locationDataToString(&data)),
+            Ok(data) => toolSuccessData(tool, ToolResultData::LocationData(locationData(data))),
             Err(error) => toolError(
                 tool,
                 format!("Error getting location information: {}", error.message),
@@ -273,7 +303,10 @@ impl StandardSystemOperationTools {
     #[allow(non_snake_case)]
     pub fn getDeviceInfo(&self, tool: &AITool) -> ToolResult {
         match self.host().and_then(|host| host.getDeviceInfo()) {
-            Ok(data) => toolSuccess(tool, deviceInfoDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::DeviceInfoResultData(deviceInfoData(data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error retrieving device info: {}", error.message),
@@ -435,12 +468,121 @@ fn toolSuccess(tool: &AITool, result: String) -> ToolResult {
 }
 
 #[allow(non_snake_case)]
+fn toolSuccessData(tool: &AITool, data: ToolResultData) -> ToolResult {
+    toolSuccess(tool, data.toJson())
+}
+
+#[allow(non_snake_case)]
 fn toolError(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
         result: String::new(),
         error: Some(error),
+    }
+}
+
+#[allow(non_snake_case)]
+fn systemSettingData(data: HostSystemSettingData) -> SystemSettingData {
+    SystemSettingData {
+        namespace: data.namespace,
+        setting: data.setting,
+        value: data.value,
+    }
+}
+
+#[allow(non_snake_case)]
+fn appOperationData(data: HostAppOperationData) -> AppOperationData {
+    AppOperationData {
+        operationType: data.operationType,
+        packageName: data.packageName,
+        success: data.success,
+        details: data.details,
+    }
+}
+
+#[allow(non_snake_case)]
+fn appListData(data: HostAppListData) -> AppListData {
+    AppListData {
+        includesSystemApps: data.includesSystemApps,
+        packages: data.packages,
+    }
+}
+
+#[allow(non_snake_case)]
+fn notificationData(data: HostNotificationData) -> NotificationData {
+    NotificationData {
+        notifications: data
+            .notifications
+            .into_iter()
+            .map(|notification| Notification {
+                packageName: notification.packageName,
+                text: notification.text,
+                timestamp: notification.timestamp,
+            })
+            .collect(),
+        timestamp: data.timestamp,
+    }
+}
+
+#[allow(non_snake_case)]
+fn appUsageTimeResultData(data: HostAppUsageTimeResultData) -> AppUsageTimeResultData {
+    AppUsageTimeResultData {
+        startTime: data.startTime,
+        endTime: data.endTime,
+        sinceHours: data.sinceHours,
+        requestedPackageName: data.requestedPackageName,
+        includesSystemApps: data.includesSystemApps,
+        totalEntries: data.totalEntries,
+        entries: data
+            .entries
+            .into_iter()
+            .map(|entry| AppUsageTimeEntry {
+                packageName: entry.packageName,
+                appName: entry.appName,
+                totalForegroundTimeMs: entry.totalForegroundTimeMs,
+                lastTimeUsed: entry.lastTimeUsed,
+                isSystemApp: entry.isSystemApp,
+            })
+            .collect(),
+    }
+}
+
+#[allow(non_snake_case)]
+fn locationData(data: HostLocationData) -> LocationData {
+    LocationData {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        accuracy: data.accuracy,
+        provider: data.provider,
+        timestamp: data.timestamp,
+        rawData: data.rawData,
+        address: data.address,
+        city: data.city,
+        province: data.province,
+        country: data.country,
+    }
+}
+
+#[allow(non_snake_case)]
+fn deviceInfoData(data: HostDeviceInfoData) -> DeviceInfoResultData {
+    DeviceInfoResultData {
+        deviceId: data.deviceId,
+        model: data.model,
+        manufacturer: data.manufacturer,
+        androidVersion: data.androidVersion,
+        sdkVersion: data.sdkVersion,
+        screenResolution: data.screenResolution,
+        screenDensity: data.screenDensity,
+        totalMemory: data.totalMemory,
+        availableMemory: data.availableMemory,
+        totalStorage: data.totalStorage,
+        availableStorage: data.availableStorage,
+        batteryLevel: data.batteryLevel,
+        batteryCharging: data.batteryCharging,
+        cpuInfo: data.cpuInfo,
+        networkType: data.networkType,
+        additionalInfo: data.additionalInfo,
     }
 }
 
@@ -581,7 +723,7 @@ fn locationDataToString(data: &LocationData) -> String {
 }
 
 #[allow(non_snake_case)]
-fn deviceInfoDataToString(data: &DeviceInfoData) -> String {
+fn deviceInfoDataToString(data: &DeviceInfoResultData) -> String {
     let mut text = String::new();
     text.push_str("Device Information:\n");
     text.push_str(&format!("Device ID: {}\n", data.deviceId));

@@ -241,7 +241,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceBindDialogTitle => 'Choose existing workspace';
 
   @override
-  String get workspacePathLabel => 'Workspace path';
+  String get workspacePathLabel => 'Selected workspace';
 
   @override
   String get workspaceEnvLabel => 'Workspace environment';
@@ -250,7 +250,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get optionalHint => 'Optional';
 
   @override
-  String get workspacePathRequired => 'Enter a workspace path';
+  String get workspacePathRequired => 'Select a workspace folder';
 
   @override
   String get bind => 'Bind';
@@ -621,6 +621,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get filePreview => 'File preview';
+
+  @override
+  String get workspaceBoundTitle => 'Bound workspace';
 
   @override
   String get selectFile => 'Select file';

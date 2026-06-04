@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutionManager, ToolExecutor, ToolValidationResult,
+    AITool, ToolExecutor, ToolValidationResult,
 };
 
 #[derive(Clone)]
@@ -24,17 +24,10 @@ impl StandardBrowserAutomationTools {
 
     #[allow(non_snake_case)]
     pub fn invoke(&self, tool: &AITool) -> ToolResult {
-        let Some(chatId) = resolveChatId(tool) else {
-            return toolError(
-                tool,
-                "chat_id is required for browser automation.".to_string(),
-            );
-        };
-        let parametersJson = browserParametersJson(tool, &chatId);
+        let parametersJson = browserParametersJson(tool);
         let request = BrowserAutomationRequest {
             requestId: uuid::Uuid::new_v4().to_string(),
             toolName: tool.name.clone(),
-            chatId,
             parametersJson,
         };
         match self.browserHost.executeBrowserTool(request) {
@@ -51,10 +44,6 @@ impl StandardBrowserAutomationTools {
 
 impl ToolExecutor for BrowserAutomationToolExecutor {
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        if resolveChatId(tool).is_none() {
-            return invalid("chat_id is required for browser automation.");
-        }
-
         let required = requiredParameters(tool.name.as_str());
         for name in required {
             if parameterValue(tool, name).trim().is_empty() {
@@ -93,18 +82,7 @@ impl ToolExecutor for BrowserAutomationToolExecutor {
 }
 
 #[allow(non_snake_case)]
-fn resolveChatId(tool: &AITool) -> Option<String> {
-    if let Some(value) = optionalParameterValue(tool, "chat_id")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return Some(value);
-    }
-    ToolExecutionManager::currentToolRuntimeContext().and_then(|context| context.callerChatId)
-}
-
-#[allow(non_snake_case)]
-fn browserParametersJson(tool: &AITool, chatId: &str) -> String {
+fn browserParametersJson(tool: &AITool) -> String {
     let mut object = Map::new();
     for parameter in &tool.parameters {
         object.insert(
@@ -112,7 +90,6 @@ fn browserParametersJson(tool: &AITool, chatId: &str) -> String {
             Value::String(parameter.value.clone()),
         );
     }
-    object.insert("chat_id".to_string(), Value::String(chatId.to_string()));
     Value::Object(object).to_string()
 }
 

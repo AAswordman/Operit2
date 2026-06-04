@@ -1,8 +1,9 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
-enum WorkspaceTabKind { home, files, terminal, browser, filePreview }
+enum WorkspaceTabKind { home, setup, files, terminal, browser, webVisit, filePreview }
 
 enum WorkspaceFilePreviewKind {
   image,
@@ -29,7 +30,14 @@ class WorkspaceTab {
     this.fileContent,
     this.previewKind,
     this.url,
+    this.userAgent,
+    this.headers,
     this.workspaceHtmlPath,
+    this.webVisitRequest,
+    this.terminalSessionId,
+    this.terminalSessionKind,
+    this.terminalType,
+    this.terminalWorkingDir,
   });
 
   final WorkspaceTabKind kind;
@@ -41,7 +49,14 @@ class WorkspaceTab {
   final String? fileContent;
   final WorkspaceFilePreviewKind? previewKind;
   final String? url;
+  final String? userAgent;
+  final Map<String, String>? headers;
   final String? workspaceHtmlPath;
+  final WebVisitRequest? webVisitRequest;
+  final String? terminalSessionId;
+  final String? terminalSessionKind;
+  final String? terminalType;
+  final String? terminalWorkingDir;
 }
 
 WorkspaceFilePreviewKind workspacePreviewKindForPath(String path) {

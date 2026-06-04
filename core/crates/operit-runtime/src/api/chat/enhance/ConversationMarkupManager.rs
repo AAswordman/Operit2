@@ -1,4 +1,5 @@
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use crate::core::tools::ToolResultDataClasses::ToolResultData;
 use serde::{Deserialize, Serialize};
 
 const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "\n[工具结果过长，已截断]";
@@ -29,15 +30,18 @@ impl ConversationMarkupManager {
 
     pub fn formatToolResultForMessage(result: &ToolResult) -> String {
         if result.success {
+            let payload = Self::formatToolResultPayload(&result.result);
             Self::createBoundedToolResultXml(
                 &result.toolName,
                 "success",
-                &result.result,
+                &payload,
                 |payload| format!("<content>{payload}</content>"),
             )
         } else {
             let message = result.error.clone().unwrap_or_default().trim().to_string();
-            let detail = result.result.trim().to_string();
+            let detail = Self::formatToolResultPayload(&result.result)
+                .trim()
+                .to_string();
             let errorPayload = if !message.is_empty() && !detail.is_empty() {
                 format!("{message}\n\n{detail}")
             } else if !message.is_empty() {
@@ -49,6 +53,16 @@ impl ConversationMarkupManager {
                 format!("<content><error>{payload}</error></content>")
             })
         }
+    }
+
+    fn formatToolResultPayload(rawPayload: &str) -> String {
+        let trimmed = rawPayload.trim_start();
+        if trimmed.starts_with('{') && trimmed.contains("\"__type\"") {
+            return serde_json::from_str::<ToolResultData>(rawPayload)
+                .expect("ToolResultData structured payload deserialization failed")
+                .toString();
+        }
+        rawPayload.to_string()
     }
 
     pub fn buildBoundedToolResultMessage(results: &[ToolResult]) -> String {

@@ -9,3 +9,4 @@ publish = false
 libc = "0.2"
 operit-host-api = { path = "../../core/crates/operit-host-api" }
 operit-host-linux-native = { path = "../linux" }
+uuid = { version = "1", features = ["v4"] }

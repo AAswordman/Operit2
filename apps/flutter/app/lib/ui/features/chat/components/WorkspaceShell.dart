@@ -15,7 +15,6 @@ class WorkspaceShell extends StatefulWidget {
     super.key,
     required this.workspaceOpen,
     required this.onWorkspaceOpenChanged,
-    required this.currentChatId,
     required this.hasBoundWorkspace,
     required this.workspacePath,
     required this.onListWorkspaceFiles,
@@ -30,7 +29,6 @@ class WorkspaceShell extends StatefulWidget {
 
   final bool workspaceOpen;
   final ValueChanged<bool> onWorkspaceOpenChanged;
-  final String? currentChatId;
   final bool hasBoundWorkspace;
   final String? workspacePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
@@ -194,7 +192,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   Widget _buildWorkspacePanel() {
     return WorkspacePanel(
       key: _workspacePanelKey,
-      currentChatId: widget.currentChatId,
       hasBoundWorkspace: widget.hasBoundWorkspace,
       workspacePath: widget.workspacePath,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,

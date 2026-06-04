@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 
@@ -20,18 +21,8 @@ class WorkspaceSetupContent extends StatefulWidget {
 }
 
 class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
-  final TextEditingController _workspacePathController =
-      TextEditingController();
-  final TextEditingController _workspaceEnvController = TextEditingController();
   bool _busy = false;
   String? _errorMessage;
-
-  @override
-  void dispose() {
-    _workspacePathController.dispose();
-    _workspaceEnvController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +73,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                       icon: Icons.folder_open,
                       title: l10n.workspaceBindExistingTitle,
                       description: l10n.workspaceBindExistingDescription,
-                      onTap: _showBindWorkspaceDialog,
+                      onTap: _pickAndBindWorkspace,
                     ),
                   ],
                 ),
@@ -204,101 +195,20 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
     );
   }
 
-  void _showBindWorkspaceDialog() {
-    _workspacePathController.clear();
-    _workspaceEnvController.clear();
-    _errorMessage = null;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final l10n = AppLocalizations.of(context)!;
-            void syncDialogState(VoidCallback action) {
-              setDialogState(action);
-              setState(() {});
-            }
-
-            return AlertDialog(
-              title: Text(l10n.workspaceBindDialogTitle),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    TextField(
-                      controller: _workspacePathController,
-                      decoration: InputDecoration(
-                        labelText: l10n.workspacePathLabel,
-                        hintText: r'D:\Code\project',
-                      ),
-                      enabled: !_busy,
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _workspaceEnvController,
-                      decoration: InputDecoration(
-                        labelText: l10n.workspaceEnvLabel,
-                        hintText: l10n.optionalHint,
-                      ),
-                      enabled: !_busy,
-                    ),
-                    if (_errorMessage != null) ...<Widget>[
-                      const SizedBox(height: 10),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _errorMessage!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: <Widget>[
-                TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          Navigator.of(dialogContext).pop();
-                        },
-                  child: Text(l10n.cancel),
-                ),
-                FilledButton(
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          final workspace = _workspacePathController.text
-                              .trim();
-                          if (workspace.isEmpty) {
-                            syncDialogState(() {
-                              _errorMessage = l10n.workspacePathRequired;
-                            });
-                            return;
-                          }
-                          final workspaceEnv = _workspaceEnvController.text
-                              .trim();
-                          syncDialogState(() {
-                            _errorMessage = null;
-                          });
-                          _runWorkspaceAction(() {
-                            return widget.onBindWorkspace(
-                              workspace,
-                              workspaceEnv.isEmpty ? null : workspaceEnv,
-                            );
-                          });
-                        },
-                  child: Text(l10n.bind),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+  Future<void> _pickAndBindWorkspace() async {
+    if (_busy) {
+      return;
+    }
+    setState(() {
+      _errorMessage = null;
+    });
+    final selectedPath = await getDirectoryPath(canCreateDirectories: false);
+    if (selectedPath == null) {
+      return;
+    }
+    await _runWorkspaceAction(() {
+      return widget.onBindWorkspace(selectedPath, null);
+    });
   }
 }
 

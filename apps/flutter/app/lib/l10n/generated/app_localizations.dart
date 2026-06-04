@@ -521,7 +521,7 @@ abstract class AppLocalizations {
   /// No description provided for @workspacePathLabel.
   ///
   /// In en, this message translates to:
-  /// **'Workspace path'**
+  /// **'Selected workspace'**
   String get workspacePathLabel;
 
   /// No description provided for @workspaceEnvLabel.
@@ -539,7 +539,7 @@ abstract class AppLocalizations {
   /// No description provided for @workspacePathRequired.
   ///
   /// In en, this message translates to:
-  /// **'Enter a workspace path'**
+  /// **'Select a workspace folder'**
   String get workspacePathRequired;
 
   /// No description provided for @bind.
@@ -1225,6 +1225,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'File preview'**
   String get filePreview;
+
+  /// No description provided for @workspaceBoundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bound workspace'**
+  String get workspaceBoundTitle;
 
   /// No description provided for @selectFile.
   ///

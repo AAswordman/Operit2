@@ -1469,6 +1469,7 @@ dependencies = [
  "libc",
  "operit-host-api",
  "operit-host-linux-native",
+ "uuid",
 ]
 
 [[package]]
@@ -1489,6 +1490,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "tungstenite",
+ "uuid",
  "zip",
 ]
 
@@ -1512,6 +1514,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "tungstenite",
+ "uuid",
  "zip",
 ]
 

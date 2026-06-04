@@ -5,12 +5,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::{FileSystemHost, HttpFilePart, HttpHost, HttpRequestData, HttpResponseData};
+use operit_host_api::{
+    FileSystemHost, HttpFilePart, HttpHost, HttpRequestData,
+    HttpResponseData as HostHttpResponseData,
+};
 use serde_json::{json, Map, Value};
 use url::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::core::tools::ToolResultDataClasses::{HttpResponseData, ToolResultData};
 
 #[derive(Clone, Debug)]
 struct CookieRecord {
@@ -674,7 +678,7 @@ fn cookiesMapForUrl(url: &str) -> HashMap<String, String> {
 }
 
 #[allow(non_snake_case)]
-fn responseToText(requestUrl: &str, response: HttpResponseData) -> String {
+fn responseToText(requestUrl: &str, response: HostHttpResponseData) -> String {
     saveResponseCookies(requestUrl, &response.headers);
     let contentType = response
         .headers
@@ -684,16 +688,18 @@ fn responseToText(requestUrl: &str, response: HttpResponseData) -> String {
         .unwrap_or_default();
     let content = String::from_utf8(response.body.clone())
         .unwrap_or_else(|_| "[Binary Content, decoding failed]".to_string());
-    buildHttpResponseData(
-        &response.finalUrl,
-        response.statusCode,
-        &response.statusMessage,
-        &contentType,
-        &content,
-        Some(&STANDARD.encode(&response.body)),
-        response.body.len(),
-        &cookiesMapForUrl(requestUrl),
-    )
+    ToolResultData::HttpResponseData(HttpResponseData {
+        url: response.finalUrl,
+        statusCode: response.statusCode,
+        statusMessage: response.statusMessage,
+        headers: response.headers.into_iter().collect(),
+        contentType,
+        content,
+        contentBase64: Some(STANDARD.encode(&response.body)),
+        size: response.body.len() as i32,
+        cookies: cookiesMapForUrl(requestUrl),
+    })
+    .toJson()
 }
 
 #[allow(non_snake_case)]

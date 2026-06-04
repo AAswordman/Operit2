@@ -176,12 +176,16 @@ String _tabTitle(AppLocalizations l10n, WorkspaceTab tab) {
   switch (tab.kind) {
     case WorkspaceTabKind.home:
       return l10n.home;
+    case WorkspaceTabKind.setup:
+      return l10n.workspaceSetupTitle;
     case WorkspaceTabKind.files:
       return l10n.files;
     case WorkspaceTabKind.terminal:
       return l10n.terminal;
     case WorkspaceTabKind.browser:
       return l10n.browser;
+    case WorkspaceTabKind.webVisit:
+      return 'visit_web';
     case WorkspaceTabKind.filePreview:
       return l10n.filePreview;
   }

@@ -15,6 +15,12 @@ use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutor, ToolParameter, ToolValidationResult,
 };
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
+use crate::core::tools::ToolResultDataClasses::{
+    BinaryFileContentData, DirectoryListingData, FileApplyResultData, FileContentData,
+    FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
+    FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
+    ToolResultData,
+};
 
 use super::super::PathValidator::PathValidator;
 use super::StandardWebVisitTool::StandardWebVisitTool;
@@ -40,9 +46,13 @@ impl StandardFileSystemTools {
         }
 
         match self.host.listFiles(&path) {
-            Ok(entries) => success(
+            Ok(entries) => successData(
                 tool,
-                directoryListingDataToString(self.envLabel(), &path, &entries),
+                ToolResultData::DirectoryListingData(DirectoryListingData {
+                    path: path.clone(),
+                    entries: entries.iter().map(toolFileEntry).collect(),
+                    env: self.envLabel().to_string(),
+                }),
             ),
             Err(error) => toolError(tool, String::new(), error.message),
         }
@@ -68,9 +78,14 @@ impl StandardFileSystemTools {
                         if existence.size > ToolExecutionLimits::MAX_FILE_READ_BYTES as i64 {
                             finalContent.push_str("\n\n... (file content truncated) ...");
                         }
-                        success(
+                        successData(
                             tool,
-                            fileContentDataToString(self.envLabel(), &path, &finalContent),
+                            ToolResultData::FileContentData(FileContentData {
+                                path: path.clone(),
+                                content: finalContent,
+                                size: existence.size,
+                                env: self.envLabel().to_string(),
+                            }),
                         )
                     }
                     Err(error) => toolError(
@@ -97,9 +112,14 @@ impl StandardFileSystemTools {
         match self.host.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
                 match self.host.readFile(&path) {
-                    Ok(content) => success(
+                    Ok(content) => successData(
                         tool,
-                        fileContentDataToString(self.envLabel(), &path, &content),
+                        ToolResultData::FileContentData(FileContentData {
+                            path: path.clone(),
+                            size: existence.size,
+                            content,
+                            env: self.envLabel().to_string(),
+                        }),
                     ),
                     Err(error) => toolError(
                         tool,
@@ -167,17 +187,18 @@ impl StandardFileSystemTools {
         if isTruncated {
             numbered.push_str("\n\n... (file content truncated) ...");
         }
-        success(
+        successData(
             tool,
-            filePartContentDataToString(
-                self.envLabel(),
-                &numbered,
-                0,
-                1,
-                startIndex,
-                endIndex,
-                totalLines,
-            ),
+            ToolResultData::FilePartContentData(FilePartContentData {
+                path: path.clone(),
+                content: numbered,
+                partIndex: 0,
+                totalParts: 1,
+                startLine: startIndex as i32,
+                endLine: endIndex as i32,
+                totalLines: totalLines as i32,
+                env: self.envLabel().to_string(),
+            }),
         )
     }
 
@@ -193,14 +214,14 @@ impl StandardFileSystemTools {
         match self.host.readFileBytes(&path) {
             Ok(bytes) => {
                 let base64Content = STANDARD.encode(&bytes);
-                success(
+                successData(
                     tool,
-                    binaryFileContentDataToString(
-                        self.envLabel(),
-                        &path,
-                        bytes.len(),
-                        base64Content.len(),
-                    ),
+                    ToolResultData::BinaryFileContentData(BinaryFileContentData {
+                        path: path.clone(),
+                        size: bytes.len() as i64,
+                        contentBase64: base64Content,
+                        env: self.envLabel().to_string(),
+                    }),
                 )
             }
             Err(error) => toolError(
@@ -230,7 +251,10 @@ impl StandardFileSystemTools {
                 } else {
                     format!("Content written to {path}")
                 };
-                success(tool, fileOperationDataToString(self.envLabel(), &details))
+                successData(
+                    tool,
+                    fileOperationResult(self.envLabel(), operation, &path, true, details),
+                )
             }
             Err(errorValue) => {
                 let message = format!("Error writing to file: {}", errorValue.message);
@@ -265,11 +289,14 @@ impl StandardFileSystemTools {
             }
         };
         match self.host.writeFileBytes(&path, &decoded) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!("Binary content written to {path} ({} bytes)", decoded.len()),
+                    "write_binary",
+                    &path,
+                    true,
+                    format!("Binary content written to {path} ({} bytes)", decoded.len()),
                 ),
             ),
             Err(errorValue) => {
@@ -294,9 +321,15 @@ impl StandardFileSystemTools {
         }
 
         match self.host.deleteFile(&path, recursive) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(self.envLabel(), &format!("Successfully deleted {path}")),
+                fileOperationResult(
+                    self.envLabel(),
+                    "delete",
+                    &path,
+                    true,
+                    format!("Successfully deleted {path}"),
+                ),
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
@@ -319,15 +352,15 @@ impl StandardFileSystemTools {
         }
 
         match self.host.fileExists(&path) {
-            Ok(existence) => success(
+            Ok(existence) => successData(
                 tool,
-                fileExistsDataToString(
-                    self.envLabel(),
-                    &path,
-                    existence.exists,
-                    existence.isDirectory,
-                    existence.size,
-                ),
+                ToolResultData::FileExistsData(FileExistsData {
+                    path: path.clone(),
+                    exists: existence.exists,
+                    isDirectory: existence.isDirectory,
+                    size: existence.size,
+                    env: self.envLabel().to_string(),
+                }),
             ),
             Err(error) => toolError(tool, String::new(), error.message),
         }
@@ -352,11 +385,14 @@ impl StandardFileSystemTools {
         }
 
         match self.host.moveFile(&sourcePath, &destPath) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!("Successfully moved {sourcePath} to {destPath}"),
+                    "move",
+                    &sourcePath,
+                    true,
+                    format!("Successfully moved {sourcePath} to {destPath}"),
                 ),
             ),
             Err(errorValue) => {
@@ -390,11 +426,14 @@ impl StandardFileSystemTools {
         }
 
         match self.host.copyFile(&sourcePath, &destPath, recursive) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!("Successfully copied {sourcePath} to {destPath}"),
+                    "copy",
+                    &sourcePath,
+                    true,
+                    format!("Successfully copied {sourcePath} to {destPath}"),
                 ),
             ),
             Err(errorValue) => {
@@ -419,9 +458,15 @@ impl StandardFileSystemTools {
         }
 
         match self.host.makeDirectory(&path, createParents) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(self.envLabel(), &format!("Directory created: {path}")),
+                fileOperationResult(
+                    self.envLabel(),
+                    "mkdir",
+                    &path,
+                    true,
+                    format!("Directory created: {path}"),
+                ),
             ),
             Err(errorValue) => {
                 let message = format!("Error creating directory: {}", errorValue.message);
@@ -446,7 +491,13 @@ impl StandardFileSystemTools {
         if pattern.trim().is_empty() {
             return toolError(
                 tool,
-                findFilesResultDataToString(self.envLabel(), &path, &pattern, &[]),
+                ToolResultData::FindFilesResultData(FindFilesResultData {
+                    path: path.clone(),
+                    pattern: pattern.clone(),
+                    files: Vec::new(),
+                    env: self.envLabel().to_string(),
+                })
+                .toJson(),
                 "pattern parameter is required".to_string(),
             );
         }
@@ -461,13 +512,24 @@ impl StandardFileSystemTools {
             caseInsensitive: parameterBool(tool, "case_insensitive"),
         };
         match self.host.findFiles(request) {
-            Ok(files) => success(
+            Ok(files) => successData(
                 tool,
-                findFilesResultDataToString(self.envLabel(), &path, &pattern, &files),
+                ToolResultData::FindFilesResultData(FindFilesResultData {
+                    path: path.clone(),
+                    pattern: pattern.clone(),
+                    files,
+                    env: self.envLabel().to_string(),
+                }),
             ),
             Err(errorValue) => toolError(
                 tool,
-                findFilesResultDataToString(self.envLabel(), &path, &pattern, &[]),
+                ToolResultData::FindFilesResultData(FindFilesResultData {
+                    path: path.clone(),
+                    pattern: pattern.clone(),
+                    files: Vec::new(),
+                    env: self.envLabel().to_string(),
+                })
+                .toJson(),
                 errorValue.message,
             ),
         }
@@ -483,7 +545,21 @@ impl StandardFileSystemTools {
         }
 
         match self.host.fileInfo(&path) {
-            Ok(info) => success(tool, fileInfoDataToString(self.envLabel(), &info)),
+            Ok(info) => successData(
+                tool,
+                ToolResultData::FileInfoData(FileInfoData {
+                    path: info.path,
+                    exists: info.exists,
+                    fileType: info.fileType,
+                    size: info.size,
+                    permissions: info.permissions,
+                    owner: info.owner,
+                    group: info.group,
+                    lastModified: info.lastModified,
+                    rawStatOutput: info.rawStatOutput,
+                    env: self.envLabel().to_string(),
+                }),
+            ),
             Err(errorValue) => toolError(tool, String::new(), errorValue.message),
         }
     }
@@ -521,9 +597,14 @@ impl StandardFileSystemTools {
                 .unwrap_or(100),
         };
         match self.host.grepCode(request) {
-            Ok(result) => success(
+            Ok(result) => successData(
                 tool,
-                grepResultDataToString(self.envLabel(), &path, &pattern, &result),
+                ToolResultData::GrepResultData(grepResultData(
+                    self.envLabel(),
+                    &path,
+                    &pattern,
+                    &result,
+                )),
             ),
             Err(errorValue) => toolError(tool, String::new(), errorValue.message),
         }
@@ -562,9 +643,14 @@ impl StandardFileSystemTools {
                 .unwrap_or(10),
         };
         match self.host.grepCode(request) {
-            Ok(result) => success(
+            Ok(result) => successData(
                 tool,
-                grepResultDataToString(self.envLabel(), &path, &intent, &result),
+                ToolResultData::GrepResultData(grepResultData(
+                    self.envLabel(),
+                    &path,
+                    &intent,
+                    &result,
+                )),
             ),
             Err(errorValue) => toolError(tool, String::new(), errorValue.message),
         }
@@ -716,11 +802,14 @@ impl StandardFileSystemTools {
         let bytes = response.body;
 
         match self.host.writeFileBytes(&destPath, bytes.as_ref()) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!(
+                    "download",
+                    &destPath,
+                    true,
+                    format!(
                         "File downloaded successfully: {} -> {} (file size: {})",
                         resolvedUrl.trim(),
                         destPath,
@@ -849,16 +938,19 @@ impl StandardFileSystemTools {
                 Ok(()) => {
                     let diffContent = FileBindingService.generateUnifiedDiff("", &newContent);
                     let details = format!("Successfully created new file: {path}");
-                    success(
+                    successData(
                         tool,
-                        fileApplyResultDataToString(
-                            self.envLabel(),
-                            "create",
-                            &path,
-                            &details,
-                            "",
-                            Some(&diffContent),
-                        ),
+                        ToolResultData::FileApplyResultData(FileApplyResultData {
+                            operation: fileOperationData(
+                                self.envLabel(),
+                                "create",
+                                &path,
+                                true,
+                                details,
+                            ),
+                            aiDiffInstructions: String::new(),
+                            diffContent: Some(diffContent),
+                        }),
                     )
                 }
                 Err(error) => {
@@ -960,16 +1052,19 @@ impl StandardFileSystemTools {
                 let details = format!("Successfully applied AI code to file: {path}");
                 let diffContent =
                     FileBindingService.generateUnifiedDiff(&originalContent, &mergedContent);
-                success(
+                successData(
                     tool,
-                    fileApplyResultDataToString(
-                        self.envLabel(),
-                        "apply",
-                        &path,
-                        &details,
-                        &aiInstructions,
-                        Some(&diffContent),
-                    ),
+                    ToolResultData::FileApplyResultData(FileApplyResultData {
+                        operation: fileOperationData(
+                            self.envLabel(),
+                            "apply",
+                            &path,
+                            true,
+                            details,
+                        ),
+                        aiDiffInstructions: aiInstructions,
+                        diffContent: Some(diffContent),
+                    }),
                 )
             }
             Err(error) => {
@@ -1001,11 +1096,14 @@ impl StandardFileSystemTools {
             return result;
         }
         match self.host.zipFiles(&source, &destination) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!("Successfully compressed {source} to {destination}"),
+                    "zip",
+                    &source,
+                    true,
+                    format!("Successfully compressed {source} to {destination}"),
                 ),
             ),
             Err(errorValue) => {
@@ -1037,11 +1135,14 @@ impl StandardFileSystemTools {
             return result;
         }
         match self.host.unzipFiles(&source, &destination) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(
+                fileOperationResult(
                     self.envLabel(),
-                    &format!("Successfully extracted {source} to {destination}"),
+                    "unzip",
+                    &source,
+                    true,
+                    format!("Successfully extracted {source} to {destination}"),
                 ),
             ),
             Err(errorValue) => {
@@ -1064,9 +1165,15 @@ impl StandardFileSystemTools {
             return result;
         }
         match self.host.openFile(&path) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(self.envLabel(), &format!("Requested open for {path}")),
+                fileOperationResult(
+                    self.envLabel(),
+                    "open",
+                    &path,
+                    true,
+                    format!("Requested open for {path}"),
+                ),
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
@@ -1090,9 +1197,15 @@ impl StandardFileSystemTools {
             return result;
         }
         match self.host.shareFile(&path, &title) {
-            Ok(()) => success(
+            Ok(()) => successData(
                 tool,
-                fileOperationDataToString(self.envLabel(), &format!("Requested share for {path}")),
+                fileOperationResult(
+                    self.envLabel(),
+                    "share",
+                    &path,
+                    true,
+                    format!("Requested share for {path}"),
+                ),
             ),
             Err(errorValue) => {
                 let message = errorValue.message;
@@ -1222,6 +1335,10 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
     }
 }
 
+fn successData(tool: &AITool, data: ToolResultData) -> ToolResult {
+    success(tool, data.toJson())
+}
+
 fn success(tool: &AITool, result: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
@@ -1237,6 +1354,73 @@ fn toolError(tool: &AITool, result: String, message: String) -> ToolResult {
         success: false,
         result,
         error: Some(message),
+    }
+}
+
+fn toolFileEntry(entry: &FileEntry) -> ToolFileEntry {
+    ToolFileEntry {
+        name: entry.name.clone(),
+        isDirectory: entry.isDirectory,
+        size: entry.size,
+        permissions: entry.permissions.clone(),
+        lastModified: entry.lastModified.clone(),
+    }
+}
+
+fn fileOperationResult(
+    env: &str,
+    operation: &str,
+    path: &str,
+    successful: bool,
+    details: String,
+) -> ToolResultData {
+    ToolResultData::FileOperationData(fileOperationData(env, operation, path, successful, details))
+}
+
+fn fileOperationData(
+    env: &str,
+    operation: &str,
+    path: &str,
+    successful: bool,
+    details: String,
+) -> FileOperationData {
+    FileOperationData {
+        operation: operation.to_string(),
+        env: env.to_string(),
+        path: path.to_string(),
+        successful,
+        details,
+    }
+}
+
+fn grepResultData(
+    env: &str,
+    searchPath: &str,
+    pattern: &str,
+    result: &GrepCodeResult,
+) -> GrepResultData {
+    GrepResultData {
+        searchPath: searchPath.to_string(),
+        pattern: pattern.to_string(),
+        matches: result
+            .matches
+            .iter()
+            .map(|fileMatch| GrepFileMatch {
+                filePath: fileMatch.filePath.clone(),
+                lineMatches: fileMatch
+                    .lineMatches
+                    .iter()
+                    .map(|lineMatch| GrepLineMatch {
+                        lineNumber: lineMatch.lineNumber as i32,
+                        lineContent: lineMatch.lineContent.clone(),
+                        matchContext: lineMatch.matchContext.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        totalMatches: result.totalMatches as i32,
+        filesSearched: result.filesSearched as i32,
+        env: env.to_string(),
     }
 }
 

@@ -12,12 +12,14 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
     required this.controller,
     required this.title,
     this.localFilePath,
+    this.preferredUserAgent,
   }) : url = initialUrl,
        addressText = initialUrl;
 
   final String id;
   final WebViewController controller;
   final String? localFilePath;
+  final String? preferredUserAgent;
   final TextEditingControllerHandle addressController =
       TextEditingControllerHandle();
 

@@ -7,6 +7,10 @@ use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolExecutor, ToolValidationResult,
 };
+use crate::core::tools::ToolResultDataClasses::{
+    LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData,
+    ToolResultData,
+};
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::UserPreferencesManager::PreferencesManager;
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
@@ -120,7 +124,7 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     let (snapshotId, snapshotCreated) = resolveSnapshot(&profileId, snapshotIdParam);
-    let settings = match MemorySearchSettingsPreferences::new(&profileId).load() {
+    let _settings = match MemorySearchSettingsPreferences::new(&profileId).load() {
         Ok(settings) => settings,
         Err(error) => {
             return errorResult(
@@ -143,23 +147,14 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
     };
 
     let (excluded, returned) = selectSnapshotResults(&profileId, &snapshotId, results, limit);
-    success(
+    successData(
         tool,
-        formatMemoryResults(
-            &query,
+        ToolResultData::MemoryQueryResultData(memoryQueryResultData(
             &returned,
-            Some(&snapshotId),
+            Some(snapshotId),
             snapshotCreated,
             excluded,
-            &format!(
-                "mode={:?}, keywordWeight={}, tagWeight={}, vectorWeight={}, edgeWeight={}",
-                settings.scoreMode,
-                settings.keywordWeight,
-                settings.tagWeight,
-                settings.vectorWeight,
-                settings.edgeWeight
-            ),
-        ),
+        )),
     )
 }
 
@@ -170,9 +165,9 @@ fn executeGetMemoryByTitle(tool: &AITool) -> ToolResult {
     }
     let repository = MemoryRepository::new(resolveActiveProfileId());
     match repository.findMemoryByTitle(&title) {
-        Ok(Some(memory)) => success(
+        Ok(Some(memory)) => successData(
             tool,
-            formatMemoryResults(&title, &[memory], None, false, 0, ""),
+            ToolResultData::MemoryQueryResultData(memoryQueryResultData(&[memory], None, false, 0)),
         ),
         Ok(None) => errorResult(tool, &format!("Memory not found with title: {title}")),
         Err(error) => errorResult(tool, &format!("Failed to get memory by title: {error}")),
@@ -435,12 +430,22 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
         .unwrap_or(MemoryRepository::MEDIUM_LINK)
         .clamp(0.0, 1.0);
     let description = optionalParameterValue(tool, "description").unwrap_or_default();
-    match repository.linkMemories(source.id, target.id, linkType.clone(), weight, description.clone()) {
-        Ok(_) => success(
+    match repository.linkMemories(
+        source.id,
+        target.id,
+        linkType.clone(),
+        weight,
+        description.clone(),
+    ) {
+        Ok(_) => successData(
             tool,
-            format!(
-                "sourceTitle={sourceTitle}\ntargetTitle={targetTitle}\nlinkType={linkType}\nweight={weight}\ndescription={description}"
-            ),
+            ToolResultData::MemoryLinkResultData(MemoryLinkResultData {
+                sourceTitle,
+                targetTitle,
+                linkType,
+                weight,
+                description,
+            }),
         ),
         Err(error) => errorResult(tool, &format!("Failed to link memories: {error}")),
     }
@@ -502,7 +507,10 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
         linkType.as_deref(),
         limit,
     ) {
-        Ok(links) => success(tool, formatMemoryLinks(&links)),
+        Ok(links) => successData(
+            tool,
+            ToolResultData::MemoryLinkQueryResultData(memoryLinkQueryResultData(&links)),
+        ),
         Err(error) => errorResult(tool, &format!("Failed to query memory links: {error}")),
     }
 }
@@ -533,7 +541,10 @@ fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
     let weight = newWeight.unwrap_or(link.link.weight).clamp(0.0, 1.0);
     let description = newDescription.unwrap_or_else(|| link.link.description.clone());
     match repository.updateLink(link.link.id, type_, weight, description) {
-        Ok(updated) => success(tool, formatMemoryLinks(&[updated])),
+        Ok(updated) => successData(
+            tool,
+            ToolResultData::MemoryLinkQueryResultData(memoryLinkQueryResultData(&[updated])),
+        ),
         Err(error) => errorResult(tool, &format!("Failed to update memory link: {error}")),
     }
 }
@@ -713,6 +724,49 @@ fn snapshotStore() -> &'static Mutex<HashMap<String, HashMap<String, QuerySnapsh
     SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn memoryQueryResultData(
+    memories: &[crate::data::model::Memory::Memory],
+    snapshotId: Option<String>,
+    snapshotCreated: bool,
+    excludedBySnapshotCount: usize,
+) -> MemoryQueryResultData {
+    MemoryQueryResultData {
+        memories: memories.iter().map(memoryInfo).collect(),
+        snapshotId,
+        snapshotCreated,
+        excludedBySnapshotCount: excludedBySnapshotCount as i32,
+    }
+}
+
+fn memoryInfo(memory: &crate::data::model::Memory::Memory) -> MemoryInfo {
+    MemoryInfo {
+        title: memory.title.clone(),
+        content: memory.content.clone(),
+        source: memory.source.clone(),
+        tags: memory.tags.iter().map(|tag| tag.name.clone()).collect(),
+        createdAt: formatMillis(memory.createdAt),
+        chunkInfo: None,
+        chunkIndices: None,
+    }
+}
+
+fn memoryLinkQueryResultData(links: &[MemoryLinkInfo]) -> MemoryLinkQueryResultData {
+    MemoryLinkQueryResultData {
+        totalCount: links.len() as i32,
+        links: links
+            .iter()
+            .map(|info| LinkInfo {
+                linkId: info.link.id,
+                sourceTitle: info.sourceTitle.clone(),
+                targetTitle: info.targetTitle.clone(),
+                linkType: info.link.type_.clone(),
+                weight: info.link.weight,
+                description: info.link.description.clone(),
+            })
+            .collect(),
+    }
+}
+
 fn formatMemoryResults(
     query: &str,
     memories: &[crate::data::model::Memory::Memory],
@@ -820,6 +874,10 @@ fn success(tool: &AITool, result: String) -> ToolResult {
         result,
         error: None,
     }
+}
+
+fn successData(tool: &AITool, data: ToolResultData) -> ToolResult {
+    success(tool, data.toJson())
 }
 
 fn errorResult(tool: &AITool, message: &str) -> ToolResult {

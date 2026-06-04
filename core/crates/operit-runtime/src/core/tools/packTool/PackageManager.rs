@@ -221,7 +221,8 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn getEnabledPackageNames(&self) -> Vec<String> {
-        let mut enabledPackageNames = BTreeSet::from_iter(self.decodeEnabledPackageNamesFromPrefs());
+        let mut enabledPackageNames =
+            BTreeSet::from_iter(self.decodeEnabledPackageNamesFromPrefs());
         let disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
         for toolPackage in self.availablePackages.values() {
             if toolPackage.is_built_in
@@ -1084,7 +1085,8 @@ impl PackageManager {
         packageName: &str,
     ) -> Result<(), PreferencesDataStoreError> {
         let normalizedPackageName = self.normalizePackageName(packageName);
-        let mut disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
+        let mut disabledPackageNames =
+            BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
         if disabledPackageNames.remove(&normalizedPackageName) {
             let names = disabledPackageNames.into_iter().collect::<Vec<_>>();
             self.saveDisabledPackageNames(&names)?;
@@ -1104,7 +1106,8 @@ impl PackageManager {
         if !toolPackage.is_built_in || !toolPackage.enabled_by_default {
             return Ok(());
         }
-        let mut disabledPackageNames = BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
+        let mut disabledPackageNames =
+            BTreeSet::from_iter(self.decodeDisabledPackageNamesFromPrefs());
         if disabledPackageNames.insert(normalizedPackageName) {
             let names = disabledPackageNames.into_iter().collect::<Vec<_>>();
             self.saveDisabledPackageNames(&names)?;

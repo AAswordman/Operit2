@@ -107,30 +107,25 @@ class _WorkspaceBrowserAutomationHostState
     switch (request.toolName) {
       case 'browser_navigate':
         final url = _required(params, 'url');
-        if (_registry.activeControllerForChat(request.chatId) == null) {
-          _registry.openBrowserTab(request.chatId, url: url);
-          await _registry.waitForChatSession(
-            request.chatId,
-            timeout: const Duration(seconds: 30),
-          );
+        if (_registry.activeController == null) {
+          _registry.openBrowserTab(url: url);
+          await _registry.waitForSession(timeout: const Duration(seconds: 30));
           return jsonEncode(<String, Object?>{
-            'chat_id': request.chatId,
             'url': url,
           });
         }
-        _registry.navigate(request.chatId, url);
+        _registry.navigate(url);
         return jsonEncode(<String, Object?>{
-          'chat_id': request.chatId,
           'url': url,
         });
       case 'browser_navigate_back':
-        _registry.navigateBack(request.chatId);
+        _registry.navigateBack();
         return 'OK';
       case 'browser_close':
-        _registry.closeActiveTab(request.chatId);
+        _registry.closeActiveTab();
         return 'OK';
       case 'browser_close_all':
-        _registry.closeAllTabs(request.chatId);
+        _registry.closeAllTabs();
         return 'OK';
       case 'browser_tabs':
         return _handleTabs(request);
@@ -209,31 +204,28 @@ class _WorkspaceBrowserAutomationHostState
     final action = _required(params, 'action');
     switch (action) {
       case 'list':
-        return jsonEncode(_registry.listTabs(request.chatId));
+        return jsonEncode(_registry.listTabs());
       case 'create':
         final url = _required(params, 'url');
-        _registry.openBrowserTab(request.chatId, url: url);
-        await _registry.waitForChatSession(
-          request.chatId,
-          timeout: const Duration(seconds: 30),
-        );
-        return jsonEncode(_registry.listTabs(request.chatId));
+        _registry.openBrowserTab(url: url);
+        await _registry.waitForSession(timeout: const Duration(seconds: 30));
+        return jsonEncode(_registry.listTabs());
       case 'select':
         final index = _intParam(params, 'index');
-        final tabs = _registry.listTabs(request.chatId);
+        final tabs = _registry.listTabs();
         final tab = tabs[index];
-        _registry.selectTab(request.chatId, tab['sessionId'] as String);
+        _registry.selectTab(tab['sessionId'] as String);
         return jsonEncode(tab);
       case 'close':
         final indexText = _optional(params, 'index');
         if (indexText == null) {
-          _registry.closeActiveTab(request.chatId);
+          _registry.closeActiveTab();
           return 'OK';
         }
         final index = int.parse(indexText);
-        final tabs = _registry.listTabs(request.chatId);
+        final tabs = _registry.listTabs();
         final tab = tabs[index];
-        _registry.closeTab(request.chatId, tab['sessionId'] as String);
+        _registry.closeTab(tab['sessionId'] as String);
         return 'OK';
     }
     throw StateError('Unsupported browser tab action: $action');
@@ -262,11 +254,9 @@ class _WorkspaceBrowserAutomationHostState
   WorkspaceBrowserAutomationController _controller(
     BrowserAutomationRequest request,
   ) {
-    final controller = _registry.activeControllerForChat(request.chatId);
+    final controller = _registry.activeController;
     if (controller == null) {
-      throw StateError(
-        'No active browser session for chat_id ${request.chatId}',
-      );
+      throw StateError('No active browser session');
     }
     return controller;
   }

@@ -188,9 +188,6 @@ type BrowserMouseButton = "left" | "right" | "middle";
 type BrowserModifierKey = "Alt" | "Control" | "ControlOrMeta" | "Meta" | "Shift";
 type ToolParamValue = string | number | boolean | object;
 type BrowserToolResult = string | { value: string; toString(): string };
-interface BrowserInternalChatPayload {
-    chat_id: string;
-}
 
 interface FilenamePayload {
     filename?: string;
@@ -337,22 +334,6 @@ function buildLargeOutputFilename(prefix: string, extension: string): string {
     return OPERIT_CLEAN_ON_EXIT_DIR + "/browser_" + prefix + "_" + timestamp + "_" + rand + "." + extension;
 }
 
-function runtimeChatId(): string {
-    const value = getChatId();
-    if (value === undefined) {
-        throw new Error("browser tool requires chat context");
-    }
-    const normalized = value.trim();
-    if (!normalized) {
-        throw new Error("browser tool requires chat context");
-    }
-    return normalized;
-}
-
-function browserParams<T extends object>(params: T): T & BrowserInternalChatPayload {
-    return Object.assign({}, params, { chat_id: runtimeChatId() });
-}
-
 function browserResultText(result: BrowserToolResult): string {
     return typeof result === "string" ? result : result.value;
 }
@@ -374,37 +355,37 @@ async function maybePersistLargeBrowserResponse(
 }
 
 async function click(params: ClickPayload) {
-    const result = await Tools.Net.browserClick(browserParams(params));
+    const result = await Tools.Net.browserClick(params);
     return maybePersistLargeBrowserResponse(result, "click");
 }
 
 async function close() {
-    const result = await Tools.Net.browserClose(browserParams({}));
+    const result = await Tools.Net.browserClose({});
     return maybePersistLargeBrowserResponse(result, "close");
 }
 
 async function close_all() {
-    const result = await Tools.Net.browserCloseAll(browserParams({}));
+    const result = await Tools.Net.browserCloseAll({});
     return maybePersistLargeBrowserResponse(result, "close_all");
 }
 
 async function console_messages(params: Partial<ConsoleMessagesPayload> = {}) {
-    const result = await Tools.Net.browserConsoleMessages(browserParams(params));
+    const result = await Tools.Net.browserConsoleMessages(params);
     return maybePersistLargeBrowserResponse(result, "console_messages");
 }
 
 async function drag(params: DragPayload) {
-    const result = await Tools.Net.browserDrag(browserParams(params));
+    const result = await Tools.Net.browserDrag(params);
     return maybePersistLargeBrowserResponse(result, "drag");
 }
 
 async function evaluate(params: EvaluatePayload) {
-    const result = await Tools.Net.browserEvaluate(browserParams(params));
+    const result = await Tools.Net.browserEvaluate(params);
     return maybePersistLargeBrowserResponse(result, "evaluate");
 }
 
 async function upload(params: UploadPayload = {}) {
-    const result = await Tools.Net.browserFileUpload(browserParams(params));
+    const result = await Tools.Net.browserFileUpload(params);
     return maybePersistLargeBrowserResponse(result, "upload");
 }
 
@@ -443,22 +424,22 @@ async function fill_form(params: FillFormPayload) {
     const payload: FillFormPayload = {
         fields: normalizeFormFields(params.fields)
     };
-    const result = await Tools.Net.browserFillForm(browserParams(payload));
+    const result = await Tools.Net.browserFillForm(payload);
     return maybePersistLargeBrowserResponse(result, "fill_form");
 }
 
 async function handle_dialog(params: HandleDialogPayload) {
-    const result = await Tools.Net.browserHandleDialog(browserParams(params));
+    const result = await Tools.Net.browserHandleDialog(params);
     return maybePersistLargeBrowserResponse(result, "handle_dialog");
 }
 
 async function hover(params: HoverPayload) {
-    const result = await Tools.Net.browserHover(browserParams(params));
+    const result = await Tools.Net.browserHover(params);
     return maybePersistLargeBrowserResponse(result, "hover");
 }
 
 async function goto(params: GotoPayload) {
-    const result = await Tools.Net.browserNavigate(browserParams(params));
+    const result = await Tools.Net.browserNavigate(params);
     const text = browserResultText(result);
     if (text.length > MAX_INLINE_BROWSER_TEXT_CHARS) {
         return maybePersistLargeBrowserResponse(result, "goto");
@@ -467,52 +448,52 @@ async function goto(params: GotoPayload) {
 }
 
 async function back() {
-    const result = await Tools.Net.browserNavigateBack(browserParams({}));
+    const result = await Tools.Net.browserNavigateBack({});
     return maybePersistLargeBrowserResponse(result, "back");
 }
 
 async function network_requests(params: NetworkRequestsPayload = {}) {
-    const result = await Tools.Net.browserNetworkRequests(browserParams(params));
+    const result = await Tools.Net.browserNetworkRequests(params);
     return maybePersistLargeBrowserResponse(result, "network_requests");
 }
 
 async function press_key(params: PressKeyPayload) {
-    const result = await Tools.Net.browserPressKey(browserParams(params));
+    const result = await Tools.Net.browserPressKey(params);
     return maybePersistLargeBrowserResponse(result, "press_key");
 }
 
 async function resize(params: ResizePayload) {
-    const result = await Tools.Net.browserResize(browserParams(params));
+    const result = await Tools.Net.browserResize(params);
     return maybePersistLargeBrowserResponse(result, "resize");
 }
 
 async function run_code(params: RunCodePayload) {
-    const result = await Tools.Net.browserRunCode(browserParams(params));
+    const result = await Tools.Net.browserRunCode(params);
     return maybePersistLargeBrowserResponse(result, "run_code");
 }
 
 async function select_option(params: SelectOptionPayload) {
-    const result = await Tools.Net.browserSelectOption(browserParams(params));
+    const result = await Tools.Net.browserSelectOption(params);
     return maybePersistLargeBrowserResponse(result, "select_option");
 }
 
 async function snapshot(params: SnapshotPayload = {}) {
-    const result = await Tools.Net.browserSnapshot(browserParams(params));
+    const result = await Tools.Net.browserSnapshot(params);
     return maybePersistLargeBrowserResponse(result, "snapshot");
 }
 
 async function type(params: TypePayload) {
-    const result = await Tools.Net.browserType(browserParams(params));
+    const result = await Tools.Net.browserType(params);
     return maybePersistLargeBrowserResponse(result, "type");
 }
 
 async function wait_for(params: WaitForPayload = {}) {
-    const result = await Tools.Net.browserWaitFor(browserParams(params));
+    const result = await Tools.Net.browserWaitFor(params);
     return maybePersistLargeBrowserResponse(result, "wait_for");
 }
 
 async function tabs(params: TabsPayload) {
-    const result = await Tools.Net.browserTabs(browserParams(params));
+    const result = await Tools.Net.browserTabs(params);
     return maybePersistLargeBrowserResponse(result, "tabs");
 }
 

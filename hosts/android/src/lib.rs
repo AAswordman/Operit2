@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, FileEntry,
@@ -22,8 +22,9 @@ use operit_host_api::{
     RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry, RuntimeStorageHost,
     SystemOperationHost, SystemSettingData, TerminalCloseOutput, TerminalCommandOutput,
     TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
-    TerminalTypeInfo, WebVisitHost, WebVisitRequest, WebVisitResult,
+    TerminalSessionListEntry, TerminalTypeInfo, WebVisitHost, WebVisitRequest, WebVisitResult,
 };
+use uuid::Uuid;
 
 static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
 type RawFd = i32;
@@ -548,6 +549,8 @@ struct AndroidTerminalSession {
 }
 
 struct AndroidPtySession {
+    sessionName: String,
+    workingDir: String,
     pid: AndroidPid,
     masterFd: RawFd,
     exitCode: Option<i32>,
@@ -569,7 +572,14 @@ impl AndroidTerminalHost {
         Self::default()
     }
 
-    pub fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String> {
+    pub fn startPtySession(
+        &self,
+        sessionName: &str,
+        workingDir: &str,
+        rows: u16,
+        cols: u16,
+    ) -> HostResult<String> {
+        let normalizedSessionName = nonBlank(sessionName, "session_name")?;
         let command = buildAndroidPtyCommand(workingDir)?;
         let (pid, masterFd) = forkPtyExecve(&command, rows, cols)?;
         let sessionId = nextTerminalId();
@@ -577,6 +587,8 @@ impl AndroidTerminalHost {
         state.ptySessions.insert(
             sessionId.clone(),
             AndroidPtySession {
+                sessionName: normalizedSessionName,
+                workingDir: workingDir.trim().to_string(),
                 pid,
                 masterFd,
                 exitCode: None,
@@ -661,8 +673,14 @@ impl TerminalHost for AndroidTerminalHost {
         })
     }
 
-    fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String> {
-        AndroidTerminalHost::startPtySession(self, workingDir, rows, cols)
+    fn startPtySession(
+        &self,
+        sessionName: &str,
+        workingDir: &str,
+        rows: u16,
+        cols: u16,
+    ) -> HostResult<String> {
+        AndroidTerminalHost::startPtySession(self, sessionName, workingDir, rows, cols)
     }
 
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
@@ -683,6 +701,40 @@ impl TerminalHost for AndroidTerminalHost {
 
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
         AndroidTerminalHost::closePtySession(self, sessionId)
+    }
+
+    fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
+        let mut state = self.lockState()?;
+        let mut entries = Vec::new();
+        for session in state.sessions.values() {
+            entries.push(TerminalSessionListEntry {
+                sessionId: session.id.clone(),
+                sessionName: session.name.clone(),
+                terminalType: session.terminalType.clone(),
+                sessionKind: "shell".to_string(),
+                workingDir: String::new(),
+                commandRunning: session.commandRunning,
+            });
+        }
+        for (sessionId, session) in state.ptySessions.iter_mut() {
+            if session.exitCode.is_none() {
+                if let Some(exitCode) = pollPidExitCode(session.pid)? {
+                    session.exitCode = Some(exitCode);
+                }
+            }
+            if session.exitCode.is_some() {
+                continue;
+            }
+            entries.push(TerminalSessionListEntry {
+                sessionId: sessionId.clone(),
+                sessionName: session.sessionName.clone(),
+                terminalType: "pty".to_string(),
+                sessionKind: "pty".to_string(),
+                workingDir: session.workingDir.clone(),
+                commandRunning: true,
+            });
+        }
+        Ok(entries)
     }
 
     fn createOrGetSession(
@@ -853,10 +905,11 @@ impl TerminalHost for AndroidTerminalHost {
 
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        let state = self.lockState()?;
-        let session = state.sessions.get(&normalizedSessionId).ok_or_else(|| {
+        let mut state = self.lockState()?;
+        let session = state.sessions.get_mut(&normalizedSessionId).ok_or_else(|| {
             HostError::new(format!("Terminal session does not exist: {sessionId}"))
         })?;
+        drainLiveAndroidShellOutputToScreen(session)?;
         let content = session
             .screenLines
             .iter()
@@ -1030,6 +1083,17 @@ fn drainAndroidStderr(session: &AndroidTerminalSession) -> HostResult<Vec<String
     Ok(collected)
 }
 
+fn drainLiveAndroidShellOutputToScreen(session: &mut AndroidTerminalSession) -> HostResult<()> {
+    while let Ok(line) = session.stdoutRx.try_recv() {
+        appendAndroidScreenLines(session, &line);
+    }
+    let stderrLines = drainAndroidStderr(session)?;
+    for line in stderrLines {
+        appendAndroidScreenLines(session, &line);
+    }
+    Ok(())
+}
+
 fn joinOutput(mut stdoutLines: Vec<String>, stderrLines: Vec<String>) -> String {
     stdoutLines.extend(stderrLines);
     stdoutLines.join("\n")
@@ -1188,12 +1252,7 @@ fn sessionKey(terminalType: &str, name: &str) -> String {
 }
 
 fn nextTerminalId() -> String {
-    let millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(value) => value.as_millis(),
-        Err(_) => 0,
-    };
-    let sequence = NEXT_TERMINAL_ID.fetch_add(1, Ordering::SeqCst);
-    format!("terminal-{millis}-{sequence}")
+    Uuid::new_v4().to_string()
 }
 
 struct AndroidPtyCommand {

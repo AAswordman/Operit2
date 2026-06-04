@@ -288,7 +288,6 @@ pub trait WebVisitHost: Send + Sync {
 pub struct BrowserAutomationRequest {
     pub requestId: String,
     pub toolName: String,
-    pub chatId: String,
     pub parametersJson: String,
 }
 
@@ -440,6 +439,16 @@ pub struct TerminalScreenOutput {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSessionListEntry {
+    pub sessionId: String,
+    pub sessionName: String,
+    pub terminalType: String,
+    pub sessionKind: String,
+    pub workingDir: String,
+    pub commandRunning: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalTypeInfo {
     pub terminalType: String,
     pub available: bool,
@@ -455,12 +464,19 @@ pub struct TerminalInfo {
 
 pub trait TerminalHost: Send + Sync {
     fn terminalInfo(&self) -> HostResult<TerminalInfo>;
-    fn startPtySession(&self, workingDir: &str, rows: u16, cols: u16) -> HostResult<String>;
+    fn startPtySession(
+        &self,
+        sessionName: &str,
+        workingDir: &str,
+        rows: u16,
+        cols: u16,
+    ) -> HostResult<String>;
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>>;
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize>;
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()>;
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>>;
     fn closePtySession(&self, sessionId: &str) -> HostResult<()>;
+    fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>>;
     fn createOrGetSession(
         &self,
         sessionName: &str,

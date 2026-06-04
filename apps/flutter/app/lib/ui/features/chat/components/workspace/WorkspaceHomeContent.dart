@@ -1,39 +1,56 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 
 class WorkspaceHomeContent extends StatelessWidget {
   const WorkspaceHomeContent({
     super.key,
     required this.workspacePath,
+    required this.terminalSessionCountListenable,
+    required this.browserSessionRegistry,
     required this.onOpenFiles,
     required this.onOpenTerminal,
+    required this.onOpenTerminalSessions,
+    required this.onOpenBrowserSessions,
     required this.onOpenBrowser,
   });
 
   final String? workspacePath;
+  final ValueListenable<int> terminalSessionCountListenable;
+  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenTerminal;
+  final VoidCallback onOpenTerminalSessions;
+  final VoidCallback onOpenBrowserSessions;
   final VoidCallback onOpenBrowser;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
+    final boundWorkspacePath = workspacePath?.trim();
     return ColoredBox(
       color: theme.colorScheme.surface,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
         children: <Widget>[
+          _WorkspaceStatusSummary(
+            workspacePath: boundWorkspacePath,
+            terminalSessionCountListenable: terminalSessionCountListenable,
+            browserSessionRegistry: browserSessionRegistry,
+            onOpenTerminalSessions: onOpenTerminalSessions,
+            onOpenBrowserSessions: onOpenBrowserSessions,
+          ),
+          const SizedBox(height: 10),
           _WorkspacePrimaryAction(
             icon: Icons.folder_open,
             title: l10n.selectFile,
             subtitle: l10n.selectFileDescription,
-            onTap: workspacePath?.trim().isNotEmpty == true
-                ? onOpenFiles
-                : () {},
+            onTap: onOpenFiles,
           ),
           const SizedBox(height: 10),
           _WorkspacePrimaryAction(
@@ -48,6 +65,103 @@ class WorkspaceHomeContent extends StatelessWidget {
             title: l10n.openBrowser,
             subtitle: l10n.openBrowserDescription,
             onTap: onOpenBrowser,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkspaceStatusSummary extends StatelessWidget {
+  const _WorkspaceStatusSummary({
+    required this.workspacePath,
+    required this.terminalSessionCountListenable,
+    required this.browserSessionRegistry,
+    required this.onOpenTerminalSessions,
+    required this.onOpenBrowserSessions,
+  });
+
+  final String? workspacePath;
+  final ValueListenable<int> terminalSessionCountListenable;
+  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
+  final VoidCallback onOpenTerminalSessions;
+  final VoidCallback onOpenBrowserSessions;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '工作区总览',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (workspacePath != null && workspacePath!.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Tooltip(
+              message: workspacePath!,
+              waitDuration: const Duration(milliseconds: 450),
+              child: Text(
+                workspacePath!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onOpenTerminalSessions,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: ValueListenableBuilder<int>(
+                valueListenable: terminalSessionCountListenable,
+                builder: (context, terminalSessionCount, child) {
+                  return Text(
+                    '当前 $terminalSessionCount 个终端会话',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onOpenBrowserSessions,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: AnimatedBuilder(
+                animation: browserSessionRegistry,
+                builder: (context, child) {
+                  return Text(
+                    '当前 ${browserSessionRegistry.sessions.length} 个浏览器会话',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ],
       ),

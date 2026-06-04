@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use operit_host_api::TimeUtils::currentTimeMillis;
 use regex::Regex;
-use serde::Serialize;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ConversationService::ConversationService;
@@ -15,7 +14,7 @@ use crate::core::tools::ToolResultDataClasses::{
     AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData, ChatCreationResultData,
     ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData, ChatMessageInfo,
     ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
-    ChatTitleUpdateResultData, MessageSendResultData,
+    ChatTitleUpdateResultData, MessageSendResultData, ToolResultData,
 };
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatHistory::ChatHistory;
@@ -66,12 +65,12 @@ impl StandardChatManagerTool {
             Ok(mut holder) => {
                 holder.getCore(ChatRuntimeSlot::MAIN);
                 holder.getCore(ChatRuntimeSlot::FLOATING);
-                successJson(
+                successData(
                     tool,
-                    &ChatServiceStartResultData {
+                    ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
                         isConnected: true,
                         connectionTime: currentTimeMillis(),
-                    },
+                    }),
                 )
             }
             Err(error) => toolError(tool, format!("ChatRuntimeHolder lock failed: {error}")),
@@ -83,12 +82,12 @@ impl StandardChatManagerTool {
         match self.holder.lock() {
             Ok(mut holder) => {
                 holder.cores.clear();
-                successJson(
+                successData(
                     tool,
-                    &ChatServiceStartResultData {
+                    ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
                         isConnected: false,
                         connectionTime: currentTimeMillis(),
-                    },
+                    }),
                 )
             }
             Err(error) => toolError(tool, format!("ChatRuntimeHolder lock failed: {error}")),
@@ -136,12 +135,12 @@ impl StandardChatManagerTool {
                     .into_iter()
                     .find(|chat| !previousChatIds.iter().any(|id| id == &chat.id));
                 match created {
-                    Some(chat) => successJson(
+                    Some(chat) => successData(
                         tool,
-                        &ChatCreationResultData {
+                        ToolResultData::ChatCreationResultData(ChatCreationResultData {
                             chatId: chat.id,
                             createdAt: currentTimeMillis(),
-                        },
+                        }),
                     ),
                     None => toolError(
                         tool,
@@ -156,13 +155,13 @@ impl StandardChatManagerTool {
     #[allow(non_snake_case)]
     pub fn listChats(&self, tool: &AITool) -> ToolResult {
         match buildFilteredChatList(tool) {
-            Ok((totalCount, currentChatId, chats)) => successJson(
+            Ok((totalCount, currentChatId, chats)) => successData(
                 tool,
-                &ChatListResultData {
+                ToolResultData::ChatListResultData(ChatListResultData {
                     totalCount,
                     currentChatId,
                     chats,
-                },
+                }),
             ),
             Err(error) => toolError(tool, error),
         }
@@ -231,16 +230,16 @@ impl StandardChatManagerTool {
                 ),
             );
         }
-        successJson(
+        successData(
             tool,
-            &ChatFindResultData {
+            ToolResultData::ChatFindResultData(ChatFindResultData {
                 matchedCount: matched.len(),
                 chat: Some(buildChatInfo(
                     &matched[targetIndex],
                     &messageCounts,
                     currentChatId.as_deref(),
                 )),
-            },
+            }),
         )
     }
 
@@ -259,15 +258,15 @@ impl StandardChatManagerTool {
                 return toolError(tool, format!("ChatRuntimeHolder lock failed: {error}"))
             }
         };
-        successJson(
+        successData(
             tool,
-            &AgentStatusResultData {
+            ToolResultData::AgentStatusResultData(AgentStatusResultData {
                 chatId,
                 state: if isProcessing { "processing" } else { "idle" }.to_string(),
                 message: None,
                 isIdle: !isProcessing,
                 isProcessing,
-            },
+            }),
         )
     }
 
@@ -294,13 +293,13 @@ impl StandardChatManagerTool {
                 return toolError(tool, format!("ChatRuntimeHolder lock failed: {error}"))
             }
         }
-        successJson(
+        successData(
             tool,
-            &ChatSwitchResultData {
+            ToolResultData::ChatSwitchResultData(ChatSwitchResultData {
                 chatId,
                 chatTitle: title,
                 switchedAt: currentTimeMillis(),
-            },
+            }),
         )
     }
 
@@ -324,13 +323,13 @@ impl StandardChatManagerTool {
             Err(error) => return toolError(tool, format!("Error loading chat: {error}")),
         }
         match manager.updateChatTitle(chatId.clone(), title.clone()) {
-            Ok(()) => successJson(
+            Ok(()) => successData(
                 tool,
-                &ChatTitleUpdateResultData {
+                ToolResultData::ChatTitleUpdateResultData(ChatTitleUpdateResultData {
                     chatId,
                     title,
                     updatedAt: currentTimeMillis(),
-                },
+                }),
             ),
             Err(error) => toolError(tool, format!("Error updating chat title: {error}")),
         }
@@ -347,12 +346,12 @@ impl StandardChatManagerTool {
             Err(error) => return toolError(tool, format!("Error opening chat history: {error}")),
         };
         match manager.deleteChatHistory(chatId.clone()) {
-            Ok(true) => successJson(
+            Ok(true) => successData(
                 tool,
-                &ChatDeleteResultData {
+                ToolResultData::ChatDeleteResultData(ChatDeleteResultData {
                     chatId,
                     deletedAt: currentTimeMillis(),
-                },
+                }),
             ),
             Ok(false) => toolError(tool, format!("Chat does not exist or is locked: {chatId}")),
             Err(error) => toolError(tool, format!("Error deleting chat: {error}")),
@@ -441,24 +440,24 @@ impl StandardChatManagerTool {
             },
         };
         let aiResponse = latestAssistantMessage(&resolvedChatId);
-        successJson(
+        successData(
             tool,
-            &MessageSendResultData {
+            ToolResultData::MessageSendResultData(MessageSendResultData {
                 chatId: resolvedChatId,
                 message,
                 aiResponse,
                 receivedAt: Some(currentTimeMillis()),
                 sentAt,
-            },
+            }),
         )
     }
 
     #[allow(non_snake_case)]
     pub fn listCharacterCards(&self, tool: &AITool) -> ToolResult {
         match CharacterCardManager::getInstance().getAllCharacterCards() {
-            Ok(cards) => successJson(
+            Ok(cards) => successData(
                 tool,
-                &CharacterCardListResultData {
+                ToolResultData::CharacterCardListResultData(CharacterCardListResultData {
                     totalCount: cards.len(),
                     cards: cards
                         .into_iter()
@@ -471,7 +470,7 @@ impl StandardChatManagerTool {
                             updatedAt: card.updatedAt,
                         })
                         .collect(),
-                },
+                }),
             ),
             Err(error) => toolError(tool, format!("Error listing character cards: {error}")),
         }
@@ -521,9 +520,9 @@ impl StandardChatManagerTool {
         }
         match manager.loadChatMessagesWithOptions(chatId.clone(), Some(order.clone()), Some(limit))
         {
-            Ok(messages) => successJson(
+            Ok(messages) => successData(
                 tool,
-                &ChatMessagesResultData {
+                ToolResultData::ChatMessagesResultData(ChatMessagesResultData {
                     chatId,
                     order,
                     limit,
@@ -539,7 +538,7 @@ impl StandardChatManagerTool {
                             modelName: message.modelName,
                         })
                         .collect(),
-                },
+                }),
             ),
             Err(error) => toolError(tool, format!("Error getting chat messages: {error}")),
         }
@@ -806,18 +805,12 @@ fn latestAssistantMessage(chatId: &str) -> Option<String> {
         })
 }
 
-fn successJson<T: Serialize>(tool: &AITool, value: &T) -> ToolResult {
-    match serde_json::to_string(value) {
-        Ok(result) => ToolResult {
-            toolName: tool.name.clone(),
-            success: true,
-            result,
-            error: None,
-        },
-        Err(error) => toolError(
-            tool,
-            format!("Failed to serialize chat tool result: {error}"),
-        ),
+fn successData(tool: &AITool, value: ToolResultData) -> ToolResult {
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: value.toJson(),
+        error: None,
     }
 }
 

@@ -50,11 +50,20 @@ class MainActivity : FlutterActivity() {
                         OperitRuntimeNative.nextBrowserAutomationRequest(ensureRuntimeHandle())
                     }
                     "handleBrowserAutomationResult" -> handleBrowserAutomationResult(call, result)
+                    "nextWebVisitRequest" -> runRuntime(result) {
+                        OperitRuntimeNative.nextWebVisitRequest(ensureRuntimeHandle())
+                    }
+                    "handleWebVisitResult" -> handleWebVisitResult(call, result)
                     "androidRuntimePaths" -> androidRuntimePaths(result)
+                    "listTerminalSessions" -> runRuntime(result) {
+                        OperitRuntimeNative.listTerminalSessions(ensureRuntimeHandle())
+                    }
                     "startTerminalPty" -> startTerminalPty(call, result)
                     "readTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::readTerminalPty)
                     "pollTerminalPtyExit" -> terminalPtySessionCall(call, result, OperitRuntimeNative::pollTerminalPtyExit)
                     "closeTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::closeTerminalPty)
+                    "getTerminalSessionScreen" -> terminalPtySessionCall(call, result, OperitRuntimeNative::getTerminalSessionScreen)
+                    "inputTerminalSession" -> inputTerminalSession(call, result)
                     "terminalDebugInfo" -> terminalDebugInfo(call, result)
                     "writeTerminalPty" -> writeTerminalPty(call, result)
                     "resizeTerminalPty" -> resizeTerminalPty(call, result)
@@ -145,6 +154,17 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun handleWebVisitResult(call: MethodCall, result: MethodChannel.Result) {
+        val webVisitResult = call.arguments as? String
+        if (webVisitResult == null) {
+            result.error("INVALID_ARGS", "handleWebVisitResult expects a JSON string", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.handleWebVisitResult(ensureRuntimeHandle(), webVisitResult)
+        }
+    }
+
     private fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
@@ -193,16 +213,18 @@ class MainActivity : FlutterActivity() {
 
     private fun startTerminalPty(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *>
+        val sessionName = args?.get("sessionName") as? String
         val workingDirectory = args?.get("workingDirectory") as? String
         val rows = args?.get("rows") as? Int
         val columns = args?.get("columns") as? Int
-        if (workingDirectory == null || rows == null || columns == null) {
-            result.error("INVALID_ARGS", "startTerminalPty expects workingDirectory, rows, columns", null)
+        if (sessionName == null || workingDirectory == null || rows == null || columns == null) {
+            result.error("INVALID_ARGS", "startTerminalPty expects sessionName, workingDirectory, rows, columns", null)
             return
         }
         runRuntime(result) {
             OperitRuntimeNative.startTerminalPty(
                 ensureRuntimeHandle(),
+                sessionName,
                 workingDirectory,
                 rows,
                 columns,
@@ -249,6 +271,19 @@ class MainActivity : FlutterActivity() {
         }
         runRuntime(result) {
             OperitRuntimeNative.resizeTerminalPty(ensureRuntimeHandle(), sessionId, rows, columns)
+        }
+    }
+
+    private fun inputTerminalSession(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val sessionId = args?.get("sessionId") as? String
+        val input = args?.get("input") as? String
+        if (sessionId == null || input == null) {
+            result.error("INVALID_ARGS", "inputTerminalSession expects sessionId and input", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.inputTerminalSession(ensureRuntimeHandle(), sessionId, input)
         }
     }
 
@@ -344,11 +379,16 @@ object OperitRuntimeNative {
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
     @JvmStatic external fun nextBrowserAutomationRequest(handle: Long): String
     @JvmStatic external fun handleBrowserAutomationResult(handle: Long, resultJson: String): String
-    @JvmStatic external fun startTerminalPty(handle: Long, workingDirectory: String, rows: Int, columns: Int): String
+    @JvmStatic external fun nextWebVisitRequest(handle: Long): String
+    @JvmStatic external fun handleWebVisitResult(handle: Long, resultJson: String): String
+    @JvmStatic external fun startTerminalPty(handle: Long, sessionName: String, workingDirectory: String, rows: Int, columns: Int): String
+    @JvmStatic external fun listTerminalSessions(handle: Long): String
     @JvmStatic external fun readTerminalPty(handle: Long, sessionId: String): String
     @JvmStatic external fun writeTerminalPty(handle: Long, sessionId: String, data: ByteArray): String
     @JvmStatic external fun resizeTerminalPty(handle: Long, sessionId: String, rows: Int, columns: Int): String
     @JvmStatic external fun pollTerminalPtyExit(handle: Long, sessionId: String): String
     @JvmStatic external fun closeTerminalPty(handle: Long, sessionId: String): String
+    @JvmStatic external fun getTerminalSessionScreen(handle: Long, sessionId: String): String
+    @JvmStatic external fun inputTerminalSession(handle: Long, sessionId: String, input: String): String
     @JvmStatic external fun terminalDebugInfo(handle: Long, workingDirectory: String): String
 }

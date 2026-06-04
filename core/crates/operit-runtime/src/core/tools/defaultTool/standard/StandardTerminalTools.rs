@@ -7,6 +7,11 @@ use operit_host_api::{
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::core::tools::ToolResultDataClasses::{
+    HiddenTerminalCommandResultData, StringResultData, TerminalCommandResultData,
+    TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData,
+    TerminalSessionScreenResultData, TerminalStreamEventData, TerminalTypeInfoData, ToolResultData,
+};
 
 const TERMINAL_SESSION_TIMEOUT_MS: u64 = 1800000;
 const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
@@ -42,7 +47,10 @@ impl StandardTerminalTools {
     #[allow(non_snake_case)]
     pub fn getTerminalInfo(&self, tool: &AITool) -> ToolResult {
         match self.host().and_then(|host| host.terminalInfo()) {
-            Ok(data) => toolSuccess(tool, terminalInfoToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::TerminalInfoResultData(terminalInfoResultData(&data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error getting terminal info: {}", error.message),
@@ -60,7 +68,12 @@ impl StandardTerminalTools {
             .host()
             .and_then(|host| host.createOrGetSession(&sessionName, &terminalType))
         {
-            Ok(data) => toolSuccess(tool, terminalSessionCreationResultDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::TerminalSessionCreationResultData(
+                    terminalSessionCreationResultData(&data),
+                ),
+            ),
             Err(error) => toolError(
                 tool,
                 format!(
@@ -80,7 +93,10 @@ impl StandardTerminalTools {
             .host()
             .and_then(|host| host.executeInSession(&sessionId, &command, timeoutMs))
         {
-            Ok(data) => toolSuccess(tool, terminalCommandResultDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::TerminalCommandResultData(terminalCommandResultData(&data)),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error executing terminal command: {}", error.message),
@@ -93,10 +109,18 @@ impl StandardTerminalTools {
         let sessionId = parameterValue(tool, "session_id");
         let command = parameterValue(tool, "command");
         let timeoutMs = timeoutParameterValue(tool, "timeout_ms", TERMINAL_SESSION_TIMEOUT_MS);
+        let startData = TerminalStreamEventData {
+            r#type: "start".to_string(),
+            command: command.clone(),
+            sessionId: sessionId.clone(),
+            chunk: None,
+            chunkIndex: Some(0),
+            receivedChars: Some(0),
+        };
         let start = ToolResult {
             toolName: tool.name.clone(),
             success: true,
-            result: "Terminal stream started".to_string(),
+            result: ToolResultData::TerminalStreamEventData(startData).toJson(),
             error: Some(String::new()),
         };
         match self
@@ -105,7 +129,10 @@ impl StandardTerminalTools {
         {
             Ok(data) => vec![
                 start,
-                toolSuccess(tool, terminalCommandResultDataToString(&data)),
+                toolSuccessData(
+                    tool,
+                    ToolResultData::TerminalCommandResultData(terminalCommandResultData(&data)),
+                ),
             ],
             Err(error) => vec![
                 start,
@@ -130,7 +157,12 @@ impl StandardTerminalTools {
         }) {
             Ok(data) => {
                 if data.exitCode == 0 || data.timedOut {
-                    toolSuccess(tool, hiddenTerminalCommandResultDataToString(&data))
+                    toolSuccessData(
+                        tool,
+                        ToolResultData::HiddenTerminalCommandResultData(
+                            hiddenTerminalCommandResultData(&data),
+                        ),
+                    )
                 } else {
                     toolError(
                         tool,
@@ -158,12 +190,14 @@ impl StandardTerminalTools {
             .host()
             .and_then(|host| host.inputInSession(&sessionId, input.as_deref(), control.as_deref()))
         {
-            Ok(data) => toolSuccess(
+            Ok(data) => toolSuccessStringData(
                 tool,
-                format!(
-                    "Terminal input sent to session {}. Accepted chars: {}",
-                    data.sessionId, data.acceptedChars
-                ),
+                StringResultData {
+                    value: format!(
+                        "Terminal input sent to session {}. Accepted chars: {}",
+                        data.sessionId, data.acceptedChars
+                    ),
+                },
             ),
             Err(error) => toolError(tool, error.message),
         }
@@ -173,7 +207,12 @@ impl StandardTerminalTools {
     pub fn closeSession(&self, tool: &AITool) -> ToolResult {
         let sessionId = parameterValue(tool, "session_id");
         match self.host().and_then(|host| host.closeSession(&sessionId)) {
-            Ok(data) => toolSuccess(tool, terminalSessionCloseResultDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::TerminalSessionCloseResultData(terminalSessionCloseResultData(
+                    &data,
+                )),
+            ),
             Err(error) => toolError(
                 tool,
                 format!(
@@ -191,7 +230,12 @@ impl StandardTerminalTools {
             .host()
             .and_then(|host| host.getSessionScreen(&sessionId))
         {
-            Ok(data) => toolSuccess(tool, terminalSessionScreenResultDataToString(&data)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::TerminalSessionScreenResultData(terminalSessionScreenResultData(
+                    &data,
+                )),
+            ),
             Err(error) => toolError(
                 tool,
                 format!("Error getting terminal session screen: {}", error.message),
@@ -285,73 +329,76 @@ fn validateTerminalTool(operation: TerminalToolOperation, tool: &AITool) -> Tool
 }
 
 #[allow(non_snake_case)]
-fn terminalCommandResultDataToString(data: &TerminalCommandOutput) -> String {
-    let timedOut = if data.timedOut {
-        "Timed Out: true\n"
-    } else {
-        ""
-    };
-    format!(
-        "Terminal Command Execution Result:\nCommand: {}\nSession: {}\nType: {}\nExit Code: {}\n{}\nOutput:\n{}\n",
-        data.command, data.sessionId, data.terminalType, data.exitCode, timedOut, data.output
-    )
-}
-
-#[allow(non_snake_case)]
-fn hiddenTerminalCommandResultDataToString(data: &HiddenTerminalCommandOutput) -> String {
-    let timedOut = if data.timedOut {
-        "Timed Out: true\n"
-    } else {
-        ""
-    };
-    format!(
-        "Hidden Terminal Command Execution Result:\nCommand: {}\nExecutor Key: {}\nType: {}\nExit Code: {}\n{}\nOutput:\n{}\n",
-        data.command, data.executorKey, data.terminalType, data.exitCode, timedOut, data.output
-    )
-}
-
-#[allow(non_snake_case)]
-fn terminalSessionCreationResultDataToString(data: &TerminalSessionInfo) -> String {
-    if data.isNewSession {
-        format!(
-            "Successfully created new terminal session. Session Name: '{}', Session ID: {}, Type: {}",
-            data.sessionName, data.sessionId, data.terminalType
-        )
-    } else {
-        format!(
-            "Successfully retrieved existing terminal session. Session Name: '{}', Session ID: {}, Type: {}",
-            data.sessionName, data.sessionId, data.terminalType
-        )
+fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandResultData {
+    TerminalCommandResultData {
+        command: data.command.clone(),
+        output: data.output.clone(),
+        exitCode: data.exitCode,
+        sessionId: data.sessionId.clone(),
+        timedOut: data.timedOut,
     }
 }
 
 #[allow(non_snake_case)]
-fn terminalSessionCloseResultDataToString(data: &TerminalCloseOutput) -> String {
-    data.message.clone()
-}
-
-#[allow(non_snake_case)]
-fn terminalSessionScreenResultDataToString(data: &TerminalScreenOutput) -> String {
-    format!(
-        "Terminal Session Screen Snapshot:\nSession: {}\nType: {}\nSize: {}x{}\nCommand Running: {}\n\n{}",
-        data.sessionId, data.terminalType, data.cols, data.rows, data.commandRunning, data.content
-    )
-}
-
-#[allow(non_snake_case)]
-fn terminalInfoToString(data: &TerminalInfo) -> String {
-    let mut text = String::new();
-    text.push_str("Terminal Info:\n");
-    text.push_str(&format!("Platform: {}\n", data.platform));
-    text.push_str(&format!("Default Type: {}\n", data.defaultType));
-    text.push_str("Types:\n");
-    for terminalType in &data.types {
-        text.push_str(&format!(
-            "- {}: available={}, {}\n",
-            terminalType.terminalType, terminalType.available, terminalType.description
-        ));
+fn hiddenTerminalCommandResultData(
+    data: &HiddenTerminalCommandOutput,
+) -> HiddenTerminalCommandResultData {
+    HiddenTerminalCommandResultData {
+        command: data.command.clone(),
+        output: data.output.clone(),
+        exitCode: data.exitCode,
+        executorKey: data.executorKey.clone(),
+        timedOut: data.timedOut,
     }
-    text
+}
+
+#[allow(non_snake_case)]
+fn terminalSessionCreationResultData(
+    data: &TerminalSessionInfo,
+) -> TerminalSessionCreationResultData {
+    TerminalSessionCreationResultData {
+        sessionId: data.sessionId.clone(),
+        sessionName: data.sessionName.clone(),
+        isNewSession: data.isNewSession,
+    }
+}
+
+#[allow(non_snake_case)]
+fn terminalSessionCloseResultData(data: &TerminalCloseOutput) -> TerminalSessionCloseResultData {
+    TerminalSessionCloseResultData {
+        sessionId: data.sessionId.clone(),
+        success: data.success,
+        message: data.message.clone(),
+    }
+}
+
+#[allow(non_snake_case)]
+fn terminalSessionScreenResultData(data: &TerminalScreenOutput) -> TerminalSessionScreenResultData {
+    TerminalSessionScreenResultData {
+        sessionId: data.sessionId.clone(),
+        rows: data.rows,
+        cols: data.cols,
+        content: data.content.clone(),
+        commandRunning: data.commandRunning,
+    }
+}
+
+#[allow(non_snake_case)]
+fn terminalInfoResultData(data: &TerminalInfo) -> TerminalInfoResultData {
+    let types = data
+        .types
+        .iter()
+        .map(|terminalType| TerminalTypeInfoData {
+            terminalType: terminalType.terminalType.clone(),
+            available: terminalType.available,
+            description: terminalType.description.clone(),
+        })
+        .collect::<Vec<_>>();
+    TerminalInfoResultData {
+        platform: data.platform.clone(),
+        defaultType: data.defaultType.clone(),
+        types,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -362,6 +409,16 @@ fn toolSuccess(tool: &AITool, result: String) -> ToolResult {
         result,
         error: None,
     }
+}
+
+#[allow(non_snake_case)]
+fn toolSuccessData(tool: &AITool, data: ToolResultData) -> ToolResult {
+    toolSuccess(tool, data.toJson())
+}
+
+#[allow(non_snake_case)]
+fn toolSuccessStringData(tool: &AITool, data: StringResultData) -> ToolResult {
+    toolSuccess(tool, data.value)
 }
 
 #[allow(non_snake_case)]

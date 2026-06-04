@@ -223,9 +223,8 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Click an element on the current page by browser_snapshot ref, including refs inside same-origin iframes.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("ref", "string", "target element ref from browser_snapshot output; provide ref or selector", false, None),
-                        param("selector", "string", "optional CSS selector fallback when ref is not available", false, None),
+                        param("selector", "string", "optional CSS selector used when ref is not available", false, None),
                         param("element", "string", "optional, human-readable element description", false, None),
                         param("doubleClick", "boolean", "optional, perform a double click instead of a single click", false, Some("false".to_string())),
                         param("button", "string", "optional mouse button: left/right/middle", false, Some("left".to_string())),
@@ -238,7 +237,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_close",
                     "Close the current browser tab. Closing the last tab also closes the browser overlay.",
                     "",
-                    vec![browser_chat_param_en()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -246,7 +245,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_close_all",
                     "Close all browser tabs. This also closes the browser overlay.",
                     "",
-                    vec![browser_chat_param_en()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -255,7 +254,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Read browser console messages for the current page.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("level", "string", "optional console level: error/warning/info/debug", false, Some("info".to_string())),
                         param("filename", "string", "optional output file name for large results", false, None)
                     ],
@@ -267,7 +265,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Perform drag and drop between two page elements.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("startElement", "string", "human-readable source element description", true, None),
                         param("startRef", "string", "source element ref from browser_snapshot output", true, None),
                         param("endElement", "string", "human-readable target element description", true, None),
@@ -281,7 +278,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Evaluate a JavaScript function on the page or on a target element.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("function", "string", "() => { ... } or (element) => { ... }", true, None),
                         param("element", "string", "optional, human-readable element description", false, None),
                         param("ref", "string", "optional target element ref; required when element is provided", false, None)
@@ -294,7 +290,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Upload one or multiple files to the active file chooser. Omit paths to cancel the chooser.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("paths", "array", "optional absolute file paths", false, None)
                     ],
                     "",
@@ -305,7 +300,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Fill multiple form fields on the current page.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("fields", "array", "array of field objects with name/type/value plus ref or selector", true, None)
                     ],
                     "",
@@ -316,7 +310,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Accept or dismiss the currently open dialog.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("accept", "boolean", "true to accept, false to dismiss", true, None),
                         param("promptText", "string", "optional prompt text when handling a prompt dialog", false, None)
                     ],
@@ -328,7 +321,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Hover over an element on the current page.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("element", "string", "optional, human-readable element description", false, None),
                         param("ref", "string", "target element ref from browser_snapshot output", true, None)
                     ],
@@ -340,7 +332,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Navigate the active browser tab to a URL. If no tab exists yet, the first tab is created automatically.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("url", "string", "target URL", true, None)
                     ],
                     "",
@@ -350,7 +341,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_navigate_back",
                     "Go back in the current tab history.",
                     "",
-                    vec![browser_chat_param_en()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -359,7 +350,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Read network requests recorded for the current page.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("includeStatic", "boolean", "optional, include static asset requests", false, Some("false".to_string())),
                         param("filename", "string", "optional output file name for large results", false, None)
                     ],
@@ -371,7 +361,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Press a keyboard key in the current page.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("key", "string", "key name, for example ArrowLeft or a", true, None)
                     ],
                     "",
@@ -382,7 +371,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Resize the browser viewport.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("width", "number", "viewport width", true, None),
                         param("height", "number", "viewport height", true, None)
                     ],
@@ -394,7 +382,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Run a Playwright-style code snippet against the current tab.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("code", "string", "Playwright-style JavaScript snippet", true, None)
                     ],
                     "",
@@ -405,7 +392,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Select option values in a dropdown element.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("element", "string", "optional, human-readable element description", false, None),
                         param("ref", "string", "target select element ref from browser_snapshot output", true, None),
                         param("values", "array", "option values or visible texts to select", true, None)
@@ -418,7 +404,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Capture a structured accessibility-style snapshot of the current page, including same-origin iframe content.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("filename", "string", "optional output snapshot file name", false, None),
                         param("selector", "string", "optional root element selector for a partial snapshot", false, None),
                         param("depth", "integer", "optional snapshot tree depth limit", false, None)
@@ -431,7 +416,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Take a screenshot of the current page or of a specific element.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("type", "string", "optional image type: png or jpeg", false, Some("png".to_string())),
                         param("filename", "string", "optional output file name", false, None),
                         param("element", "string", "optional element description; when present ref is required", false, None),
@@ -446,7 +430,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Type text into an editable element.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("element", "string", "optional, human-readable element description", false, None),
                         param("ref", "string", "target element ref from browser_snapshot output", true, None),
                         param("text", "string", "text to type", true, None),
@@ -461,7 +444,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Wait for text to appear, disappear, or for a duration to pass.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("time", "number", "optional wait duration in seconds", false, None),
                         param("text", "string", "optional text that must appear", false, None),
                         param("textGone", "string", "optional text that must disappear", false, None)
@@ -474,7 +456,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "List, create, select, or close browser tabs using 0-based indexes.",
                     "",
                     vec![
-                        browser_chat_param_en(),
                         param("action", "string", "one of: list, create, select, close", true, None),
                         param("index", "integer", "optional tab index used by select or close", false, None)
                     ],
@@ -1666,9 +1647,8 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "按 browser_snapshot 的 ref 点击当前页面元素，包括同源 iframe 内的 ref。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("ref", "string", "来自 browser_snapshot 输出的目标元素 ref；ref 和 selector 至少提供一个", false, None),
-                        param("selector", "string", "可选，ref 不可用时的 CSS 选择器兜底", false, None),
+                        param("selector", "string", "可选，ref 不可用时使用的 CSS 选择器", false, None),
                         param("element", "string", "可选，人类可读元素描述", false, None),
                         param("doubleClick", "boolean", "可选，是否双击", false, Some("false".to_string())),
                         param("button", "string", "可选鼠标按键：left/right/middle", false, Some("left".to_string())),
@@ -1681,7 +1661,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_close",
                     "关闭当前浏览器 tab。关闭最后一个 tab 时也会关闭浏览器浮窗。",
                     "",
-                    vec![browser_chat_param_cn()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -1689,7 +1669,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_close_all",
                     "关闭全部浏览器 tab，并关闭浏览器浮窗。",
                     "",
-                    vec![browser_chat_param_cn()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -1698,7 +1678,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "读取当前页面的浏览器控制台消息。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("level", "string", "可选，控制台级别：error/warning/info/debug", false, Some("info".to_string())),
                         param("filename", "string", "可选，大结果输出文件名", false, None)
                     ],
@@ -1710,7 +1689,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在两个页面元素之间执行拖拽。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("startElement", "string", "源元素的人类可读描述", true, None),
                         param("startRef", "string", "源元素 ref", true, None),
                         param("endElement", "string", "目标元素的人类可读描述", true, None),
@@ -1724,7 +1702,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在页面上或目标元素上执行 JavaScript 函数。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("function", "string", "() => { ... } 或 (element) => { ... }", true, None),
                         param("element", "string", "可选，人类可读元素描述", false, None),
                         param("ref", "string", "可选，目标元素 ref；提供 element 时必须同时提供", false, None)
@@ -1737,7 +1714,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "向当前 file chooser 上传一个或多个文件。不传 paths 时取消选择器。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("paths", "array", "可选，绝对文件路径数组", false, None)
                     ],
                     "",
@@ -1748,7 +1724,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "批量填写当前页面的多个表单字段。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("fields", "array", "字段对象数组，每项包含 name/type/value 以及 ref 或 selector", true, None)
                     ],
                     "",
@@ -1759,7 +1734,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "接受或取消当前打开的对话框。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("accept", "boolean", "true 表示接受，false 表示取消", true, None),
                         param("promptText", "string", "可选，处理 prompt 时输入的文本", false, None)
                     ],
@@ -1771,7 +1745,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "悬停到当前页面的目标元素上。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("element", "string", "可选，人类可读元素描述", false, None),
                         param("ref", "string", "目标元素 ref", true, None)
                     ],
@@ -1783,7 +1756,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "让当前活动 tab 跳转到指定 URL。若当前没有 tab，会自动创建首个 tab。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("url", "string", "目标 URL", true, None)
                     ],
                     "",
@@ -1793,7 +1765,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "browser_navigate_back",
                     "在当前 tab 历史中后退。",
                     "",
-                    vec![browser_chat_param_cn()],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -1802,7 +1774,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "读取当前页面记录到的网络请求。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("includeStatic", "boolean", "可选，是否包含静态资源请求", false, Some("false".to_string())),
                         param("filename", "string", "可选，大结果输出文件名", false, None)
                     ],
@@ -1814,7 +1785,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在当前页面按下一个键盘按键。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("key", "string", "按键名，例如 ArrowLeft 或 a", true, None)
                     ],
                     "",
@@ -1825,7 +1795,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "调整浏览器视口大小。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("width", "number", "视口宽度", true, None),
                         param("height", "number", "视口高度", true, None)
                     ],
@@ -1837,7 +1806,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "运行 Playwright 风格的代码片段。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("code", "string", "Playwright 风格 JavaScript 代码片段", true, None)
                     ],
                     "",
@@ -1848,7 +1816,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在下拉元素中选择一个或多个选项值。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("element", "string", "可选，人类可读元素描述", false, None),
                         param("ref", "string", "来自 browser_snapshot 输出的目标下拉元素 ref", true, None),
                         param("values", "array", "要选择的值或可见文本数组", true, None)
@@ -1861,7 +1828,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "抓取当前页面的结构化无障碍风格快照，包括同源 iframe 内容。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("filename", "string", "可选，输出快照文件名", false, None),
                         param("selector", "string", "可选，局部快照的根元素选择器", false, None),
                         param("depth", "integer", "可选，快照树深度限制", false, None)
@@ -1874,7 +1840,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "截取当前页面或特定元素的截图。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("type", "string", "可选，图片类型：png 或 jpeg", false, Some("png".to_string())),
                         param("filename", "string", "可选，输出文件名", false, None),
                         param("element", "string", "可选，元素描述；提供时必须同时提供 ref", false, None),
@@ -1889,7 +1854,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "向可编辑元素输入文本。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("element", "string", "可选，人类可读元素描述", false, None),
                         param("ref", "string", "来自 browser_snapshot 输出的目标元素 ref", true, None),
                         param("text", "string", "要输入的文本", true, None),
@@ -1904,7 +1868,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "等待文本出现、消失，或等待指定时长。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("time", "number", "可选，等待秒数", false, None),
                         param("text", "string", "可选，等待出现的文本", false, None),
                         param("textGone", "string", "可选，等待消失的文本", false, None)
@@ -1917,7 +1880,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "使用 0-based 索引列出、创建、切换或关闭浏览器 tab。",
                     "",
                     vec![
-                        browser_chat_param_cn(),
                         param("action", "string", "list/create/select/close 之一", true, None),
                         param("index", "integer", "可选，select 或 close 使用的 tab 索引", false, None)
                     ],
@@ -2974,18 +2936,4 @@ fn param(
         required,
         default,
     }
-}
-
-fn browser_chat_param_en() -> ToolParameterSchema {
-    param(
-        "chat_id",
-        "string",
-        "optional target chat session id",
-        false,
-        None,
-    )
-}
-
-fn browser_chat_param_cn() -> ToolParameterSchema {
-    param("chat_id", "string", "可选，目标聊天会话 ID", false, None)
 }

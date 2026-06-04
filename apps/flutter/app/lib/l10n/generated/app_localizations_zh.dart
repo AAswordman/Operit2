@@ -235,7 +235,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceBindDialogTitle => '选择已有工作区';
 
   @override
-  String get workspacePathLabel => '工作区路径';
+  String get workspacePathLabel => '已选工作区';
 
   @override
   String get workspaceEnvLabel => '工作区环境';
@@ -244,7 +244,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get optionalHint => '可留空';
 
   @override
-  String get workspacePathRequired => '请输入工作区路径';
+  String get workspacePathRequired => '请选择工作区文件夹';
 
   @override
   String get bind => '绑定';
@@ -612,6 +612,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get filePreview => '文件预览';
+
+  @override
+  String get workspaceBoundTitle => '已绑定工作区';
 
   @override
   String get selectFile => '选择文件';
