@@ -2,10 +2,25 @@ use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct CharacterGroupsBackupFile {
+    #[serde(default, rename = "characterGroups")]
+    characterGroups: Vec<CharacterGroupCard>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CharacterGroupImportResult {
+    pub new: i32,
+    pub updated: i32,
+    pub skipped: i32,
+    pub total: i32,
+}
 
 #[derive(Clone)]
 pub struct CharacterGroupCardManager {
@@ -259,6 +274,58 @@ impl CharacterGroupCardManager {
     pub fn cloneBindingsFromCharacterGroup(&self, _sourceGroupId: &str, _targetGroupId: &str) {}
 
     #[allow(non_snake_case)]
+    pub fn exportAllCharacterGroupsToBackupContent(&self) -> Result<String, String> {
+        let groups = self
+            .getAllCharacterGroupCards()
+            .map_err(|error| error.to_string())?;
+        let backup = CharacterGroupsBackupFile {
+            characterGroups: groups,
+        };
+        serde_json::to_string_pretty(&backup)
+            .map_err(|error| format!("导出角色组备份失败：{error}"))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importAllCharacterGroupsFromBackupContent(
+        &self,
+        jsonContent: &str,
+    ) -> Result<CharacterGroupImportResult, String> {
+        if jsonContent.trim().is_empty() {
+            return Err("角色组备份内容不能为空".to_string());
+        }
+        let backup = serde_json::from_str::<CharacterGroupsBackupFile>(jsonContent)
+            .map_err(|error| format!("角色组备份 JSON 格式错误：{error}"))?;
+        let existingIds = self
+            .characterGroupCardListFlow()
+            .first()
+            .map_err(|error| error.to_string())?;
+        let mut newCount = 0;
+        let mut updatedCount = 0;
+        let mut skippedCount = 0;
+
+        for group in backup.characterGroups {
+            if group.id.trim().is_empty() || group.name.trim().is_empty() {
+                skippedCount += 1;
+                continue;
+            }
+            if existingIds.contains(&group.id) {
+                updatedCount += 1;
+            } else {
+                newCount += 1;
+            }
+            self.upsertCharacterGroupCardWithId(group)
+                .map_err(|error| error.to_string())?;
+        }
+
+        Ok(CharacterGroupImportResult {
+            new: newCount,
+            updated: updatedCount,
+            skipped: skippedCount,
+            total: newCount + updatedCount,
+        })
+    }
+
+    #[allow(non_snake_case)]
     fn decodeGroup(&self, json: &str) -> Option<CharacterGroupCard> {
         serde_json::from_str::<CharacterGroupCard>(json)
             .ok()
@@ -296,6 +363,38 @@ impl CharacterGroupCardManager {
             },
             ..group
         }
+    }
+
+    #[allow(non_snake_case)]
+    fn upsertCharacterGroupCardWithId(
+        &self,
+        group: CharacterGroupCard,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let id = group.id.clone();
+        if id.trim().is_empty() {
+            return Ok(());
+        }
+        let normalizedGroup = self.normalizeGroup(group);
+        self.dataStore.edit(|preferences| {
+            let mut currentList = Self::readGroupList(preferences);
+            if !currentList.contains(&id) {
+                currentList.push(id.clone());
+            }
+            currentList.sort();
+            currentList.dedup();
+            Self::writeGroupList(preferences, currentList);
+            preferences.set(
+                &Self::groupDataKey(&id),
+                serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
+            );
+            if preferences
+                .get(&Self::ACTIVE_CHARACTER_GROUP_ID())
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+            {
+                preferences.set(&Self::ACTIVE_CHARACTER_GROUP_ID(), id.clone());
+            }
+        })
     }
 
     #[allow(non_snake_case)]

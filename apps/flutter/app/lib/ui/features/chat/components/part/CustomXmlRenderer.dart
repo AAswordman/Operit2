@@ -21,7 +21,6 @@ class CustomXmlRenderer extends StatelessWidget {
     required this.textColor,
     this.xmlStream,
     this.showThinkingProcess = true,
-    this.showStatusTags = true,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
   });
@@ -31,7 +30,6 @@ class CustomXmlRenderer extends StatelessWidget {
   final Color textColor;
   final Stream<String>? xmlStream;
   final bool showThinkingProcess;
-  final bool showStatusTags;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
 
@@ -45,9 +43,7 @@ class CustomXmlRenderer extends StatelessWidget {
         !showThinkingProcess) {
       return const SizedBox.shrink();
     }
-    if (parsed.tagName == 'status' &&
-        !showStatusTags &&
-        _isQuietStatus(parsed)) {
+    if (parsed.tagName == 'status' && parsed.attr('type') != 'warning') {
       return const SizedBox.shrink();
     }
     final pluginRender = XmlRenderPluginRegistry.renderIfMatched(
@@ -391,17 +387,16 @@ class _StatusChip extends StatelessWidget {
     }
 
     final backgroundColor = switch (statusType) {
-      'completion' || 'complete' => theme.colorScheme.primaryContainer
-          .withValues(alpha: 0.3),
+      'completion' ||
+      'complete' => theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
       'wait_for_user_need' => theme.colorScheme.tertiaryContainer.withValues(
-          alpha: 0.3,
-        ),
+        alpha: 0.3,
+      ),
       _ => theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
     };
     final borderColor = switch (statusType) {
-      'completion' || 'complete' => theme.colorScheme.primary.withValues(
-          alpha: 0.3,
-        ),
+      'completion' ||
+      'complete' => theme.colorScheme.primary.withValues(alpha: 0.3),
       'wait_for_user_need' => theme.colorScheme.tertiary.withValues(alpha: 0.3),
       _ => theme.colorScheme.outline.withValues(alpha: 0.3),
     };
@@ -454,9 +449,7 @@ class _StatusCard extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: textColor,
-              ),
+              style: theme.textTheme.bodySmall?.copyWith(color: textColor),
             ),
           ),
           if (isStreaming)
@@ -715,7 +708,7 @@ class _IncrementalTokenEstimator {
 
 class _XmlInnerTokenCounter {
   _XmlInnerTokenCounter({required String tagName})
-      : _closingPattern = '</$tagName>';
+    : _closingPattern = '</$tagName>';
 
   static const String _openingTagEndChar = '>';
   final String _closingPattern;

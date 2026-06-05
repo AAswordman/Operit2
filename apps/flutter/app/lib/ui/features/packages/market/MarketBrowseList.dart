@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
 List<_MarketGridGroup<T>> _marketGridGroups<T>({
@@ -220,11 +221,17 @@ class MarketGridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Card(
-      elevation: 1,
+    final borderRadius = BorderRadius.circular(16);
+    return OperitGlassSurface(
       color: colorScheme.surface,
-      clipBehavior: Clip.antiAlias,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      material: true,
       child: InkWell(
+        borderRadius: borderRadius,
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

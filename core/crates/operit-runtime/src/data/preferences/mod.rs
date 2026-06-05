@@ -18,8 +18,6 @@ pub mod CharacterCardToolAccessResolver;
 pub mod CharacterGroupCardManager;
 #[path = "CustomEmojiPreferences.rs"]
 pub mod CustomEmojiPreferences;
-#[path = "DisplayPreferencesManager.rs"]
-pub mod DisplayPreferencesManager;
 #[path = "EnvPreferences.rs"]
 pub mod EnvPreferences;
 #[path = "ExternalHttpApiPreferences.rs"]
@@ -38,6 +36,8 @@ pub mod MemorySearchSettingsPreferences;
 pub mod ModelConfigManager;
 #[path = "PersonaCardChatHistoryManager.rs"]
 pub mod PersonaCardChatHistoryManager;
+#[path = "PreferenceStorageManager.rs"]
+pub mod PreferenceStorageManager;
 #[path = "PromptTagManager.rs"]
 pub mod PromptTagManager;
 #[path = "PromptVersionManager.rs"]
@@ -46,10 +46,6 @@ pub mod PromptVersionManager;
 pub mod RemoteAnnouncementPreferences;
 #[path = "SkillVisibilityPreferences.rs"]
 pub mod SkillVisibilityPreferences;
-#[path = "SpeechServicesPreferences.rs"]
-pub mod SpeechServicesPreferences;
-#[path = "ThemePreferenceSnapshot.rs"]
-pub mod ThemePreferenceSnapshot;
 #[path = "ToolCollapseMode.rs"]
 pub mod ToolCollapseMode;
 #[path = "UserPreferencesManager.rs"]
@@ -68,7 +64,6 @@ pub use CharacterCardManager::*;
 pub use CharacterCardToolAccessResolver::*;
 pub use CharacterGroupCardManager::*;
 pub use CustomEmojiPreferences::*;
-pub use DisplayPreferencesManager::*;
 pub use EnvPreferences::*;
 pub use ExternalHttpApiPreferences::*;
 pub use FreeUsagePreferences::*;
@@ -78,12 +73,11 @@ pub use GitHubAuthPreferences::*;
 pub use MemorySearchSettingsPreferences::*;
 pub use ModelConfigManager::*;
 pub use PersonaCardChatHistoryManager::*;
+pub use PreferenceStorageManager::*;
 pub use PromptTagManager::*;
 pub use PromptVersionManager::*;
 pub use RemoteAnnouncementPreferences::*;
 pub use SkillVisibilityPreferences::*;
-pub use SpeechServicesPreferences::*;
-pub use ThemePreferenceSnapshot::*;
 pub use ToolCollapseMode::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;

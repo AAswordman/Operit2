@@ -1,15 +1,25 @@
 // ignore_for_file: file_names
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../../../../../util/ChatMarkupRegex.dart';
+import '../../../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../../../theme/OperitTheme.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
+import '../bubble/BubbleSurface.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 
 class UserMessageComposable extends StatefulWidget {
-  const UserMessageComposable({super.key, required this.message});
+  const UserMessageComposable({
+    super.key,
+    required this.message,
+    required this.useBubbleStyle,
+  });
 
   final ChatUiMessage message;
+  final bool useBubbleStyle;
 
   @override
   State<UserMessageComposable> createState() => _UserMessageComposableState();
@@ -22,91 +32,215 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
     final parseResult = parseMessageContent(widget.message.content);
+    final themePreferenceSnapshot = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot;
+    final showUserName = themePreferenceSnapshot.showUserName;
+    final bubbleColor =
+        _optionalColor(
+          widget.useBubbleStyle
+              ? themePreferenceSnapshot.bubbleUserBubbleColor
+              : themePreferenceSnapshot.cursorUserBubbleColor,
+        ) ??
+        colorScheme.primaryContainer;
+    final effectiveTextColor =
+        _optionalColor(themePreferenceSnapshot.bubbleUserTextColor) ??
+        textColor;
+    final messageFontFamily = widget.useBubbleStyle
+        ? operitMessageFontFamily(themePreferenceSnapshot, isUser: true)
+        : null;
+    final messageFontFamilyFallback = widget.useBubbleStyle
+        ? operitMessageFontFamilyFallback(themePreferenceSnapshot, isUser: true)
+        : null;
+    final contentPadding = EdgeInsets.fromLTRB(
+      themePreferenceSnapshot.bubbleUserContentPaddingLeft,
+      16,
+      themePreferenceSnapshot.bubbleUserContentPaddingRight,
+      16,
+    );
+    final bubbleBorderRadius = BorderRadius.circular(
+      themePreferenceSnapshot.bubbleUserRoundedCornersEnabled ? 12 : 4,
+    );
+    final transparentSurface =
+        themePreferenceSnapshot.transparentSurfaceEnabled;
+    final userBubbleImagePath = themePreferenceSnapshot.bubbleUserImageUri;
+    final userBubbleImageStyle =
+        widget.useBubbleStyle &&
+            themePreferenceSnapshot.bubbleUserUseImage &&
+            userBubbleImagePath != null &&
+            userBubbleImagePath.isNotEmpty
+        ? BubbleImageStyle(
+            imagePath: userBubbleImagePath,
+            cropLeftRatio: themePreferenceSnapshot.bubbleUserImageCropLeft,
+            cropTopRatio: themePreferenceSnapshot.bubbleUserImageCropTop,
+            cropRightRatio: themePreferenceSnapshot.bubbleUserImageCropRight,
+            cropBottomRatio: themePreferenceSnapshot.bubbleUserImageCropBottom,
+            repeatXStartRatio:
+                themePreferenceSnapshot.bubbleUserImageRepeatStart,
+            repeatXEndRatio: themePreferenceSnapshot.bubbleUserImageRepeatEnd,
+            repeatYStartRatio:
+                themePreferenceSnapshot.bubbleUserImageRepeatYStart,
+            repeatYEndRatio: themePreferenceSnapshot.bubbleUserImageRepeatYEnd,
+            imageScale: themePreferenceSnapshot.bubbleUserImageScale,
+            renderMode: themePreferenceSnapshot.bubbleUserImageRenderMode,
+          )
+        : null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: SizedBox(
-        width: double.infinity,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (parseResult.replyInfo != null)
-              _ReplyInfoView(replyInfo: parseResult.replyInfo!),
-            if (parseResult.trailingAttachments.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: <Widget>[
-                      for (final attachment in parseResult.trailingAttachments)
-                        AttachmentTag(
-                          attachment: attachment,
-                          textColor: textColor,
-                          backgroundColor: colorScheme.primaryContainer,
-                          onClick: (attachmentData) {
-                            final chatAttachment = ChatAttachment(
-                              id: attachmentData.id,
-                              filename: attachmentData.filename,
-                              mimeType: attachmentData.type,
-                              size: attachmentData.size,
-                              content: attachmentData.content,
-                            );
-                            showDialog<void>(
-                              context: context,
-                              builder: (dialogContext) =>
-                                  AttachmentViewerDialog(
-                                    visible: true,
-                                    attachment: chatAttachment,
-                                    onDismiss: () {
-                                      Navigator.of(dialogContext).pop();
-                                    },
-                                  ),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            SizedBox(
-              width: double.infinity,
-              child: Card(
-                margin: EdgeInsets.zero,
-                color: colorScheme.primaryContainer,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        parseResult.proxySenderName == null
-                            ? 'Prompt'
-                            : 'Prompt by ${parseResult.proxySenderName}',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: textColor.withValues(alpha: 0.7),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SelectableText(
-                        parseResult.processedText,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: textColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (widget.useBubbleStyle &&
+              themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
+            _MessageAvatar(
+              imagePath: themePreferenceSnapshot.customUserAvatarUri,
+              backgroundColor: bubbleColor,
+              foregroundColor: effectiveTextColor,
+              square:
+                  themePreferenceSnapshot.avatarShape ==
+                  UserPreferencesManager.AVATAR_SHAPE_SQUARE,
+              cornerRadius: themePreferenceSnapshot.avatarCornerRadius,
             ),
+            const SizedBox(width: 8),
           ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (parseResult.replyInfo != null)
+                  _ReplyInfoView(replyInfo: parseResult.replyInfo!),
+                if (parseResult.trailingAttachments.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: <Widget>[
+                          for (final attachment
+                              in parseResult.trailingAttachments)
+                            AttachmentTag(
+                              attachment: attachment,
+                              textColor: effectiveTextColor,
+                              backgroundColor: bubbleColor,
+                              onClick: (attachmentData) {
+                                final chatAttachment = ChatAttachment(
+                                  id: attachmentData.id,
+                                  filename: attachmentData.filename,
+                                  mimeType: attachmentData.type,
+                                  size: attachmentData.size,
+                                  content: attachmentData.content,
+                                );
+                                showDialog<void>(
+                                  context: context,
+                                  builder: (dialogContext) =>
+                                      AttachmentViewerDialog(
+                                        visible: true,
+                                        attachment: chatAttachment,
+                                        onDismiss: () {
+                                          Navigator.of(dialogContext).pop();
+                                        },
+                                      ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                SizedBox(
+                  width: double.infinity,
+                  child: BubbleSurface(
+                    color: bubbleColor,
+                    borderRadius: bubbleBorderRadius,
+                    imageStyle: userBubbleImageStyle,
+                    transparentSurface: transparentSurface,
+                    child: Padding(
+                      padding: contentPadding,
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(
+                          fontFamily: messageFontFamily,
+                          fontFamilyFallback: messageFontFamilyFallback,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            if (showUserName) ...<Widget>[
+                              Text(
+                                parseResult.proxySenderName == null
+                                    ? 'Prompt'
+                                    : 'Prompt by ${parseResult.proxySenderName}',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: effectiveTextColor.withValues(
+                                    alpha: 0.7,
+                                  ),
+                                  fontFamily: messageFontFamily,
+                                  fontFamilyFallback: messageFontFamilyFallback,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            SelectableText(
+                              parseResult.processedText,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: effectiveTextColor,
+                                fontFamily: messageFontFamily,
+                                fontFamilyFallback: messageFontFamilyFallback,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Color? _optionalColor(int? value) {
+  return value == null ? null : Color(value);
+}
+
+class _MessageAvatar extends StatelessWidget {
+  const _MessageAvatar({
+    required this.backgroundColor,
+    required this.foregroundColor,
+    required this.imagePath,
+    required this.square,
+    required this.cornerRadius,
+  });
+
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final String? imagePath;
+  final bool square;
+  final double cornerRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarImagePath = imagePath;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          shape: square ? BoxShape.rectangle : BoxShape.circle,
+          borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
         ),
+        clipBehavior: Clip.antiAlias,
+        child: avatarImagePath != null && avatarImagePath.isNotEmpty
+            ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
+            : Icon(Icons.person, size: 15, color: foregroundColor),
       ),
     );
   }

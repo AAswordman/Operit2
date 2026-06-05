@@ -4,6 +4,8 @@
   "aiChat": "AI Chat",
   "fullscreenInput": "Fullscreen input",
   "settings": "Settings",
+  "packageManager": "Package manager",
+  "market": "Market",
   "addAttachment": "Add attachment",
   "cancel": "Cancel",
   "send": "Send",
@@ -347,5 +349,559 @@
   "cannotPreview": "Cannot preview",
   "openProjectInFullBrowser": "Open project in full browser",
   "openInBrowser": "Open in browser",
-  "emptySpreadsheet": "Spreadsheet is empty"
+  "emptySpreadsheet": "Spreadsheet is empty",
+  "settingsCategoryModelTitle": "Models & AI",
+  "settingsCategoryModelSubtitle": "Models, keys, context",
+  "settingsCategoryModelDescription": "Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.",
+  "settingsCategoryCharactersTitle": "Characters & Memory",
+  "settingsCategoryCharactersSubtitle": "Cards, groups, bindings",
+  "settingsCategoryCharactersDescription": "Manage character cards, character groups, active roles, and role-level model, memory, and tool bindings.",
+  "settingsCategoryToolsTitle": "Tools & Extensions",
+  "settingsCategoryToolsSubtitle": "Permissions, packages, skills, MCP",
+  "settingsCategoryToolsDescription": "Control which tools Operit can call, and manage plugins, tool packages, skills, and MCP servers.",
+  "settingsCategoryWorkspaceTitle": "Workspace & Browser",
+  "settingsCategoryWorkspaceSubtitle": "Files, terminal, browser",
+  "settingsCategoryWorkspaceDescription": "Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.",
+  "settingsCategoryAppearanceTitle": "Appearance & Interaction",
+  "settingsCategoryAppearanceSubtitle": "Theme and language",
+  "settingsCategoryAppearanceDescription": "Adjust the client theme and current localization display.",
+  "settingsCategoryDataTitle": "Data & Diagnostics",
+  "settingsCategoryDataSubtitle": "History, backup, logs",
+  "settingsCategoryDataDescription": "Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.",
+  "settingsComingSoon": "This area will continue connecting existing runtime capabilities. Models, characters, and tools are being completed first.",
+  "settingsAdvanced": "Advanced settings",
+  "settingsActive": "Active",
+  "settingsActivate": "Activate",
+  "settingsModelCurrentSection": "Current chat model",
+  "settingsModelCurrentChatModel": "Chat uses",
+  "settingsChatThinkingMode": "Thinking mode",
+  "settingsChatThinkingModeDescription": "Let supported models produce steadier reasoning.",
+  "settingsChatStreamOutput": "Stream output",
+  "settingsChatStreamOutputDescription": "Show generated replies progressively.",
+  "settingsModelProfilesSection": "Model profiles",
+  "settingsModelFunctionMappingsSection": "Function model assignment",
+  "settingsModelFunctionMappingsDescription": "Choose the model profile and concrete model used by chat, summary, memory, image recognition, and other functions.",
+  "settingsModelFunctionMappingsReset": "Reset all",
+  "settingsModelFunctionMappingsChange": "Change",
+  "settingsModelFunctionMappingsSelect": "Select {name} model",
+  "@settingsModelFunctionMappingsSelect": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsCurrent": "{configName} · {modelName}",
+  "@settingsModelFunctionMappingsCurrent": {
+    "placeholders": {
+      "configName": {
+        "type": "String"
+      },
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelChatAutoGlmWarning": "AutoGLM cannot be used as the main chat model. Chat and UI control use separate model assignments; choose another large model.",
+  "settingsModelFunctionChat": "Chat",
+  "settingsModelFunctionChatDescription": "Model used for main conversation replies.",
+  "settingsModelFunctionSummary": "Summary",
+  "settingsModelFunctionSummaryDescription": "Model used for long-context automatic summaries.",
+  "settingsModelFunctionMemory": "Memory",
+  "settingsModelFunctionMemoryDescription": "Model used to extract, organize, and update memories.",
+  "settingsModelFunctionUiController": "UI control",
+  "settingsModelFunctionUiControllerDescription": "Model used for interface control and lightweight action planning.",
+  "settingsModelFunctionTranslation": "Translation",
+  "settingsModelFunctionTranslationDescription": "Model used to translate text and localized content.",
+  "settingsModelFunctionGrep": "Text search",
+  "settingsModelFunctionGrepDescription": "Model used to filter search results and judge text matches.",
+  "settingsModelFunctionRoleResponsePlanner": "Group reply planner",
+  "settingsModelFunctionRoleResponsePlannerDescription": "Model used to plan speaking roles and order in character group conversations.",
+  "settingsModelFunctionImageRecognition": "Image recognition",
+  "settingsModelFunctionImageRecognitionDescription": "Model used to understand images and extract image content.",
+  "settingsModelFunctionAudioRecognition": "Audio recognition",
+  "settingsModelFunctionAudioRecognitionDescription": "Model used to understand audio and extract audio content.",
+  "settingsModelFunctionVideoRecognition": "Video recognition",
+  "settingsModelFunctionVideoRecognitionDescription": "Model used to understand video and extract video content.",
+  "settingsModelFunctionImageUnsupported": "The selected model profile has direct image input disabled.",
+  "settingsModelFunctionAudioUnsupported": "The selected model profile has direct audio input disabled.",
+  "settingsModelFunctionVideoUnsupported": "The selected model profile has direct video input disabled.",
+  "settingsModelCreateProfile": "New model profile",
+  "settingsModelEditProfile": "Edit model profile",
+  "settingsModelProfileName": "Profile name",
+  "settingsModelApiEndpoint": "API endpoint",
+  "settingsModelModelNames": "Model names",
+  "settingsModelApiKey": "API key",
+  "settingsModelApiKeyPool": "API key pool",
+  "settingsModelApiKeyPoolDescription": "Prepare multiple keys for one model profile so runtime can rotate between them.",
+  "settingsModelApiKeyPoolCount": "{count} keys",
+  "@settingsModelApiKeyPoolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelApiKeyPoolEmpty": "No keys yet. Add keys and this profile will use the key pool.",
+  "settingsModelAddApiKey": "Add key",
+  "settingsModelEditApiKey": "Edit key",
+  "settingsModelApiKeyName": "Key name",
+  "settingsModelApiKeyEnabled": "Enable this key",
+  "settingsModelProviderId": "Provider ID",
+  "settingsModelMaxTokens": "Max tokens",
+  "settingsModelMaxTokensDescription": "Limit how many tokens one response may generate.",
+  "settingsModelTemperature": "Temperature",
+  "settingsModelTemperatureDescription": "Controls randomness. Lower is steadier, higher is more varied.",
+  "settingsModelTopP": "Top-p",
+  "settingsModelTopPDescription": "Sample only from the cumulative Top-p probability range.",
+  "settingsModelTopK": "Top-k",
+  "settingsModelTopKDescription": "Sample from the K most likely candidate tokens. 0 disables it.",
+  "settingsModelPresencePenalty": "Presence penalty",
+  "settingsModelPresencePenaltyDescription": "Encourages new topics and reduces reuse of existing content.",
+  "settingsModelFrequencyPenalty": "Frequency penalty",
+  "settingsModelFrequencyPenaltyDescription": "Penalizes repeated tokens by frequency.",
+  "settingsModelRepetitionPenalty": "Repetition penalty",
+  "settingsModelRepetitionPenaltyDescription": "Further reduces repeated output. 1.0 means no penalty.",
+  "settingsModelRequestLimit": "Requests per minute",
+  "settingsModelMaxConcurrent": "Max concurrent requests",
+  "settingsModelContextLength": "Context length",
+  "settingsModelMaxContextLength": "Max context length",
+  "settingsModelMaxContextMode": "Max context mode",
+  "settingsModelSummaryThreshold": "Summary token threshold",
+  "settingsModelSummaryByMessageCount": "Summarize by message count",
+  "settingsModelSummaryMessageCount": "Summary message threshold",
+  "settingsModelCustomHeaders": "Custom headers",
+  "settingsModelCustomParameters": "Custom parameters JSON",
+  "settingsModelToolCall": "Tool calling",
+  "settingsModelToolCallDescription": "Allow the model to use structured tool calls.",
+  "settingsModelDirectImage": "Direct image input",
+  "settingsModelDirectImageDescription": "Send images directly to models that support image input.",
+  "settingsModelDirectAudio": "Direct audio input",
+  "settingsModelDirectAudioDescription": "Send audio directly to models that support audio input.",
+  "settingsModelDirectVideo": "Direct video input",
+  "settingsModelDirectVideoDescription": "Send video directly to models that support video input.",
+  "settingsModelGoogleSearch": "Google Search",
+  "settingsModelGoogleSearchDescription": "Enable provider-side search capability.",
+  "settingsModelContext": "Context window",
+  "settingsModelSummary": "Auto summary",
+  "settingsModelMediaHistory": "Media history",
+  "settingsModelConnectionTestSection": "Connection test",
+  "settingsModelRunConnectionTest": "Test current model",
+  "settingsModelTestingConnection": "Testing current model connection…",
+  "settingsModelTestedModel": "Tested model",
+  "settingsModelConnectionTestPassed": "All checks passed",
+  "settingsModelConnectionTestFailed": "Some checks failed",
+  "settingsModelCapabilitiesApplied": "Model capability switches were updated from the test result.",
+  "settingsModelCapabilitiesNeedChat": "Chat test did not pass, so model capability switches were not updated.",
+  "settingsModelConnectionTestError": "Connection test failed: {error}",
+  "@settingsModelConnectionTestError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestItemChat": "Chat",
+  "settingsModelTestItemToolCall": "Tool call",
+  "settingsModelTestItemImage": "Image",
+  "settingsModelTestItemAudio": "Audio",
+  "settingsModelTestItemVideo": "Video",
+  "settingsModelTestItemUnknown": "Unknown item",
+  "settingsCharactersCreateCard": "New character card",
+  "settingsCharactersEditCard": "Edit character card",
+  "settingsCharactersCardName": "Character name",
+  "settingsCharactersCreateGroup": "New character group",
+  "settingsCharactersEditGroup": "Edit character group",
+  "settingsCharactersGroupName": "Group name",
+  "settingsCharactersDescription": "Description",
+  "settingsCharactersCharacterSetting": "Character setting",
+  "settingsCharactersOpeningStatement": "Opening statement",
+  "settingsCharactersOtherContentChat": "Extra chat content",
+  "settingsCharactersOtherContentVoice": "Extra voice content",
+  "settingsCharactersAdvancedPrompt": "Advanced custom prompt",
+  "settingsCharactersMarks": "Notes",
+  "settingsCharactersTags": "Tags",
+  "settingsCharactersNoTags": "No tags available. Create tags in prompt/tag management, then bind them to character cards.",
+  "settingsCharactersImportJson": "Import JSON",
+  "settingsCharactersCopyJson": "Copy JSON",
+  "settingsCharactersImportTavernJson": "Import Tavern JSON",
+  "settingsCharactersCopyTavernJson": "Copy Tavern JSON",
+  "settingsCharactersJsonInput": "JSON content",
+  "settingsCharactersTavernJsonInput": "Tavern JSON content",
+  "settingsCharactersJsonCopied": "Copied JSON for “{name}”.",
+  "@settingsCharactersJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopied": "Copied Tavern JSON for “{name}”.",
+  "@settingsCharactersTavernJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportCardJson": "Import character card JSON",
+  "settingsCharactersImportCardJsonDone": "Character card imported.",
+  "settingsCharactersImportTavernJsonDone": "Tavern character card imported.",
+  "settingsCharactersImportGroupJson": "Import character group JSON",
+  "settingsCharactersImportGroupJsonDone": "Character group imported.",
+  "settingsCharactersImportJsonError": "JSON import failed: {error}",
+  "@settingsCharactersImportJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportTavernJsonError": "Tavern JSON import failed: {error}",
+  "@settingsCharactersImportTavernJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopyError": "Tavern JSON copy failed: {error}",
+  "@settingsCharactersTavernJsonCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagsSection": "Tags",
+  "settingsCharactersCreateTag": "New tag",
+  "settingsCharactersEditTag": "Edit tag",
+  "settingsCharactersDeleteTag": "Delete tag",
+  "settingsCharactersDeleteTagMessage": "Delete “{name}”?",
+  "@settingsCharactersDeleteTagMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagName": "Tag name",
+  "settingsCharactersTagDescription": "Tag description",
+  "settingsCharactersTagPromptContent": "Prompt content",
+  "settingsCharactersChatModelBindingMode": "Chat model binding mode",
+  "settingsCharactersChatModelConfigId": "Chat model config ID",
+  "settingsCharactersChatModelIndex": "Chat model index",
+  "settingsCharactersMemoryBindingMode": "Memory binding mode",
+  "settingsCharactersMemoryProfileId": "Memory profile ID",
+  "settingsCharactersToolAccess": "Enable character tool allowlist",
+  "settingsCharactersChatModelFollowGlobal": "Follow global model",
+  "settingsCharactersChatModelFixedConfig": "Use fixed model config",
+  "settingsCharactersChatModelConfig": "Model config",
+  "settingsCharactersMemoryProfileFollowGlobal": "Follow global memory",
+  "settingsCharactersMemoryProfileFixedProfile": "Use fixed memory profile",
+  "settingsCharactersMemoryProfile": "Memory profile",
+  "settingsCharactersToolAccessFollowGlobal": "Follow global tool permissions",
+  "settingsCharactersToolAccessEmpty": "Enabled with no selected tools",
+  "settingsCharactersToolAccessSummaryCounts": "Built-in {builtinCount} · packages {packageCount} · skills {skillCount} · MCP {mcpCount}",
+  "@settingsCharactersToolAccessSummaryCounts": {
+    "placeholders": {
+      "builtinCount": {
+        "type": "int"
+      },
+      "packageCount": {
+        "type": "int"
+      },
+      "skillCount": {
+        "type": "int"
+      },
+      "mcpCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsCharactersToolAccessConfigure": "Configure tool allowlist",
+  "settingsCharactersToolAccessRequiresUsePackage": "Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.",
+  "settingsCharactersToolAccessEmptyBuiltin": "No built-in tools available.",
+  "settingsCharactersToolAccessEmptyPackages": "No packages available.",
+  "settingsCharactersToolAccessEmptySkills": "No skills available.",
+  "settingsCharactersToolAccessEmptyMcp": "No MCP servers available.",
+  "settingsCharactersBuiltinTools": "Allowed built-in tools",
+  "settingsCharactersAllowedPackages": "Allowed packages",
+  "settingsCharactersAllowedSkills": "Allowed skills",
+  "settingsCharactersAllowedMcpServers": "Allowed MCP servers",
+  "settingsCharactersGroupMembersTitle": "Group characters",
+  "settingsCharactersPreferenceProfilesSection": "User preferences & memory",
+  "settingsCharactersCreatePreferenceProfile": "New user preference profile",
+  "settingsCharactersEditPreferenceProfile": "Edit user preference profile",
+  "settingsCharactersPreferenceProfileName": "Profile name",
+  "settingsCharactersPreferenceBirthDate": "Birth date timestamp",
+  "settingsCharactersPreferenceGender": "Gender",
+  "settingsCharactersPreferencePersonality": "Personality",
+  "settingsCharactersPreferenceIdentity": "Identity",
+  "settingsCharactersPreferenceOccupation": "Occupation",
+  "settingsCharactersPreferenceAiStyle": "AI interaction style",
+  "settingsCharactersMemoryAutoUpdate": "Auto-update memory preferences",
+  "settingsCharactersMemoryAutoUpdateDescription": "Allow AI to update user preferences and long-term memory from conversations.",
+  "settingsCharactersPreferenceDescription": "Send user preferences to model",
+  "settingsCharactersPreferenceDescriptionSubtitle": "Include the active preference profile in chat prompts.",
+  "settingsCharactersPreferenceLocksSection": "Preference field locks",
+  "settingsCharactersPreferenceLockDescription": "When locked, automatic memory updates will not rewrite this field.",
+  "settingsCharactersCardsSection": "Character cards",
+  "settingsCharactersGroupsSection": "Character groups",
+  "settingsCharactersGroupMembers": "{count} members",
+  "@settingsCharactersGroupMembers": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsPermissionMode": "Tool permission mode",
+  "settingsToolsAsk": "Ask",
+  "settingsToolsExtensions": "Extension management",
+  "settingsToolsPlugins": "Plugins",
+  "settingsToolsPluginsDescription": "Manage ToolPkg plugin containers and UI extensions.",
+  "settingsToolsPackages": "Tool packages",
+  "settingsToolsPackagesDescription": "Enable, disable, and inspect built-in or external tool packages.",
+  "settingsToolsSkills": "Skills",
+  "settingsToolsSkillsDescription": "Manage skill package visibility and imports.",
+  "settingsToolsMcp": "MCP servers",
+  "settingsToolsMcpDescription": "Manage MCP configuration. Startup wait is {seconds} seconds.",
+  "@settingsToolsMcpDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsOverrides": "Per-tool permission records",
+  "settingsToolsToolGroups": "Per-tool permissions",
+  "settingsToolsToolGroupsDescription": "Keep Ask for normal use. Put trusted tools in Always allow, and risky or unwanted tools in Always forbid.",
+  "settingsToolsAlwaysAllow": "Always allow",
+  "settingsToolsAlwaysAllowDescription": "These tools run without asking again.",
+  "settingsToolsAlwaysForbid": "Always forbid",
+  "settingsToolsAlwaysForbidDescription": "AI will not call these tools.",
+  "settingsToolsAddTool": "Add tool",
+  "settingsToolsAddAllowTool": "Add allowed tool",
+  "settingsToolsAddForbidTool": "Add forbidden tool",
+  "settingsToolsSearchTools": "Search tools",
+  "settingsToolsNoToolsInGroup": "No tools in this group.",
+  "settingsToolsMcpStartupTimeout": "MCP startup timeout",
+  "settingsToolsMcpStartupTimeoutSeconds": "Wait seconds",
+  "settingsWorkspaceCurrentDesign": "Current workspace structure",
+  "settingsWorkspaceCurrentDesignDescription": "Workspaces are bound to chats. Terminal sessions and browser sessions are global sessions shown flat inside the workspace.",
+  "settingsWorkspaceOpenChat": "Return to chat workspace",
+  "settingsWorkspaceOpenChatDescription": "Open files, terminals, browser, and web automation on the right side of chat.",
+  "settingsWorkspaceContains": "Workspace contains",
+  "settingsWorkspacePerChat": "Bound per chat",
+  "settingsWorkspaceGlobalSessions": "Global terminal sessions",
+  "settingsWorkspaceBrowserSessions": "Browser and WebVisit sessions",
+  "settingsAppearanceThemeSection": "Theme",
+  "settingsAppearanceThemeMode": "Current mode",
+  "settingsAppearanceThemeTarget": "Theme save target",
+  "settingsAppearanceThemeTargetGlobal": "Global",
+  "settingsAppearanceThemeTargetCharacter": "Current character: {name}",
+  "@settingsAppearanceThemeTargetCharacter": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeTargetGroup": "Current group: {name}",
+  "@settingsAppearanceThemeTargetGroup": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeSystem": "System",
+  "settingsAppearanceThemeLight": "Light",
+  "settingsAppearanceThemeDark": "Dark",
+  "settingsAppearanceColorSection": "Theme color",
+  "settingsAppearanceColorDescription": "Choose a simple color preset. System bars and current app chrome follow the theme automatically.",
+  "settingsAppearanceColorDefault": "Default",
+  "settingsAppearanceColorSky": "Sky",
+  "settingsAppearanceColorMatcha": "Matcha",
+  "settingsAppearanceColorEmber": "Ember",
+  "settingsAppearanceColorRose": "Rose",
+  "settingsAppearanceColorCustom": "Custom colors",
+  "settingsAppearanceCustomColorsTitle": "Custom theme colors",
+  "settingsAppearancePrimaryColor": "Primary color",
+  "settingsAppearanceSecondaryColor": "Secondary color",
+  "settingsAppearanceHexColorHint": "#RRGGBB",
+  "settingsAppearanceHexColorInvalid": "Enter a color in #RRGGBB format",
+  "settingsAppearanceBackgroundSection": "Background",
+  "settingsAppearanceBackgroundDescription": "Choose a local image or video as the app background. App surfaces and system bars follow the theme automatically.",
+  "settingsAppearanceBackgroundImage": "Background media",
+  "settingsAppearanceBackgroundNone": "None selected",
+  "settingsAppearanceBackgroundChooseImage": "Choose image",
+  "settingsAppearanceBackgroundChooseVideo": "Choose video",
+  "settingsAppearanceBackgroundDisable": "Disable background",
+  "settingsAppearanceBackgroundEnabled": "Enable background",
+  "settingsAppearanceBackgroundOpacity": "Background opacity",
+  "settingsAppearanceBackgroundBlur": "Blur background",
+  "settingsAppearanceBackgroundBlurRadius": "Blur strength",
+  "settingsAppearanceBackgroundVideoMuted": "Mute video background",
+  "settingsAppearanceBackgroundVideoLoop": "Loop video background",
+  "settingsAppearanceTextSection": "Text",
+  "settingsAppearanceFontFamily": "Font",
+  "settingsAppearanceFontDefault": "Default",
+  "settingsAppearanceCustomFont": "Custom font",
+  "settingsAppearanceFontCustom": "Custom",
+  "settingsAppearanceChooseCustomFont": "Choose custom font",
+  "settingsAppearanceClearCustomFont": "Clear custom font",
+  "settingsAppearanceFontSerif": "Serif",
+  "settingsAppearanceFontMonospace": "Mono",
+  "settingsAppearanceFontScale": "Font size",
+  "settingsAppearanceAvatarSection": "Avatars",
+  "settingsAppearanceUserAvatar": "User avatar",
+  "settingsAppearanceAiAvatar": "AI avatar",
+  "settingsAppearanceAvatarDefault": "Default avatar",
+  "settingsAppearanceAvatarShape": "Avatar shape",
+  "settingsAppearanceAvatarShapeCircle": "Circle",
+  "settingsAppearanceAvatarShapeSquare": "Square",
+  "settingsAppearanceChooseUserAvatar": "Choose user avatar",
+  "settingsAppearanceChooseAiAvatar": "Choose AI avatar",
+  "settingsAppearanceClearUserAvatar": "Clear user avatar",
+  "settingsAppearanceClearAiAvatar": "Clear AI avatar",
+  "settingsAppearanceChatDisplaySection": "Chat display",
+  "settingsAppearanceMessageStyle": "Message style",
+  "settingsAppearanceMessageStyleClean": "Command",
+  "settingsAppearanceMessageStyleCard": "Bubble",
+  "settingsAppearanceMessageColors": "Message colors",
+  "settingsAppearanceMessageColorsTheme": "Follow theme",
+  "settingsAppearanceMessageColorsSky": "Clean blue",
+  "settingsAppearanceMessageColorsMatcha": "Matcha",
+  "settingsAppearanceMessageColorsInk": "Dark",
+  "settingsAppearanceMessageColorsCustom": "Custom message colors",
+  "settingsAppearanceCustomMessageColorsTitle": "Custom message colors",
+  "settingsAppearanceCursorUserBubbleColor": "Command user bubble",
+  "settingsAppearanceUserBubbleColor": "User bubble",
+  "settingsAppearanceAiBubbleColor": "AI bubble",
+  "settingsAppearanceUserTextColor": "User text",
+  "settingsAppearanceAiTextColor": "AI text",
+  "settingsAppearanceMessageSurface": "Global texture",
+  "settingsAppearanceMessageSurfaceNormal": "Normal",
+  "settingsAppearanceMessageSurfaceTransparent": "Transparent",
+  "settingsAppearanceUserBubbleFont": "User bubble font",
+  "settingsAppearanceAiBubbleFont": "AI bubble font",
+  "settingsAppearanceAdjustUserBubbleFont": "Adjust user bubble font",
+  "settingsAppearanceAdjustAiBubbleFont": "Adjust AI bubble font",
+  "settingsAppearanceEnableBubbleFont": "Enable bubble-specific font",
+  "settingsAppearanceUserBubbleImage": "User bubble image",
+  "settingsAppearanceAiBubbleImage": "AI bubble image",
+  "settingsAppearanceChooseUserBubbleImage": "Choose user bubble",
+  "settingsAppearanceChooseAiBubbleImage": "Choose AI bubble",
+  "settingsAppearanceClearUserBubbleImage": "Clear user bubble",
+  "settingsAppearanceClearAiBubbleImage": "Clear AI bubble",
+  "settingsAppearanceBubbleImageRenderMode": "Bubble image mode",
+  "settingsAppearanceBubbleImageTiledNineSlice": "Tiled 9-slice",
+  "settingsAppearanceBubbleImageNinePatch": "Stretch 9-patch",
+  "settingsAppearanceBubbleImageAdjustUser": "Adjust user bubble image",
+  "settingsAppearanceBubbleImageAdjustAi": "Adjust AI bubble image",
+  "settingsAppearanceBubbleImagePreview": "Preview",
+  "settingsAppearanceBubbleImagePreviewText": "Bubble preview with 9-slice guides",
+  "settingsAppearanceBubbleImageCrop": "Crop",
+  "settingsAppearanceBubbleImageRepeat": "Repeat region",
+  "settingsAppearanceBubbleImageScale": "Image scale",
+  "settingsAppearanceBubbleImageCropLeft": "Crop left",
+  "settingsAppearanceBubbleImageCropTop": "Crop top",
+  "settingsAppearanceBubbleImageCropRight": "Crop right",
+  "settingsAppearanceBubbleImageCropBottom": "Crop bottom",
+  "settingsAppearanceBubbleImageRepeatStart": "Repeat X start",
+  "settingsAppearanceBubbleImageRepeatEnd": "Repeat X end",
+  "settingsAppearanceBubbleImageRepeatYStart": "Repeat Y start",
+  "settingsAppearanceBubbleImageRepeatYEnd": "Repeat Y end",
+  "settingsAppearanceMessageDensity": "Message spacing",
+  "settingsAppearanceMessageDensityComfortable": "Comfortable",
+  "settingsAppearanceMessageDensityCompact": "Compact",
+  "settingsAppearanceWideLayout": "Use wider chat layout",
+  "settingsAppearanceRoundedMessages": "Rounded message cards",
+  "settingsAppearanceShowAvatars": "Show message avatars",
+  "settingsAppearanceShowThinkingProcess": "Show thinking process",
+  "settingsAppearanceShowRoleName": "Show role name",
+  "settingsAppearanceShowUserName": "Show user name",
+  "settingsAppearanceShowModelName": "Show model name",
+  "settingsAppearanceShowModelProvider": "Show model provider",
+  "settingsAppearanceShowMessageTokenStats": "Show token stats",
+  "settingsAppearanceShowMessageTimingStats": "Show timing stats",
+  "settingsAppearanceShowMessageTimestamp": "Show message time",
+  "settingsAppearanceShowInputProcessingStatus": "Show input processing status",
+  "settingsAppearanceResetTheme": "Reset theme settings",
+  "settingsAppearanceLanguageSection": "Language",
+  "settingsAppearanceLanguage": "Current language",
+  "settingsAppearanceLanguageDescription": "Language follows the localization configuration loaded at app startup.",
+  "settingsDataRuntimeSection": "Runtime",
+  "settingsDataCoreVersion": "Core version",
+  "settingsDataTokenSection": "Token statistics",
+  "settingsDataInputTokens": "Input tokens",
+  "settingsDataOutputTokens": "Output tokens",
+  "settingsDataRefreshTokenStats": "Refresh cumulative statistics",
+  "settingsDataResetTokenStats": "Reset token statistics",
+  "settingsDataBackupSection": "Backup",
+  "settingsDataChatHistoriesBackup": "Chat history backup",
+  "settingsDataChatHistoriesBackupDescription": "Copy all chats and messages as JSON. Import updates or creates chats by chat ID.",
+  "settingsDataCharacterCardsBackup": "Character card backup",
+  "settingsDataCharacterCardsBackupDescription": "Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.",
+  "settingsDataCharacterGroupsBackup": "Character group backup",
+  "settingsDataCharacterGroupsBackupDescription": "Copy all character groups as JSON. Import keeps member references and ordering.",
+  "settingsDataModelConfigsBackup": "Model config backup",
+  "settingsDataModelConfigsBackupDescription": "Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.",
+  "settingsDataBackupCount": "{count} items",
+  "@settingsDataBackupCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataCopyBackupJson": "Copy backup JSON",
+  "settingsDataImportBackupJson": "Import backup JSON",
+  "settingsDataBackupJsonInput": "Backup JSON content",
+  "settingsDataBackupCopied": "Copied backup JSON for “{name}”.",
+  "@settingsDataBackupCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupImportResult": "Import complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.",
+  "@settingsDataBackupImportResult": {
+    "placeholders": {
+      "newCount": {
+        "type": "int"
+      },
+      "updatedCount": {
+        "type": "int"
+      },
+      "skippedCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataBackupImportError": "Backup import failed: {error}",
+  "@settingsDataBackupImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupCopyError": "Backup copy failed: {error}",
+  "@settingsDataBackupCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataExportRawSnapshot": "Export raw snapshot",
+  "settingsDataExportRawSnapshotDescription": "Generate the current data snapshot from runtime and show its byte size.",
+  "settingsDataSnapshotBytes": "Snapshot generated: {bytes} bytes",
+  "@settingsDataSnapshotBytes": {
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      }
+    }
+  }
 }

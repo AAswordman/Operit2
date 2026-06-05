@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
 const String _marketOwner = 'AAswordman';
@@ -389,7 +390,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     final isContinuationMode = publishContext != null;
     final lockedDisplayName = publishContext?.lockedDisplayName.trim() ?? '';
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
         title: Text(isContinuationMode ? '发布更新版本' : '发布 Artifact'),
         actions: <Widget>[
           IconButton(
@@ -589,11 +592,11 @@ class _PublishContinuationPanel extends StatelessWidget {
     final parentCount = contextInfo.parentNodeIds
         .where((nodeId) => nodeId.trim().isNotEmpty)
         .length;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return OperitGlassSurface(
+      color: colorScheme.secondaryContainer.withValues(alpha: 0.32),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: colorScheme.secondary.withValues(alpha: 0.14)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -729,11 +732,12 @@ class _PublishErrorPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return OperitGlassSurface(
+      color: colorScheme.errorContainer,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: colorScheme.error.withValues(alpha: 0.18)),
+      transparentAlpha: 0.22,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Text(

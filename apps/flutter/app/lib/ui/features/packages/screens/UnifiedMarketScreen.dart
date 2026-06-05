@@ -12,6 +12,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/LazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../main/TopBarController.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../market/ArtifactMarketSupport.dart';
 import '../market/MarketBrowseControls.dart';
@@ -72,31 +73,39 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: Theme.of(context).colorScheme.surface,
+      color: Colors.transparent,
       child: Column(
         children: <Widget>[
-          DefaultTabController(
-            key: ValueKey<MarketHomeTab>(_selectedTab),
-            length: MarketHomeTab.values.length,
-            initialIndex: _selectedTab.index,
-            child: TabBar(
-              onTap: (index) {
-                setState(() {
-                  _selectedTab = MarketHomeTab.values[index];
-                  _searchInput = '';
-                  _searchQuery = '';
-                  _searchExpanded = false;
-                  _searchDebounce?.cancel();
-                });
-                _syncTopBar();
-              },
-              tabs: const <Widget>[
-                Tab(text: 'Artifact'),
-                Tab(text: 'Skill'),
-                Tab(text: 'MCP'),
-                Tab(text: 'Mine'),
-              ],
+          OperitGlassSurface(
+            color: colorScheme.surface,
+            layer: OperitGlassSurfaceLayer.panel,
+            transparentAlpha: 0.035,
+            clip: false,
+            material: true,
+            child: DefaultTabController(
+              key: ValueKey<MarketHomeTab>(_selectedTab),
+              length: MarketHomeTab.values.length,
+              initialIndex: _selectedTab.index,
+              child: TabBar(
+                onTap: (index) {
+                  setState(() {
+                    _selectedTab = MarketHomeTab.values[index];
+                    _searchInput = '';
+                    _searchQuery = '';
+                    _searchExpanded = false;
+                    _searchDebounce?.cancel();
+                  });
+                  _syncTopBar();
+                },
+                tabs: const <Widget>[
+                  Tab(text: 'Artifact'),
+                  Tab(text: 'Skill'),
+                  Tab(text: 'MCP'),
+                  Tab(text: 'Mine'),
+                ],
+              ),
             ),
           ),
           MarketBrowseControls(
@@ -718,7 +727,9 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   Widget build(BuildContext context) {
     final error = _errorMessage;
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
         title: const Text('管理 Artifact'),
         actions: <Widget>[
           IconButton(
@@ -795,9 +806,13 @@ class _ManagedArtifactCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final title = item.displayName;
-    return Card(
-      elevation: 0,
+    return OperitGlassSurface(
       color: colorScheme.surfaceContainerLow,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -2056,9 +2071,13 @@ class _MineAccountLoadingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.62),
+    return OperitGlassSurface(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
       child: const ListTile(
         leading: M3LoadingIndicator(size: 24),
         title: Text('GitHub 账号'),
@@ -2083,7 +2102,15 @@ class _MineActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final colorScheme = Theme.of(context).colorScheme;
+    return OperitGlassSurface(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.38),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      material: true,
       child: ListTile(
         onTap: onTap,
         leading: Icon(icon),
@@ -2131,9 +2158,14 @@ class _MineAccountCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final currentUser = user;
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.62),
+    return OperitGlassSurface(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      material: true,
       child: ListTile(
         onTap: loggedIn ? null : onLogin,
         leading: _MineAccountAvatar(user: currentUser),

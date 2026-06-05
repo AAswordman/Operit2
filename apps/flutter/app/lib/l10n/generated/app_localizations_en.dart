@@ -21,6 +21,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings => 'Settings';
 
   @override
+  String get packageManager => 'Package manager';
+
+  @override
+  String get market => 'Market';
+
+  @override
   String get addAttachment => 'Add attachment';
 
   @override
@@ -704,4 +710,1326 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get emptySpreadsheet => 'Spreadsheet is empty';
+
+  @override
+  String get settingsCategoryModelTitle => 'Models & AI';
+
+  @override
+  String get settingsCategoryModelSubtitle => 'Models, keys, context';
+
+  @override
+  String get settingsCategoryModelDescription =>
+      'Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.';
+
+  @override
+  String get settingsCategoryCharactersTitle => 'Characters & Memory';
+
+  @override
+  String get settingsCategoryCharactersSubtitle => 'Cards, groups, bindings';
+
+  @override
+  String get settingsCategoryCharactersDescription =>
+      'Manage character cards, character groups, active roles, and role-level model, memory, and tool bindings.';
+
+  @override
+  String get settingsCategoryToolsTitle => 'Tools & Extensions';
+
+  @override
+  String get settingsCategoryToolsSubtitle =>
+      'Permissions, packages, skills, MCP';
+
+  @override
+  String get settingsCategoryToolsDescription =>
+      'Control which tools Operit can call, and manage plugins, tool packages, skills, and MCP servers.';
+
+  @override
+  String get settingsCategoryWorkspaceTitle => 'Workspace & Browser';
+
+  @override
+  String get settingsCategoryWorkspaceSubtitle => 'Files, terminal, browser';
+
+  @override
+  String get settingsCategoryWorkspaceDescription =>
+      'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.';
+
+  @override
+  String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
+
+  @override
+  String get settingsCategoryAppearanceSubtitle => 'Theme and language';
+
+  @override
+  String get settingsCategoryAppearanceDescription =>
+      'Adjust the client theme and current localization display.';
+
+  @override
+  String get settingsCategoryDataTitle => 'Data & Diagnostics';
+
+  @override
+  String get settingsCategoryDataSubtitle => 'History, backup, logs';
+
+  @override
+  String get settingsCategoryDataDescription =>
+      'Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.';
+
+  @override
+  String get settingsComingSoon =>
+      'This area will continue connecting existing runtime capabilities. Models, characters, and tools are being completed first.';
+
+  @override
+  String get settingsAdvanced => 'Advanced settings';
+
+  @override
+  String get settingsActive => 'Active';
+
+  @override
+  String get settingsActivate => 'Activate';
+
+  @override
+  String get settingsModelCurrentSection => 'Current chat model';
+
+  @override
+  String get settingsModelCurrentChatModel => 'Chat uses';
+
+  @override
+  String get settingsChatThinkingMode => 'Thinking mode';
+
+  @override
+  String get settingsChatThinkingModeDescription =>
+      'Let supported models produce steadier reasoning.';
+
+  @override
+  String get settingsChatStreamOutput => 'Stream output';
+
+  @override
+  String get settingsChatStreamOutputDescription =>
+      'Show generated replies progressively.';
+
+  @override
+  String get settingsModelProfilesSection => 'Model profiles';
+
+  @override
+  String get settingsModelFunctionMappingsSection =>
+      'Function model assignment';
+
+  @override
+  String get settingsModelFunctionMappingsDescription =>
+      'Choose the model profile and concrete model used by chat, summary, memory, image recognition, and other functions.';
+
+  @override
+  String get settingsModelFunctionMappingsReset => 'Reset all';
+
+  @override
+  String get settingsModelFunctionMappingsChange => 'Change';
+
+  @override
+  String settingsModelFunctionMappingsSelect(String name) {
+    return 'Select $name model';
+  }
+
+  @override
+  String settingsModelFunctionMappingsCurrent(
+    String configName,
+    String modelName,
+  ) {
+    return '$configName · $modelName';
+  }
+
+  @override
+  String get settingsModelChatAutoGlmWarning =>
+      'AutoGLM cannot be used as the main chat model. Chat and UI control use separate model assignments; choose another large model.';
+
+  @override
+  String get settingsModelFunctionChat => 'Chat';
+
+  @override
+  String get settingsModelFunctionChatDescription =>
+      'Model used for main conversation replies.';
+
+  @override
+  String get settingsModelFunctionSummary => 'Summary';
+
+  @override
+  String get settingsModelFunctionSummaryDescription =>
+      'Model used for long-context automatic summaries.';
+
+  @override
+  String get settingsModelFunctionMemory => 'Memory';
+
+  @override
+  String get settingsModelFunctionMemoryDescription =>
+      'Model used to extract, organize, and update memories.';
+
+  @override
+  String get settingsModelFunctionUiController => 'UI control';
+
+  @override
+  String get settingsModelFunctionUiControllerDescription =>
+      'Model used for interface control and lightweight action planning.';
+
+  @override
+  String get settingsModelFunctionTranslation => 'Translation';
+
+  @override
+  String get settingsModelFunctionTranslationDescription =>
+      'Model used to translate text and localized content.';
+
+  @override
+  String get settingsModelFunctionGrep => 'Text search';
+
+  @override
+  String get settingsModelFunctionGrepDescription =>
+      'Model used to filter search results and judge text matches.';
+
+  @override
+  String get settingsModelFunctionRoleResponsePlanner => 'Group reply planner';
+
+  @override
+  String get settingsModelFunctionRoleResponsePlannerDescription =>
+      'Model used to plan speaking roles and order in character group conversations.';
+
+  @override
+  String get settingsModelFunctionImageRecognition => 'Image recognition';
+
+  @override
+  String get settingsModelFunctionImageRecognitionDescription =>
+      'Model used to understand images and extract image content.';
+
+  @override
+  String get settingsModelFunctionAudioRecognition => 'Audio recognition';
+
+  @override
+  String get settingsModelFunctionAudioRecognitionDescription =>
+      'Model used to understand audio and extract audio content.';
+
+  @override
+  String get settingsModelFunctionVideoRecognition => 'Video recognition';
+
+  @override
+  String get settingsModelFunctionVideoRecognitionDescription =>
+      'Model used to understand video and extract video content.';
+
+  @override
+  String get settingsModelFunctionImageUnsupported =>
+      'The selected model profile has direct image input disabled.';
+
+  @override
+  String get settingsModelFunctionAudioUnsupported =>
+      'The selected model profile has direct audio input disabled.';
+
+  @override
+  String get settingsModelFunctionVideoUnsupported =>
+      'The selected model profile has direct video input disabled.';
+
+  @override
+  String get settingsModelCreateProfile => 'New model profile';
+
+  @override
+  String get settingsModelEditProfile => 'Edit model profile';
+
+  @override
+  String get settingsModelProfileName => 'Profile name';
+
+  @override
+  String get settingsModelApiEndpoint => 'API endpoint';
+
+  @override
+  String get settingsModelModelNames => 'Model names';
+
+  @override
+  String get settingsModelApiKey => 'API key';
+
+  @override
+  String get settingsModelApiKeyPool => 'API key pool';
+
+  @override
+  String get settingsModelApiKeyPoolDescription =>
+      'Prepare multiple keys for one model profile so runtime can rotate between them.';
+
+  @override
+  String settingsModelApiKeyPoolCount(int count) {
+    return '$count keys';
+  }
+
+  @override
+  String get settingsModelApiKeyPoolEmpty =>
+      'No keys yet. Add keys and this profile will use the key pool.';
+
+  @override
+  String get settingsModelAddApiKey => 'Add key';
+
+  @override
+  String get settingsModelEditApiKey => 'Edit key';
+
+  @override
+  String get settingsModelApiKeyName => 'Key name';
+
+  @override
+  String get settingsModelApiKeyEnabled => 'Enable this key';
+
+  @override
+  String get settingsModelProviderId => 'Provider ID';
+
+  @override
+  String get settingsModelMaxTokens => 'Max tokens';
+
+  @override
+  String get settingsModelMaxTokensDescription =>
+      'Limit how many tokens one response may generate.';
+
+  @override
+  String get settingsModelTemperature => 'Temperature';
+
+  @override
+  String get settingsModelTemperatureDescription =>
+      'Controls randomness. Lower is steadier, higher is more varied.';
+
+  @override
+  String get settingsModelTopP => 'Top-p';
+
+  @override
+  String get settingsModelTopPDescription =>
+      'Sample only from the cumulative Top-p probability range.';
+
+  @override
+  String get settingsModelTopK => 'Top-k';
+
+  @override
+  String get settingsModelTopKDescription =>
+      'Sample from the K most likely candidate tokens. 0 disables it.';
+
+  @override
+  String get settingsModelPresencePenalty => 'Presence penalty';
+
+  @override
+  String get settingsModelPresencePenaltyDescription =>
+      'Encourages new topics and reduces reuse of existing content.';
+
+  @override
+  String get settingsModelFrequencyPenalty => 'Frequency penalty';
+
+  @override
+  String get settingsModelFrequencyPenaltyDescription =>
+      'Penalizes repeated tokens by frequency.';
+
+  @override
+  String get settingsModelRepetitionPenalty => 'Repetition penalty';
+
+  @override
+  String get settingsModelRepetitionPenaltyDescription =>
+      'Further reduces repeated output. 1.0 means no penalty.';
+
+  @override
+  String get settingsModelRequestLimit => 'Requests per minute';
+
+  @override
+  String get settingsModelMaxConcurrent => 'Max concurrent requests';
+
+  @override
+  String get settingsModelContextLength => 'Context length';
+
+  @override
+  String get settingsModelMaxContextLength => 'Max context length';
+
+  @override
+  String get settingsModelMaxContextMode => 'Max context mode';
+
+  @override
+  String get settingsModelSummaryThreshold => 'Summary token threshold';
+
+  @override
+  String get settingsModelSummaryByMessageCount => 'Summarize by message count';
+
+  @override
+  String get settingsModelSummaryMessageCount => 'Summary message threshold';
+
+  @override
+  String get settingsModelCustomHeaders => 'Custom headers';
+
+  @override
+  String get settingsModelCustomParameters => 'Custom parameters JSON';
+
+  @override
+  String get settingsModelToolCall => 'Tool calling';
+
+  @override
+  String get settingsModelToolCallDescription =>
+      'Allow the model to use structured tool calls.';
+
+  @override
+  String get settingsModelDirectImage => 'Direct image input';
+
+  @override
+  String get settingsModelDirectImageDescription =>
+      'Send images directly to models that support image input.';
+
+  @override
+  String get settingsModelDirectAudio => 'Direct audio input';
+
+  @override
+  String get settingsModelDirectAudioDescription =>
+      'Send audio directly to models that support audio input.';
+
+  @override
+  String get settingsModelDirectVideo => 'Direct video input';
+
+  @override
+  String get settingsModelDirectVideoDescription =>
+      'Send video directly to models that support video input.';
+
+  @override
+  String get settingsModelGoogleSearch => 'Google Search';
+
+  @override
+  String get settingsModelGoogleSearchDescription =>
+      'Enable provider-side search capability.';
+
+  @override
+  String get settingsModelContext => 'Context window';
+
+  @override
+  String get settingsModelSummary => 'Auto summary';
+
+  @override
+  String get settingsModelMediaHistory => 'Media history';
+
+  @override
+  String get settingsModelConnectionTestSection => 'Connection test';
+
+  @override
+  String get settingsModelRunConnectionTest => 'Test current model';
+
+  @override
+  String get settingsModelTestingConnection =>
+      'Testing current model connection…';
+
+  @override
+  String get settingsModelTestedModel => 'Tested model';
+
+  @override
+  String get settingsModelConnectionTestPassed => 'All checks passed';
+
+  @override
+  String get settingsModelConnectionTestFailed => 'Some checks failed';
+
+  @override
+  String get settingsModelCapabilitiesApplied =>
+      'Model capability switches were updated from the test result.';
+
+  @override
+  String get settingsModelCapabilitiesNeedChat =>
+      'Chat test did not pass, so model capability switches were not updated.';
+
+  @override
+  String settingsModelConnectionTestError(String error) {
+    return 'Connection test failed: $error';
+  }
+
+  @override
+  String get settingsModelTestItemChat => 'Chat';
+
+  @override
+  String get settingsModelTestItemToolCall => 'Tool call';
+
+  @override
+  String get settingsModelTestItemImage => 'Image';
+
+  @override
+  String get settingsModelTestItemAudio => 'Audio';
+
+  @override
+  String get settingsModelTestItemVideo => 'Video';
+
+  @override
+  String get settingsModelTestItemUnknown => 'Unknown item';
+
+  @override
+  String get settingsCharactersCreateCard => 'New character card';
+
+  @override
+  String get settingsCharactersEditCard => 'Edit character card';
+
+  @override
+  String get settingsCharactersCardName => 'Character name';
+
+  @override
+  String get settingsCharactersCreateGroup => 'New character group';
+
+  @override
+  String get settingsCharactersEditGroup => 'Edit character group';
+
+  @override
+  String get settingsCharactersGroupName => 'Group name';
+
+  @override
+  String get settingsCharactersDescription => 'Description';
+
+  @override
+  String get settingsCharactersCharacterSetting => 'Character setting';
+
+  @override
+  String get settingsCharactersOpeningStatement => 'Opening statement';
+
+  @override
+  String get settingsCharactersOtherContentChat => 'Extra chat content';
+
+  @override
+  String get settingsCharactersOtherContentVoice => 'Extra voice content';
+
+  @override
+  String get settingsCharactersAdvancedPrompt => 'Advanced custom prompt';
+
+  @override
+  String get settingsCharactersMarks => 'Notes';
+
+  @override
+  String get settingsCharactersTags => 'Tags';
+
+  @override
+  String get settingsCharactersNoTags =>
+      'No tags available. Create tags in prompt/tag management, then bind them to character cards.';
+
+  @override
+  String get settingsCharactersImportJson => 'Import JSON';
+
+  @override
+  String get settingsCharactersCopyJson => 'Copy JSON';
+
+  @override
+  String get settingsCharactersImportTavernJson => 'Import Tavern JSON';
+
+  @override
+  String get settingsCharactersCopyTavernJson => 'Copy Tavern JSON';
+
+  @override
+  String get settingsCharactersJsonInput => 'JSON content';
+
+  @override
+  String get settingsCharactersTavernJsonInput => 'Tavern JSON content';
+
+  @override
+  String settingsCharactersJsonCopied(String name) {
+    return 'Copied JSON for “$name”.';
+  }
+
+  @override
+  String settingsCharactersTavernJsonCopied(String name) {
+    return 'Copied Tavern JSON for “$name”.';
+  }
+
+  @override
+  String get settingsCharactersImportCardJson => 'Import character card JSON';
+
+  @override
+  String get settingsCharactersImportCardJsonDone => 'Character card imported.';
+
+  @override
+  String get settingsCharactersImportTavernJsonDone =>
+      'Tavern character card imported.';
+
+  @override
+  String get settingsCharactersImportGroupJson => 'Import character group JSON';
+
+  @override
+  String get settingsCharactersImportGroupJsonDone =>
+      'Character group imported.';
+
+  @override
+  String settingsCharactersImportJsonError(String error) {
+    return 'JSON import failed: $error';
+  }
+
+  @override
+  String settingsCharactersImportTavernJsonError(String error) {
+    return 'Tavern JSON import failed: $error';
+  }
+
+  @override
+  String settingsCharactersTavernJsonCopyError(String error) {
+    return 'Tavern JSON copy failed: $error';
+  }
+
+  @override
+  String get settingsCharactersTagsSection => 'Tags';
+
+  @override
+  String get settingsCharactersCreateTag => 'New tag';
+
+  @override
+  String get settingsCharactersEditTag => 'Edit tag';
+
+  @override
+  String get settingsCharactersDeleteTag => 'Delete tag';
+
+  @override
+  String settingsCharactersDeleteTagMessage(String name) {
+    return 'Delete “$name”?';
+  }
+
+  @override
+  String get settingsCharactersTagName => 'Tag name';
+
+  @override
+  String get settingsCharactersTagDescription => 'Tag description';
+
+  @override
+  String get settingsCharactersTagPromptContent => 'Prompt content';
+
+  @override
+  String get settingsCharactersChatModelBindingMode =>
+      'Chat model binding mode';
+
+  @override
+  String get settingsCharactersChatModelConfigId => 'Chat model config ID';
+
+  @override
+  String get settingsCharactersChatModelIndex => 'Chat model index';
+
+  @override
+  String get settingsCharactersMemoryBindingMode => 'Memory binding mode';
+
+  @override
+  String get settingsCharactersMemoryProfileId => 'Memory profile ID';
+
+  @override
+  String get settingsCharactersToolAccess => 'Enable character tool allowlist';
+
+  @override
+  String get settingsCharactersChatModelFollowGlobal => 'Follow global model';
+
+  @override
+  String get settingsCharactersChatModelFixedConfig => 'Use fixed model config';
+
+  @override
+  String get settingsCharactersChatModelConfig => 'Model config';
+
+  @override
+  String get settingsCharactersMemoryProfileFollowGlobal =>
+      'Follow global memory';
+
+  @override
+  String get settingsCharactersMemoryProfileFixedProfile =>
+      'Use fixed memory profile';
+
+  @override
+  String get settingsCharactersMemoryProfile => 'Memory profile';
+
+  @override
+  String get settingsCharactersToolAccessFollowGlobal =>
+      'Follow global tool permissions';
+
+  @override
+  String get settingsCharactersToolAccessEmpty =>
+      'Enabled with no selected tools';
+
+  @override
+  String settingsCharactersToolAccessSummaryCounts(
+    int builtinCount,
+    int packageCount,
+    int skillCount,
+    int mcpCount,
+  ) {
+    return 'Built-in $builtinCount · packages $packageCount · skills $skillCount · MCP $mcpCount';
+  }
+
+  @override
+  String get settingsCharactersToolAccessConfigure =>
+      'Configure tool allowlist';
+
+  @override
+  String get settingsCharactersToolAccessRequiresUsePackage =>
+      'Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.';
+
+  @override
+  String get settingsCharactersToolAccessEmptyBuiltin =>
+      'No built-in tools available.';
+
+  @override
+  String get settingsCharactersToolAccessEmptyPackages =>
+      'No packages available.';
+
+  @override
+  String get settingsCharactersToolAccessEmptySkills => 'No skills available.';
+
+  @override
+  String get settingsCharactersToolAccessEmptyMcp =>
+      'No MCP servers available.';
+
+  @override
+  String get settingsCharactersBuiltinTools => 'Allowed built-in tools';
+
+  @override
+  String get settingsCharactersAllowedPackages => 'Allowed packages';
+
+  @override
+  String get settingsCharactersAllowedSkills => 'Allowed skills';
+
+  @override
+  String get settingsCharactersAllowedMcpServers => 'Allowed MCP servers';
+
+  @override
+  String get settingsCharactersGroupMembersTitle => 'Group characters';
+
+  @override
+  String get settingsCharactersPreferenceProfilesSection =>
+      'User preferences & memory';
+
+  @override
+  String get settingsCharactersCreatePreferenceProfile =>
+      'New user preference profile';
+
+  @override
+  String get settingsCharactersEditPreferenceProfile =>
+      'Edit user preference profile';
+
+  @override
+  String get settingsCharactersPreferenceProfileName => 'Profile name';
+
+  @override
+  String get settingsCharactersPreferenceBirthDate => 'Birth date timestamp';
+
+  @override
+  String get settingsCharactersPreferenceGender => 'Gender';
+
+  @override
+  String get settingsCharactersPreferencePersonality => 'Personality';
+
+  @override
+  String get settingsCharactersPreferenceIdentity => 'Identity';
+
+  @override
+  String get settingsCharactersPreferenceOccupation => 'Occupation';
+
+  @override
+  String get settingsCharactersPreferenceAiStyle => 'AI interaction style';
+
+  @override
+  String get settingsCharactersMemoryAutoUpdate =>
+      'Auto-update memory preferences';
+
+  @override
+  String get settingsCharactersMemoryAutoUpdateDescription =>
+      'Allow AI to update user preferences and long-term memory from conversations.';
+
+  @override
+  String get settingsCharactersPreferenceDescription =>
+      'Send user preferences to model';
+
+  @override
+  String get settingsCharactersPreferenceDescriptionSubtitle =>
+      'Include the active preference profile in chat prompts.';
+
+  @override
+  String get settingsCharactersPreferenceLocksSection =>
+      'Preference field locks';
+
+  @override
+  String get settingsCharactersPreferenceLockDescription =>
+      'When locked, automatic memory updates will not rewrite this field.';
+
+  @override
+  String get settingsCharactersCardsSection => 'Character cards';
+
+  @override
+  String get settingsCharactersGroupsSection => 'Character groups';
+
+  @override
+  String settingsCharactersGroupMembers(int count) {
+    return '$count members';
+  }
+
+  @override
+  String get settingsToolsPermissionMode => 'Tool permission mode';
+
+  @override
+  String get settingsToolsAsk => 'Ask';
+
+  @override
+  String get settingsToolsExtensions => 'Extension management';
+
+  @override
+  String get settingsToolsPlugins => 'Plugins';
+
+  @override
+  String get settingsToolsPluginsDescription =>
+      'Manage ToolPkg plugin containers and UI extensions.';
+
+  @override
+  String get settingsToolsPackages => 'Tool packages';
+
+  @override
+  String get settingsToolsPackagesDescription =>
+      'Enable, disable, and inspect built-in or external tool packages.';
+
+  @override
+  String get settingsToolsSkills => 'Skills';
+
+  @override
+  String get settingsToolsSkillsDescription =>
+      'Manage skill package visibility and imports.';
+
+  @override
+  String get settingsToolsMcp => 'MCP servers';
+
+  @override
+  String settingsToolsMcpDescription(int seconds) {
+    return 'Manage MCP configuration. Startup wait is $seconds seconds.';
+  }
+
+  @override
+  String get settingsToolsOverrides => 'Per-tool permission records';
+
+  @override
+  String get settingsToolsToolGroups => 'Per-tool permissions';
+
+  @override
+  String get settingsToolsToolGroupsDescription =>
+      'Keep Ask for normal use. Put trusted tools in Always allow, and risky or unwanted tools in Always forbid.';
+
+  @override
+  String get settingsToolsAlwaysAllow => 'Always allow';
+
+  @override
+  String get settingsToolsAlwaysAllowDescription =>
+      'These tools run without asking again.';
+
+  @override
+  String get settingsToolsAlwaysForbid => 'Always forbid';
+
+  @override
+  String get settingsToolsAlwaysForbidDescription =>
+      'AI will not call these tools.';
+
+  @override
+  String get settingsToolsAddTool => 'Add tool';
+
+  @override
+  String get settingsToolsAddAllowTool => 'Add allowed tool';
+
+  @override
+  String get settingsToolsAddForbidTool => 'Add forbidden tool';
+
+  @override
+  String get settingsToolsSearchTools => 'Search tools';
+
+  @override
+  String get settingsToolsNoToolsInGroup => 'No tools in this group.';
+
+  @override
+  String get settingsToolsMcpStartupTimeout => 'MCP startup timeout';
+
+  @override
+  String get settingsToolsMcpStartupTimeoutSeconds => 'Wait seconds';
+
+  @override
+  String get settingsWorkspaceCurrentDesign => 'Current workspace structure';
+
+  @override
+  String get settingsWorkspaceCurrentDesignDescription =>
+      'Workspaces are bound to chats. Terminal sessions and browser sessions are global sessions shown flat inside the workspace.';
+
+  @override
+  String get settingsWorkspaceOpenChat => 'Return to chat workspace';
+
+  @override
+  String get settingsWorkspaceOpenChatDescription =>
+      'Open files, terminals, browser, and web automation on the right side of chat.';
+
+  @override
+  String get settingsWorkspaceContains => 'Workspace contains';
+
+  @override
+  String get settingsWorkspacePerChat => 'Bound per chat';
+
+  @override
+  String get settingsWorkspaceGlobalSessions => 'Global terminal sessions';
+
+  @override
+  String get settingsWorkspaceBrowserSessions =>
+      'Browser and WebVisit sessions';
+
+  @override
+  String get settingsAppearanceThemeSection => 'Theme';
+
+  @override
+  String get settingsAppearanceThemeMode => 'Current mode';
+
+  @override
+  String get settingsAppearanceThemeTarget => 'Theme save target';
+
+  @override
+  String get settingsAppearanceThemeTargetGlobal => 'Global';
+
+  @override
+  String settingsAppearanceThemeTargetCharacter(Object name) {
+    return 'Current character: $name';
+  }
+
+  @override
+  String settingsAppearanceThemeTargetGroup(Object name) {
+    return 'Current group: $name';
+  }
+
+  @override
+  String get settingsAppearanceThemeSystem => 'System';
+
+  @override
+  String get settingsAppearanceThemeLight => 'Light';
+
+  @override
+  String get settingsAppearanceThemeDark => 'Dark';
+
+  @override
+  String get settingsAppearanceColorSection => 'Theme color';
+
+  @override
+  String get settingsAppearanceColorDescription =>
+      'Choose a simple color preset. System bars and current app chrome follow the theme automatically.';
+
+  @override
+  String get settingsAppearanceColorDefault => 'Default';
+
+  @override
+  String get settingsAppearanceColorSky => 'Sky';
+
+  @override
+  String get settingsAppearanceColorMatcha => 'Matcha';
+
+  @override
+  String get settingsAppearanceColorEmber => 'Ember';
+
+  @override
+  String get settingsAppearanceColorRose => 'Rose';
+
+  @override
+  String get settingsAppearanceColorCustom => 'Custom colors';
+
+  @override
+  String get settingsAppearanceCustomColorsTitle => 'Custom theme colors';
+
+  @override
+  String get settingsAppearancePrimaryColor => 'Primary color';
+
+  @override
+  String get settingsAppearanceSecondaryColor => 'Secondary color';
+
+  @override
+  String get settingsAppearanceHexColorHint => '#RRGGBB';
+
+  @override
+  String get settingsAppearanceHexColorInvalid =>
+      'Enter a color in #RRGGBB format';
+
+  @override
+  String get settingsAppearanceBackgroundSection => 'Background';
+
+  @override
+  String get settingsAppearanceBackgroundDescription =>
+      'Choose a local image or video as the app background. App surfaces and system bars follow the theme automatically.';
+
+  @override
+  String get settingsAppearanceBackgroundImage => 'Background media';
+
+  @override
+  String get settingsAppearanceBackgroundNone => 'None selected';
+
+  @override
+  String get settingsAppearanceBackgroundChooseImage => 'Choose image';
+
+  @override
+  String get settingsAppearanceBackgroundChooseVideo => 'Choose video';
+
+  @override
+  String get settingsAppearanceBackgroundDisable => 'Disable background';
+
+  @override
+  String get settingsAppearanceBackgroundEnabled => 'Enable background';
+
+  @override
+  String get settingsAppearanceBackgroundOpacity => 'Background opacity';
+
+  @override
+  String get settingsAppearanceBackgroundBlur => 'Blur background';
+
+  @override
+  String get settingsAppearanceBackgroundBlurRadius => 'Blur strength';
+
+  @override
+  String get settingsAppearanceBackgroundVideoMuted => 'Mute video background';
+
+  @override
+  String get settingsAppearanceBackgroundVideoLoop => 'Loop video background';
+
+  @override
+  String get settingsAppearanceTextSection => 'Text';
+
+  @override
+  String get settingsAppearanceFontFamily => 'Font';
+
+  @override
+  String get settingsAppearanceFontDefault => 'Default';
+
+  @override
+  String get settingsAppearanceCustomFont => 'Custom font';
+
+  @override
+  String get settingsAppearanceFontCustom => 'Custom';
+
+  @override
+  String get settingsAppearanceChooseCustomFont => 'Choose custom font';
+
+  @override
+  String get settingsAppearanceClearCustomFont => 'Clear custom font';
+
+  @override
+  String get settingsAppearanceFontSerif => 'Serif';
+
+  @override
+  String get settingsAppearanceFontMonospace => 'Mono';
+
+  @override
+  String get settingsAppearanceFontScale => 'Font size';
+
+  @override
+  String get settingsAppearanceAvatarSection => 'Avatars';
+
+  @override
+  String get settingsAppearanceUserAvatar => 'User avatar';
+
+  @override
+  String get settingsAppearanceAiAvatar => 'AI avatar';
+
+  @override
+  String get settingsAppearanceAvatarDefault => 'Default avatar';
+
+  @override
+  String get settingsAppearanceAvatarShape => 'Avatar shape';
+
+  @override
+  String get settingsAppearanceAvatarShapeCircle => 'Circle';
+
+  @override
+  String get settingsAppearanceAvatarShapeSquare => 'Square';
+
+  @override
+  String get settingsAppearanceChooseUserAvatar => 'Choose user avatar';
+
+  @override
+  String get settingsAppearanceChooseAiAvatar => 'Choose AI avatar';
+
+  @override
+  String get settingsAppearanceClearUserAvatar => 'Clear user avatar';
+
+  @override
+  String get settingsAppearanceClearAiAvatar => 'Clear AI avatar';
+
+  @override
+  String get settingsAppearanceChatDisplaySection => 'Chat display';
+
+  @override
+  String get settingsAppearanceMessageStyle => 'Message style';
+
+  @override
+  String get settingsAppearanceMessageStyleClean => 'Command';
+
+  @override
+  String get settingsAppearanceMessageStyleCard => 'Bubble';
+
+  @override
+  String get settingsAppearanceMessageColors => 'Message colors';
+
+  @override
+  String get settingsAppearanceMessageColorsTheme => 'Follow theme';
+
+  @override
+  String get settingsAppearanceMessageColorsSky => 'Clean blue';
+
+  @override
+  String get settingsAppearanceMessageColorsMatcha => 'Matcha';
+
+  @override
+  String get settingsAppearanceMessageColorsInk => 'Dark';
+
+  @override
+  String get settingsAppearanceMessageColorsCustom => 'Custom message colors';
+
+  @override
+  String get settingsAppearanceCustomMessageColorsTitle =>
+      'Custom message colors';
+
+  @override
+  String get settingsAppearanceCursorUserBubbleColor => 'Command user bubble';
+
+  @override
+  String get settingsAppearanceUserBubbleColor => 'User bubble';
+
+  @override
+  String get settingsAppearanceAiBubbleColor => 'AI bubble';
+
+  @override
+  String get settingsAppearanceUserTextColor => 'User text';
+
+  @override
+  String get settingsAppearanceAiTextColor => 'AI text';
+
+  @override
+  String get settingsAppearanceMessageSurface => 'Global texture';
+
+  @override
+  String get settingsAppearanceMessageSurfaceNormal => 'Normal';
+
+  @override
+  String get settingsAppearanceMessageSurfaceTransparent => 'Transparent';
+
+  @override
+  String get settingsAppearanceUserBubbleFont => 'User bubble font';
+
+  @override
+  String get settingsAppearanceAiBubbleFont => 'AI bubble font';
+
+  @override
+  String get settingsAppearanceAdjustUserBubbleFont =>
+      'Adjust user bubble font';
+
+  @override
+  String get settingsAppearanceAdjustAiBubbleFont => 'Adjust AI bubble font';
+
+  @override
+  String get settingsAppearanceEnableBubbleFont =>
+      'Enable bubble-specific font';
+
+  @override
+  String get settingsAppearanceUserBubbleImage => 'User bubble image';
+
+  @override
+  String get settingsAppearanceAiBubbleImage => 'AI bubble image';
+
+  @override
+  String get settingsAppearanceChooseUserBubbleImage => 'Choose user bubble';
+
+  @override
+  String get settingsAppearanceChooseAiBubbleImage => 'Choose AI bubble';
+
+  @override
+  String get settingsAppearanceClearUserBubbleImage => 'Clear user bubble';
+
+  @override
+  String get settingsAppearanceClearAiBubbleImage => 'Clear AI bubble';
+
+  @override
+  String get settingsAppearanceBubbleImageRenderMode => 'Bubble image mode';
+
+  @override
+  String get settingsAppearanceBubbleImageTiledNineSlice => 'Tiled 9-slice';
+
+  @override
+  String get settingsAppearanceBubbleImageNinePatch => 'Stretch 9-patch';
+
+  @override
+  String get settingsAppearanceBubbleImageAdjustUser =>
+      'Adjust user bubble image';
+
+  @override
+  String get settingsAppearanceBubbleImageAdjustAi => 'Adjust AI bubble image';
+
+  @override
+  String get settingsAppearanceBubbleImagePreview => 'Preview';
+
+  @override
+  String get settingsAppearanceBubbleImagePreviewText =>
+      'Bubble preview with 9-slice guides';
+
+  @override
+  String get settingsAppearanceBubbleImageCrop => 'Crop';
+
+  @override
+  String get settingsAppearanceBubbleImageRepeat => 'Repeat region';
+
+  @override
+  String get settingsAppearanceBubbleImageScale => 'Image scale';
+
+  @override
+  String get settingsAppearanceBubbleImageCropLeft => 'Crop left';
+
+  @override
+  String get settingsAppearanceBubbleImageCropTop => 'Crop top';
+
+  @override
+  String get settingsAppearanceBubbleImageCropRight => 'Crop right';
+
+  @override
+  String get settingsAppearanceBubbleImageCropBottom => 'Crop bottom';
+
+  @override
+  String get settingsAppearanceBubbleImageRepeatStart => 'Repeat X start';
+
+  @override
+  String get settingsAppearanceBubbleImageRepeatEnd => 'Repeat X end';
+
+  @override
+  String get settingsAppearanceBubbleImageRepeatYStart => 'Repeat Y start';
+
+  @override
+  String get settingsAppearanceBubbleImageRepeatYEnd => 'Repeat Y end';
+
+  @override
+  String get settingsAppearanceMessageDensity => 'Message spacing';
+
+  @override
+  String get settingsAppearanceMessageDensityComfortable => 'Comfortable';
+
+  @override
+  String get settingsAppearanceMessageDensityCompact => 'Compact';
+
+  @override
+  String get settingsAppearanceWideLayout => 'Use wider chat layout';
+
+  @override
+  String get settingsAppearanceRoundedMessages => 'Rounded message cards';
+
+  @override
+  String get settingsAppearanceShowAvatars => 'Show message avatars';
+
+  @override
+  String get settingsAppearanceShowThinkingProcess => 'Show thinking process';
+
+  @override
+  String get settingsAppearanceShowRoleName => 'Show role name';
+
+  @override
+  String get settingsAppearanceShowUserName => 'Show user name';
+
+  @override
+  String get settingsAppearanceShowModelName => 'Show model name';
+
+  @override
+  String get settingsAppearanceShowModelProvider => 'Show model provider';
+
+  @override
+  String get settingsAppearanceShowMessageTokenStats => 'Show token stats';
+
+  @override
+  String get settingsAppearanceShowMessageTimingStats => 'Show timing stats';
+
+  @override
+  String get settingsAppearanceShowMessageTimestamp => 'Show message time';
+
+  @override
+  String get settingsAppearanceShowInputProcessingStatus =>
+      'Show input processing status';
+
+  @override
+  String get settingsAppearanceResetTheme => 'Reset theme settings';
+
+  @override
+  String get settingsAppearanceLanguageSection => 'Language';
+
+  @override
+  String get settingsAppearanceLanguage => 'Current language';
+
+  @override
+  String get settingsAppearanceLanguageDescription =>
+      'Language follows the localization configuration loaded at app startup.';
+
+  @override
+  String get settingsDataRuntimeSection => 'Runtime';
+
+  @override
+  String get settingsDataCoreVersion => 'Core version';
+
+  @override
+  String get settingsDataTokenSection => 'Token statistics';
+
+  @override
+  String get settingsDataInputTokens => 'Input tokens';
+
+  @override
+  String get settingsDataOutputTokens => 'Output tokens';
+
+  @override
+  String get settingsDataRefreshTokenStats => 'Refresh cumulative statistics';
+
+  @override
+  String get settingsDataResetTokenStats => 'Reset token statistics';
+
+  @override
+  String get settingsDataBackupSection => 'Backup';
+
+  @override
+  String get settingsDataChatHistoriesBackup => 'Chat history backup';
+
+  @override
+  String get settingsDataChatHistoriesBackupDescription =>
+      'Copy all chats and messages as JSON. Import updates or creates chats by chat ID.';
+
+  @override
+  String get settingsDataCharacterCardsBackup => 'Character card backup';
+
+  @override
+  String get settingsDataCharacterCardsBackupDescription =>
+      'Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.';
+
+  @override
+  String get settingsDataCharacterGroupsBackup => 'Character group backup';
+
+  @override
+  String get settingsDataCharacterGroupsBackupDescription =>
+      'Copy all character groups as JSON. Import keeps member references and ordering.';
+
+  @override
+  String get settingsDataModelConfigsBackup => 'Model config backup';
+
+  @override
+  String get settingsDataModelConfigsBackupDescription =>
+      'Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.';
+
+  @override
+  String settingsDataBackupCount(int count) {
+    return '$count items';
+  }
+
+  @override
+  String get settingsDataCopyBackupJson => 'Copy backup JSON';
+
+  @override
+  String get settingsDataImportBackupJson => 'Import backup JSON';
+
+  @override
+  String get settingsDataBackupJsonInput => 'Backup JSON content';
+
+  @override
+  String settingsDataBackupCopied(String name) {
+    return 'Copied backup JSON for “$name”.';
+  }
+
+  @override
+  String settingsDataBackupImportResult(
+    int newCount,
+    int updatedCount,
+    int skippedCount,
+  ) {
+    return 'Import complete: $newCount new, $updatedCount updated, $skippedCount skipped.';
+  }
+
+  @override
+  String settingsDataBackupImportError(String error) {
+    return 'Backup import failed: $error';
+  }
+
+  @override
+  String settingsDataBackupCopyError(String error) {
+    return 'Backup copy failed: $error';
+  }
+
+  @override
+  String get settingsDataExportRawSnapshot => 'Export raw snapshot';
+
+  @override
+  String get settingsDataExportRawSnapshotDescription =>
+      'Generate the current data snapshot from runtime and show its byte size.';
+
+  @override
+  String settingsDataSnapshotBytes(int bytes) {
+    return 'Snapshot generated: $bytes bytes';
+  }
 }

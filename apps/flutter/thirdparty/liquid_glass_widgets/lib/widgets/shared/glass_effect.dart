@@ -1,0 +1,953 @@
+// ignore_for_file: require_trailing_commas
+
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import '../../src/renderer/liquid_glass_renderer.dart';
+
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/scheduler.dart';
+import '../../widgets/interactive/liquid_glass_scope.dart';
+import 'inherited_liquid_glass.dart';
+
+import '../../types/glass_quality.dart';
+import 'adaptive_glass.dart';
+
+/// Enhanced glass renderer specifically for interactive indicators.
+///
+/// Uses a specialized shader on Skia/Web to match Impeller's visual quality
+/// with magnification effects, enhanced rim lighting, and radial brightness.
+///
+/// On Impeller with premium quality, it uses the native LiquidGlass renderer.
+/// On Skia/Web or standard quality, it uses the enhanced GlassEffect
+/// shader with magnification and structural rim effects.
+class GlassEffect extends StatefulWidget {
+  const GlassEffect({
+    required this.shape,
+    required this.settings,
+    required this.interactionIntensity,
+    required this.child,
+    this.quality = GlassQuality.standard,
+    this.densityFactor = 0.0,
+    this.backgroundKey,
+    this.ambientRim = 0.1,
+    this.baseAlphaMultiplier = 0.2,
+    this.edgeAlphaMultiplier = 0.4,
+    this.rimThickness = 0.5,
+    this.rimSmoothing = 1.5,
+    this.clipExpansion = EdgeInsets.zero,
+    super.key,
+  });
+
+  final Widget child;
+  final LiquidShape shape;
+  final LiquidGlassSettings settings;
+  final GlassQuality quality;
+
+  /// Defaults to 0.0.
+  final double densityFactor;
+
+  /// GlobalKey of a RepaintBoundary wrapping the background content.
+  /// Used for Skia/Web background sampling.
+  final GlobalKey? backgroundKey;
+
+  /// Interaction intensity (0.0 = resting, 1.0 = fully active)
+  /// Drives magnification and enhancement effects
+  final double interactionIntensity;
+
+  /// Minimum rim brightness regardless of light direction (default: 0.1)
+  final double ambientRim;
+
+  /// Center transparency multiplier (default: 0.2)
+  final double baseAlphaMultiplier;
+
+  /// Edge opacity multiplier (default: 0.4)
+  final double edgeAlphaMultiplier;
+
+  /// Rim offset/thickness in logical pixels (default: 0.5)
+  final double rimThickness;
+
+  /// Rim edge smoothing multiplier (default: 1.5)
+  final double rimSmoothing;
+
+  /// Extra clip budget forwarded to [LiquidGlass.withOwnLayer] on the Impeller
+  /// premium path.  Use this to prevent the glass BackdropFilterLayer from
+  /// hard-clipping pixels that an ancestor Transform (e.g. jelly physics) has
+  /// pushed outside the tight geometry bounds.
+  ///
+  /// Defaults to [EdgeInsets.zero] — no extra cost for static glass.
+  final EdgeInsets clipExpansion;
+
+  static ui.FragmentProgram? _cachedProgram;
+  static bool _isPreparing = false;
+
+  /// Detects if Impeller rendering engine is active
+  static bool get _canUseImpeller => ui.ImageFilter.isShaderFilterSupported;
+
+  static ui.Image? _dummyImage;
+
+  static Future<void> preWarm() async {
+    if (_cachedProgram != null || _isPreparing) return;
+    _isPreparing = true;
+    const path =
+        'packages/liquid_glass_widgets/shaders/interactive_indicator.frag';
+    const testPath = 'shaders/interactive_indicator.frag';
+
+    try {
+      ui.FragmentProgram program;
+      try {
+        program = await ui.FragmentProgram.fromAsset(path);
+      } catch (_) {
+        // Fallback for unit tests where package prefix may not be resolved
+        program = await ui.FragmentProgram.fromAsset(testPath);
+      }
+      _cachedProgram = program;
+
+      if (!kIsWeb) {
+        debugPrint('[GlassEffect] ✓ Shader precached (native)');
+      } else {
+        debugPrint('[GlassEffect] ✓ Shader program loaded (web)');
+      }
+
+      // Create a 1x1 transparent dummy image to satisfy sampler index 0
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawColor(const Color(0x00000000), BlendMode.src);
+      final picture = recorder.endRecording();
+      _dummyImage = await picture.toImage(1, 1);
+    } catch (e) {
+      debugPrint('[GlassEffect] Pre-warm failed: $e');
+    } finally {
+      _isPreparing = false;
+    }
+  }
+
+  @override
+  State<GlassEffect> createState() => _GlassEffectState();
+}
+
+class _GlassEffectState extends State<GlassEffect>
+    with SingleTickerProviderStateMixin {
+  ui.FragmentShader? _localShader;
+  bool _loggedCreation = false;
+  ui.Image? _backgroundImage;
+  late Ticker _ticker;
+  Size? _lastCaptureSize;
+  Offset? _lastCapturePosition;
+  // Web only: guards against overlapping async captures.
+  bool _isCapturingAsync = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Skip shader init entirely in minimal quality — build() returns early via
+    // the _FrostedFallback path and the shader is never used.
+    if (widget.quality != GlassQuality.minimal) {
+      _initShader();
+    }
+
+    _ticker = createTicker(_handleTick);
+
+    // Defer ticker update until after first frame to ensure shader is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _updateTicker();
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant GlassEffect oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.quality != widget.quality) {
+      if (_activeShader == null) {
+        _initShader();
+      }
+    }
+    _updateTicker();
+  }
+
+  GlobalKey? _cachedScopeKey;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _cachedScopeKey = LiquidGlassScope.of(context);
+    _updateTicker();
+  }
+
+  GlobalKey? get _effectiveKey => widget.backgroundKey ?? _cachedScopeKey;
+
+  void _updateTicker() {
+    // Background capture requirements:
+    //  1. Widget is actively interacting (cost only paid during gesture)
+    //  2. A valid capture key is available
+    //  3. blur > 0 — when blur is 0 the component intentionally uses synthetic
+    //     glass (e.g. GlassSwitch thumb). Capturing the background would let the
+    //     green track bleed through as a dark/tinted frosted overlay, which
+    //     contradicts the intended white glass bloom effect.
+    final bool shouldCapture = widget.interactionIntensity > 0.01 &&
+        _effectiveKey != null &&
+        widget.settings.blur > 0.0;
+    if (shouldCapture) {
+      if (!_ticker.isActive) {
+        _ticker.start();
+        // debugPrint(
+        //     '[GlassEffect] 📸 Starting capture loop. Intensity: ${widget.interactionIntensity.toStringAsFixed(2)}');
+      }
+    } else {
+      if (_ticker.isActive) {
+        _ticker.stop();
+        _backgroundImage?.dispose();
+        _backgroundImage = null;
+        // debugPrint(
+        //     '[GlassEffect] 📸 Interaction finished, cleared snapshot.');
+      }
+    }
+  }
+
+  void _handleTick(Duration elapsed) {
+    final key = _effectiveKey;
+    if (key == null) return;
+
+    final boundary =
+        key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+    if (boundary == null) return;
+
+    // Guard: boundary may not be laid out yet (e.g. when the glass widget
+    // is mounted early for Standard quality before the first frame completes).
+    if (!boundary.hasSize) return;
+
+    final currentSize = boundary.size;
+    final currentPos = (key.currentContext?.findRenderObject() as RenderBox?)
+        ?.localToGlobal(Offset.zero);
+
+    // Capture on geometry change always; during interaction capture every frame
+    // since toImageSync() is synchronous (no GPU readback, no CPU copy).
+    final bool isInteracting = widget.interactionIntensity > 0.05;
+    bool needsCapture = _backgroundImage == null;
+    needsCapture |= _lastCaptureSize != currentSize;
+    needsCapture |= _lastCapturePosition != currentPos;
+    needsCapture |= isInteracting; // every frame during drag — free cost
+
+    if (needsCapture) {
+      _captureBackground(boundary, currentSize, currentPos);
+    }
+  }
+
+  /// Background capture — platform-adaptive.
+  ///
+  /// **Native (Impeller / Skia):** [RenderRepaintBoundary.toImageSync] —
+  /// fully synchronous, stays in GPU memory, zero CPU←GPU readback.
+  /// Runs every frame during active interaction at negligible cost.
+  ///
+  /// **Web (CanvasKit):** async [RenderRepaintBoundary.toImage] at
+  /// `pixelRatio: 1.0`. [toImageSync] is unreliable across CanvasKit versions
+  /// and unavailable in the legacy HTML renderer. The async path is still a
+  /// significant improvement over the previous `pixelRatio: dpr` approach —
+  /// same 1/DPR² memory reduction, with a 1-frame delivery lag during a drag.
+  /// An `_isCapturingAsync` guard prevents overlapping futures.
+  void _captureBackground(
+      RenderRepaintBoundary boundary, Size size, Offset? pos) {
+    assert(() {
+      if (boundary.size.isEmpty) {
+        debugPrint(
+          '⚠️ [GlassEffect] Background boundary has zero size.\n'
+          '   Ensure GlassRefractionSource (or LiquidGlassScope.stack) wraps\n'
+          '   a widget with non-zero dimensions.',
+        );
+      }
+      return true;
+    }());
+
+    if (kIsWeb) {
+      _captureBackgroundAsync(boundary, size, pos);
+    } else {
+      _captureBackgroundSync(boundary, size, pos);
+    }
+  }
+
+  /// Synchronous capture path for native (non-web) platforms.
+  void _captureBackgroundSync(
+      RenderRepaintBoundary boundary, Size size, Offset? pos) {
+    try {
+      // pixelRatio: 1.0 — logical resolution is sufficient for refraction.
+      // Stays in GPU-accessible memory; handed directly to setImageSampler.
+      final image = boundary.toImageSync(pixelRatio: 1.0);
+      // Guard: if the widget was disposed between the toImageSync call and
+      // this point (possible during rapid navigation), dispose the image
+      // immediately rather than leaking it into a dead State.
+      if (!mounted) {
+        image.dispose();
+        return;
+      }
+      _backgroundImage?.dispose();
+      _backgroundImage = image;
+      _lastCaptureSize = size;
+      _lastCapturePosition = pos;
+      setState(() {});
+    } catch (e) {
+      assert(() {
+        debugPrint('[GlassEffect] toImageSync failed: $e');
+        return true;
+      }());
+    }
+  }
+
+  /// Async capture path for web (CanvasKit / HTML renderer).
+  ///
+  /// [toImageSync] is not reliably available across all CanvasKit builds and
+  /// is absent in the legacy HTML renderer. Using async at `pixelRatio: 1.0`
+  /// still achieves the same memory reduction with an acceptable 1-frame lag.
+  Future<void> _captureBackgroundAsync(
+      RenderRepaintBoundary boundary, Size size, Offset? pos) async {
+    if (_isCapturingAsync) return; // prevent overlapping futures
+    _isCapturingAsync = true;
+    try {
+      final image = await boundary.toImage(pixelRatio: 1.0);
+      if (mounted) {
+        setState(() {
+          _backgroundImage?.dispose();
+          _backgroundImage = image;
+          _lastCaptureSize = size;
+          _lastCapturePosition = pos;
+        });
+      }
+    } catch (e) {
+      assert(() {
+        debugPrint('[GlassEffect] toImage (web) failed: $e');
+        return true;
+      }());
+    } finally {
+      _isCapturingAsync = false;
+    }
+  }
+
+  Future<void> _initShader() async {
+    // Check if shader is already available
+    if (GlassEffect._cachedProgram == null) {
+      // Shader not ready, load it asynchronously
+      await GlassEffect.preWarm();
+
+      // Force rebuild now that shader is ready
+      if (mounted) {
+        setState(() {});
+      }
+    }
+
+    if (GlassEffect._cachedProgram != null && _localShader == null) {
+      if (mounted) {
+        setState(() {
+          // Always create a local shader instance for state isolation
+          _localShader = GlassEffect._cachedProgram!.fragmentShader();
+          if (!_loggedCreation) {
+            debugPrint(
+                '[GlassEffect] ✓ Created unique shader instance for ${widget.shape.runtimeType}');
+            _loggedCreation = true;
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    // Null backgroundImage BEFORE disposing the shader to break the reference
+    // chain: _backgroundImage → render object → engine layer tree → GPU texture.
+    // On Mali GPUs, if the shader’s DlRuntimeEffectColorSource retains a
+    // texture reference during isolate shutdown, the Vulkan mutex is accessed
+    // after destruction (Crash 2).
+    _backgroundImage?.dispose();
+    _backgroundImage = null;
+    _localShader?.dispose();
+    _localShader = null;
+    super.dispose();
+  }
+
+  ui.FragmentShader? get _activeShader {
+    // We only return the shader if the dummy image is ready,
+    // to prevent "missing sampler" build errors.
+    if (GlassEffect._dummyImage == null) return null;
+    return _localShader;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Detect Environment & Constraints
+    final bool isImpeller = !kIsWeb && GlassEffect._canUseImpeller;
+
+    final bool avoidsRefraction = context
+            .dependOnInheritedWidgetOfExactType<InheritedLiquidGlass>()
+            ?.avoidsRefraction ??
+        false;
+
+    // 2. Resolve the background refraction source
+    final effectiveKey = widget.backgroundKey ?? LiquidGlassScope.of(context);
+    final shader = _activeShader;
+
+    // VQ4: Content-adaptive glass strength proxy.
+    final isDark = MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    final backdropLuma = isDark ? 0.15 : 0.85;
+
+    // 3. Selection Logic:
+
+    // Path A: Minimal (shader-free — BackdropFilter + ClipPath via _FrostedFallback)
+    // Routes through AdaptiveGlass which uses ClipPath(ShapeBorderClipper) for
+    // correct clipping on all shape types. No fragment shaders on any platform.
+    //
+    // IMPORTANT: always pass Clip.antiAlias here — never Clip.none.
+    // clipExpansion is only relevant for the LiquidStretch jelly displacement
+    // used in the full-shader path. _FrostedFallback has no displacement, so
+    // Clip.none would skip clipping entirely and let BackdropFilter blur the
+    // full rectangular bounds (the grey-square artifact).
+    if (widget.quality == GlassQuality.minimal || avoidsRefraction) {
+      return AdaptiveGlass(
+        shape: widget.shape,
+        settings: widget.settings,
+        quality: GlassQuality.minimal,
+        useOwnLayer: true,
+        clipBehavior: Clip.antiAlias,
+        isInteractive: true,
+        child: widget.child,
+      );
+    }
+
+    // Path B: Native Impeller (Premium only)
+    if (isImpeller && widget.quality == GlassQuality.premium) {
+      return LiquidGlass.withOwnLayer(
+        shape: widget.shape,
+        settings: widget.settings,
+        clipExpansion: widget.clipExpansion,
+        child: widget.child,
+      );
+    }
+
+    // 4. Resolve if we can use the high-fidelity refraction shader
+    final bool canUseRefraction = effectiveKey != null && !avoidsRefraction;
+
+    // Standard-path structural normalization for interactive_indicator.frag.
+    // The Premium Impeller path renders a real 3D bevel with natural gradient
+    // falloff. The 2D indicator shader draws a flat rim that reads as heavier
+    // at the same parameter values. Scaling these structural params down brings
+    // the pill's visual weight in line with the Premium bevel.
+    //
+    // NOTE: This mirrors the AdaptiveGlass normalization for lightweight_glass.frag
+    // (cards/buttons). Both are intentional Standard-path normalization sites —
+    // each scoped to its own shader's parameter space.
+    // Premium exits above via LiquidGlass.withOwnLayer; this block never runs there.
+    final double effectiveRimThickness = widget.quality == GlassQuality.standard
+        ? widget.rimThickness * 0.35
+        : widget.rimThickness;
+    final double effectiveAmbientRim = widget.quality == GlassQuality.standard
+        ? widget.ambientRim * 0.7
+        : widget.ambientRim;
+    final double effectiveEdgeAlpha = widget.quality == GlassQuality.standard
+        ? widget.edgeAlphaMultiplier * 0.7
+        : widget.edgeAlphaMultiplier;
+
+    // Normalise LiquidGlassSettings for the Standard path.
+    // The 2D interactive_indicator.frag renders thickness and specular highlights
+    // heavier than the Impeller 3D path at equal parameter values.
+    // Ratios are identical to AdaptiveGlass (thickness × 0.4, lightIntensity × 0.6)
+    // so the visual language stays consistent between static and interactive surfaces.
+    //
+    // NOTE: glassColor.alpha is intentionally NOT normalised here (unlike AdaptiveGlass).
+    // Interactive thumb body opacity is already governed by
+    //   standardBaseAlpha = baseAlphaMultiplier × interactionIntensity
+    // inside the shader — normalising alpha here would double-count it.
+    final LiquidGlassSettings effectiveSettings;
+    if (widget.quality == GlassQuality.standard) {
+      final base = widget.settings;
+      effectiveSettings = base.copyWith(
+        thickness: (base.effectiveThickness * 0.4).clamp(0.0, double.infinity),
+        lightIntensity: (base.effectiveLightIntensity * 0.6).clamp(0.0, 10.0),
+        ambientStrength: (base.effectiveAmbientStrength * 0.25).clamp(0.0, 1.0),
+        glowIntensity: (base.glowIntensity * 0.50).clamp(0.0, 5.0),
+      );
+    } else {
+      effectiveSettings = widget.settings;
+    }
+
+    // Path B: High-Fidelity Refraction Shader (Custom GLSL)
+    // This is the "New Shader" featuring magnification and liquid distortion.
+    if (canUseRefraction && shader != null) {
+      return ClipPath(
+        clipper: ShapeBorderClipper(shape: widget.shape),
+        clipBehavior: Clip.antiAliasWithSaveLayer,
+        child: _InteractiveIndicatorEffect(
+          shader: shader,
+          settings: effectiveSettings,
+          shape: widget.shape,
+          interactionIntensity: widget.interactionIntensity,
+          densityFactor: widget.densityFactor,
+          backdropLuma: backdropLuma,
+          backgroundImage: _backgroundImage,
+          backgroundKey: effectiveKey,
+          devicePixelRatio: View.of(context).devicePixelRatio,
+          ambientRim: effectiveAmbientRim,
+          baseAlphaMultiplier: widget.baseAlphaMultiplier,
+          edgeAlphaMultiplier: effectiveEdgeAlpha,
+          rimThickness: effectiveRimThickness,
+          rimSmoothing: widget.rimSmoothing,
+          child: widget.child,
+        ),
+      );
+    }
+
+    // Path C: Unified Indicator Fallback
+    // Even if no background image is available, we use the custom indicator shader
+    // to preserve the signature lighting, rim highlights, and structural "vibe".
+    // The shader will automatically switch to "Synthetic Frost" mode.
+    if (shader != null) {
+      return ClipPath(
+        clipper: ShapeBorderClipper(shape: widget.shape),
+        clipBehavior: Clip.antiAliasWithSaveLayer,
+        child: _InteractiveIndicatorEffect(
+          shader: shader,
+          settings: effectiveSettings.copyWith(blur: 0),
+          shape: widget.shape,
+          interactionIntensity: widget.interactionIntensity,
+          densityFactor: widget.densityFactor,
+          backdropLuma: backdropLuma,
+          backgroundImage: null, // Fallback mode
+          backgroundKey: null,
+          devicePixelRatio: View.of(context).devicePixelRatio,
+          ambientRim: effectiveAmbientRim,
+          baseAlphaMultiplier: widget.baseAlphaMultiplier,
+          edgeAlphaMultiplier: effectiveEdgeAlpha,
+          rimThickness: effectiveRimThickness,
+          rimSmoothing: widget.rimSmoothing,
+          child: widget.child,
+        ),
+      );
+    }
+
+    // Ultra-clean fallback if shader hasn't loaded yet
+    return ClipPath(
+      clipper: ShapeBorderClipper(shape: widget.shape),
+      child: Container(
+        color: Colors.transparent, // Invisible fallback to prevent flicker
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _InteractiveIndicatorEffect extends SingleChildRenderObjectWidget {
+  const _InteractiveIndicatorEffect({
+    required this.shader,
+    required this.settings,
+    required this.shape,
+    required this.interactionIntensity,
+    required this.densityFactor,
+    required this.backdropLuma,
+    this.backgroundImage,
+    this.backgroundKey,
+    required this.devicePixelRatio,
+    required this.ambientRim,
+    required this.baseAlphaMultiplier,
+    required this.edgeAlphaMultiplier,
+    required this.rimThickness,
+    required this.rimSmoothing,
+    required super.child,
+  });
+
+  final ui.FragmentShader shader;
+  final LiquidGlassSettings settings;
+  final LiquidShape shape;
+  final double interactionIntensity;
+  final double densityFactor;
+  final double backdropLuma;
+  final ui.Image? backgroundImage;
+  final GlobalKey? backgroundKey;
+  final double devicePixelRatio;
+  final double ambientRim;
+  final double baseAlphaMultiplier;
+  final double edgeAlphaMultiplier;
+  final double rimThickness;
+  final double rimSmoothing;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderInteractiveIndicator(
+      shader: shader,
+      settings: settings,
+      shape: shape,
+      interactionIntensity: interactionIntensity,
+      densityFactor: densityFactor,
+      backdropLuma: backdropLuma,
+      backgroundImage: backgroundImage,
+      backgroundKey: backgroundKey,
+      devicePixelRatio: devicePixelRatio,
+      ambientRim: ambientRim,
+      baseAlphaMultiplier: baseAlphaMultiplier,
+      edgeAlphaMultiplier: edgeAlphaMultiplier,
+      rimThickness: rimThickness,
+      rimSmoothing: rimSmoothing,
+    );
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderInteractiveIndicator renderObject,
+  ) {
+    renderObject
+      ..shader = shader
+      ..settings = settings
+      ..shape = shape
+      ..interactionIntensity = interactionIntensity
+      ..densityFactor = densityFactor
+      ..backdropLuma = backdropLuma
+      ..backgroundImage = backgroundImage
+      ..backgroundKey = backgroundKey
+      ..devicePixelRatio = devicePixelRatio
+      ..ambientRim = ambientRim
+      ..baseAlphaMultiplier = baseAlphaMultiplier
+      ..edgeAlphaMultiplier = edgeAlphaMultiplier
+      ..rimThickness = rimThickness
+      ..rimSmoothing = rimSmoothing;
+  }
+}
+
+class _RenderInteractiveIndicator extends RenderProxyBox {
+  _RenderInteractiveIndicator({
+    required ui.FragmentShader shader,
+    required LiquidGlassSettings settings,
+    required LiquidShape shape,
+    required double interactionIntensity,
+    required double densityFactor,
+    required double backdropLuma,
+    ui.Image? backgroundImage,
+    GlobalKey? backgroundKey,
+    required double devicePixelRatio,
+    required double ambientRim,
+    required double baseAlphaMultiplier,
+    required double edgeAlphaMultiplier,
+    required double rimThickness,
+    required double rimSmoothing,
+  })  : _shader = shader,
+        _settings = settings,
+        _shape = shape,
+        _interactionIntensity = interactionIntensity,
+        _densityFactor = densityFactor,
+        _backdropLuma = backdropLuma,
+        _backgroundImage = backgroundImage,
+        _backgroundKey = backgroundKey,
+        _devicePixelRatio = devicePixelRatio,
+        _ambientRim = ambientRim,
+        _baseAlphaMultiplier = baseAlphaMultiplier,
+        _edgeAlphaMultiplier = edgeAlphaMultiplier,
+        _rimThickness = rimThickness,
+        _rimSmoothing = rimSmoothing;
+
+  ui.FragmentShader _shader;
+  set shader(ui.FragmentShader value) {
+    if (_shader == value) return;
+    _shader = value;
+    markNeedsPaint();
+  }
+
+  LiquidGlassSettings _settings;
+  set settings(LiquidGlassSettings value) {
+    if (_settings == value) return;
+    _settings = value;
+    markNeedsPaint();
+  }
+
+  LiquidShape _shape;
+  set shape(LiquidShape value) {
+    if (_shape == value) return;
+    _shape = value;
+    markNeedsPaint();
+  }
+
+  double _interactionIntensity;
+  set interactionIntensity(double value) {
+    if (_interactionIntensity == value) return;
+    _interactionIntensity = value;
+    markNeedsPaint();
+  }
+
+  double _densityFactor;
+  set densityFactor(double value) {
+    if (_densityFactor == value) return;
+    _densityFactor = value;
+    markNeedsPaint();
+  }
+
+  double _backdropLuma;
+  set backdropLuma(double value) {
+    if (_backdropLuma == value) return;
+    _backdropLuma = value;
+    markNeedsPaint();
+  }
+
+  ui.Image? _backgroundImage;
+  set backgroundImage(ui.Image? value) {
+    if (_backgroundImage == value) return;
+    _backgroundImage = value;
+    markNeedsPaint();
+  }
+
+  GlobalKey? _backgroundKey;
+  set backgroundKey(GlobalKey? value) {
+    if (_backgroundKey == value) return;
+    _backgroundKey = value;
+    markNeedsPaint();
+  }
+
+  double _devicePixelRatio;
+  set devicePixelRatio(double value) {
+    if (_devicePixelRatio == value) return;
+    _devicePixelRatio = value;
+    markNeedsPaint();
+  }
+
+  double _ambientRim;
+  set ambientRim(double value) {
+    if (_ambientRim == value) return;
+    _ambientRim = value;
+    markNeedsPaint();
+  }
+
+  double _baseAlphaMultiplier;
+  set baseAlphaMultiplier(double value) {
+    if (_baseAlphaMultiplier == value) return;
+    _baseAlphaMultiplier = value;
+    markNeedsPaint();
+  }
+
+  double _edgeAlphaMultiplier;
+  set edgeAlphaMultiplier(double value) {
+    if (_edgeAlphaMultiplier == value) return;
+    _edgeAlphaMultiplier = value;
+    markNeedsPaint();
+  }
+
+  double _rimThickness;
+  set rimThickness(double value) {
+    if (_rimThickness == value) return;
+    _rimThickness = value;
+    markNeedsPaint();
+  }
+
+  double _rimSmoothing;
+  set rimSmoothing(double value) {
+    if (_rimSmoothing == value) return;
+    _rimSmoothing = value;
+    markNeedsPaint();
+  }
+
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child != null) {
+      final blurSigma = _settings.effectiveBlur;
+      if (blurSigma > 0) {
+        ui.ImageFilter filter =
+            ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma);
+
+        const double mult = 1.15;
+        const double add = 0.05;
+        final ui.ColorFilter brightnessFilter = ui.ColorFilter.matrix(<double>[
+          mult,
+          0.0,
+          0.0,
+          0.0,
+          add * 255.0,
+          0.0,
+          mult,
+          0.0,
+          0.0,
+          add * 255.0,
+          0.0,
+          0.0,
+          mult,
+          0.0,
+          add * 255.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+        ]);
+
+        filter = ui.ImageFilter.compose(
+          outer: brightnessFilter,
+          inner: filter,
+        );
+
+        context.pushLayer(
+          BackdropFilterLayer(filter: filter),
+          (context, offset) {
+            _paintGlassContent(context, offset);
+          },
+          offset,
+        );
+      } else {
+        _paintGlassContent(context, offset);
+      }
+    }
+  }
+
+  void _paintGlassContent(PaintingContext context, Offset offset) {
+    // 1. Paint Child content (glow etc)
+    super.paint(context, offset);
+
+    // 2. Prepare shader uniforms
+    final canvas = context.canvas;
+    final matrix = canvas.getTransform();
+
+    final canvasPhysicalX = matrix[12];
+    final canvasPhysicalY = matrix[13];
+    final scaleX = matrix[0];
+    final scaleY = matrix[5];
+
+    final physicalOrigin = Offset(
+      canvasPhysicalX + (offset.dx * scaleX),
+      canvasPhysicalY + (offset.dy * scaleY),
+    );
+
+    // Keep uScale from canvas for shape calculations
+    final uScale = Offset(scaleX, scaleY);
+
+    // Relative Offset Mapping - ALL IN LOGICAL PIXELS
+    Offset bgRelativeOffset = Offset.zero;
+    Size bgSize = const Size(1, 1);
+
+    if (_backgroundKey != null && _backgroundImage != null) {
+      final boundary = _backgroundKey!.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary != null) {
+        // Get screen positions (localToGlobal gives logical coords)
+        final bgGlobalPos = boundary.localToGlobal(Offset.zero);
+        final indGlobalPos = localToGlobal(Offset.zero);
+
+        // Keep in LOGICAL pixels (don't multiply by DPR)
+        bgRelativeOffset = indGlobalPos - bgGlobalPos;
+
+        // Image captured at pixelRatio: 1.0 — dimensions are already logical pixels.
+        // No DPR conversion needed (was previously physical→logical).
+        bgSize = Size(
+          _backgroundImage!.width.toDouble(),
+          _backgroundImage!.height.toDouble(),
+        );
+      }
+    }
+
+    _updateShaderUniforms(
+        size, physicalOrigin, uScale, bgRelativeOffset, bgSize);
+
+    // 3. Set Sampler
+    final imageToBind = _backgroundImage ?? GlassEffect._dummyImage;
+    if (imageToBind != null) {
+      _shader.setImageSampler(0, imageToBind);
+    }
+
+    // 4. Paint shader overlay
+    final paint = Paint()..shader = _shader;
+    canvas.drawRect(offset & size, paint);
+  }
+
+  void _updateShaderUniforms(Size size, Offset physicalOrigin,
+      Offset physicalScale, Offset bgOrigin, Size bgSize) {
+    int index = 0;
+    _shader.setFloat(index++, size.width);
+    _shader.setFloat(index++, size.height);
+    _shader.setFloat(index++, physicalOrigin.dx);
+    _shader.setFloat(index++, physicalOrigin.dy);
+
+    final color = _settings.effectiveGlassColor;
+    _shader.setFloat(index++, (color.r * 255.0).round().clamp(0, 255) / 255.0);
+    _shader.setFloat(index++, (color.g * 255.0).round().clamp(0, 255) / 255.0);
+    _shader.setFloat(index++, (color.b * 255.0).round().clamp(0, 255) / 255.0);
+    _shader.setFloat(index++, (color.a * 255.0).round().clamp(0, 255) / 255.0);
+
+    _shader.setFloat(index++, _settings.effectiveThickness);
+
+    // Pass light direction as [cos(angle), -sin(angle)]
+    // lightAngle is in radians (per LiquidGlassSettings API docs and default = 0.5*pi).
+    // Pass directly to cos/sin — no conversion needed.
+    _shader.setFloat(index++, math.cos(_settings.lightAngle));
+    _shader.setFloat(index++, -math.sin(_settings.lightAngle));
+
+    _shader.setFloat(index++, _settings.effectiveLightIntensity);
+    _shader.setFloat(index++, _settings.effectiveAmbientStrength);
+    _shader.setFloat(index++, _settings.effectiveSaturation);
+    _shader.setFloat(index++, _settings.effectiveRefractiveIndex);
+    _shader.setFloat(index++, (_settings.chromaticAberration).clamp(0.0, 1.0));
+
+    // 16: uCornerRadius (float) - Logical
+    double? cornerRadius;
+    final dynamic dynShape = _shape;
+    final shapeStr = _shape.runtimeType.toString().toLowerCase();
+
+    // 1. Try dynamic property extraction (Highest Accuracy)
+    try {
+      if (dynShape.borderRadius is num) {
+        cornerRadius = (dynShape.borderRadius as num).toDouble();
+      } else if (dynShape.borderRadius is BorderRadius) {
+        cornerRadius = (dynShape.borderRadius as BorderRadius).topLeft.x;
+      } else if (dynShape.borderRadius is BorderRadiusGeometry) {
+        final resolved = (dynShape.borderRadius as BorderRadiusGeometry)
+            .resolve(TextDirection.ltr);
+        cornerRadius = resolved.topLeft.x;
+      } else if (dynShape.radius is num) {
+        cornerRadius = (dynShape.radius as num).toDouble();
+      } else if (dynShape.radius is Radius) {
+        cornerRadius = (dynShape.radius as Radius).x;
+      }
+    } catch (_) {}
+
+    // 2. Class Name Heuristics (Robustness fallback)
+    // Only apply if the property extraction failed completely
+    if (cornerRadius == null) {
+      if (shapeStr.contains('rounded') || shapeStr.contains('superellipse')) {
+        cornerRadius = 16.0; // Standard pill/card radius
+      } else if (shapeStr.contains('oval') ||
+          shapeStr.contains('circle') ||
+          shapeStr.contains('stadium')) {
+        cornerRadius = math.min(size.width, size.height) / 2.0;
+      } else {
+        cornerRadius = 0.0;
+      }
+    }
+    final maxRadius = math.min(size.width, size.height) / 2.0;
+    cornerRadius = cornerRadius.clamp(0.0, maxRadius);
+    _shader.setFloat(index++, cornerRadius);
+
+    _shader.setFloat(index++, physicalScale.dx);
+    _shader.setFloat(index++, physicalScale.dy);
+    _shader.setFloat(
+        index++, _settings.glowIntensity); // uGlowIntensity (fresnel boost)
+    _shader.setFloat(
+        index++,
+        _densityFactor.clamp(0.0,
+            1.0)); // 20: uDensityFactor (float) - Elevation physics (0.0-1.0)
+    _shader.setFloat(index++, _interactionIntensity.clamp(0.0, 1.0));
+
+    // Background Mapping Uniforms
+    _shader.setFloat(index++, bgOrigin.dx);
+    _shader.setFloat(index++, bgOrigin.dy);
+    _shader.setFloat(index++, bgSize.width);
+    _shader.setFloat(index++, bgSize.height);
+    _shader.setFloat(index++, _backgroundImage != null ? 1.0 : 0.0);
+
+    // Configurable appearance parameters
+    _shader.setFloat(index++, _ambientRim);
+    _shader.setFloat(index++, _baseAlphaMultiplier);
+    _shader.setFloat(index++, _edgeAlphaMultiplier);
+    _shader.setFloat(index++, _rimThickness);
+    _shader.setFloat(index++, _rimSmoothing);
+    _shader.setFloat(index++, _settings.effectiveBlur);
+    _shader.setFloat(index++, 0.0);
+    _shader.setFloat(index++, 0.0);
+    _shader.setFloat(index++, 0.0);
+  }
+}

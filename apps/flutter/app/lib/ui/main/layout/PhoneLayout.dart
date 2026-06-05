@@ -8,6 +8,7 @@ import 'package:flutter/physics.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../../theme/OperitGlassSurface.dart';
 
 class PhoneLayout extends StatefulWidget {
   const PhoneLayout({
@@ -242,15 +243,26 @@ class _PhoneLayoutState extends State<PhoneLayout>
                   child: Transform.scale(
                     alignment: Alignment.centerLeft,
                     scale: drawerScale,
-                    child: Material(
-                      color: appearance.containerColor,
-                      elevation: math.max(0.0, sidebarElevation),
-                      borderRadius: const BorderRadiusDirectional.only(
-                        topEnd: Radius.circular(16),
-                        bottomEnd: Radius.circular(16),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        boxShadow: <BoxShadow>[
+                          if (sidebarElevation > 0)
+                            BoxShadow(
+                              blurRadius: sidebarElevation,
+                              color: Colors.black.withValues(alpha: 0.12),
+                            ),
+                        ],
                       ),
-                      clipBehavior: Clip.antiAlias,
-                      child: animatedChild.drawerContent,
+                      child: OperitGlassSurface(
+                        color: appearance.containerColor,
+                        layer: OperitGlassSurfaceLayer.panel,
+                        transparentAlpha: 0.035,
+                        borderRadius: const BorderRadiusDirectional.only(
+                          topEnd: Radius.circular(16),
+                          bottomEnd: Radius.circular(16),
+                        ).resolve(Directionality.of(context)),
+                        child: animatedChild.drawerContent,
+                      ),
                     ),
                   ),
                 ),

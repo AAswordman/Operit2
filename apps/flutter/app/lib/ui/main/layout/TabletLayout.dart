@@ -8,6 +8,7 @@ import '../components/CollapsedDrawerContent.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../../theme/OperitGlassSurface.dart';
 
 class TabletLayout extends StatefulWidget {
   const TabletLayout({
@@ -113,35 +114,39 @@ class _TabletLayoutState extends State<TabletLayout> {
           curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
-          decoration: BoxDecoration(
+          child: OperitGlassSurface(
             color: appearance.containerColor,
-            boxShadow: <BoxShadow>[
+            layer: OperitGlassSurfaceLayer.panel,
+            transparentAlpha: 0.035,
+            borderRadius: BorderRadius.zero,
+            shadows: <BoxShadow>[
               BoxShadow(
                 blurRadius: 4,
                 color: Colors.black.withValues(alpha: 0.12),
               ),
             ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: AnimatedSwitcher(
-            duration: _sidebarContentFadeDuration,
-            child: _isSidebarContentExpanded
-                ? DrawerContent(
-                    key: const ValueKey<String>('expandedSidebarContent'),
-                    navigationEntries: widget.navigationEntries,
-                    selectedRouteId: widget.selectedRouteId,
-                    appearance: appearance,
-                    onNavigationEntrySelected: widget.onNavigationEntrySelected,
-                    onConversationActivated: widget.onConversationActivated,
-                  )
-                : CollapsedDrawerContent(
-                    key: const ValueKey<String>('collapsedSidebarContent'),
-                    navigationEntries: widget.navigationEntries,
-                    selectedRouteId: widget.selectedRouteId,
-                    appearance: appearance,
-                    onNavigationEntrySelected: widget.onNavigationEntrySelected,
-                    onConversationActivated: widget.onConversationActivated,
-                  ),
+            child: AnimatedSwitcher(
+              duration: _sidebarContentFadeDuration,
+              child: _isSidebarContentExpanded
+                  ? DrawerContent(
+                      key: const ValueKey<String>('expandedSidebarContent'),
+                      navigationEntries: widget.navigationEntries,
+                      selectedRouteId: widget.selectedRouteId,
+                      appearance: appearance,
+                      onNavigationEntrySelected:
+                          widget.onNavigationEntrySelected,
+                      onConversationActivated: widget.onConversationActivated,
+                    )
+                  : CollapsedDrawerContent(
+                      key: const ValueKey<String>('collapsedSidebarContent'),
+                      navigationEntries: widget.navigationEntries,
+                      selectedRouteId: widget.selectedRouteId,
+                      appearance: appearance,
+                      onNavigationEntrySelected:
+                          widget.onNavigationEntrySelected,
+                      onConversationActivated: widget.onConversationActivated,
+                    ),
+            ),
           ),
         ),
         Expanded(child: widget.content),

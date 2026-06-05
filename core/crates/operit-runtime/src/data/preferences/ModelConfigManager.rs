@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
+    ModelConfigConnectionTester, ModelConnectionTestReport,
+};
 use crate::data::model::ApiKeyInfo::ApiKeyInfo;
 use crate::data::model::ModelConfigData::{ApiProviderType, ModelConfigData, ModelConfigSummary};
 use crate::data::model::ModelParameter::{
@@ -33,12 +37,22 @@ pub enum ModelConfigError {
     CustomParameterCategory(String),
     #[error("custom parameter conversion error: {0}")]
     CustomParameterConversion(String),
+    #[error("connection test error: {0}")]
+    ConnectionTest(String),
 }
 
 #[derive(Clone)]
 pub struct ModelConfigManager {
     paths: RuntimeStorePaths,
     modelConfigDataStore: PreferencesDataStore,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ModelConfigImportResult {
+    pub new: i32,
+    pub updated: i32,
+    pub skipped: i32,
+    pub total: i32,
 }
 
 impl ModelConfigManager {
@@ -713,6 +727,79 @@ impl ModelConfigManager {
             config.enableSummaryByMessageCount = enableSummaryByMessageCount;
             config.summaryMessageCountThreshold = summaryMessageCountThreshold;
             config
+        })
+    }
+
+    pub async fn testModelConfigConnection(
+        &self,
+        configId: &str,
+        modelIndex: i32,
+    ) -> Result<ModelConnectionTestReport, ModelConfigError> {
+        ModelConfigConnectionTester::run(self.paths.root_dir().to_path_buf(), configId, modelIndex)
+            .await
+            .map_err(ModelConfigError::ConnectionTest)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportAllConfigs(&self) -> Result<String, String> {
+        let configList = self.configListFlow().map_err(|error| error.to_string())?;
+        let configIds = configList.first().map_err(|error| error.to_string())?;
+        let mut allConfigs = Vec::new();
+        for configId in configIds {
+            allConfigs.push(
+                self.getModelConfigFlow(&configId)
+                    .map_err(|error| error.to_string())?
+                    .first()
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        serde_json::to_string_pretty(&allConfigs).map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importConfigs(&self, jsonContent: &str) -> Result<ModelConfigImportResult, String> {
+        if jsonContent.trim().is_empty() {
+            return Err("模型配置备份内容不能为空".to_string());
+        }
+        let importedConfigs = serde_json::from_str::<Vec<ModelConfigData>>(jsonContent)
+            .map_err(|error| format!("模型配置 JSON 格式错误：{error}"))?;
+        let mut existingConfigList = self
+            .configListFlow()
+            .map_err(|error| error.to_string())?
+            .first()
+            .map_err(|error| error.to_string())?;
+        let existingConfigIds = existingConfigList.clone();
+        let mut newCount = 0;
+        let mut updatedCount = 0;
+        let mut skippedCount = 0;
+
+        for config in importedConfigs {
+            if config.id.trim().is_empty() || config.name.trim().is_empty() {
+                skippedCount += 1;
+                continue;
+            }
+            self.saveConfigToDataStore(&config)
+                .map_err(|error| error.to_string())?;
+            if existingConfigIds.contains(&config.id) {
+                updatedCount += 1;
+            } else {
+                newCount += 1;
+                existingConfigList.push(config.id);
+            }
+        }
+
+        if newCount > 0 {
+            existingConfigList.sort();
+            existingConfigList.dedup();
+            self.saveConfigList(existingConfigList)
+                .map_err(|error| error.to_string())?;
+        }
+
+        Ok(ModelConfigImportResult {
+            new: newCount,
+            updated: updatedCount,
+            skipped: skippedCount,
+            total: newCount + updatedCount,
         })
     }
 

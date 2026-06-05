@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../models/SettingsModels.dart';
 
 class SettingsCategoryList extends StatelessWidget {
@@ -16,12 +18,13 @@ class SettingsCategoryList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
       children: <Widget>[
         for (final category in SettingsCategory.values)
           SettingsCategoryTile(
-            spec: SettingsCategorySpec.of(category),
+            spec: SettingsCategorySpec.of(category, l10n),
             selected: selectedCategory == category,
             onTap: () => onCategorySelected(category),
           ),
@@ -47,68 +50,64 @@ class SettingsCategoryTile extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final background = selected
-        ? colorScheme.secondaryContainer
-        : colorScheme.surface;
+        ? colorScheme.primaryContainer
+        : colorScheme.surfaceContainerHighest.withValues(alpha: 0.34);
     final foreground = selected
-        ? colorScheme.onSecondaryContainer
+        ? colorScheme.onPrimaryContainer
         : colorScheme.onSurface;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(12),
-          border: selected
-              ? null
-              : Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.42),
-                ),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: OperitGlassSurface(
+        color: background,
+        layer: OperitGlassSurfaceLayer.control,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.24)
+              : colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: Row(
-                children: <Widget>[
-                  Icon(spec.icon, size: 21, color: foreground),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          spec.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: foreground,
-                            fontWeight: FontWeight.w700,
-                          ),
+        material: true,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            child: Row(
+              children: <Widget>[
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: selected
+                      ? colorScheme.primary.withValues(alpha: 0.16)
+                      : colorScheme.surface,
+                  child: Icon(spec.icon, size: 20, color: foreground),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        spec.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: foreground,
+                          fontWeight: FontWeight.w800,
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          spec.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: foreground.withValues(alpha: 0.72),
-                          ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        spec.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: foreground.withValues(alpha: 0.70),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.chevron_right,
-                    size: 18,
-                    color: foreground.withValues(alpha: 0.62),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

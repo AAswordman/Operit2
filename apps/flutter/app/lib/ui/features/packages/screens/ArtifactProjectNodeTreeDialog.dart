@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../theme/OperitGlassSurface.dart';
 
 class ArtifactProjectNodeTreeDialog extends StatelessWidget {
   const ArtifactProjectNodeTreeDialog({
@@ -138,56 +139,53 @@ class _ArtifactProjectTreeCanvasState
           math.min(math.max(constraints.maxWidth * 0.58, 280), 560),
         );
         _fitTreeIntoViewport(layout, viewportSize);
-        return ClipRRect(
+        return OperitGlassSurface(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.18),
+          layer: OperitGlassSurfaceLayer.card,
           borderRadius: BorderRadius.circular(20),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.18,
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: SizedBox(
-              height: viewportSize.height,
-              child: InteractiveViewer(
-                transformationController: _controller,
-                constrained: false,
-                minScale: 0.35,
-                maxScale: 2.8,
-                boundaryMargin: const EdgeInsets.all(360),
-                onInteractionEnd: (_) {
-                  _lastTransformGestureAt = DateTime.now();
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.14),
+          ),
+          child: SizedBox(
+            height: viewportSize.height,
+            child: InteractiveViewer(
+              transformationController: _controller,
+              constrained: false,
+              minScale: 0.35,
+              maxScale: 2.8,
+              boundaryMargin: const EdgeInsets.all(360),
+              onInteractionEnd: (_) {
+                _lastTransformGestureAt = DateTime.now();
+              },
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onDoubleTap: () {
+                  _fitTreeIntoViewport(layout, viewportSize, force: true);
                 },
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onDoubleTap: () {
-                    _fitTreeIntoViewport(layout, viewportSize, force: true);
-                  },
-                  onTapUp: (details) {
-                    final lastTransformGestureAt = _lastTransformGestureAt;
-                    if (lastTransformGestureAt != null &&
-                        DateTime.now()
-                                .difference(lastTransformGestureAt)
-                                .inMilliseconds <
-                            140) {
+                onTapUp: (details) {
+                  final lastTransformGestureAt = _lastTransformGestureAt;
+                  if (lastTransformGestureAt != null &&
+                      DateTime.now()
+                              .difference(lastTransformGestureAt)
+                              .inMilliseconds <
+                          140) {
+                    return;
+                  }
+                  final position = details.localPosition;
+                  for (final node in layout.nodes.reversed) {
+                    if (node.rect.contains(position)) {
+                      widget.onSelectNode(node.node);
                       return;
                     }
-                    final position = details.localPosition;
-                    for (final node in layout.nodes.reversed) {
-                      if (node.rect.contains(position)) {
-                        widget.onSelectNode(node.node);
-                        return;
-                      }
-                    }
-                  },
-                  child: CustomPaint(
-                    size: Size(layout.totalWidth, layout.totalHeight),
-                    painter: _ArtifactProjectTreePainter(
-                      project: widget.project,
-                      layout: layout,
-                      metrics: metrics,
-                      colorScheme: colorScheme,
-                    ),
+                  }
+                },
+                child: CustomPaint(
+                  size: Size(layout.totalWidth, layout.totalHeight),
+                  painter: _ArtifactProjectTreePainter(
+                    project: widget.project,
+                    layout: layout,
+                    metrics: metrics,
+                    colorScheme: colorScheme,
                   ),
                 ),
               ),

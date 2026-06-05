@@ -1,5 +1,5 @@
-use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use crate::core::tools::ToolResultDataClasses::ToolResultData;
+use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use serde::{Deserialize, Serialize};
 
 const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "\n[工具结果过长，已截断]";
@@ -31,12 +31,9 @@ impl ConversationMarkupManager {
     pub fn formatToolResultForMessage(result: &ToolResult) -> String {
         if result.success {
             let payload = Self::formatToolResultPayload(&result.result);
-            Self::createBoundedToolResultXml(
-                &result.toolName,
-                "success",
-                &payload,
-                |payload| format!("<content>{payload}</content>"),
-            )
+            Self::createBoundedToolResultXml(&result.toolName, "success", &payload, |payload| {
+                format!("<content>{payload}</content>")
+            })
         } else {
             let message = result.error.clone().unwrap_or_default().trim().to_string();
             let detail = Self::formatToolResultPayload(&result.result)

@@ -266,6 +266,32 @@ impl MultiServiceManager {
         Ok((config, modelParameters, service))
     }
 
+    pub fn createTransientServiceBundleForConfigData(
+        &mut self,
+        config: ModelConfigData,
+        modelIndex: i32,
+    ) -> Result<
+        (
+            ModelConfigData,
+            Vec<ModelParameter<Value>>,
+            Box<dyn AIService>,
+        ),
+        AiServiceError,
+    > {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("MultiServiceManager mutex poisoned");
+        Self::ensureInitializedLocked(&mut inner)?;
+        let modelParameters = inner
+            .modelConfigManager
+            .getModelParametersForConfig(&config.id)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let normalizedIndex = modelIndex.max(0);
+        let service = Self::createServiceFromConfigLocked(&inner, config.clone(), normalizedIndex)?;
+        Ok((config, modelParameters, service))
+    }
+
     pub fn cancelAllStreaming(&mut self) {
         let inner = self
             .inner

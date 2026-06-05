@@ -4,6 +4,8 @@
   "aiChat": "AI聊天",
   "fullscreenInput": "全屏输入",
   "settings": "设置",
+  "packageManager": "包管理",
+  "market": "市场",
   "addAttachment": "添加附件",
   "cancel": "取消",
   "send": "发送",
@@ -347,5 +349,559 @@
   "cannotPreview": "无法预览",
   "openProjectInFullBrowser": "用完整浏览器打开项目",
   "openInBrowser": "在浏览器打开",
-  "emptySpreadsheet": "表格为空"
+  "emptySpreadsheet": "表格为空",
+  "settingsCategoryModelTitle": "模型与 AI",
+  "settingsCategoryModelSubtitle": "模型、Key、上下文",
+  "settingsCategoryModelDescription": "配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。",
+  "settingsCategoryCharactersTitle": "角色与记忆",
+  "settingsCategoryCharactersSubtitle": "角色卡、群组、绑定",
+  "settingsCategoryCharactersDescription": "管理角色卡、角色组、当前激活角色和角色级模型/记忆/工具绑定。",
+  "settingsCategoryToolsTitle": "工具与扩展",
+  "settingsCategoryToolsSubtitle": "权限、包、技能、MCP",
+  "settingsCategoryToolsDescription": "控制 Operit 可以调用哪些工具，并管理插件、工具包、技能和 MCP 服务。",
+  "settingsCategoryWorkspaceTitle": "工作区与浏览器",
+  "settingsCategoryWorkspaceSubtitle": "文件、终端、浏览器",
+  "settingsCategoryWorkspaceDescription": "管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。",
+  "settingsCategoryAppearanceTitle": "外观与交互",
+  "settingsCategoryAppearanceSubtitle": "主题、语言",
+  "settingsCategoryAppearanceDescription": "调整客户端主题和当前本地化显示。",
+  "settingsCategoryDataTitle": "数据与诊断",
+  "settingsCategoryDataSubtitle": "历史、备份、日志",
+  "settingsCategoryDataDescription": "管理聊天历史、备份恢复、Token 统计、Host 能力、日志和版本更新。",
+  "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。",
+  "settingsAdvanced": "高级设置",
+  "settingsActive": "当前",
+  "settingsActivate": "设为当前",
+  "settingsModelCurrentSection": "当前聊天模型",
+  "settingsModelCurrentChatModel": "聊天使用",
+  "settingsChatThinkingMode": "思考模式",
+  "settingsChatThinkingModeDescription": "让支持的模型输出更稳的推理过程。",
+  "settingsChatStreamOutput": "流式输出",
+  "settingsChatStreamOutputDescription": "回复生成时逐步显示内容。",
+  "settingsModelProfilesSection": "模型档案",
+  "settingsModelFunctionMappingsSection": "功能模型分配",
+  "settingsModelFunctionMappingsDescription": "为聊天、总结、记忆、识图等功能指定使用的模型配置和具体模型。",
+  "settingsModelFunctionMappingsReset": "全部重置",
+  "settingsModelFunctionMappingsChange": "更改",
+  "settingsModelFunctionMappingsSelect": "选择{name}模型",
+  "@settingsModelFunctionMappingsSelect": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsCurrent": "{configName} · {modelName}",
+  "@settingsModelFunctionMappingsCurrent": {
+    "placeholders": {
+      "configName": {
+        "type": "String"
+      },
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelChatAutoGlmWarning": "禁止使用 AutoGLM 作为对话主模型。对话模型和 UI 控制模型是分离的，请选择其他大模型。",
+  "settingsModelFunctionChat": "聊天",
+  "settingsModelFunctionChatDescription": "主对话回复使用的模型。",
+  "settingsModelFunctionSummary": "总结",
+  "settingsModelFunctionSummaryDescription": "长上下文自动总结使用的模型。",
+  "settingsModelFunctionMemory": "记忆",
+  "settingsModelFunctionMemoryDescription": "记忆提取、整理和更新使用的模型。",
+  "settingsModelFunctionUiController": "UI 控制",
+  "settingsModelFunctionUiControllerDescription": "界面控制和轻量操作规划使用的模型。",
+  "settingsModelFunctionTranslation": "翻译",
+  "settingsModelFunctionTranslationDescription": "翻译文本和本地化内容使用的模型。",
+  "settingsModelFunctionGrep": "文本检索",
+  "settingsModelFunctionGrepDescription": "搜索结果筛选和文本匹配判断使用的模型。",
+  "settingsModelFunctionRoleResponsePlanner": "群聊发言规划",
+  "settingsModelFunctionRoleResponsePlannerDescription": "角色组对话中规划发言角色和顺序使用的模型。",
+  "settingsModelFunctionImageRecognition": "图片识别",
+  "settingsModelFunctionImageRecognitionDescription": "图片理解和图片内容提取使用的模型。",
+  "settingsModelFunctionAudioRecognition": "音频识别",
+  "settingsModelFunctionAudioRecognitionDescription": "音频理解和音频内容提取使用的模型。",
+  "settingsModelFunctionVideoRecognition": "视频识别",
+  "settingsModelFunctionVideoRecognitionDescription": "视频理解和视频内容提取使用的模型。",
+  "settingsModelFunctionImageUnsupported": "当前模型配置未开启图片直传。",
+  "settingsModelFunctionAudioUnsupported": "当前模型配置未开启音频直传。",
+  "settingsModelFunctionVideoUnsupported": "当前模型配置未开启视频直传。",
+  "settingsModelCreateProfile": "新建模型档案",
+  "settingsModelEditProfile": "编辑模型档案",
+  "settingsModelProfileName": "档案名称",
+  "settingsModelApiEndpoint": "API 地址",
+  "settingsModelModelNames": "模型名称",
+  "settingsModelApiKey": "API Key",
+  "settingsModelApiKeyPool": "API Key 池",
+  "settingsModelApiKeyPoolDescription": "给同一个模型配置准备多个 Key，用于多 Key 轮换。",
+  "settingsModelApiKeyPoolCount": "{count} 个 Key",
+  "@settingsModelApiKeyPoolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelApiKeyPoolEmpty": "还没有 Key。添加后，运行时会按当前配置使用 Key 池。",
+  "settingsModelAddApiKey": "添加 Key",
+  "settingsModelEditApiKey": "编辑 Key",
+  "settingsModelApiKeyName": "Key 名称",
+  "settingsModelApiKeyEnabled": "启用这个 Key",
+  "settingsModelProviderId": "供应商 ID",
+  "settingsModelMaxTokens": "Max tokens",
+  "settingsModelMaxTokensDescription": "限制一次回复最多生成多少 Token。",
+  "settingsModelTemperature": "Temperature",
+  "settingsModelTemperatureDescription": "控制随机性，越低越稳定，越高越发散。",
+  "settingsModelTopP": "Top-p",
+  "settingsModelTopPDescription": "只从累计概率 Top-p 范围内采样。",
+  "settingsModelTopK": "Top-k",
+  "settingsModelTopKDescription": "只从概率最高的 K 个候选 Token 中采样，0 表示关闭。",
+  "settingsModelPresencePenalty": "Presence penalty",
+  "settingsModelPresencePenaltyDescription": "鼓励引入新话题，减少重复已有内容。",
+  "settingsModelFrequencyPenalty": "Frequency penalty",
+  "settingsModelFrequencyPenaltyDescription": "按出现频率惩罚重复 Token。",
+  "settingsModelRepetitionPenalty": "Repetition penalty",
+  "settingsModelRepetitionPenaltyDescription": "进一步降低重复，1.0 表示不惩罚。",
+  "settingsModelRequestLimit": "每分钟请求数",
+  "settingsModelMaxConcurrent": "最大并发请求",
+  "settingsModelContextLength": "上下文长度",
+  "settingsModelMaxContextLength": "最大上下文长度",
+  "settingsModelMaxContextMode": "最大上下文模式",
+  "settingsModelSummaryThreshold": "总结 Token 阈值",
+  "settingsModelSummaryByMessageCount": "按消息数总结",
+  "settingsModelSummaryMessageCount": "总结消息数阈值",
+  "settingsModelCustomHeaders": "自定义 Headers",
+  "settingsModelCustomParameters": "自定义参数 JSON",
+  "settingsModelToolCall": "工具调用",
+  "settingsModelToolCallDescription": "允许模型使用结构化工具调用能力。",
+  "settingsModelDirectImage": "图片直传",
+  "settingsModelDirectImageDescription": "支持图片能力的模型可直接接收图片。",
+  "settingsModelDirectAudio": "音频直传",
+  "settingsModelDirectAudioDescription": "支持音频能力的模型可直接接收音频。",
+  "settingsModelDirectVideo": "视频直传",
+  "settingsModelDirectVideoDescription": "支持视频能力的模型可直接接收视频。",
+  "settingsModelGoogleSearch": "Google 搜索",
+  "settingsModelGoogleSearchDescription": "启用供应商侧搜索能力。",
+  "settingsModelContext": "上下文窗口",
+  "settingsModelSummary": "自动总结",
+  "settingsModelMediaHistory": "媒体历史",
+  "settingsModelConnectionTestSection": "连接测试",
+  "settingsModelRunConnectionTest": "测试当前模型",
+  "settingsModelTestingConnection": "正在测试当前模型连接…",
+  "settingsModelTestedModel": "测试模型",
+  "settingsModelConnectionTestPassed": "全部通过",
+  "settingsModelConnectionTestFailed": "存在失败项",
+  "settingsModelCapabilitiesApplied": "已按测试结果更新模型能力开关。",
+  "settingsModelCapabilitiesNeedChat": "聊天测试未通过，模型能力开关未更新。",
+  "settingsModelConnectionTestError": "连接测试失败：{error}",
+  "@settingsModelConnectionTestError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestItemChat": "聊天",
+  "settingsModelTestItemToolCall": "工具调用",
+  "settingsModelTestItemImage": "图片",
+  "settingsModelTestItemAudio": "音频",
+  "settingsModelTestItemVideo": "视频",
+  "settingsModelTestItemUnknown": "未知项",
+  "settingsCharactersCreateCard": "新建角色卡",
+  "settingsCharactersEditCard": "编辑角色卡",
+  "settingsCharactersCardName": "角色名称",
+  "settingsCharactersCreateGroup": "新建角色组",
+  "settingsCharactersEditGroup": "编辑角色组",
+  "settingsCharactersGroupName": "角色组名称",
+  "settingsCharactersDescription": "描述",
+  "settingsCharactersCharacterSetting": "角色设定",
+  "settingsCharactersOpeningStatement": "开场白",
+  "settingsCharactersOtherContentChat": "聊天附加内容",
+  "settingsCharactersOtherContentVoice": "语音附加内容",
+  "settingsCharactersAdvancedPrompt": "高级自定义 Prompt",
+  "settingsCharactersMarks": "备注",
+  "settingsCharactersTags": "标签",
+  "settingsCharactersNoTags": "当前没有可选标签。可在提示词/标签管理中创建后绑定到角色卡。",
+  "settingsCharactersImportJson": "导入 JSON",
+  "settingsCharactersCopyJson": "复制 JSON",
+  "settingsCharactersImportTavernJson": "导入 Tavern JSON",
+  "settingsCharactersCopyTavernJson": "复制 Tavern JSON",
+  "settingsCharactersJsonInput": "JSON 内容",
+  "settingsCharactersTavernJsonInput": "Tavern JSON 内容",
+  "settingsCharactersJsonCopied": "已复制“{name}”的 JSON。",
+  "@settingsCharactersJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopied": "已复制“{name}”的 Tavern JSON。",
+  "@settingsCharactersTavernJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportCardJson": "导入角色卡 JSON",
+  "settingsCharactersImportCardJsonDone": "已导入角色卡。",
+  "settingsCharactersImportTavernJsonDone": "已导入 Tavern 角色卡。",
+  "settingsCharactersImportGroupJson": "导入角色组 JSON",
+  "settingsCharactersImportGroupJsonDone": "已导入角色组。",
+  "settingsCharactersImportJsonError": "导入 JSON 失败：{error}",
+  "@settingsCharactersImportJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportTavernJsonError": "导入 Tavern JSON 失败：{error}",
+  "@settingsCharactersImportTavernJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopyError": "复制 Tavern JSON 失败：{error}",
+  "@settingsCharactersTavernJsonCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagsSection": "标签",
+  "settingsCharactersCreateTag": "新建标签",
+  "settingsCharactersEditTag": "编辑标签",
+  "settingsCharactersDeleteTag": "删除标签",
+  "settingsCharactersDeleteTagMessage": "确定删除“{name}”吗？",
+  "@settingsCharactersDeleteTagMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagName": "标签名称",
+  "settingsCharactersTagDescription": "标签描述",
+  "settingsCharactersTagPromptContent": "Prompt 内容",
+  "settingsCharactersChatModelBindingMode": "聊天模型绑定模式",
+  "settingsCharactersChatModelConfigId": "聊天模型配置 ID",
+  "settingsCharactersChatModelIndex": "聊天模型序号",
+  "settingsCharactersMemoryBindingMode": "记忆绑定模式",
+  "settingsCharactersMemoryProfileId": "记忆配置 ID",
+  "settingsCharactersToolAccess": "启用角色工具白名单",
+  "settingsCharactersChatModelFollowGlobal": "跟随全局模型",
+  "settingsCharactersChatModelFixedConfig": "固定模型配置",
+  "settingsCharactersChatModelConfig": "模型配置",
+  "settingsCharactersMemoryProfileFollowGlobal": "跟随全局记忆",
+  "settingsCharactersMemoryProfileFixedProfile": "固定记忆档案",
+  "settingsCharactersMemoryProfile": "记忆档案",
+  "settingsCharactersToolAccessFollowGlobal": "跟随全局工具权限",
+  "settingsCharactersToolAccessEmpty": "已启用，但未选择任何工具",
+  "settingsCharactersToolAccessSummaryCounts": "内置 {builtinCount} · 工具包 {packageCount} · 技能 {skillCount} · MCP {mcpCount}",
+  "@settingsCharactersToolAccessSummaryCounts": {
+    "placeholders": {
+      "builtinCount": {
+        "type": "int"
+      },
+      "packageCount": {
+        "type": "int"
+      },
+      "skillCount": {
+        "type": "int"
+      },
+      "mcpCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsCharactersToolAccessConfigure": "配置工具白名单",
+  "settingsCharactersToolAccessRequiresUsePackage": "选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。",
+  "settingsCharactersToolAccessEmptyBuiltin": "当前没有可选内置工具。",
+  "settingsCharactersToolAccessEmptyPackages": "当前没有可选工具包。",
+  "settingsCharactersToolAccessEmptySkills": "当前没有可选技能。",
+  "settingsCharactersToolAccessEmptyMcp": "当前没有可选 MCP 服务。",
+  "settingsCharactersBuiltinTools": "允许的内置工具",
+  "settingsCharactersAllowedPackages": "允许的工具包",
+  "settingsCharactersAllowedSkills": "允许的技能",
+  "settingsCharactersAllowedMcpServers": "允许的 MCP 服务",
+  "settingsCharactersGroupMembersTitle": "组内角色",
+  "settingsCharactersPreferenceProfilesSection": "用户偏好与记忆",
+  "settingsCharactersCreatePreferenceProfile": "新建用户偏好档案",
+  "settingsCharactersEditPreferenceProfile": "编辑用户偏好档案",
+  "settingsCharactersPreferenceProfileName": "档案名称",
+  "settingsCharactersPreferenceBirthDate": "出生日期时间戳",
+  "settingsCharactersPreferenceGender": "性别",
+  "settingsCharactersPreferencePersonality": "性格",
+  "settingsCharactersPreferenceIdentity": "身份",
+  "settingsCharactersPreferenceOccupation": "职业",
+  "settingsCharactersPreferenceAiStyle": "AI 互动风格",
+  "settingsCharactersMemoryAutoUpdate": "自动更新记忆偏好",
+  "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中更新用户偏好与长期记忆。",
+  "settingsCharactersPreferenceDescription": "向模型提供用户偏好",
+  "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前偏好档案写入提示词。",
+  "settingsCharactersPreferenceLocksSection": "偏好字段锁定",
+  "settingsCharactersPreferenceLockDescription": "锁定后，自动记忆更新不会改写这个字段。",
+  "settingsCharactersCardsSection": "角色卡",
+  "settingsCharactersGroupsSection": "角色组",
+  "settingsCharactersGroupMembers": "{count} 个成员",
+  "@settingsCharactersGroupMembers": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsPermissionMode": "工具权限模式",
+  "settingsToolsAsk": "询问",
+  "settingsToolsExtensions": "扩展管理",
+  "settingsToolsPlugins": "插件",
+  "settingsToolsPluginsDescription": "管理 ToolPkg 插件容器和 UI 扩展。",
+  "settingsToolsPackages": "工具包",
+  "settingsToolsPackagesDescription": "启用、停用和查看内置/外部工具包。",
+  "settingsToolsSkills": "技能",
+  "settingsToolsSkillsDescription": "管理技能包可见性和导入。",
+  "settingsToolsMcp": "MCP 服务",
+  "settingsToolsMcpDescription": "管理 MCP 配置，当前启动等待 {seconds} 秒。",
+  "@settingsToolsMcpDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsOverrides": "单工具权限记录",
+  "settingsToolsToolGroups": "逐工具权限",
+  "settingsToolsToolGroupsDescription": "常用情况下保持“询问”即可；明确可信的工具放到允许组，危险或不想让 AI 用的工具放到禁止组。",
+  "settingsToolsAlwaysAllow": "始终允许",
+  "settingsToolsAlwaysAllowDescription": "这些工具执行时不再询问。",
+  "settingsToolsAlwaysForbid": "始终禁止",
+  "settingsToolsAlwaysForbidDescription": "这些工具不会被 AI 调用。",
+  "settingsToolsAddTool": "添加工具",
+  "settingsToolsAddAllowTool": "添加允许工具",
+  "settingsToolsAddForbidTool": "添加禁止工具",
+  "settingsToolsSearchTools": "搜索工具",
+  "settingsToolsNoToolsInGroup": "当前没有工具。",
+  "settingsToolsMcpStartupTimeout": "MCP 启动超时",
+  "settingsToolsMcpStartupTimeoutSeconds": "等待秒数",
+  "settingsWorkspaceCurrentDesign": "当前工作区结构",
+  "settingsWorkspaceCurrentDesignDescription": "工作区跟随聊天绑定；终端会话和浏览器会话作为全局会话在工作区里扁平展示。",
+  "settingsWorkspaceOpenChat": "回到聊天工作区",
+  "settingsWorkspaceOpenChatDescription": "在聊天右侧打开文件、终端、浏览器和网页自动化。",
+  "settingsWorkspaceContains": "工作区包含",
+  "settingsWorkspacePerChat": "按聊天绑定",
+  "settingsWorkspaceGlobalSessions": "全局终端会话",
+  "settingsWorkspaceBrowserSessions": "浏览器与 WebVisit 会话",
+  "settingsAppearanceThemeSection": "主题",
+  "settingsAppearanceThemeMode": "当前模式",
+  "settingsAppearanceThemeTarget": "主题保存目标",
+  "settingsAppearanceThemeTargetGlobal": "全局",
+  "settingsAppearanceThemeTargetCharacter": "当前角色：{name}",
+  "@settingsAppearanceThemeTargetCharacter": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeTargetGroup": "当前群组：{name}",
+  "@settingsAppearanceThemeTargetGroup": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeSystem": "跟随系统",
+  "settingsAppearanceThemeLight": "浅色",
+  "settingsAppearanceThemeDark": "深色",
+  "settingsAppearanceColorSection": "主题色",
+  "settingsAppearanceColorDescription": "选择一个简单的颜色预设。系统栏和当前应用外壳会自动跟随主题，不再单独配置。",
+  "settingsAppearanceColorDefault": "默认",
+  "settingsAppearanceColorSky": "天蓝",
+  "settingsAppearanceColorMatcha": "抹茶",
+  "settingsAppearanceColorEmber": "暖橙",
+  "settingsAppearanceColorRose": "玫瑰",
+  "settingsAppearanceColorCustom": "自定义颜色",
+  "settingsAppearanceCustomColorsTitle": "自定义主题色",
+  "settingsAppearancePrimaryColor": "主色",
+  "settingsAppearanceSecondaryColor": "辅色",
+  "settingsAppearanceHexColorHint": "#RRGGBB",
+  "settingsAppearanceHexColorInvalid": "请输入 #RRGGBB 格式的颜色",
+  "settingsAppearanceBackgroundSection": "背景",
+  "settingsAppearanceBackgroundDescription": "选择本地图片或视频作为应用背景，界面底色和系统栏会自动跟随主题。",
+  "settingsAppearanceBackgroundImage": "背景媒体",
+  "settingsAppearanceBackgroundNone": "未选择",
+  "settingsAppearanceBackgroundChooseImage": "选择图片",
+  "settingsAppearanceBackgroundChooseVideo": "选择视频",
+  "settingsAppearanceBackgroundDisable": "关闭背景",
+  "settingsAppearanceBackgroundEnabled": "启用背景",
+  "settingsAppearanceBackgroundOpacity": "背景透明度",
+  "settingsAppearanceBackgroundBlur": "背景模糊",
+  "settingsAppearanceBackgroundBlurRadius": "模糊强度",
+  "settingsAppearanceBackgroundVideoMuted": "视频背景静音",
+  "settingsAppearanceBackgroundVideoLoop": "视频背景循环",
+  "settingsAppearanceTextSection": "文字",
+  "settingsAppearanceFontFamily": "字体",
+  "settingsAppearanceFontDefault": "默认",
+  "settingsAppearanceCustomFont": "自定义字体",
+  "settingsAppearanceFontCustom": "自定义",
+  "settingsAppearanceChooseCustomFont": "选择自定义字体",
+  "settingsAppearanceClearCustomFont": "清除自定义字体",
+  "settingsAppearanceFontSerif": "衬线",
+  "settingsAppearanceFontMonospace": "等宽",
+  "settingsAppearanceFontScale": "字体大小",
+  "settingsAppearanceAvatarSection": "头像",
+  "settingsAppearanceUserAvatar": "用户头像",
+  "settingsAppearanceAiAvatar": "AI 头像",
+  "settingsAppearanceAvatarDefault": "默认头像",
+  "settingsAppearanceAvatarShape": "头像形状",
+  "settingsAppearanceAvatarShapeCircle": "圆形",
+  "settingsAppearanceAvatarShapeSquare": "方形",
+  "settingsAppearanceChooseUserAvatar": "选择用户头像",
+  "settingsAppearanceChooseAiAvatar": "选择 AI 头像",
+  "settingsAppearanceClearUserAvatar": "清除用户头像",
+  "settingsAppearanceClearAiAvatar": "清除 AI 头像",
+  "settingsAppearanceChatDisplaySection": "聊天显示",
+  "settingsAppearanceMessageStyle": "消息样式",
+  "settingsAppearanceMessageStyleClean": "命令式",
+  "settingsAppearanceMessageStyleCard": "气泡式",
+  "settingsAppearanceMessageColors": "消息配色",
+  "settingsAppearanceMessageColorsTheme": "跟随主题",
+  "settingsAppearanceMessageColorsSky": "清爽蓝",
+  "settingsAppearanceMessageColorsMatcha": "抹茶",
+  "settingsAppearanceMessageColorsInk": "深色",
+  "settingsAppearanceMessageColorsCustom": "自定义消息颜色",
+  "settingsAppearanceCustomMessageColorsTitle": "自定义消息颜色",
+  "settingsAppearanceCursorUserBubbleColor": "命令式用户气泡",
+  "settingsAppearanceUserBubbleColor": "用户气泡",
+  "settingsAppearanceAiBubbleColor": "AI 气泡",
+  "settingsAppearanceUserTextColor": "用户文字",
+  "settingsAppearanceAiTextColor": "AI 文字",
+  "settingsAppearanceMessageSurface": "全局质感",
+  "settingsAppearanceMessageSurfaceNormal": "普通",
+  "settingsAppearanceMessageSurfaceTransparent": "透明",
+  "settingsAppearanceUserBubbleFont": "用户气泡字体",
+  "settingsAppearanceAiBubbleFont": "AI 气泡字体",
+  "settingsAppearanceAdjustUserBubbleFont": "调整用户气泡字体",
+  "settingsAppearanceAdjustAiBubbleFont": "调整 AI 气泡字体",
+  "settingsAppearanceEnableBubbleFont": "启用气泡专属字体",
+  "settingsAppearanceUserBubbleImage": "用户气泡图片",
+  "settingsAppearanceAiBubbleImage": "AI 气泡图片",
+  "settingsAppearanceChooseUserBubbleImage": "选择用户气泡",
+  "settingsAppearanceChooseAiBubbleImage": "选择 AI 气泡",
+  "settingsAppearanceClearUserBubbleImage": "清除用户气泡",
+  "settingsAppearanceClearAiBubbleImage": "清除 AI 气泡",
+  "settingsAppearanceBubbleImageRenderMode": "气泡图片模式",
+  "settingsAppearanceBubbleImageTiledNineSlice": "平铺九宫格",
+  "settingsAppearanceBubbleImageNinePatch": "拉伸九宫格",
+  "settingsAppearanceBubbleImageAdjustUser": "调整用户气泡图片",
+  "settingsAppearanceBubbleImageAdjustAi": "调整 AI 气泡图片",
+  "settingsAppearanceBubbleImagePreview": "预览",
+  "settingsAppearanceBubbleImagePreviewText": "这是一条气泡预览，切线展示九宫格区域",
+  "settingsAppearanceBubbleImageCrop": "裁切",
+  "settingsAppearanceBubbleImageRepeat": "重复区域",
+  "settingsAppearanceBubbleImageScale": "图片缩放",
+  "settingsAppearanceBubbleImageCropLeft": "左侧裁切",
+  "settingsAppearanceBubbleImageCropTop": "顶部裁切",
+  "settingsAppearanceBubbleImageCropRight": "右侧裁切",
+  "settingsAppearanceBubbleImageCropBottom": "底部裁切",
+  "settingsAppearanceBubbleImageRepeatStart": "横向重复起点",
+  "settingsAppearanceBubbleImageRepeatEnd": "横向重复终点",
+  "settingsAppearanceBubbleImageRepeatYStart": "纵向重复起点",
+  "settingsAppearanceBubbleImageRepeatYEnd": "纵向重复终点",
+  "settingsAppearanceMessageDensity": "消息间距",
+  "settingsAppearanceMessageDensityComfortable": "舒适",
+  "settingsAppearanceMessageDensityCompact": "紧凑",
+  "settingsAppearanceWideLayout": "使用更宽的聊天布局",
+  "settingsAppearanceRoundedMessages": "消息卡片圆角",
+  "settingsAppearanceShowAvatars": "显示消息头像",
+  "settingsAppearanceShowThinkingProcess": "显示思考过程",
+  "settingsAppearanceShowRoleName": "显示角色名",
+  "settingsAppearanceShowUserName": "显示用户名",
+  "settingsAppearanceShowModelName": "显示模型名",
+  "settingsAppearanceShowModelProvider": "显示模型供应商",
+  "settingsAppearanceShowMessageTokenStats": "显示 Token 统计",
+  "settingsAppearanceShowMessageTimingStats": "显示耗时统计",
+  "settingsAppearanceShowMessageTimestamp": "显示消息时间",
+  "settingsAppearanceShowInputProcessingStatus": "显示输入处理状态",
+  "settingsAppearanceResetTheme": "重置主题设置",
+  "settingsAppearanceLanguageSection": "语言",
+  "settingsAppearanceLanguage": "当前语言",
+  "settingsAppearanceLanguageDescription": "语言跟随应用启动时的本地化配置。",
+  "settingsDataRuntimeSection": "Runtime",
+  "settingsDataCoreVersion": "Core 版本",
+  "settingsDataTokenSection": "Token 统计",
+  "settingsDataInputTokens": "输入 Token",
+  "settingsDataOutputTokens": "输出 Token",
+  "settingsDataRefreshTokenStats": "刷新累计统计",
+  "settingsDataResetTokenStats": "重置 Token 统计",
+  "settingsDataBackupSection": "备份",
+  "settingsDataChatHistoriesBackup": "聊天记录备份",
+  "settingsDataChatHistoriesBackupDescription": "复制全部聊天和消息为 JSON；导入时会按聊天 ID 更新或新增。",
+  "settingsDataCharacterCardsBackup": "角色卡备份",
+  "settingsDataCharacterCardsBackupDescription": "复制全部角色卡和已引用标签为 JSON；导入时会按原 ID 更新或新增。",
+  "settingsDataCharacterGroupsBackup": "角色组备份",
+  "settingsDataCharacterGroupsBackupDescription": "复制全部角色组为 JSON；导入时会保留组内角色引用和顺序。",
+  "settingsDataModelConfigsBackup": "模型配置备份",
+  "settingsDataModelConfigsBackupDescription": "复制全部模型配置为 JSON；导入时会按配置 ID 更新或新增，包含模型参数和 API Key 池。",
+  "settingsDataBackupCount": "当前 {count} 项",
+  "@settingsDataBackupCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataCopyBackupJson": "复制备份 JSON",
+  "settingsDataImportBackupJson": "导入备份 JSON",
+  "settingsDataBackupJsonInput": "备份 JSON 内容",
+  "settingsDataBackupCopied": "已复制“{name}”备份 JSON。",
+  "@settingsDataBackupCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupImportResult": "导入完成：新增 {newCount}，更新 {updatedCount}，跳过 {skippedCount}。",
+  "@settingsDataBackupImportResult": {
+    "placeholders": {
+      "newCount": {
+        "type": "int"
+      },
+      "updatedCount": {
+        "type": "int"
+      },
+      "skippedCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataBackupImportError": "导入备份失败：{error}",
+  "@settingsDataBackupImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupCopyError": "复制备份失败：{error}",
+  "@settingsDataBackupCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataExportRawSnapshot": "导出原始快照",
+  "settingsDataExportRawSnapshotDescription": "从 runtime 生成当前数据快照并显示字节数。",
+  "settingsDataSnapshotBytes": "已生成快照：{bytes} 字节",
+  "@settingsDataSnapshotBytes": {
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      }
+    }
+  }
 }

@@ -1,10 +1,15 @@
 // ignore_for_file: file_names
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
 import 'style/input/agent/AgentInputMenuPopup.dart';
@@ -242,15 +247,23 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final themePreferenceSnapshot = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot;
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
     final processingStatus = _inputProcessingStatus(l10n, widget.inputState);
     final showProcessingStatus =
-        widget.inputState.isProcessing && processingStatus.isNotEmpty;
-    final inputCardShape = const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        themePreferenceSnapshot.showInputProcessingStatus &&
+        widget.inputState.isProcessing &&
+        processingStatus.isNotEmpty;
+    const inputCardBorderRadius = BorderRadius.vertical(
+      top: Radius.circular(20),
+    );
+    const inputCardShape = RoundedRectangleBorder(
+      borderRadius: inputCardBorderRadius,
     );
 
     return Material(
@@ -258,7 +271,11 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
       child: Align(
         alignment: Alignment.bottomCenter,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: chatContentMaxWidth),
+          constraints: BoxConstraints(
+            maxWidth: themePreferenceSnapshot.bubbleWideLayoutEnabled
+                ? chatWideContentMaxWidth
+                : chatContentMaxWidth,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -275,27 +292,14 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     ),
                   ),
                 ),
-              Container(
+              _InputSurface(
+                color: colorScheme.surfaceContainer,
+                shape: inputCardShape,
+                borderRadius: inputCardBorderRadius,
+                transparentSurface:
+                    themePreferenceSnapshot.transparentSurfaceEnabled,
                 width: double.infinity,
                 margin: const EdgeInsets.only(top: 4),
-                decoration: ShapeDecoration(
-                  color: colorScheme.surfaceContainer,
-                  shape: inputCardShape,
-                  shadows: <BoxShadow>[
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                      offset: const Offset(0, -4),
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.035),
-                      blurRadius: 5,
-                      spreadRadius: 0,
-                      offset: const Offset(0, -1),
-                    ),
-                  ],
-                ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -328,6 +332,114 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
       ),
     );
   }
+}
+
+class _InputSurface extends StatelessWidget {
+  const _InputSurface({
+    required this.color,
+    required this.shape,
+    required this.borderRadius,
+    required this.child,
+    required this.width,
+    required this.margin,
+    required this.transparentSurface,
+  });
+
+  final Color color;
+  final ShapeBorder shape;
+  final BorderRadius borderRadius;
+  final Widget child;
+  final double width;
+  final EdgeInsetsGeometry margin;
+  final bool transparentSurface;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveColor = transparentSurface ? Colors.transparent : color;
+    final decorated = SizedBox(
+      width: width,
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          color: effectiveColor,
+          shape: shape,
+          shadows: transparentSurface
+              ? const <BoxShadow>[]
+              : <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 18,
+                    spreadRadius: 1,
+                    offset: const Offset(0, -4),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.035),
+                    blurRadius: 5,
+                    spreadRadius: 0,
+                    offset: const Offset(0, -1),
+                  ),
+                ],
+        ),
+        child: child,
+      ),
+    );
+    final Widget surface;
+    if (transparentSurface) {
+      final settings = _inputTransparentGlassSettings(context);
+      surface = ClipPath(
+        clipper: ShapeBorderClipper(shape: shape),
+        child: Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(
+                  sigmaX: settings.blur,
+                  sigmaY: settings.blur,
+                ),
+                child: const ColoredBox(color: Colors.transparent),
+              ),
+            ),
+            Positioned.fill(
+              child: GlassEffect(
+                quality: GlassQuality.standard,
+                shape: LiquidRoundedSuperellipse(
+                  borderRadius: borderRadius.topLeft.x,
+                ),
+                settings: settings,
+                interactionIntensity: 0.85,
+                ambientRim: 0.11,
+                baseAlphaMultiplier: 0.75,
+                edgeAlphaMultiplier: 0.75,
+                rimThickness: 1.48,
+                rimSmoothing: 8,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            decorated,
+          ],
+        ),
+      );
+    } else {
+      surface = decorated;
+    }
+    return Padding(padding: margin, child: surface);
+  }
+}
+
+LiquidGlassSettings _inputTransparentGlassSettings(BuildContext context) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return LiquidGlassSettings(
+    glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
+    thickness: 80,
+    blur: 2,
+    chromaticAberration: 0.18,
+    lightIntensity: 0.42,
+    ambientStrength: 0.2,
+    refractiveIndex: 1.16,
+    saturation: 1.04,
+    glowIntensity: 0.17,
+    specularSharpness: GlassSpecularSharpness.soft,
+    standardOpacityMultiplier: 0.12,
+  );
 }
 
 class _InputBody extends StatelessWidget {

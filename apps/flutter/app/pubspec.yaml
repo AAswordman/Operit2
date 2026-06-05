@@ -53,6 +53,8 @@ dependencies:
   file_selector: ^1.1.0
   xterm:
     path: ../thirdparty/xterm
+  liquid_glass_widgets:
+    path: ../thirdparty/liquid_glass_widgets
 
 dev_dependencies:
   flutter_test:

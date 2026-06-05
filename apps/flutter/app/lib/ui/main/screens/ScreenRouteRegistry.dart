@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../l10n/generated/app_localizations.dart';
+import '../../features/packages/components/PackageTab.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -29,7 +30,10 @@ class ScreenRouteRegistry {
   static final List<_HostScreenDefinition> _hostEntryDefinitions =
       <_HostScreenDefinition>[
         const _HostScreenDefinition(screen: aiChat),
-        const _HostScreenDefinition(screen: packageManager),
+        _HostScreenDefinition(
+          screen: packageManager,
+          factory: _buildPackageManagerScreen,
+        ),
         _HostScreenDefinition(screen: market, factory: _buildMarketScreen),
         _HostScreenDefinition(screen: settings, factory: _buildSettingsScreen),
       ];
@@ -60,7 +64,7 @@ class ScreenRouteRegistry {
         entryId: 'main.package_manager',
         routeId: routeIdOf(packageManager),
         surface: NavigationSurface.mainSidebarAi,
-        title: '包管理',
+        title: l10n.packageManager,
         icon: Icons.extension_outlined,
         order: 20,
       ),
@@ -68,7 +72,7 @@ class ScreenRouteRegistry {
         entryId: 'main.market',
         routeId: routeIdOf(market),
         surface: NavigationSurface.mainSidebarAi,
-        title: '市场',
+        title: l10n.market,
         icon: Icons.store_outlined,
         order: 30,
       ),
@@ -76,7 +80,7 @@ class ScreenRouteRegistry {
         entryId: 'main.settings',
         routeId: routeIdOf(settings),
         surface: NavigationSurface.mainSidebarAi,
-        title: '设置',
+        title: l10n.settings,
         icon: Icons.settings_outlined,
         order: 40,
       ),
@@ -135,6 +139,19 @@ class ScreenRouteRegistry {
 
   static String _nativeRouteIdForTypeName(String typeName) {
     return 'native.${_camelToSnakeCase(typeName)}';
+  }
+
+  static OperitScreen _buildPackageManagerScreen(Map<String, Object?> args) {
+    final initialTab = args['initialTab'];
+    if (initialTab == null) {
+      return const PackageManagerScreenRoute();
+    }
+    if (initialTab is! String) {
+      throw StateError('Invalid PackageManager.initialTab: $initialTab');
+    }
+    return PackageManagerScreenRoute(
+      initialTab: _enumByName(PackageTab.values, initialTab),
+    );
   }
 
   static OperitScreen _buildMarketScreen(Map<String, Object?> args) {

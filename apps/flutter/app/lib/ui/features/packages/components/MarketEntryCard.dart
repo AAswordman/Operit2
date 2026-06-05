@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../theme/OperitGlassSurface.dart';
+
 class MarketEntryCard extends StatelessWidget {
   const MarketEntryCard({
     super.key,
@@ -19,11 +21,15 @@ class MarketEntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      color: colorScheme.primaryContainer.withValues(alpha: 0.68),
+    final borderRadius = BorderRadius.circular(14);
+    return OperitGlassSurface(
+      color: colorScheme.primaryContainer.withValues(alpha: 0.54),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: borderRadius,
+      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.14)),
+      material: true,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: borderRadius,
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),

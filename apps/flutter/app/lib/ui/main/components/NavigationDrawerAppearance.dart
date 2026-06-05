@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../theme/OperitTheme.dart';
+
 class NavigationDrawerAppearance {
   const NavigationDrawerAppearance({
     required this.containerColor,
@@ -12,8 +14,7 @@ class NavigationDrawerAppearance {
     required this.selectedContainerColor,
     required this.selectedContentColor,
     required this.dividerColor,
-    required this.waterGlassEnabled,
-    required this.buttonLiquidGlassEnabled,
+    required this.transparentSurfaceEnabled,
   });
 
   final Color containerColor;
@@ -24,22 +25,31 @@ class NavigationDrawerAppearance {
   final Color selectedContainerColor;
   final Color selectedContentColor;
   final Color dividerColor;
-  final bool waterGlassEnabled;
-  final bool buttonLiquidGlassEnabled;
+  final bool transparentSurfaceEnabled;
 }
 
 NavigationDrawerAppearance navigationDrawerAppearanceOf(BuildContext context) {
   final colorScheme = Theme.of(context).colorScheme;
+  final transparentSurface = OperitTheme.of(
+    context,
+  ).themePreferenceSnapshot.transparentSurfaceEnabled;
   return NavigationDrawerAppearance(
-    containerColor: colorScheme.surface,
+    containerColor: transparentSurface
+        ? colorScheme.surface.withValues(alpha: 0.04)
+        : colorScheme.surface.withValues(alpha: 0.88),
     titleColor: colorScheme.onSurface,
     statusAvailableColor: colorScheme.primary,
     itemColor: colorScheme.onSurfaceVariant,
-    buttonContainerColor: colorScheme.surfaceContainerLow,
-    selectedContainerColor: colorScheme.secondaryContainer,
+    buttonContainerColor: transparentSurface
+        ? colorScheme.surfaceContainerLow.withValues(alpha: 0.18)
+        : colorScheme.surfaceContainerLow.withValues(alpha: 0.72),
+    selectedContainerColor: transparentSurface
+        ? colorScheme.secondaryContainer.withValues(alpha: 0.34)
+        : colorScheme.secondaryContainer.withValues(alpha: 0.78),
     selectedContentColor: colorScheme.onSecondaryContainer,
-    dividerColor: colorScheme.outlineVariant,
-    waterGlassEnabled: false,
-    buttonLiquidGlassEnabled: false,
+    dividerColor: transparentSurface
+        ? colorScheme.outlineVariant.withValues(alpha: 0.34)
+        : colorScheme.outlineVariant.withValues(alpha: 0.62),
+    transparentSurfaceEnabled: transparentSurface,
   );
 }

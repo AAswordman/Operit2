@@ -2,10 +2,13 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/screens/OperitScreens.dart';
 import '../../../main/screens/ScreenRouteRegistry.dart';
+import '../../../theme/OperitGlassSurface.dart';
+import '../../../theme/OperitTheme.dart';
 import '../components/SettingsCategoryList.dart';
 import '../components/SettingsDetailView.dart';
 import '../models/SettingsModels.dart';
@@ -21,7 +24,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late SettingsCategory? _phoneSelectedCategory = widget.initialCategory;
-  SettingsCategory _wideSelectedCategory = SettingsCategory.model;
+  late SettingsCategory _wideSelectedCategory =
+      widget.initialCategory ?? SettingsCategory.model;
   TopBarController? _topBarController;
 
   @override
@@ -36,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialCategory != widget.initialCategory) {
       _phoneSelectedCategory = widget.initialCategory;
+      _wideSelectedCategory = widget.initialCategory ?? _wideSelectedCategory;
       _syncTopBarTitle();
     }
   }
@@ -96,7 +101,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       controller.clearTitleContent(owner: this);
       return;
     }
-    final spec = SettingsCategorySpec.of(category);
+    final spec = SettingsCategorySpec.of(
+      category,
+      AppLocalizations.of(context)!,
+    );
     controller.setTitleContent(
       TopBarTitleContent(
         (context) => Text(
@@ -127,16 +135,30 @@ class _SettingsWideLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeSnapshot = OperitTheme.of(context).themePreferenceSnapshot;
+    final backgroundVisible =
+        themeSnapshot.useBackgroundImage &&
+        themeSnapshot.backgroundImageUri != null &&
+        themeSnapshot.backgroundImageUri!.isNotEmpty;
+    final transparentSurface = themeSnapshot.transparentSurfaceEnabled;
+    final sidebarColor = backgroundVisible
+        ? colorScheme.surface.withValues(alpha: 0.72)
+        : transparentSurface
+        ? colorScheme.surface.withValues(alpha: 0.04)
+        : colorScheme.surface;
     return Row(
       children: <Widget>[
         SizedBox(
           width: 260,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              border: Border(
-                right: BorderSide(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+          child: OperitGlassSurface(
+            color: sidebarColor,
+            layer: OperitGlassSurfaceLayer.panel,
+            transparentAlpha: 0.035,
+            borderRadius: BorderRadius.zero,
+            border: Border(
+              right: BorderSide(
+                color: colorScheme.outlineVariant.withValues(
+                  alpha: transparentSurface ? 0.18 : 0.45,
                 ),
               ),
             ),

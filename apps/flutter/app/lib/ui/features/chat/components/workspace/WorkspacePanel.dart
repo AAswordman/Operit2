@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
+import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
@@ -119,8 +120,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
+    return OperitGlassSurface(
       color: theme.colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.panel,
+      transparentAlpha: 0.035,
+      borderRadius: BorderRadius.zero,
+      clip: false,
       child: SizedBox.expand(
         child: DecoratedBox(
           decoration: BoxDecoration(
@@ -156,9 +161,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   void _registerBrowserControls() {
-    _browserSessionRegistry.setBrowserControls(
-      openBrowserTab: _openBrowserTab,
-    );
+    _browserSessionRegistry.setBrowserControls(openBrowserTab: _openBrowserTab);
   }
 
   void _registerWebVisitControls() {
@@ -716,10 +719,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
   }
 
-  void _completeWebVisitRequest(
-    String requestId,
-    WebVisitResponse response,
-  ) {
+  void _completeWebVisitRequest(String requestId, WebVisitResponse response) {
     final completer = _webVisitCompleters.remove(requestId);
     if (completer != null && !completer.isCompleted) {
       completer.complete(response);

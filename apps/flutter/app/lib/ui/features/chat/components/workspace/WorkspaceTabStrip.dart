@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../theme/OperitGlassSurface.dart';
+import '../../../../theme/OperitTheme.dart';
 import 'WorkspaceTabModels.dart';
 
 class WorkspaceTabStrip extends StatelessWidget {
@@ -23,8 +25,17 @@ class WorkspaceTabStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return ColoredBox(
-      color: theme.colorScheme.surface,
+    final transparentSurface = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot.transparentSurfaceEnabled;
+    return OperitGlassSurface(
+      color: transparentSurface
+          ? theme.colorScheme.surface.withValues(alpha: 0.04)
+          : theme.colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.panel,
+      transparentAlpha: 0.03,
+      borderRadius: BorderRadius.zero,
+      clip: false,
       child: SizedBox(
         height: 42,
         child: Stack(
@@ -88,7 +99,11 @@ class _WorkspaceTabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final backgroundColor = selected
-        ? theme.colorScheme.surface
+        ? OperitTheme.of(
+                context,
+              ).themePreferenceSnapshot.transparentSurfaceEnabled
+              ? theme.colorScheme.surface.withValues(alpha: 0.18)
+              : theme.colorScheme.surface
         : Colors.transparent;
     final contentColor = selected
         ? theme.colorScheme.onSurface

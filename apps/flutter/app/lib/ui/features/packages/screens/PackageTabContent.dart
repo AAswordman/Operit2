@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
@@ -115,10 +116,15 @@ class _QuickPluginCreatorEntry extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      color: colorScheme.primaryContainer,
+    final borderRadius = BorderRadius.circular(14);
+    return OperitGlassSurface(
+      color: colorScheme.primaryContainer.withValues(alpha: 0.54),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: borderRadius,
+      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.14)),
+      material: true,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: borderRadius,
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),

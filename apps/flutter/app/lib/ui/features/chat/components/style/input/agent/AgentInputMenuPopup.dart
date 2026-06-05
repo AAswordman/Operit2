@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
@@ -37,6 +38,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   bool _pluginsExpanded = false;
 
   GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
+  UserPreferencesManager get _userPreferencesManager =>
+      UserPreferencesManager(clients: _clients);
 
   @override
   void initState() {
@@ -80,19 +83,15 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   Future<_AgentInputMenuData> _loadSettings() async {
-    await _clients.preferencesUserPreferencesManager.initializeIfNeeded(
+    await _userPreferencesManager.initializeIfNeeded(
       defaultProfileName: 'Operit',
     );
-    final activeProfileId = await _clients.preferencesUserPreferencesManager
-        .activeProfileId();
-    final profileIds = await _clients.preferencesUserPreferencesManager
-        .profileListFlowSnapshot();
+    final activeProfileId = await _userPreferencesManager.activeProfileId();
+    final profileIds = await _userPreferencesManager.profileListFlowSnapshot();
     final profiles = <core_proxy.PreferenceProfile>[];
     for (final profileId in profileIds) {
       profiles.add(
-        await _clients.preferencesUserPreferencesManager.getProfile(
-          profileId: profileId,
-        ),
+        await _userPreferencesManager.getProfile(profileId: profileId),
       );
     }
     _observedPluginChangeVersion = await _clients
@@ -130,9 +129,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   Future<void> _selectMemory(String profileId) async {
-    await _clients.preferencesUserPreferencesManager.setActiveProfile(
-      profileId: profileId,
-    );
+    await _userPreferencesManager.setActiveProfile(profileId: profileId);
     await _clients.preferencesApiPreferences
         .saveDisableUserPreferenceDescription(isDisabled: false);
     _reloadSettings();

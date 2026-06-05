@@ -3,6 +3,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../../features/chat/screens/AIChatScreen.dart';
+import '../../features/packages/components/PackageTab.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
@@ -51,12 +52,24 @@ class AiChatScreenRoute extends OperitScreen {
 }
 
 class PackageManagerScreenRoute extends OperitScreen {
-  const PackageManagerScreenRoute()
+  const PackageManagerScreenRoute({this.initialTab = PackageTab.plugins})
     : super(routeTypeName: 'PackageManager', title: '包管理', keepAlive: true);
+
+  final PackageTab initialTab;
+
+  @override
+  Map<String, Object?> routeArgs() {
+    return <String, Object?>{'initialTab': initialTab.name};
+  }
+
+  @override
+  String? stableScreenKey() {
+    return 'PackageManager:${initialTab.name}';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return PackageManagerScreen();
+    return PackageManagerScreen(initialTab: initialTab);
   }
 }
 

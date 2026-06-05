@@ -4,9 +4,7 @@ use operit_host_api::{BrowserAutomationHost, BrowserAutomationRequest};
 use serde_json::{Map, Value};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
-    AITool, ToolExecutor, ToolValidationResult,
-};
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 
 #[derive(Clone)]
 pub struct StandardBrowserAutomationTools {

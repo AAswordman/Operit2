@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
@@ -346,9 +347,13 @@ class _SkillHeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+    return OperitGlassSurface(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(

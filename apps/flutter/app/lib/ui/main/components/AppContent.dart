@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../theme/OperitTheme.dart';
 import '../TopBarController.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/OperitScreens.dart';
@@ -164,8 +165,18 @@ class _AppContentState extends State<AppContent> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final appBarColor = theme.colorScheme.surface;
-    final contentColor = theme.colorScheme.surface;
+    final themeSnapshot = OperitTheme.of(context).themePreferenceSnapshot;
+    final backgroundVisible =
+        themeSnapshot.useBackgroundImage &&
+        themeSnapshot.backgroundImageUri != null &&
+        themeSnapshot.backgroundImageUri!.isNotEmpty;
+    final transparentSurface = themeSnapshot.transparentSurfaceEnabled;
+    final appBarColor = backgroundVisible
+        ? theme.colorScheme.surface.withValues(alpha: 0.72)
+        : theme.colorScheme.surface;
+    final contentColor = backgroundVisible || transparentSurface
+        ? Colors.transparent
+        : theme.colorScheme.surface;
     final appBarContentColor = theme.colorScheme.onSurface;
     final topPadding = MediaQuery.paddingOf(context).top;
     final currentScreenKey = _currentScreenKey;
@@ -206,52 +217,53 @@ class _AppContentState extends State<AppContent> {
               final shouldFlipNavigationIcon =
                   !widget.canGoBack &&
                   !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
-              return Material(
-                color: appBarColor,
-                child: SizedBox(
-                  height: topPadding + _topBarHeight,
-                  child: Padding(
-                    padding: EdgeInsets.only(top: topPadding),
-                    child: Row(
-                      children: <Widget>[
-                        const SizedBox(width: _navigationIconStartPadding),
-                        SizedBox(
-                          width: _navigationIconSize,
-                          height: _navigationIconSize,
-                          child: IconButton(
-                            onPressed: widget.canGoBack
-                                ? widget.onGoBack
-                                : widget.onNavigationButtonPressed,
-                            icon: shouldFlipNavigationIcon
-                                ? Transform(
-                                    alignment: Alignment.center,
-                                    transform: Matrix4.identity()
-                                      ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
-                                    child: navigationIconWidget,
-                                  )
-                                : navigationIconWidget,
-                            tooltip: widget.canGoBack
-                                ? 'Back'
-                                : widget.useTabletLayout &&
-                                      widget.isTabletSidebarExpanded
-                                ? 'Collapse sidebar'
-                                : 'Navigation',
-                          ),
+              final topBarContent = SizedBox(
+                height: topPadding + _topBarHeight,
+                child: Padding(
+                  padding: EdgeInsets.only(top: topPadding),
+                  child: Row(
+                    children: <Widget>[
+                      const SizedBox(width: _navigationIconStartPadding),
+                      SizedBox(
+                        width: _navigationIconSize,
+                        height: _navigationIconSize,
+                        child: IconButton(
+                          onPressed: widget.canGoBack
+                              ? widget.onGoBack
+                              : widget.onNavigationButtonPressed,
+                          icon: shouldFlipNavigationIcon
+                              ? Transform(
+                                  alignment: Alignment.center,
+                                  transform: Matrix4.identity()
+                                    ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
+                                  child: navigationIconWidget,
+                                )
+                              : navigationIconWidget,
+                          tooltip: widget.canGoBack
+                              ? 'Back'
+                              : widget.useTabletLayout &&
+                                    widget.isTabletSidebarExpanded
+                              ? 'Collapse sidebar'
+                              : 'Navigation',
                         ),
-                        Expanded(
-                          child:
-                              titleContent?.content(context) ??
-                              TopBarTitleText(
-                                primaryText: widget.currentRouteTitle,
-                                contentColor: appBarContentColor,
-                              ),
-                        ),
-                        if (actions != null) ...actions(context),
-                      ],
-                    ),
+                      ),
+                      Expanded(
+                        child:
+                            titleContent?.content(context) ??
+                            TopBarTitleText(
+                              primaryText: widget.currentRouteTitle,
+                              contentColor: appBarContentColor,
+                            ),
+                      ),
+                      if (actions != null) ...actions(context),
+                    ],
                   ),
                 ),
               );
+              if (transparentSurface) {
+                return topBarContent;
+              }
+              return Material(color: appBarColor, child: topBarContent);
             },
           ),
           Expanded(

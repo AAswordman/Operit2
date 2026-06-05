@@ -87,4 +87,166 @@ One long monologue (over three sentences without pause)"#
                 .to_string()
         }
     }
+
+    #[allow(non_snake_case)]
+    pub fn getCharacterDescriptionLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Character Description:".to_string()
+        } else {
+            "角色描述：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getPersonalityLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Personality:".to_string()
+        } else {
+            "性格特征：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getScenarioLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Scenario Setting:".to_string()
+        } else {
+            "场景设定：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getDialogueExampleLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Dialogue Examples:".to_string()
+        } else {
+            "对话示例：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getSystemPromptLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "System Prompt:".to_string()
+        } else {
+            "系统提示词：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getPostHistoryInstructionsLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Post-History Instructions:".to_string()
+        } else {
+            "历史指令：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAlternateGreetingsLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Alternate Greetings:".to_string()
+        } else {
+            "备用问候语：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getDepthPromptLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Depth Prompt:".to_string()
+        } else {
+            "深度提示词：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getWorldBookTagName(useEnglish: bool, characterName: &str) -> String {
+        if useEnglish {
+            format!("World Book: {characterName}")
+        } else {
+            format!("世界书: {characterName}")
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getWorldBookTagDescription(useEnglish: bool, characterName: &str) -> String {
+        if useEnglish {
+            format!("World book auto-generated for character '{characterName}'.")
+        } else {
+            format!("为角色'{characterName}'自动生成的世界书。")
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getSourceLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Source: Tavern Character Card\n".to_string()
+        } else {
+            "来源：酒馆角色卡\n".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAuthorLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Author:".to_string()
+        } else {
+            "作者：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getAuthorNotesLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Author Notes:\n\n".to_string()
+        } else {
+            "作者备注：\n\n".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getVersionLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Version:".to_string()
+        } else {
+            "版本：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getOriginalTagsLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Original Tags:".to_string()
+        } else {
+            "原始标签：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getFormatLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Format:".to_string()
+        } else {
+            "格式：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getTagsLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            "Tags:".to_string()
+        } else {
+            "标签：".to_string()
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getEtAlLabel(useEnglish: bool) -> String {
+        if useEnglish {
+            " et al.".to_string()
+        } else {
+            "等".to_string()
+        }
+    }
 }

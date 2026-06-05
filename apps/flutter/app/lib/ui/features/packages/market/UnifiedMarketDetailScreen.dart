@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../main/layout/NavigationLayoutMetrics.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import 'ArtifactMarketSupport.dart';
 
 const double _desktopDetailMaxWidth = 860;
@@ -119,7 +120,9 @@ class _UnifiedMarketDetailScreenState extends State<UnifiedMarketDetailScreen> {
   Widget build(BuildContext context) {
     final useWideLayout = useTabletLayoutForContext(context);
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
         title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: Column(
@@ -155,10 +158,12 @@ class _UnifiedMarketDetailScreenState extends State<UnifiedMarketDetailScreen> {
               ),
             ),
           ),
-          const Divider(height: 1),
-          Material(
+          OperitGlassSurface(
             color: Theme.of(context).colorScheme.surface,
-            elevation: 6,
+            layer: OperitGlassSurfaceLayer.panel,
+            transparentAlpha: 0.055,
+            clip: false,
+            material: true,
             child: SafeArea(
               top: false,
               child: Padding(
@@ -211,80 +216,96 @@ class UnifiedMarketDetailHeaderCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final participants = header.participants.take(2).toList(growable: false);
     final metrics = header.metrics.take(4).toList(growable: false);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _ArtifactDetailLargeIcon(title: header.fallbackAvatarText),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    header.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                _ArtifactDetailLargeIcon(title: header.fallbackAvatarText),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      for (final badge in header.badges.where(
-                        (item) => item.trim().isNotEmpty,
-                      ))
-                        _ArtifactDetailBadge(text: badge),
+                      Text(
+                        header.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: <Widget>[
+                          for (final badge in header.badges.where(
+                            (item) => item.trim().isNotEmpty,
+                          ))
+                            _ArtifactDetailBadge(text: badge),
+                        ],
+                      ),
                     ],
                   ),
+                ),
+              ],
+            ),
+            if (participants.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 14),
+              Row(
+                children: <Widget>[
+                  for (
+                    var index = 0;
+                    index < participants.length;
+                    index += 1
+                  ) ...[
+                    if (index > 0) const SizedBox(width: 16),
+                    Expanded(
+                      child: _ArtifactDetailPerson(
+                        label: participants[index].roleLabel,
+                        name: participants[index].name,
+                        avatarUrl: participants[index].avatarUrl,
+                        fallbackAvatarText:
+                            participants[index].fallbackAvatarText,
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ),
+            ],
+            if (metrics.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 14),
+              Row(
+                children: <Widget>[
+                  for (var index = 0; index < metrics.length; index += 1) ...[
+                    if (index > 0)
+                      _ArtifactDetailMetricDivider(
+                        color: colorScheme.outlineVariant,
+                      ),
+                    Expanded(
+                      child: _ArtifactDetailMetric(
+                        value: metrics[index].value,
+                        label: metrics[index].label,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
           ],
         ),
-        if (participants.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 14),
-          Row(
-            children: <Widget>[
-              for (var index = 0; index < participants.length; index += 1) ...[
-                if (index > 0) const SizedBox(width: 16),
-                Expanded(
-                  child: _ArtifactDetailPerson(
-                    label: participants[index].roleLabel,
-                    name: participants[index].name,
-                    avatarUrl: participants[index].avatarUrl,
-                    fallbackAvatarText: participants[index].fallbackAvatarText,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-        if (metrics.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 14),
-          Row(
-            children: <Widget>[
-              for (var index = 0; index < metrics.length; index += 1) ...[
-                if (index > 0)
-                  _ArtifactDetailMetricDivider(
-                    color: colorScheme.outlineVariant,
-                  ),
-                Expanded(
-                  child: _ArtifactDetailMetric(
-                    value: metrics[index].value,
-                    label: metrics[index].label,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ],
+      ),
     );
   }
 }
@@ -553,9 +574,14 @@ class ArtifactDetailSectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: 1,
+    final colorScheme = Theme.of(context).colorScheme;
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -806,10 +832,12 @@ class ArtifactCommentTile extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(8),
+      child: OperitGlassSurface(
+        color: colorScheme.surfaceContainerLow,
+        layer: OperitGlassSurfaceLayer.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.12),
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),

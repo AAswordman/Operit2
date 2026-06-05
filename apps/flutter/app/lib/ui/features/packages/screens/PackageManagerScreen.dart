@@ -13,6 +13,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/screens/OperitScreens.dart';
 import '../../../main/screens/ScreenRouteRegistry.dart';
+import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageTab.dart';
 import '../dialogs/MCPImportDialog.dart';
@@ -28,10 +29,14 @@ import 'SkillConfigScreen.dart';
 import 'UnifiedMarketScreen.dart';
 
 class PackageManagerScreen extends StatefulWidget {
-  const PackageManagerScreen({super.key, GeneratedCoreProxyClients? clients})
-    : clients =
-          clients ?? const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+  const PackageManagerScreen({
+    super.key,
+    this.initialTab = PackageTab.plugins,
+    GeneratedCoreProxyClients? clients,
+  }) : clients =
+           clients ?? const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
+  final PackageTab initialTab;
   final GeneratedCoreProxyClients clients;
 
   @override
@@ -39,7 +44,7 @@ class PackageManagerScreen extends StatefulWidget {
 }
 
 class _PackageManagerScreenState extends State<PackageManagerScreen> {
-  PackageTab _selectedTab = PackageTab.plugins;
+  late PackageTab _selectedTab = widget.initialTab;
   bool _loading = true;
   bool _searchFiltering = false;
   String? _errorMessage;
@@ -57,6 +62,16 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   void initState() {
     super.initState();
     _loadSnapshot();
+  }
+
+  @override
+  void didUpdateWidget(covariant PackageManagerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTab != widget.initialTab) {
+      setState(() {
+        _selectedTab = widget.initialTab;
+      });
+    }
   }
 
   @override
@@ -242,7 +257,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: Colors.transparent,
       floatingActionButton: _buildFloatingActions(context),
       body: SafeArea(
         top: false,
@@ -615,8 +630,13 @@ class _PackageTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
+    final colorScheme = Theme.of(context).colorScheme;
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.panel,
+      transparentAlpha: 0.035,
+      clip: false,
+      material: true,
       child: DefaultTabController(
         key: ValueKey<PackageTab>(selectedTab),
         length: PackageTab.values.length,
@@ -717,48 +737,51 @@ class _PackageSearchBar extends StatelessWidget {
         alignment: Alignment.center,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: SearchBar(
-            constraints: const BoxConstraints(minHeight: 44, maxHeight: 44),
-            leading: Icon(
-              Icons.search,
-              size: 20,
-              color: colorScheme.onSurfaceVariant,
+          child: OperitGlassSurface(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.56),
+            layer: OperitGlassSurfaceLayer.control,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.26),
             ),
-            hintText: hintText,
-            elevation: const WidgetStatePropertyAll<double>(0),
-            backgroundColor: WidgetStatePropertyAll<Color>(
-              colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
-            ),
-            side: WidgetStatePropertyAll<BorderSide>(
-              BorderSide(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.34),
-              ),
-            ),
-            shape: const WidgetStatePropertyAll<OutlinedBorder>(
-              RoundedRectangleBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-              ),
-            ),
-            textStyle: WidgetStatePropertyAll<TextStyle?>(
-              Theme.of(context).textTheme.bodyMedium,
-            ),
-            hintStyle: WidgetStatePropertyAll<TextStyle?>(
-              Theme.of(context).textTheme.bodyMedium?.copyWith(
+            child: SearchBar(
+              constraints: const BoxConstraints(minHeight: 44, maxHeight: 44),
+              leading: Icon(
+                Icons.search,
+                size: 20,
                 color: colorScheme.onSurfaceVariant,
               ),
-            ),
-            controller: TextEditingController(text: query)
-              ..selection = TextSelection.collapsed(offset: query.length),
-            onChanged: onChanged,
-            trailing: <Widget>[
-              if (query.isNotEmpty)
-                IconButton(
-                  tooltip: '清空',
-                  onPressed: () => onChanged(''),
-                  icon: const Icon(Icons.close, size: 18),
-                  visualDensity: VisualDensity.compact,
+              hintText: hintText,
+              elevation: const WidgetStatePropertyAll<double>(0),
+              backgroundColor: const WidgetStatePropertyAll<Color>(
+                Colors.transparent,
+              ),
+              shape: const WidgetStatePropertyAll<OutlinedBorder>(
+                RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
                 ),
-            ],
+              ),
+              textStyle: WidgetStatePropertyAll<TextStyle?>(
+                Theme.of(context).textTheme.bodyMedium,
+              ),
+              hintStyle: WidgetStatePropertyAll<TextStyle?>(
+                Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              controller: TextEditingController(text: query)
+                ..selection = TextSelection.collapsed(offset: query.length),
+              onChanged: onChanged,
+              trailing: <Widget>[
+                if (query.isNotEmpty)
+                  IconButton(
+                    tooltip: '清空',
+                    onPressed: () => onChanged(''),
+                    icon: const Icon(Icons.close, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
           ),
         ),
       ),

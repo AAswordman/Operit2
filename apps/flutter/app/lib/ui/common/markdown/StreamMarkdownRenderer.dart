@@ -32,6 +32,9 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.rendererId,
     this.state,
     this.onLinkClick,
+    this.showThinkingProcess = true,
+    this.initialThinkingExpanded = false,
+    this.allowExpandedThinkingFullHeight = false,
   });
 
   final String content;
@@ -43,6 +46,9 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final String? rendererId;
   final StreamMarkdownRendererState? state;
   final void Function(String url)? onLinkClick;
+  final bool showThinkingProcess;
+  final bool initialThinkingExpanded;
+  final bool allowExpandedThinkingFullHeight;
 
   @override
   State<StreamMarkdownRenderer> createState() => _StreamMarkdownRendererState();
@@ -339,6 +345,9 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       xmlNodeStreams: _rendererState.xmlNodeStreams,
       nodeAnimationStates: _rendererState.nodeAnimationStates,
       onLinkClick: widget.onLinkClick,
+      showThinkingProcess: widget.showThinkingProcess,
+      initialThinkingExpanded: widget.initialThinkingExpanded,
+      allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
     );
   }
 }
@@ -451,6 +460,9 @@ class _MarkdownNodeColumn extends StatefulWidget {
     required this.backgroundColor,
     required this.nodeGrouper,
     required this.xmlNodeStreams,
+    required this.showThinkingProcess,
+    required this.initialThinkingExpanded,
+    required this.allowExpandedThinkingFullHeight,
     this.nodeAnimationStates,
     this.onLinkClick,
   });
@@ -461,6 +473,9 @@ class _MarkdownNodeColumn extends StatefulWidget {
   final Color backgroundColor;
   final MarkdownNodeGrouper nodeGrouper;
   final Map<int, Stream<String>> xmlNodeStreams;
+  final bool showThinkingProcess;
+  final bool initialThinkingExpanded;
+  final bool allowExpandedThinkingFullHeight;
   final Map<String, bool>? nodeAnimationStates;
   final void Function(String url)? onLinkClick;
 
@@ -480,8 +495,12 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
     if (oldWidget.rendererId != widget.rendererId ||
         oldWidget.textColor != widget.textColor ||
         oldWidget.backgroundColor != widget.backgroundColor ||
-        oldWidget.nodeGrouper.runtimeType != widget.nodeGrouper.runtimeType ||
-        oldWidget.onLinkClick != widget.onLinkClick) {
+        oldWidget.nodeGrouper != widget.nodeGrouper ||
+        oldWidget.onLinkClick != widget.onLinkClick ||
+        oldWidget.showThinkingProcess != widget.showThinkingProcess ||
+        oldWidget.initialThinkingExpanded != widget.initialThinkingExpanded ||
+        oldWidget.allowExpandedThinkingFullHeight !=
+            widget.allowExpandedThinkingFullHeight) {
       _singleNodeCache.clear();
       _groupCache.clear();
     }
@@ -521,6 +540,9 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         isStreaming: isStreaming,
         textColor: textColor,
         xmlStream: xmlStream,
+        showThinkingProcess: widget.showThinkingProcess,
+        initialThinkingExpanded: widget.initialThinkingExpanded,
+        allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
       );
     }
 

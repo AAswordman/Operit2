@@ -7,10 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
 import 'MessageContextMenu.dart';
 import 'ChatScrollNavigator.dart';
+import 'style/bubble/BubbleStyleChatMessage.dart';
+import 'style/bubble/BubbleSurface.dart';
 import 'style/cursor/CursorStyleChatMessage.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
@@ -450,24 +454,70 @@ class _ChatAreaState extends State<ChatArea> {
     final selected = widget.selectedMessageIndices.contains(messageIndex);
     final selectionMode = widget.isMultiSelectMode;
     final isStreaming = _isStreamingMessage(messageIndex);
+    final themePreferenceSnapshot = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot;
     final cached = _messageRowCache[message.timestamp];
     if (cached != null &&
         cached.index == messageIndex &&
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
         cached.isStreaming == isStreaming &&
+        cached.themePreferenceSnapshot == themePreferenceSnapshot &&
         _sameMessageForRender(cached.message, message)) {
       return cached.widget;
     }
 
+    final colorScheme = Theme.of(context).colorScheme;
+    final chatMessage =
+        themePreferenceSnapshot.chatStyle ==
+            UserPreferencesManager.CHAT_STYLE_BUBBLE
+        ? BubbleStyleChatMessage(
+            key: ValueKey<String>(message.stableKey),
+            message: message,
+            isStreaming: isStreaming,
+            userMessageColor:
+                _optionalColor(themePreferenceSnapshot.bubbleUserBubbleColor) ??
+                colorScheme.primaryContainer,
+            aiMessageColor:
+                _optionalColor(themePreferenceSnapshot.bubbleAiBubbleColor) ??
+                colorScheme.surfaceContainerHighest,
+            userTextColor:
+                _optionalColor(themePreferenceSnapshot.bubbleUserTextColor) ??
+                colorScheme.onPrimaryContainer,
+            aiTextColor:
+                _optionalColor(themePreferenceSnapshot.bubbleAiTextColor) ??
+                colorScheme.onSurface,
+            systemMessageColor: colorScheme.surfaceContainerHighest,
+            systemTextColor: colorScheme.onSurfaceVariant,
+            transparentSurface:
+                themePreferenceSnapshot.transparentSurfaceEnabled,
+            userBubbleImageStyle: _userBubbleImageStyle(
+              themePreferenceSnapshot,
+            ),
+            aiBubbleImageStyle: _aiBubbleImageStyle(themePreferenceSnapshot),
+            bubbleUserRoundedCornersEnabled:
+                themePreferenceSnapshot.bubbleUserRoundedCornersEnabled,
+            bubbleAiRoundedCornersEnabled:
+                themePreferenceSnapshot.bubbleAiRoundedCornersEnabled,
+            bubbleUserContentPaddingLeft:
+                themePreferenceSnapshot.bubbleUserContentPaddingLeft,
+            bubbleUserContentPaddingRight:
+                themePreferenceSnapshot.bubbleUserContentPaddingRight,
+            bubbleAiContentPaddingLeft:
+                themePreferenceSnapshot.bubbleAiContentPaddingLeft,
+            bubbleAiContentPaddingRight:
+                themePreferenceSnapshot.bubbleAiContentPaddingRight,
+          )
+        : CursorStyleChatMessage(
+            key: ValueKey<String>(message.stableKey),
+            message: message,
+            isStreaming: isStreaming,
+          );
     final messageContent = _SelectableMessageFrame(
       selected: selected,
       selectionMode: selectionMode,
-      child: CursorStyleChatMessage(
-        key: ValueKey<String>(message.stableKey),
-        message: message,
-        isStreaming: isStreaming,
-      ),
+      child: chatMessage,
     );
     final row = selectionMode
         ? GestureDetector(
@@ -499,6 +549,7 @@ class _ChatAreaState extends State<ChatArea> {
       selected: selected,
       selectionMode: selectionMode,
       isStreaming: isStreaming,
+      themePreferenceSnapshot: themePreferenceSnapshot,
       widget: row,
     );
     return row;
@@ -538,10 +589,16 @@ class _ChatAreaContentColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themePreferenceSnapshot = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot;
+    final maxWidth = themePreferenceSnapshot.bubbleWideLayoutEnabled
+        ? chatWideContentMaxWidth
+        : chatContentMaxWidth;
     return Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: chatContentMaxWidth),
+        constraints: BoxConstraints(maxWidth: maxWidth),
         child: SizedBox(width: double.infinity, child: child),
       ),
     );
@@ -661,6 +718,7 @@ class _CachedMessageRow {
     required this.selected,
     required this.selectionMode,
     required this.isStreaming,
+    required this.themePreferenceSnapshot,
     required this.widget,
   });
 
@@ -669,7 +727,52 @@ class _CachedMessageRow {
   final bool selected;
   final bool selectionMode;
   final bool isStreaming;
+  final ThemePreferenceSnapshot themePreferenceSnapshot;
   final Widget widget;
+}
+
+BubbleImageStyle? _userBubbleImageStyle(ThemePreferenceSnapshot snapshot) {
+  final imagePath = snapshot.bubbleUserImageUri;
+  if (!snapshot.bubbleUserUseImage || imagePath == null || imagePath.isEmpty) {
+    return null;
+  }
+  return BubbleImageStyle(
+    imagePath: imagePath,
+    cropLeftRatio: snapshot.bubbleUserImageCropLeft,
+    cropTopRatio: snapshot.bubbleUserImageCropTop,
+    cropRightRatio: snapshot.bubbleUserImageCropRight,
+    cropBottomRatio: snapshot.bubbleUserImageCropBottom,
+    repeatXStartRatio: snapshot.bubbleUserImageRepeatStart,
+    repeatXEndRatio: snapshot.bubbleUserImageRepeatEnd,
+    repeatYStartRatio: snapshot.bubbleUserImageRepeatYStart,
+    repeatYEndRatio: snapshot.bubbleUserImageRepeatYEnd,
+    imageScale: snapshot.bubbleUserImageScale,
+    renderMode: snapshot.bubbleUserImageRenderMode,
+  );
+}
+
+BubbleImageStyle? _aiBubbleImageStyle(ThemePreferenceSnapshot snapshot) {
+  final imagePath = snapshot.bubbleAiImageUri;
+  if (!snapshot.bubbleAiUseImage || imagePath == null || imagePath.isEmpty) {
+    return null;
+  }
+  return BubbleImageStyle(
+    imagePath: imagePath,
+    cropLeftRatio: snapshot.bubbleAiImageCropLeft,
+    cropTopRatio: snapshot.bubbleAiImageCropTop,
+    cropRightRatio: snapshot.bubbleAiImageCropRight,
+    cropBottomRatio: snapshot.bubbleAiImageCropBottom,
+    repeatXStartRatio: snapshot.bubbleAiImageRepeatStart,
+    repeatXEndRatio: snapshot.bubbleAiImageRepeatEnd,
+    repeatYStartRatio: snapshot.bubbleAiImageRepeatYStart,
+    repeatYEndRatio: snapshot.bubbleAiImageRepeatYEnd,
+    imageScale: snapshot.bubbleAiImageScale,
+    renderMode: snapshot.bubbleAiImageRenderMode,
+  );
+}
+
+Color? _optionalColor(int? value) {
+  return value == null ? null : Color(value);
 }
 
 bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {

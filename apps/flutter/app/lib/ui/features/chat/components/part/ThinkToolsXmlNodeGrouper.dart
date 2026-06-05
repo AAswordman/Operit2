@@ -26,6 +26,24 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
   final ToolCollapseMode toolCollapseMode;
 
   @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is ThinkToolsXmlNodeGrouper &&
+            other.showThinkingProcess == showThinkingProcess &&
+            other.forceExpandGroups == forceExpandGroups &&
+            other.toolCollapseMode == toolCollapseMode;
+  }
+
+  @override
+  int get hashCode {
+    return Object.hash(
+      showThinkingProcess,
+      forceExpandGroups,
+      toolCollapseMode,
+    );
+  }
+
+  @override
   List<MarkdownGroupedItem> group(
     List<MarkdownNodeStable> nodes,
     String rendererId,
