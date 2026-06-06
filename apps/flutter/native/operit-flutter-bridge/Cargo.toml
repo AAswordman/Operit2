@@ -16,6 +16,7 @@ operit-runtime = { path = "../../../../core/crates/operit-runtime" }
 operit-store = { path = "../../../../core/crates/operit-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread"] }

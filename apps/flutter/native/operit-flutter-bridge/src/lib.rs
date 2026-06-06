@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, CStr, CString};
 use std::path::PathBuf;
@@ -7,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use operit_core_proxy::LocalCoreProxy;
 #[cfg(any(windows, target_os = "linux", target_os = "android"))]
 use operit_host_api::TerminalHost;
@@ -59,7 +62,7 @@ use wasm_bindgen::prelude::*;
 pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
-    proxyCore: Mutex<LocalCoreProxy>,
+    proxyCore: ConcurrentLocalCoreProxy,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
     approvalBridge: FlutterApprovalBridge,
@@ -67,6 +70,25 @@ pub struct OperitFlutterBridge {
     webVisitBridge: FlutterWebVisitBridge,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     terminalHost: Arc<NativeTerminalHost>,
+}
+
+struct ConcurrentLocalCoreProxy {
+    inner: UnsafeCell<LocalCoreProxy>,
+}
+
+unsafe impl Send for ConcurrentLocalCoreProxy {}
+unsafe impl Sync for ConcurrentLocalCoreProxy {}
+
+impl ConcurrentLocalCoreProxy {
+    fn new(core: LocalCoreProxy) -> Self {
+        Self {
+            inner: UnsafeCell::new(core),
+        }
+    }
+
+    unsafe fn getMut(&self) -> &mut LocalCoreProxy {
+        &mut *self.inner.get()
+    }
 }
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -489,7 +511,7 @@ impl OperitFlutterBridge {
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
-            proxyCore: Mutex::new(core),
+            proxyCore: ConcurrentLocalCoreProxy::new(core),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
             approvalBridge,
@@ -502,29 +524,13 @@ impl OperitFlutterBridge {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        let mut proxyCore = match self.proxyCore.lock() {
-            Ok(core) => core,
-            Err(error) => {
-                return CoreCallResponse::err(
-                    request.requestId,
-                    CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}")),
-                );
-            }
-        };
+        let proxyCore = unsafe { self.proxyCore.getMut() };
         self.runtime.block_on(proxyCore.call(request))
     }
 
     #[cfg(target_arch = "wasm32")]
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        let mut proxyCore = match self.proxyCore.lock() {
-            Ok(core) => core,
-            Err(error) => {
-                return CoreCallResponse::err(
-                    request.requestId,
-                    CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}")),
-                );
-            }
-        };
+        let proxyCore = unsafe { self.proxyCore.getMut() };
         proxyCore.call(request).await
     }
 
@@ -533,9 +539,7 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        let mut proxyCore = self.proxyCore.lock().map_err(|error| {
-            CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}"))
-        })?;
+        let proxyCore = unsafe { self.proxyCore.getMut() };
         #[cfg(target_arch = "wasm32")]
         {
             return proxyCore.watchSnapshotSync(request);
@@ -545,10 +549,7 @@ impl OperitFlutterBridge {
     }
 
     fn hostDescriptor(&self) -> serde_json::Value {
-        let mut proxyCore = self
-            .proxyCore
-            .lock()
-            .expect("runtime bridge lock must not be poisoned");
+        let proxyCore = unsafe { self.proxyCore.getMut() };
         let application = proxyCore.localApplicationMut();
         let context = &application.applicationContext;
         let host = &context.hostEnvironment;
@@ -574,9 +575,7 @@ impl OperitFlutterBridge {
     }
 
     fn watchStream(&self, request: CoreWatchRequest) -> Result<String, CoreLinkError> {
-        let mut proxyCore = self.proxyCore.lock().map_err(|error| {
-            CoreLinkError::internal(format!("runtime bridge lock poisoned: {error}"))
-        })?;
+        let proxyCore = unsafe { self.proxyCore.getMut() };
         #[cfg(target_arch = "wasm32")]
         let receiver = proxyCore.watchSync(request)?;
         #[cfg(not(target_arch = "wasm32"))]
@@ -708,7 +707,7 @@ impl OperitFlutterBridge {
         match self.terminalHost.readPtySession(sessionId) {
             Ok(data) => serde_json::json!({
                 "ok": true,
-                "data": data
+                "dataBase64": BASE64_STANDARD.encode(data)
             })
             .to_string(),
             Err(error) => serde_json::json!({

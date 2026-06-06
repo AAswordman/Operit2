@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../common/components/LazyIndexedStack.dart';
+import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../main/TopBarController.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -42,8 +42,10 @@ class UnifiedMarketScreen extends StatefulWidget {
   State<UnifiedMarketScreen> createState() => _UnifiedMarketScreenState();
 }
 
-class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
+class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
+    with SingleTickerProviderStateMixin {
   late MarketHomeTab _selectedTab = widget.initialTab;
+  late final TabController _tabController;
   MarketSortOption _sortOption = MarketSortOption.downloads;
   String _searchInput = '';
   String _searchQuery = '';
@@ -57,6 +59,31 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
       _searchEnabled && (_searchExpanded || _searchInput.trim().isNotEmpty);
 
   @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(
+      length: MarketHomeTab.values.length,
+      initialIndex: _selectedTab.index,
+      vsync: this,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant UnifiedMarketScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTab != widget.initialTab &&
+        _selectedTab != widget.initialTab) {
+      _selectedTab = widget.initialTab;
+      _tabController.animateTo(_selectedTab.index);
+      _searchInput = '';
+      _searchQuery = '';
+      _searchExpanded = false;
+      _searchDebounce?.cancel();
+      _syncTopBar();
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _topBarController = TopBarScope.of(context);
@@ -68,6 +95,7 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
     _searchDebounce?.cancel();
     _topBarController?.clearActions(owner: this);
     _topBarController?.clearTitleContent(owner: this);
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -84,28 +112,24 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
             transparentAlpha: 0.035,
             clip: false,
             material: true,
-            child: DefaultTabController(
-              key: ValueKey<MarketHomeTab>(_selectedTab),
-              length: MarketHomeTab.values.length,
-              initialIndex: _selectedTab.index,
-              child: TabBar(
-                onTap: (index) {
-                  setState(() {
-                    _selectedTab = MarketHomeTab.values[index];
-                    _searchInput = '';
-                    _searchQuery = '';
-                    _searchExpanded = false;
-                    _searchDebounce?.cancel();
-                  });
-                  _syncTopBar();
-                },
-                tabs: const <Widget>[
-                  Tab(text: 'Artifact'),
-                  Tab(text: 'Skill'),
-                  Tab(text: 'MCP'),
-                  Tab(text: 'Mine'),
-                ],
-              ),
+            child: TabBar(
+              controller: _tabController,
+              onTap: (index) {
+                setState(() {
+                  _selectedTab = MarketHomeTab.values[index];
+                  _searchInput = '';
+                  _searchQuery = '';
+                  _searchExpanded = false;
+                  _searchDebounce?.cancel();
+                });
+                _syncTopBar();
+              },
+              tabs: const <Widget>[
+                Tab(text: 'Artifact'),
+                Tab(text: 'Skill'),
+                Tab(text: 'MCP'),
+                Tab(text: 'Mine'),
+              ],
             ),
           ),
           MarketBrowseControls(
@@ -118,7 +142,7 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen> {
             },
           ),
           Expanded(
-            child: LazyIndexedStack(
+            child: AnimatedLazyIndexedStack(
               index: _selectedTab.index,
               itemCount: MarketHomeTab.values.length,
               itemBuilder: (context, index) {

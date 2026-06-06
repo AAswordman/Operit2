@@ -5,13 +5,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
 import '../components/ChatScreenContent.dart';
 import '../components/MessageEditorDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
+import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
+import '../viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
@@ -38,6 +41,8 @@ class _ChatContentData {
     required this.isLoadingDisplayWindow,
     required this.isMultiSelectMode,
     required this.selectedMessageIndices,
+    required this.currentCharacterCardAvatarUri,
+    required this.isPreparingChatSwitch,
   });
 
   final List<ChatUiMessage> messages;
@@ -50,6 +55,8 @@ class _ChatContentData {
   final bool isLoadingDisplayWindow;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageIndices;
+  final String? currentCharacterCardAvatarUri;
+  final bool isPreparingChatSwitch;
 }
 
 class _AIChatScreenState extends State<AIChatScreen>
@@ -75,11 +82,17 @@ class _AIChatScreenState extends State<AIChatScreen>
   String? _errorMessage;
   StreamSubscription<ChatViewModelSnapshot>? _mainStateSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
+  ChatSwitchRenderRequest? _activeChatSwitchRequest;
   TopBarController? _topBarController;
+  MainLayoutController? _mainLayoutController;
   final Object _topBarTitleOwner = Object();
   final Object _topBarActionsOwner = Object();
+  final Object _mainLayoutOwner = Object();
+  late final MainLayoutAttachmentBuilder _workspaceMainLayoutAttachment =
+      _buildWorkspaceMainLayoutAttachment;
   String _currentChatTitle = '';
   String? _currentCharacterCardName;
+  String? _currentCharacterCardAvatarUri;
   String? _activeCharacterCardName;
   String? _currentChatId;
   String? _currentWorkspacePath;
@@ -91,6 +104,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
   bool _isLoadingDisplayWindow = false;
+  bool _isPreparingChatSwitch = false;
+  int _chatSwitchRenderGeneration = 0;
+  ChatViewModelSnapshot? _pendingChatSwitchSnapshot;
   late bool _workspaceOpen;
   bool _topBarActionsUpdateScheduled = false;
 
@@ -107,6 +123,10 @@ class _AIChatScreenState extends State<AIChatScreen>
     _workspaceOpen = _chatWorkspaceOpen;
     _watchMainState();
     _watchToastEvent();
+    ChatSwitchRenderCoordinator.requests.addListener(
+      _onChatSwitchRenderRequest,
+    );
+    _onChatSwitchRenderRequest();
     _inputFocusNode.addListener(_onInputFocusChanged);
   }
 
@@ -114,12 +134,16 @@ class _AIChatScreenState extends State<AIChatScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _topBarController = TopBarScope.of(context);
+    _mainLayoutController = MainLayoutScope.of(context);
     _scheduleTopBarActionsUpdate();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ChatSwitchRenderCoordinator.requests.removeListener(
+      _onChatSwitchRenderRequest,
+    );
     _inputFocusNode.removeListener(_onInputFocusChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
@@ -132,6 +156,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     _toastEventSubscription?.cancel();
     _topBarController?.clearActions(owner: _topBarActionsOwner);
     _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
+    _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
     super.dispose();
   }
 
@@ -196,40 +221,111 @@ class _AIChatScreenState extends State<AIChatScreen>
     );
   }
 
-  Future<ChatViewModelSnapshot?> _loadSnapshot({
-    bool showLoading = true,
-  }) async {
-    _mutateChatContentData(() {
-      if (showLoading) {
-        _loading = true;
+  void _onChatSwitchRenderRequest() {
+    final request = ChatSwitchRenderCoordinator.requests.value;
+    if (request == null) {
+      _activeChatSwitchRequest = null;
+      _pendingChatSwitchSnapshot = null;
+      if (_isPreparingChatSwitch) {
+        _chatSwitchRenderGeneration += 1;
+        _mutateChatContentData(() {
+          _isPreparingChatSwitch = false;
+        });
       }
-      _errorMessage = null;
-    });
-
-    try {
-      final snapshot = await widget.viewModel.loadMainSnapshot();
-      if (!mounted) {
-        return null;
-      }
-      _applySnapshot(snapshot);
-      _refreshCurrentModelLabel();
-      _updateTopBarTitle();
-      _scheduleScrollToBottom();
-      return snapshot;
-    } catch (error, stackTrace) {
-      debugPrint('Failed to load chat snapshot: $error\n$stackTrace');
-      if (!mounted) {
-        return null;
-      }
+      return;
+    }
+    if (request.targetChatId == _currentChatId) {
+      return;
+    }
+    _activeChatSwitchRequest = request;
+    _pendingChatSwitchSnapshot = null;
+    _chatSwitchRenderGeneration += 1;
+    _setAutoScrollToBottom(true);
+    if (!_isPreparingChatSwitch) {
       _mutateChatContentData(() {
-        _errorMessage = error.toString();
-        _loading = false;
+        _isPreparingChatSwitch = true;
+        _errorMessage = null;
       });
-      return null;
     }
   }
 
   void _applySnapshot(ChatViewModelSnapshot snapshot) {
+    final activeRequest = _activeChatSwitchRequest;
+    if (_isPreparingChatSwitch && activeRequest != null) {
+      if (snapshot.currentChatId != activeRequest.targetChatId) {
+        return;
+      }
+      _prepareChatSwitchSnapshot(snapshot);
+      return;
+    }
+    final isChatSwitch =
+        _currentChatId != null &&
+        snapshot.currentChatId != null &&
+        _currentChatId != snapshot.currentChatId;
+    if (isChatSwitch) {
+      _prepareChatSwitchSnapshot(snapshot);
+      return;
+    }
+    _commitSnapshot(snapshot, keepPreparingChatSwitch: _isPreparingChatSwitch);
+  }
+
+  void _prepareChatSwitchSnapshot(ChatViewModelSnapshot snapshot) {
+    _pendingChatSwitchSnapshot = snapshot;
+    final generation = ++_chatSwitchRenderGeneration;
+    if (!_isPreparingChatSwitch) {
+      _mutateChatContentData(() {
+        _isPreparingChatSwitch = true;
+        _errorMessage = null;
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _commitPreparedChatSwitchSnapshot(generation);
+    });
+  }
+
+  Future<void> _commitPreparedChatSwitchSnapshot(int generation) async {
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || generation != _chatSwitchRenderGeneration) {
+      return;
+    }
+    final snapshot = _pendingChatSwitchSnapshot;
+    if (snapshot == null) {
+      return;
+    }
+    _pendingChatSwitchSnapshot = null;
+    _commitSnapshot(snapshot, keepPreparingChatSwitch: true);
+    _refreshCurrentModelLabel();
+    _updateTopBarTitle();
+    final renderReady = await _waitForPreparedChatSwitchRender(generation);
+    if (!renderReady) {
+      return;
+    }
+    _jumpToBottomAfterPreparedSwitch();
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || generation != _chatSwitchRenderGeneration) {
+      return;
+    }
+    _mutateChatContentData(() {
+      _isPreparingChatSwitch = false;
+    });
+    _activeChatSwitchRequest = null;
+    ChatSwitchRenderCoordinator.clear();
+  }
+
+  Future<bool> _waitForPreparedChatSwitchRender(int generation) async {
+    for (var frame = 0; frame < 2; frame++) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || generation != _chatSwitchRenderGeneration) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _commitSnapshot(
+    ChatViewModelSnapshot snapshot, {
+    required bool keepPreparingChatSwitch,
+  }) {
     final workspaceChanged =
         _currentChatId != snapshot.currentChatId ||
         _currentWorkspacePath != snapshot.currentWorkspacePath;
@@ -249,10 +345,12 @@ class _AIChatScreenState extends State<AIChatScreen>
       _currentWorkspacePath = snapshot.currentWorkspacePath;
       _currentChatTitle = snapshot.currentChatTitle;
       _currentCharacterCardName = snapshot.currentCharacterCardName;
+      _currentCharacterCardAvatarUri = snapshot.currentCharacterCardAvatarUri;
       _activeCharacterCardName = snapshot.activeCharacterCardName;
       _hasOlderDisplayHistory = snapshot.hasOlderDisplayHistory;
       _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
       _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
+      _isPreparingChatSwitch = keepPreparingChatSwitch;
       if (chatChanged) {
         _isMultiSelectMode = false;
         _selectedMessageIndices = const <int>{};
@@ -268,7 +366,20 @@ class _AIChatScreenState extends State<AIChatScreen>
     });
     if (workspaceChanged && mounted) {
       setState(() {});
+      _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
     }
+  }
+
+  void _jumpToBottomAfterPreparedSwitch() {
+    if (!_autoScrollToBottom || !_scrollController.hasClients) {
+      return;
+    }
+    final position = _scrollController.position;
+    final target = position.maxScrollExtent;
+    if ((target - position.pixels).abs() <= 1) {
+      return;
+    }
+    _scrollController.jumpTo(target);
   }
 
   void _sendMessage() {
@@ -303,7 +414,7 @@ class _AIChatScreenState extends State<AIChatScreen>
           .sendUserMessage(text, replyToMessage: _replyToMessage)
           .then((_) {
             _replyToMessage = null;
-            return _loadSnapshot(showLoading: false);
+            return null;
           })
           .catchError((Object error, StackTrace stackTrace) {
             debugPrint('Failed to send chat message: $error\n$stackTrace');
@@ -356,6 +467,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _scheduleScrollToBottom() {
+    if (_isPreparingChatSwitch) {
+      return;
+    }
     if (!_autoScrollToBottom) {
       return;
     }
@@ -363,7 +477,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       widget.viewModel
           .showLatestMessagesForCurrentChat()
           .then((_) {
-            _loadSnapshot(showLoading: false);
+            widget.viewModel.requestMainStateRefresh();
           })
           .catchError((Object error, StackTrace stackTrace) {
             debugPrint('Failed to show latest messages: $error\n$stackTrace');
@@ -431,7 +545,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       index: index,
       onConfirm: () async {
         await widget.viewModel.rollbackToMessage(index);
-        await _loadSnapshot(showLoading: false);
+        widget.viewModel.requestMainStateRefresh();
       },
     );
   }
@@ -445,7 +559,7 @@ class _AIChatScreenState extends State<AIChatScreen>
           showResendButton: message.sender == 'user',
           onSave: (content) async {
             await widget.viewModel.updateMessage(index, content);
-            await _loadSnapshot(showLoading: false);
+            widget.viewModel.requestMainStateRefresh();
           },
           onResend: (content) async {
             if (_currentWorkspacePath != null &&
@@ -455,12 +569,12 @@ class _AIChatScreenState extends State<AIChatScreen>
                 index: index,
                 onConfirm: () async {
                   await widget.viewModel.rewindAndResendMessage(index, content);
-                  await _loadSnapshot(showLoading: false);
+                  widget.viewModel.requestMainStateRefresh();
                 },
               );
             } else {
               await widget.viewModel.rewindAndResendMessage(index, content);
-              await _loadSnapshot(showLoading: false);
+              widget.viewModel.requestMainStateRefresh();
             }
           },
         );
@@ -498,7 +612,7 @@ class _AIChatScreenState extends State<AIChatScreen>
   void _insertSummary(ChatUiMessage message) {
     widget.viewModel
         .insertSummary(message)
-        .then((_) => _loadSnapshot(showLoading: false))
+        .then((_) => widget.viewModel.requestMainStateRefresh())
         .catchError((Object error, StackTrace stackTrace) {
           debugPrint('Failed to insert summary: $error\n$stackTrace');
           return null;
@@ -567,22 +681,22 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
     await widget.viewModel.deleteMessages(indices);
     _exitMultiSelectMode();
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 
   Future<void> _loadOlderDisplayWindow() async {
     await widget.viewModel.loadOlderMessagesForCurrentChat();
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 
   Future<void> _loadNewerDisplayWindow() async {
     await widget.viewModel.loadNewerMessagesForCurrentChat();
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 
   Future<void> _showLatestDisplayWindow() async {
     await widget.viewModel.showLatestMessagesForCurrentChat();
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 
   String _resolveModelLabel(List<ChatUiMessage> messages) {
@@ -679,10 +793,18 @@ class _AIChatScreenState extends State<AIChatScreen>
       _chatWorkspaceOpen = value;
     });
     _updateTopBarActions();
+    _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
   }
 
   @override
   Widget build(BuildContext context) {
+    final useMainLayoutWorkspace =
+        MediaQuery.sizeOf(context).width >= workspaceTabletBreakpoint;
+    _syncWorkspaceMainLayoutAttachment(useMainLayoutWorkspace);
+    final content = _buildChatContent();
+    if (useMainLayoutWorkspace) {
+      return content;
+    }
     return WorkspaceShell(
       workspaceOpen: _workspaceOpen,
       onWorkspaceOpenChanged: _setWorkspaceOpen,
@@ -695,58 +817,100 @@ class _AIChatScreenState extends State<AIChatScreen>
       onOpenWorkspaceFile: widget.viewModel.openWorkspaceFile,
       onCreateDefaultWorkspace: _createDefaultWorkspace,
       onBindWorkspace: _bindWorkspace,
-      child: ValueListenableBuilder<_ChatContentData>(
-        valueListenable: _chatContentDataNotifier,
-        builder: (context, data, _) {
-          return ChatScreenContent(
-            messages: data.messages,
-            loading: data.loading,
-            errorMessage: data.errorMessage,
-            messageController: _messageController,
-            inputFocusNode: _inputFocusNode,
-            scrollController: _scrollController,
-            inputProcessingState: data.inputProcessingState,
-            modelLabelListenable: _modelLabelNotifier,
-            viewModel: widget.viewModel,
-            currentChatId: data.currentChatId,
-            autoScrollToBottomListenable: _autoScrollToBottomNotifier,
-            hasOlderDisplayHistory: data.hasOlderDisplayHistory,
-            hasNewerDisplayHistory: data.hasNewerDisplayHistory,
-            isLoadingDisplayWindow: data.isLoadingDisplayWindow,
-            loadLocatorEntries: _loadMessageLocatorEntries,
-            onAutoScrollToBottomChanged: _setAutoScrollToBottom,
-            onLoadOlderDisplayWindow: _loadOlderDisplayWindow,
-            onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
-            onShowLatestDisplayWindow: _showLatestDisplayWindow,
-            onToggleFavoriteMessage: _setMessageFavorite,
-            onDeleteMessage: _deleteMessage,
-            onDeleteMessagesFrom: _deleteMessagesFrom,
-            onDeleteMessageVariant: _deleteMessageVariant,
-            onRollbackToMessage: _requestRollbackToMessage,
-            onSelectMessageToEdit: _selectMessageToEdit,
-            onRegenerateMessage: _regenerateMessage,
-            onInsertSummary: _insertSummary,
-            onCreateBranch: _createBranch,
-            onReplyToMessage: _replyToMessageTarget,
-            onToggleMultiSelectMode: _toggleMultiSelectMode,
-            onToggleMessageSelection: _toggleMessageSelection,
-            onExitMultiSelectMode: _exitMultiSelectMode,
-            onSelectAllMessages: _selectAllMessages,
-            onClearMessageSelection: _clearMessageSelection,
-            onDeleteSelectedMessages: _deleteSelectedMessages,
-            onRefreshRequested: () =>
-                _loadSnapshot(showLoading: false).then((_) {}),
-            isMultiSelectMode: data.isMultiSelectMode,
-            selectedMessageIndices: data.selectedMessageIndices,
-            onSendMessage: _sendMessage,
-            onCancelMessage: _cancelMessage,
-            onModelChanged: _setModelLabel,
-            toastMessageListenable: _toastMessageNotifier,
-            onDismissToast: _dismissToast,
-          );
-        },
-      ),
+      child: content,
     );
+  }
+
+  Widget _buildChatContent() {
+    return ValueListenableBuilder<_ChatContentData>(
+      valueListenable: _chatContentDataNotifier,
+      builder: (context, data, _) {
+        return ChatScreenContent(
+          messages: data.messages,
+          loading: data.loading,
+          errorMessage: data.errorMessage,
+          messageController: _messageController,
+          inputFocusNode: _inputFocusNode,
+          scrollController: _scrollController,
+          inputProcessingState: data.inputProcessingState,
+          modelLabelListenable: _modelLabelNotifier,
+          viewModel: widget.viewModel,
+          currentChatId: data.currentChatId,
+          currentCharacterCardAvatarUri: data.currentCharacterCardAvatarUri,
+          autoScrollToBottomListenable: _autoScrollToBottomNotifier,
+          hasOlderDisplayHistory: data.hasOlderDisplayHistory,
+          hasNewerDisplayHistory: data.hasNewerDisplayHistory,
+          isLoadingDisplayWindow: data.isLoadingDisplayWindow,
+          loadLocatorEntries: _loadMessageLocatorEntries,
+          onAutoScrollToBottomChanged: _setAutoScrollToBottom,
+          onLoadOlderDisplayWindow: _loadOlderDisplayWindow,
+          onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
+          onShowLatestDisplayWindow: _showLatestDisplayWindow,
+          onToggleFavoriteMessage: _setMessageFavorite,
+          onDeleteMessage: _deleteMessage,
+          onDeleteMessagesFrom: _deleteMessagesFrom,
+          onDeleteMessageVariant: _deleteMessageVariant,
+          onRollbackToMessage: _requestRollbackToMessage,
+          onSelectMessageToEdit: _selectMessageToEdit,
+          onRegenerateMessage: _regenerateMessage,
+          onInsertSummary: _insertSummary,
+          onCreateBranch: _createBranch,
+          onReplyToMessage: _replyToMessageTarget,
+          onToggleMultiSelectMode: _toggleMultiSelectMode,
+          onToggleMessageSelection: _toggleMessageSelection,
+          onExitMultiSelectMode: _exitMultiSelectMode,
+          onSelectAllMessages: _selectAllMessages,
+          onClearMessageSelection: _clearMessageSelection,
+          onDeleteSelectedMessages: _deleteSelectedMessages,
+          onRefreshRequested: () async {
+            widget.viewModel.requestMainStateRefresh();
+          },
+          isMultiSelectMode: data.isMultiSelectMode,
+          selectedMessageIndices: data.selectedMessageIndices,
+          isPreparingChatSwitch: data.isPreparingChatSwitch,
+          onSendMessage: _sendMessage,
+          onCancelMessage: _cancelMessage,
+          onModelChanged: _setModelLabel,
+          toastMessageListenable: _toastMessageNotifier,
+          onDismissToast: _dismissToast,
+        );
+      },
+    );
+  }
+
+  Widget _buildWorkspaceMainLayoutAttachment(
+    BuildContext context,
+    Widget child,
+  ) {
+    return WorkspaceShell(
+      workspaceOpen: _workspaceOpen,
+      onWorkspaceOpenChanged: _setWorkspaceOpen,
+      hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
+      workspacePath: _currentWorkspacePath,
+      onListWorkspaceFiles: widget.viewModel.listWorkspaceFiles,
+      onReadWorkspaceTextFile: widget.viewModel.readWorkspaceTextFile,
+      onReadWorkspaceFileBytes: widget.viewModel.readWorkspaceFileBytes,
+      onWriteWorkspaceFileBytes: widget.viewModel.writeWorkspaceFileBytes,
+      onOpenWorkspaceFile: widget.viewModel.openWorkspaceFile,
+      onCreateDefaultWorkspace: _createDefaultWorkspace,
+      onBindWorkspace: _bindWorkspace,
+      child: child,
+    );
+  }
+
+  void _syncWorkspaceMainLayoutAttachment(bool active) {
+    final controller = _mainLayoutController;
+    if (controller == null) {
+      return;
+    }
+    if (active) {
+      controller.setAttachment(
+        _workspaceMainLayoutAttachment,
+        owner: _mainLayoutOwner,
+      );
+      return;
+    }
+    controller.clearAttachment(owner: _mainLayoutOwner);
   }
 
   void _mutateChatContentData(VoidCallback mutate) {
@@ -770,6 +934,8 @@ class _AIChatScreenState extends State<AIChatScreen>
       isLoadingDisplayWindow: _isLoadingDisplayWindow,
       isMultiSelectMode: _isMultiSelectMode,
       selectedMessageIndices: _selectedMessageIndices,
+      currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
+      isPreparingChatSwitch: _isPreparingChatSwitch,
     );
   }
 
@@ -779,7 +945,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       throw StateError('No current chat');
     }
     await widget.viewModel.createAndBindDefaultWorkspace(chatId, projectType);
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 
   Future<void> _bindWorkspace(String workspace, String? workspaceEnv) async {
@@ -788,6 +954,6 @@ class _AIChatScreenState extends State<AIChatScreen>
       throw StateError('No current chat');
     }
     await widget.viewModel.bindChatToWorkspace(chatId, workspace, workspaceEnv);
-    await _loadSnapshot(showLoading: false);
+    widget.viewModel.requestMainStateRefresh();
   }
 }

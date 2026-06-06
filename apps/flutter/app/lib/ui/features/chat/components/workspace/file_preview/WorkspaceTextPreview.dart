@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../../theme/OperitGlassSurface.dart';
 import '../WorkspaceTabModels.dart';
 import 'WorkspaceFilePreviewActionBar.dart';
 
@@ -71,7 +72,7 @@ class WorkspaceMarkdownPreview extends StatelessWidget {
               content: tab.fileContent ?? '',
               isStreaming: false,
               textColor: theme.colorScheme.onSurface,
-              backgroundColor: theme.colorScheme.surface,
+              backgroundColor: Colors.transparent,
               onLinkClick: (url) => onOpenBrowser(url: url),
             ),
           ),
@@ -94,8 +95,10 @@ class WorkspaceTextBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ColoredBox(
-      color: theme.colorScheme.surface,
+    return OperitGlassSurface(
+      color: theme.colorScheme.surface.withValues(alpha: 0.42),
+      layer: OperitGlassSurfaceLayer.panel,
+      transparentAlpha: 0.025,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: SelectableText(

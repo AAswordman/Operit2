@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'browser/WorkspaceBrowserContent.dart';
 import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
@@ -177,32 +178,42 @@ class _WorkspaceSimplePane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 42, color: theme.colorScheme.primary),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.onSurface,
-                  fontWeight: FontWeight.w700,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: OperitGlassSurface(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.36,
+          ),
+          layer: OperitGlassSurfaceLayer.card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.18),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(icon, size: 42, color: theme.colorScheme.primary),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

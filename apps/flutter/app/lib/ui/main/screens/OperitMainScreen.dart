@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../components/AppContent.dart';
 import '../layout/NavigationLayoutMetrics.dart';
 import '../layout/PhoneLayout.dart';
+import '../MainLayoutController.dart';
 import '../TopBarController.dart';
 import '../layout/TabletLayout.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -26,6 +27,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   late AppNavigationModel _navigationModel;
   late final AppRouterState _routerState;
   late final TopBarController _topBarController;
+  late final MainLayoutController _mainLayoutController;
   bool _drawerOpen = false;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
@@ -37,6 +39,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   void initState() {
     super.initState();
     _topBarController = TopBarController();
+    _mainLayoutController = MainLayoutController();
     _routerState = AppRouterState(AppRouteCatalog.initialEntry());
     AppRouterGateway.install(handler: _navigateToRoute, reset: _resetToRoute);
   }
@@ -54,6 +57,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     AppRouteDiscoveryGateway.clear();
     _routerState.dispose();
     _topBarController.dispose();
+    _mainLayoutController.dispose();
     super.dispose();
   }
 
@@ -73,6 +77,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
       _topBarController.clear();
     }
+    _mainLayoutController.clear();
     _routerState.navigate(
       routeId: routeId,
       args: args,
@@ -96,6 +101,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
       _topBarController.clear();
     }
+    _mainLayoutController.clear();
     _routerState.resetTo(
       RouteEntry(routeId: routeId, args: args, source: source),
     );
@@ -150,6 +156,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _isNavigatingBack = true;
     _navigationTransitionSource = NavigationTransitionSource.defaultSource;
     _topBarController.clear();
+    _mainLayoutController.clear();
     _routerState.pop();
   }
 
@@ -161,6 +168,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _isNavigatingBack = true;
     _navigationTransitionSource = NavigationTransitionSource.defaultSource;
     _topBarController.clear();
+    _mainLayoutController.clear();
     _routerState.resetTo(
       RouteEntry(
         routeId: entry.routeId,
@@ -250,51 +258,54 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           },
         );
 
-        return TopBarScope(
-          controller: _topBarController,
-          child: PopScope(
-            canPop:
-                defaultTargetPlatform != TargetPlatform.android &&
-                !_drawerOpen &&
-                !_routerState.canPop,
-            onPopInvokedWithResult: (didPop, result) {
-              if (didPop) {
-                return;
-              }
-              _handleSystemBack(currentScreen);
-            },
-            child: Scaffold(
-              body: useTabletLayout
-                  ? TabletLayout(
-                      content: content,
-                      navigationEntries: _navigationModel.navigationEntries,
-                      selectedRouteId: currentRouteEntry.routeId,
-                      isTabletSidebarExpanded: _isTabletSidebarExpanded,
-                      tabletSidebarWidth: 280,
-                      collapsedTabletSidebarWidth: 56,
-                      onNavigationEntrySelected: _navigateToNavigationEntry,
-                      onConversationActivated: _activateConversationRoute,
-                    )
-                  : PhoneLayout(
-                      content: content,
-                      navigationEntries: _navigationModel.navigationEntries,
-                      selectedRouteId: currentRouteEntry.routeId,
-                      drawerWidth: mediaQuery.size.width * 0.75,
-                      drawerOpen: _drawerOpen,
-                      enableNavigationAnimation: true,
-                      onOpenDrawer: () {
-                        setState(() {
-                          _drawerOpen = true;
-                        });
-                      },
-                      onCloseDrawer: () {
-                        setState(() {
-                          _drawerOpen = false;
-                        });
-                      },
-                      onNavigationEntrySelected: _navigateToNavigationEntry,
-                      onConversationActivated: _activateConversationRoute,
-                    ),
+        return MainLayoutScope(
+          controller: _mainLayoutController,
+          child: TopBarScope(
+            controller: _topBarController,
+            child: PopScope(
+              canPop:
+                  defaultTargetPlatform != TargetPlatform.android &&
+                  !_drawerOpen &&
+                  !_routerState.canPop,
+              onPopInvokedWithResult: (didPop, result) {
+                if (didPop) {
+                  return;
+                }
+                _handleSystemBack(currentScreen);
+              },
+              child: Scaffold(
+                body: useTabletLayout
+                    ? TabletLayout(
+                        content: content,
+                        navigationEntries: _navigationModel.navigationEntries,
+                        selectedRouteId: currentRouteEntry.routeId,
+                        isTabletSidebarExpanded: _isTabletSidebarExpanded,
+                        tabletSidebarWidth: 280,
+                        collapsedTabletSidebarWidth: 56,
+                        onNavigationEntrySelected: _navigateToNavigationEntry,
+                        onConversationActivated: _activateConversationRoute,
+                      )
+                    : PhoneLayout(
+                        content: content,
+                        navigationEntries: _navigationModel.navigationEntries,
+                        selectedRouteId: currentRouteEntry.routeId,
+                        drawerWidth: mediaQuery.size.width * 0.75,
+                        drawerOpen: _drawerOpen,
+                        enableNavigationAnimation: true,
+                        onOpenDrawer: () {
+                          setState(() {
+                            _drawerOpen = true;
+                          });
+                        },
+                        onCloseDrawer: () {
+                          setState(() {
+                            _drawerOpen = false;
+                          });
+                        },
+                        onNavigationEntrySelected: _navigateToNavigationEntry,
+                        onConversationActivated: _activateConversationRoute,
+                      ),
+              ),
             ),
           ),
         );

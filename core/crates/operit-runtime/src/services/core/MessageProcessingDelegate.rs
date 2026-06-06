@@ -180,10 +180,10 @@ pub struct MessageProcessingDelegate {
     pub turnCompleteCounterByChatIdFlow: MutableStateFlow<HashMap<String, i64>>,
     pub currentTurnToolInvocationCountByChatId: HashMap<String, i32>,
     pub currentTurnToolInvocationCountByChatIdFlow: MutableStateFlow<HashMap<String, i32>>,
-    pub chatRuntimes: HashMap<String, ChatRuntime>,
-    pub lastScrollEmitMsByChatKey: HashMap<String, i64>,
-    pub suppressIdleCompletedStateByChatId: HashMap<String, bool>,
-    pub pendingAsyncSummaryUiByChatId: HashMap<String, bool>,
+    pub chatRuntimes: Arc<Mutex<HashMap<String, ChatRuntime>>>,
+    pub lastScrollEmitMsByChatKey: Arc<Mutex<HashMap<String, i64>>>,
+    pub suppressIdleCompletedStateByChatId: Arc<Mutex<HashMap<String, bool>>>,
+    pub pendingAsyncSummaryUiByChatId: Arc<Mutex<HashMap<String, bool>>>,
     pub speakMessageHandler: Option<fn(String, bool)>,
 }
 
@@ -222,10 +222,10 @@ impl MessageProcessingDelegate {
             turnCompleteCounterByChatIdFlow: mutableStateFlow(HashMap::new()),
             currentTurnToolInvocationCountByChatId: HashMap::new(),
             currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(HashMap::new()),
-            chatRuntimes: HashMap::new(),
-            lastScrollEmitMsByChatKey: HashMap::new(),
-            suppressIdleCompletedStateByChatId: HashMap::new(),
-            pendingAsyncSummaryUiByChatId: HashMap::new(),
+            chatRuntimes: Arc::new(Mutex::new(HashMap::new())),
+            lastScrollEmitMsByChatKey: Arc::new(Mutex::new(HashMap::new())),
+            suppressIdleCompletedStateByChatId: Arc::new(Mutex::new(HashMap::new())),
+            pendingAsyncSummaryUiByChatId: Arc::new(Mutex::new(HashMap::new())),
             speakMessageHandler: None,
         }
     }
@@ -236,23 +236,23 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
-            userMessage: self.userMessage.clone(),
+            userMessage: self.userMessageFlow.value(),
             userMessageFlow: self.userMessageFlow.clone(),
-            isLoading: self.isLoading,
+            isLoading: self.isLoadingFlow.value(),
             isLoadingFlow: self.isLoadingFlow.clone(),
-            activeStreamingChatIds: self.activeStreamingChatIds.clone(),
+            activeStreamingChatIds: self.activeStreamingChatIdsFlow.value(),
             activeStreamingChatIdsFlow: self.activeStreamingChatIdsFlow.clone(),
-            inputProcessingStateByChatId: self.inputProcessingStateByChatId.clone(),
+            inputProcessingStateByChatId: self.inputProcessingStateByChatIdFlow.value(),
             inputProcessingStateByChatIdFlow: self.inputProcessingStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
             nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
             toastEventFlow: self.toastEventFlow.clone(),
-            turnCompleteCounterByChatId: self.turnCompleteCounterByChatId.clone(),
+            turnCompleteCounterByChatId: self.turnCompleteCounterByChatIdFlow.value(),
             turnCompleteCounterByChatIdFlow: self.turnCompleteCounterByChatIdFlow.clone(),
             currentTurnToolInvocationCountByChatId: self
-                .currentTurnToolInvocationCountByChatId
-                .clone(),
+                .currentTurnToolInvocationCountByChatIdFlow
+                .value(),
             currentTurnToolInvocationCountByChatIdFlow: self
                 .currentTurnToolInvocationCountByChatIdFlow
                 .clone(),
@@ -307,6 +307,8 @@ impl MessageProcessingDelegate {
     pub fn tryEmitScrollToBottomThrottled(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
         self.lastScrollEmitMsByChatKey
+            .lock()
+            .expect("last scroll emit map mutex poisoned")
             .insert(key, messageTimingNow().startedAtMs as i64);
         self.scrollToBottomEvent.push(());
     }
@@ -315,32 +317,61 @@ impl MessageProcessingDelegate {
     pub fn forceEmitScrollToBottom(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
         self.lastScrollEmitMsByChatKey
+            .lock()
+            .expect("last scroll emit map mutex poisoned")
             .insert(key, messageTimingNow().startedAtMs as i64);
         self.scrollToBottomEvent.push(());
     }
 
     #[allow(non_snake_case)]
-    pub fn runtimeFor(&mut self, chatId: Option<String>) -> &mut ChatRuntime {
+    fn withRuntime<R>(
+        &self,
+        chatId: Option<String>,
+        action: impl FnOnce(&mut ChatRuntime) -> R,
+    ) -> R {
         let key = Self::chatKey(chatId);
-        self.chatRuntimes
-            .entry(key)
-            .or_insert_with(ChatRuntime::new)
+        let mut runtimes = self
+            .chatRuntimes
+            .lock()
+            .expect("chat runtimes mutex poisoned");
+        action(runtimes.entry(key).or_insert_with(ChatRuntime::new))
+    }
+
+    #[allow(non_snake_case)]
+    fn withExistingRuntime<R>(
+        &self,
+        chatId: Option<String>,
+        action: impl FnOnce(&mut ChatRuntime) -> R,
+    ) -> Option<R> {
+        let key = Self::chatKey(chatId);
+        let mut runtimes = self
+            .chatRuntimes
+            .lock()
+            .expect("chat runtimes mutex poisoned");
+        runtimes.get_mut(&key).map(action)
     }
 
     #[allow(non_snake_case)]
     pub fn updateGlobalLoadingState(&mut self) {
-        self.isLoading = self.chatRuntimes.values().any(|runtime| runtime.isLoading);
-        self.activeStreamingChatIds = self
-            .chatRuntimes
-            .iter()
-            .filter(|(key, runtime)| key.as_str() != "__DEFAULT_CHAT__" && runtime.isLoading)
-            .map(|(key, _)| key.clone())
-            .collect();
+        let (isLoading, activeStreamingChatIds) = {
+            let runtimes = self
+                .chatRuntimes
+                .lock()
+                .expect("chat runtimes mutex poisoned");
+            let isLoading = runtimes.values().any(|runtime| runtime.isLoading);
+            let activeStreamingChatIds = runtimes
+                .iter()
+                .filter(|(key, runtime)| key.as_str() != "__DEFAULT_CHAT__" && runtime.isLoading)
+                .map(|(key, _)| key.clone())
+                .collect();
+            (isLoading, activeStreamingChatIds)
+        };
+        self.isLoading = isLoading;
+        self.activeStreamingChatIds = activeStreamingChatIds;
         self.isLoadingFlow.set_value(self.isLoading);
         self.activeStreamingChatIdsFlow
             .set_value(self.activeStreamingChatIds.clone());
     }
-
     #[allow(non_snake_case)]
     pub fn refreshGlobalLoadingState(&mut self) {
         self.updateGlobalLoadingState();
@@ -361,13 +392,17 @@ impl MessageProcessingDelegate {
         state: InputProcessingState,
     ) {
         if let Some(chatId) = chatId.as_ref() {
-            if self.runtimeFor(Some(chatId.clone())).isLoading && Self::isTerminalInputState(&state)
+            if self.withRuntime(Some(chatId.clone()), |runtime| runtime.isLoading)
+                && Self::isTerminalInputState(&state)
             {
                 return;
             }
-            if self.suppressIdleCompletedStateByChatId.contains_key(chatId)
-                && Self::isTerminalInputState(&state)
-            {
+            let suppressIdleCompleted = self
+                .suppressIdleCompletedStateByChatId
+                .lock()
+                .expect("suppress idle completed map mutex poisoned")
+                .contains_key(chatId);
+            if suppressIdleCompleted && Self::isTerminalInputState(&state) {
                 return;
             }
         }
@@ -378,26 +413,35 @@ impl MessageProcessingDelegate {
             ToolProgressBus::clear();
         }
         let key = Self::chatKey(chatId);
-        self.inputProcessingStateByChatId.insert(key, state);
-        self.inputProcessingStateByChatIdFlow
-            .set_value(self.inputProcessingStateByChatId.clone());
+        let mut states = self.inputProcessingStateByChatIdFlow.value();
+        states.insert(key, state);
+        self.inputProcessingStateByChatId = states.clone();
+        self.inputProcessingStateByChatIdFlow.set_value(states);
     }
 
     #[allow(non_snake_case)]
     pub fn setSuppressIdleCompletedStateForChat(&mut self, chatId: String, suppress: bool) {
+        let mut states = self
+            .suppressIdleCompletedStateByChatId
+            .lock()
+            .expect("suppress idle completed map mutex poisoned");
         if suppress {
-            self.suppressIdleCompletedStateByChatId.insert(chatId, true);
+            states.insert(chatId, true);
         } else {
-            self.suppressIdleCompletedStateByChatId.remove(&chatId);
+            states.remove(&chatId);
         }
     }
 
     #[allow(non_snake_case)]
     pub fn setPendingAsyncSummaryUiForChat(&mut self, chatId: String, pending: bool) {
+        let mut states = self
+            .pendingAsyncSummaryUiByChatId
+            .lock()
+            .expect("pending async summary map mutex poisoned");
         if pending {
-            self.pendingAsyncSummaryUiByChatId.insert(chatId, true);
+            states.insert(chatId, true);
         } else {
-            self.pendingAsyncSummaryUiByChatId.remove(&chatId);
+            states.remove(&chatId);
         }
     }
 
@@ -494,12 +538,8 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
-        let key = Self::chatKey(Some(chatId.clone()));
-        let stream = self
-            .chatRuntimes
-            .get(&key)
-            .and_then(|runtime| runtime.responseStream.clone());
-        stream
+        self.withExistingRuntime(Some(chatId), |runtime| runtime.responseStream.clone())
+            .flatten()
     }
 
     #[allow(non_snake_case)]
@@ -553,18 +593,16 @@ impl MessageProcessingDelegate {
         &self,
         chatId: String,
     ) -> Option<TurnCancellationSnapshot> {
-        self.chatRuntimes
-            .get(&Self::chatKey(Some(chatId.clone())))
-            .map(|runtime| TurnCancellationSnapshot {
-                chatId,
-                aiMessage: None,
-                partialContent: runtime
-                    .responseStream
-                    .as_ref()
-                    .map(|stream| stream.replay_cache().join(""))
-                    .unwrap_or_default(),
-                turnOptions: runtime.currentTurnOptions.clone(),
-            })
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| TurnCancellationSnapshot {
+            chatId,
+            aiMessage: None,
+            partialContent: runtime
+                .responseStream
+                .as_ref()
+                .map(|stream| stream.replay_cache().join(""))
+                .unwrap_or_default(),
+            turnOptions: runtime.currentTurnOptions.clone(),
+        })
     }
 
     #[allow(non_snake_case)]
@@ -580,10 +618,7 @@ impl MessageProcessingDelegate {
         }
         self.clearCurrentTurnToolInvocationCount(chatId.clone());
         AIMessageManager::cancelOperation(chatId.clone());
-        if let Some(runtime) = self
-            .chatRuntimes
-            .get_mut(&Self::chatKey(Some(chatId.clone())))
-        {
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             if let Some(responseStream) = runtime.responseStream.as_ref() {
                 responseStream.upstream.close();
                 responseStream.event_channel.close();
@@ -597,7 +632,7 @@ impl MessageProcessingDelegate {
             runtime.requestSentAt = 0;
             runtime.requestStartElapsed = 0;
             runtime.firstResponseElapsed = None;
-        }
+        });
         self.setInputProcessingStateForChat(chatId, InputProcessingState::Idle);
         self.updateGlobalLoadingState();
     }
@@ -614,14 +649,15 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn updateUserMessage(&mut self, message: String) {
-        self.userMessage = TextFieldValue::new(message);
-        self.userMessageFlow.set_value(self.userMessage.clone());
+        let value = TextFieldValue::new(message);
+        self.userMessage = value.clone();
+        self.userMessageFlow.set_value(value);
     }
 
     #[allow(non_snake_case)]
     pub fn updateUserMessageValue(&mut self, value: TextFieldValue) {
-        self.userMessage = value;
-        self.userMessageFlow.set_value(self.userMessage.clone());
+        self.userMessage = value.clone();
+        self.userMessageFlow.set_value(value);
     }
 
     pub fn userMessageFlow(&self) -> StateFlow<TextFieldValue> {
@@ -658,14 +694,16 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn getTurnCompleteCounter(&self, chatId: String) -> i64 {
-        *self.turnCompleteCounterByChatId.get(&chatId).unwrap_or(&0)
+        *self
+            .turnCompleteCounterByChatIdFlow
+            .value()
+            .get(&chatId)
+            .unwrap_or(&0)
     }
 
     #[allow(non_snake_case)]
     pub fn isChatLoading(&self, chatId: String) -> bool {
-        self.chatRuntimes
-            .get(&Self::chatKey(Some(chatId)))
-            .map(|runtime| runtime.isLoading)
+        self.withExistingRuntime(Some(chatId), |runtime| runtime.isLoading)
             .unwrap_or(false)
     }
 
@@ -676,31 +714,30 @@ impl MessageProcessingDelegate {
 
     #[allow(non_snake_case)]
     pub fn resetCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        self.currentTurnToolInvocationCountByChatId
-            .insert(chatId, 0);
+        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
+        counts.insert(chatId, 0);
+        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
+            .set_value(counts);
     }
 
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        let value = self
-            .currentTurnToolInvocationCountByChatId
-            .get(&chatId)
-            .copied()
-            .unwrap_or(0)
-            + 1;
-        self.currentTurnToolInvocationCountByChatId
-            .insert(chatId, value);
+        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
+        let value = counts.get(&chatId).copied().unwrap_or(0) + 1;
+        counts.insert(chatId, value);
+        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
+            .set_value(counts);
     }
 
     #[allow(non_snake_case)]
     pub fn clearCurrentTurnToolInvocationCount(&mut self, chatId: String) {
-        self.currentTurnToolInvocationCountByChatId.remove(&chatId);
+        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
+        counts.remove(&chatId);
+        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(self.currentTurnToolInvocationCountByChatId.clone());
+            .set_value(counts);
     }
 
     #[allow(non_snake_case)]
@@ -714,15 +751,14 @@ impl MessageProcessingDelegate {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
         self.resetCurrentTurnToolInvocationCount(chatId.clone());
-        {
-            let runtime = self.runtimeFor(Some(chatId.clone()));
+        self.withRuntime(Some(chatId.clone()), |runtime| {
             runtime.currentTurnOptions = request.turnOptions.clone();
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
             runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
             runtime.firstResponseElapsed = None;
             runtime.isLoading = true;
             runtime.responseStream = None;
-        }
+        });
         self.updateGlobalLoadingState();
         self.setInputProcessingStateForChat(
             chatId.clone(),
@@ -745,16 +781,13 @@ impl MessageProcessingDelegate {
             }) {
                 Ok(content) => content,
                 Err(error) => {
-                    if let Some(runtime) = self
-                        .chatRuntimes
-                        .get_mut(&Self::chatKey(Some(chatId.clone())))
-                    {
+                    self.withExistingRuntime(Some(chatId.clone()), |runtime| {
                         runtime.isLoading = false;
                         runtime.responseStream = None;
                         runtime.sendJob = None;
                         runtime.streamCollectionJob = None;
                         runtime.stateCollectionJob = None;
-                    }
+                    });
                     self.updateGlobalLoadingState();
                     self.setInputProcessingStateForChat(
                         chatId.clone(),
@@ -952,22 +985,21 @@ impl MessageProcessingDelegate {
                         message: error.to_string(),
                     },
                 );
-                if let Some(runtime) = self
-                    .chatRuntimes
-                    .get_mut(&Self::chatKey(Some(chatId.clone())))
-                {
+                self.withExistingRuntime(Some(chatId.clone()), |runtime| {
                     runtime.isLoading = false;
                     runtime.responseStream = None;
                     runtime.sendJob = None;
                     runtime.streamCollectionJob = None;
                     runtime.stateCollectionJob = None;
-                }
+                });
                 self.updateGlobalLoadingState();
                 return Err(error);
             }
         };
         let sharedResponseStream = completionStream.clone();
-        self.runtimeFor(Some(chatId.clone())).responseStream = Some(sharedResponseStream.clone());
+        self.withRuntime(Some(chatId.clone()), |runtime| {
+            runtime.responseStream = Some(sharedResponseStream.clone());
+        });
         let initialProviderModel = request
             .enhancedAiService
             .getLastProviderModel()
@@ -998,8 +1030,10 @@ impl MessageProcessingDelegate {
         let mut workerChatHistoryDelegate = request.chatHistoryDelegate.clone_for_core();
         let mut workerMessageProcessingDelegate = self.clone_for_core();
         let workerCalculateNextWindowSize = calculateNextWindowSize;
-        let workerRequestSentAt = self.runtimeFor(Some(chatId.clone())).requestSentAt;
-        let workerRequestStartElapsed = self.runtimeFor(Some(chatId.clone())).requestStartElapsed;
+        let (workerRequestSentAt, workerRequestStartElapsed) = self
+            .withRuntime(Some(chatId.clone()), |runtime| {
+                (runtime.requestSentAt, runtime.requestStartElapsed)
+            });
         let workerWorkspaceToolHookSession = workspaceToolHookSession.clone();
         let mut workerWorkspaceToolHookHandler = workspaceToolHookHandler.clone();
         if userMessageAdded {
@@ -1175,15 +1209,11 @@ impl MessageProcessingDelegate {
         _turnOptions: ChatTurnOptions,
     ) {
         if let Some(chatId) = chatId {
-            let next = self
-                .turnCompleteCounterByChatId
-                .get(&chatId)
-                .copied()
-                .unwrap_or(0)
-                + 1;
-            self.turnCompleteCounterByChatId.insert(chatId, next);
-            self.turnCompleteCounterByChatIdFlow
-                .set_value(self.turnCompleteCounterByChatId.clone());
+            let mut counters = self.turnCompleteCounterByChatIdFlow.value();
+            let next = counters.get(&chatId).copied().unwrap_or(0) + 1;
+            counters.insert(chatId, next);
+            self.turnCompleteCounterByChatId = counters.clone();
+            self.turnCompleteCounterByChatIdFlow.set_value(counters);
         }
     }
 
@@ -1197,30 +1227,22 @@ impl MessageProcessingDelegate {
     ) {
         self.cleanupRuntimeAfterSend(chatId.clone(), turnOptions);
         self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
-        let next = self
-            .turnCompleteCounterByChatId
-            .get(&chatId)
-            .copied()
-            .unwrap_or(0)
-            + 1;
-        self.turnCompleteCounterByChatId
-            .insert(chatId.clone(), next);
-        self.turnCompleteCounterByChatIdFlow
-            .set_value(self.turnCompleteCounterByChatId.clone());
+        let mut counters = self.turnCompleteCounterByChatIdFlow.value();
+        let next = counters.get(&chatId).copied().unwrap_or(0) + 1;
+        counters.insert(chatId.clone(), next);
+        self.turnCompleteCounterByChatId = counters.clone();
+        self.turnCompleteCounterByChatIdFlow.set_value(counters);
         let _ = nextWindowSize;
     }
 
     #[allow(non_snake_case)]
     pub fn cleanupRuntimeAfterSend(&mut self, chatId: String, _turnOptions: ChatTurnOptions) {
-        if let Some(runtime) = self
-            .chatRuntimes
-            .get_mut(&Self::chatKey(Some(chatId.clone())))
-        {
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             runtime.isLoading = false;
             runtime.sendJob = None;
             runtime.streamCollectionJob = None;
             runtime.stateCollectionJob = None;
-        }
+        });
         self.clearCurrentTurnToolInvocationCount(chatId);
         self.updateGlobalLoadingState();
     }

@@ -58,6 +58,9 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
     final detailText = _detailText(widget.message, themePreferenceSnapshot);
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
+      toolCollapseMode: toolCollapseModeFromPreferenceValue(
+        themePreferenceSnapshot.toolCollapseMode,
+      ),
     );
     final useCardStyle = widget.useBubbleStyle;
     final aiBubbleColor =
@@ -144,10 +147,8 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
           if (widget.useBubbleStyle &&
               themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
             _MessageAvatar(
-              icon: Icons.auto_awesome,
               imagePath: themePreferenceSnapshot.customAiAvatarUri,
               backgroundColor: aiBubbleColor,
-              foregroundColor: aiTextColor,
               square:
                   themePreferenceSnapshot.avatarShape ==
                   UserPreferencesManager.AVATAR_SHAPE_SQUARE,
@@ -228,20 +229,18 @@ Color? _optionalColor(int? value) {
 
 class _MessageAvatar extends StatelessWidget {
   const _MessageAvatar({
-    required this.icon,
     required this.imagePath,
     required this.backgroundColor,
-    required this.foregroundColor,
     required this.square,
     required this.cornerRadius,
   });
 
-  final IconData icon;
   final String? imagePath;
   final Color backgroundColor;
-  final Color foregroundColor;
   final bool square;
   final double cornerRadius;
+
+  static const String _operitAvatarAsset = 'assets/images/operit_avatar.png';
 
   @override
   Widget build(BuildContext context) {
@@ -259,7 +258,7 @@ class _MessageAvatar extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: avatarImagePath != null && avatarImagePath.isNotEmpty
             ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
-            : Icon(icon, size: 15, color: foregroundColor),
+            : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
       ),
     );
   }

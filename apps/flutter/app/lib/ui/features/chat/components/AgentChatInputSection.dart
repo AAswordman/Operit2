@@ -430,7 +430,7 @@ LiquidGlassSettings _inputTransparentGlassSettings(BuildContext context) {
   return LiquidGlassSettings(
     glassColor: dark ? const Color(0x08FFFFFF) : const Color(0x07FFFFFF),
     thickness: 80,
-    blur: 2,
+    blur: 8,
     chromaticAberration: 0.18,
     lightIntensity: 0.42,
     ambientStrength: 0.2,

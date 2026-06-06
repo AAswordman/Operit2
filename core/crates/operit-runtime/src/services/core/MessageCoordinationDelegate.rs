@@ -18,6 +18,7 @@ use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
@@ -354,6 +355,10 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.and_then(|chat| chat.workspace);
+        let enableThinking = ApiPreferences::getInstance()
+            .enableThinkingModeFlow()
+            .first()
+            .expect("enable_thinking_mode preference must be readable");
         let mut variantMessage = self
             .messageProcessingDelegate
             .regenerateAiMessageVariant(RegenerateAiMessageVariantRequest {
@@ -369,7 +374,7 @@ impl MessageCoordinationDelegate {
                 currentRoleName: targetMessage.roleName,
                 attachments: Vec::new(),
                 replyToMessage: None,
-                enableThinking: false,
+                enableThinking,
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
@@ -454,14 +459,14 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
-        let workspaceEnv = currentChat.and_then(|chat| chat.workspaceEnv);
+        let workspaceEnv = currentChat.clone().and_then(|chat| chat.workspaceEnv);
         let roleCardId = match roleCardIdOverride
             .clone()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
         {
             Some(roleCardId) => roleCardId,
-            None => match ActivePromptManager::getInstance().resolveActiveCardIdForSend() {
+            None => match self.resolveRoleCardIdForSend(currentChat.as_ref()) {
                 Ok(roleCardId) => roleCardId,
                 Err(error) => {
                     self.messageProcessingDelegate
@@ -478,6 +483,10 @@ impl MessageCoordinationDelegate {
         let runtimeChatHistory = self
             .chatHistoryDelegate
             .getRuntimeChatHistory(chatId.clone());
+        let enableThinking = ApiPreferences::getInstance()
+            .enableThinkingModeFlow()
+            .first()
+            .expect("enable_thinking_mode preference must be readable");
         let result = self
             .messageProcessingDelegate
             .sendUserMessage(SendUserMessageProcessingRequest {
@@ -495,7 +504,7 @@ impl MessageCoordinationDelegate {
                 avatarUri: None,
                 attachments,
                 replyToMessage,
-                enableThinking: false,
+                enableThinking,
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
@@ -549,6 +558,36 @@ impl MessageCoordinationDelegate {
         if isAutoContinuation {
             self.removePendingAutoContinuation(chatId);
         }
+    }
+
+    #[allow(non_snake_case)]
+    fn resolveRoleCardIdForSend(
+        &self,
+        currentChat: Option<&crate::data::model::ChatHistory::ChatHistory>,
+    ) -> Result<String, operit_store::PreferencesDataStore::PreferencesDataStoreError> {
+        if let Some(chat) = currentChat {
+            let hasGroupBinding = chat
+                .characterGroupId
+                .as_ref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if !hasGroupBinding {
+                if let Some(characterCardName) = chat
+                    .characterCardName
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some(card) = self
+                        .characterCardManager
+                        .findCharacterCardByName(&characterCardName)?
+                    {
+                        return Ok(card.id);
+                    }
+                }
+            }
+        }
+        ActivePromptManager::getInstance().resolveActiveCardIdForSend()
     }
 
     pub fn handleManualMemoryUpdate(&mut self, _chatId: Option<String>) {

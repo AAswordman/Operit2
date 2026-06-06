@@ -41,6 +41,11 @@ class AiChatScreenRoute extends OperitScreen {
   const AiChatScreenRoute() : super(routeTypeName: 'AiChat', title: 'AI Chat');
 
   @override
+  String? stableScreenKey() {
+    return 'AiChat';
+  }
+
+  @override
   bool preserveTopBarTitleWhenReplacingWith(OperitScreen nextScreen) {
     return nextScreen is AiChatScreenRoute;
   }
@@ -85,6 +90,11 @@ class MarketScreenRoute extends OperitScreen {
   }
 
   @override
+  String? stableScreenKey() {
+    return 'Market:${initialTab.name}';
+  }
+
+  @override
   Widget build(BuildContext context) {
     return UnifiedMarketScreen(initialTab: initialTab);
   }
@@ -102,6 +112,11 @@ class SettingsScreenRoute extends OperitScreen {
     return <String, Object?>{
       if (selectedCategory != null) 'category': selectedCategory.name,
     };
+  }
+
+  @override
+  String? stableScreenKey() {
+    return 'Settings:${category?.name ?? 'root'}';
   }
 
   @override

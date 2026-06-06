@@ -27,6 +27,7 @@ class ChatArea extends StatefulWidget {
     required this.errorMessage,
     required this.scrollController,
     required this.currentChatId,
+    required this.currentCharacterCardAvatarUri,
     required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
@@ -58,6 +59,7 @@ class ChatArea extends StatefulWidget {
   final String? errorMessage;
   final ScrollController scrollController;
   final String? currentChatId;
+  final String? currentCharacterCardAvatarUri;
   final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
@@ -463,6 +465,8 @@ class _ChatAreaState extends State<ChatArea> {
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
         cached.isStreaming == isStreaming &&
+        cached.currentCharacterCardAvatarUri ==
+            widget.currentCharacterCardAvatarUri &&
         cached.themePreferenceSnapshot == themePreferenceSnapshot &&
         _sameMessageForRender(cached.message, message)) {
       return cached.widget;
@@ -508,6 +512,7 @@ class _ChatAreaState extends State<ChatArea> {
                 themePreferenceSnapshot.bubbleAiContentPaddingLeft,
             bubbleAiContentPaddingRight:
                 themePreferenceSnapshot.bubbleAiContentPaddingRight,
+            currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
           )
         : CursorStyleChatMessage(
             key: ValueKey<String>(message.stableKey),
@@ -549,6 +554,7 @@ class _ChatAreaState extends State<ChatArea> {
       selected: selected,
       selectionMode: selectionMode,
       isStreaming: isStreaming,
+      currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
       themePreferenceSnapshot: themePreferenceSnapshot,
       widget: row,
     );
@@ -718,6 +724,7 @@ class _CachedMessageRow {
     required this.selected,
     required this.selectionMode,
     required this.isStreaming,
+    required this.currentCharacterCardAvatarUri,
     required this.themePreferenceSnapshot,
     required this.widget,
   });
@@ -727,6 +734,7 @@ class _CachedMessageRow {
   final bool selected;
   final bool selectionMode;
   final bool isStreaming;
+  final String? currentCharacterCardAvatarUri;
   final ThemePreferenceSnapshot themePreferenceSnapshot;
   final Widget widget;
 }

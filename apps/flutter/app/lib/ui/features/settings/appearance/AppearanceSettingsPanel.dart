@@ -25,11 +25,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
       children: <Widget>[
-        _SettingsHero(
-          icon: Icons.palette_outlined,
-          title: l10n.settingsCategoryAppearanceTitle,
-          description: l10n.settingsCategoryAppearanceDescription,
-        ),
         _SectionCard(
           title: l10n.settingsAppearanceThemeSection,
           children: <Widget>[
@@ -65,6 +60,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
             _BodyText(l10n.settingsAppearanceColorDescription),
             _ThemeColorPresetSelector(
               selectedId: _selectedColorPresetId(snapshot),
+              snapshot: snapshot,
               onChanged: (preset) {
                 unawaited(
                   themeController.saveThemeSettings(
@@ -74,18 +70,11 @@ class AppearanceSettingsPanel extends StatelessWidget {
                   ),
                 );
               },
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  unawaited(
-                    _showThemeColorDialog(context, themeController, snapshot),
-                  );
-                },
-                icon: const Icon(Icons.colorize_outlined),
-                label: Text(l10n.settingsAppearanceColorCustom),
-              ),
+              onCustomTap: () {
+                unawaited(
+                  _showThemeColorDialog(context, themeController, snapshot),
+                );
+              },
             ),
           ],
         ),
@@ -114,19 +103,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
                   },
                   icon: const Icon(Icons.movie_creation_outlined),
                   label: Text(l10n.settingsAppearanceBackgroundChooseVideo),
-                ),
-                OutlinedButton.icon(
-                  onPressed: snapshot.useBackgroundImage
-                      ? () {
-                          unawaited(
-                            themeController.saveThemeSettings(
-                              useBackgroundImage: false,
-                            ),
-                          );
-                        }
-                      : null,
-                  icon: const Icon(Icons.visibility_off_outlined),
-                  label: Text(l10n.settingsAppearanceBackgroundDisable),
                 ),
               ],
             ),
@@ -320,44 +296,50 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
-            _InfoLine(
-              label: l10n.settingsAppearanceUserAvatar,
-              value: _avatarImageLabel(l10n, snapshot.customUserAvatarUri),
-            ),
-            _AvatarActionRow(
-              chooseLabel: l10n.settingsAppearanceChooseUserAvatar,
-              clearLabel: l10n.settingsAppearanceClearUserAvatar,
-              clearEnabled:
-                  snapshot.customUserAvatarUri != null &&
-                  snapshot.customUserAvatarUri!.isNotEmpty,
-              onChoose: () {
-                unawaited(_pickAvatarImage(themeController, isUser: true));
-              },
-              onClear: () {
-                unawaited(
-                  themeController.saveThemeSettings(customUserAvatarUri: ''),
-                );
-              },
-            ),
-            _InfoLine(
-              label: l10n.settingsAppearanceAiAvatar,
-              value: _avatarImageLabel(l10n, snapshot.customAiAvatarUri),
-            ),
-            _AvatarActionRow(
-              chooseLabel: l10n.settingsAppearanceChooseAiAvatar,
-              clearLabel: l10n.settingsAppearanceClearAiAvatar,
-              clearEnabled:
-                  snapshot.customAiAvatarUri != null &&
-                  snapshot.customAiAvatarUri!.isNotEmpty,
-              onChoose: () {
-                unawaited(_pickAvatarImage(themeController, isUser: false));
-              },
-              onClear: () {
-                unawaited(
-                  themeController.saveThemeSettings(customAiAvatarUri: ''),
-                );
-              },
-            ),
+            if (themeController.hasActiveThemeTarget) ...<Widget>[
+              _InfoLine(
+                label: l10n.settingsAppearanceUserAvatar,
+                value: _avatarImageLabel(l10n, snapshot.customUserAvatarUri),
+              ),
+              _AvatarActionRow(
+                chooseLabel: l10n.settingsAppearanceChooseUserAvatar,
+                clearLabel: l10n.settingsAppearanceClearUserAvatar,
+                clearEnabled:
+                    snapshot.customUserAvatarUri != null &&
+                    snapshot.customUserAvatarUri!.isNotEmpty,
+                onChoose: () {
+                  unawaited(_pickAvatarImage(themeController, isUser: true));
+                },
+                onClear: () {
+                  unawaited(
+                    themeController.saveActiveThemeAvatarSettings(
+                      customUserAvatarUri: '',
+                    ),
+                  );
+                },
+              ),
+              _InfoLine(
+                label: l10n.settingsAppearanceAiAvatar,
+                value: _avatarImageLabel(l10n, snapshot.customAiAvatarUri),
+              ),
+              _AvatarActionRow(
+                chooseLabel: l10n.settingsAppearanceChooseAiAvatar,
+                clearLabel: l10n.settingsAppearanceClearAiAvatar,
+                clearEnabled:
+                    snapshot.customAiAvatarUri != null &&
+                    snapshot.customAiAvatarUri!.isNotEmpty,
+                onChoose: () {
+                  unawaited(_pickAvatarImage(themeController, isUser: false));
+                },
+                onClear: () {
+                  unawaited(
+                    themeController.saveActiveThemeAvatarSettings(
+                      customAiAvatarUri: '',
+                    ),
+                  );
+                },
+              ),
+            ],
           ],
         ),
         _SectionCard(
@@ -382,18 +364,11 @@ class AppearanceSettingsPanel extends StatelessWidget {
               onChanged: (value) {
                 unawaited(_applyMessageColorPreset(themeController, value));
               },
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  unawaited(
-                    _showMessageColorDialog(context, themeController, snapshot),
-                  );
-                },
-                icon: const Icon(Icons.color_lens_outlined),
-                label: Text(l10n.settingsAppearanceMessageColorsCustom),
-              ),
+              onCustomTap: () {
+                unawaited(
+                  _showMessageColorDialog(context, themeController, snapshot),
+                );
+              },
             ),
             _InfoLine(
               label: l10n.settingsAppearanceUserBubbleFont,
@@ -794,7 +769,7 @@ Future<void> _pickAvatarImage(
   if (file == null) {
     return;
   }
-  await themeController.saveThemeSettings(
+  await themeController.saveActiveThemeAvatarSettings(
     customUserAvatarUri: isUser ? file.path : null,
     customAiAvatarUri: isUser ? null : file.path,
   );
@@ -1423,6 +1398,9 @@ const List<_ThemeColorPreset> _themeColorPresets = <_ThemeColorPreset>[
   ),
 ];
 
+const Color _customPresetPrimaryPreviewColor = Color(0xFF2F80ED);
+const Color _customPresetSecondaryPreviewColor = Color(0xFFFFB020);
+
 String _selectedColorPresetId(ThemePreferenceSnapshot snapshot) {
   if (!snapshot.useCustomColors) {
     return 'default';
@@ -1508,45 +1486,202 @@ String _fileNameOrNoneLabel(
 class _ThemeColorPresetSelector extends StatelessWidget {
   const _ThemeColorPresetSelector({
     required this.selectedId,
+    required this.snapshot,
     required this.onChanged,
+    required this.onCustomTap,
   });
 
   final String selectedId;
+  final ThemePreferenceSnapshot snapshot;
   final ValueChanged<_ThemeColorPreset> onChanged;
+  final VoidCallback onCustomTap;
 
   @override
   Widget build(BuildContext context) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: 10,
+      runSpacing: 10,
       children: <Widget>[
         for (final preset in _themeColorPresets)
-          ChoiceChip(
+          _ColorPresetTile(
             selected: selectedId == preset.id,
             label: Text(_themeColorPresetLabel(context, preset.id)),
-            avatar: _ThemeColorDot(preset: preset),
-            onSelected: (_) => onChanged(preset),
+            primaryColor: _themePresetPrimaryColor(context, preset),
+            secondaryColor: _themePresetSecondaryColor(context, preset),
+            onTap: () => onChanged(preset),
           ),
+        _ColorPresetTile(
+          selected: selectedId == 'custom',
+          label: Text(_themeColorPresetLabel(context, 'custom')),
+          primaryColor: _customPresetPrimaryPreviewColor,
+          secondaryColor: _customPresetSecondaryPreviewColor,
+          onTap: onCustomTap,
+        ),
       ],
     );
   }
 }
 
-class _ThemeColorDot extends StatelessWidget {
-  const _ThemeColorDot({required this.preset});
+Color _themePresetPrimaryColor(BuildContext context, _ThemeColorPreset preset) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return preset.primaryColor == null
+      ? colorScheme.primary
+      : Color(preset.primaryColor!);
+}
 
-  final _ThemeColorPreset preset;
+Color _themePresetSecondaryColor(
+  BuildContext context,
+  _ThemeColorPreset preset,
+) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return preset.secondaryColor == null
+      ? colorScheme.secondary
+      : Color(preset.secondaryColor!);
+}
+
+class _ColorPresetTile extends StatelessWidget {
+  const _ColorPresetTile({
+    required this.selected,
+    required this.label,
+    required this.primaryColor,
+    required this.secondaryColor,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final Widget label;
+  final Color primaryColor;
+  final Color secondaryColor;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final color = preset.primaryColor == null
-        ? colorScheme.primary
-        : Color(preset.primaryColor!);
-    return Container(
-      width: 14,
-      height: 14,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    return SizedBox(
+      width: 82,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected
+                  ? colorScheme.primaryContainer.withValues(alpha: 0.28)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _SplitColorCircle(
+                  selected: selected,
+                  primaryColor: primaryColor,
+                  secondaryColor: secondaryColor,
+                ),
+                const SizedBox(height: 6),
+                DefaultTextStyle.merge(
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: selected
+                        ? colorScheme.onPrimaryContainer
+                        : colorScheme.onSurfaceVariant,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                  child: label,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SplitColorCircle extends StatelessWidget {
+  const _SplitColorCircle({
+    required this.selected,
+    required this.primaryColor,
+    required this.secondaryColor,
+  });
+
+  final bool selected;
+  final Color primaryColor;
+  final Color secondaryColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      width: 48,
+      height: 48,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          width: selected ? 2 : 1,
+          color: selected
+              ? colorScheme.primary
+              : colorScheme.outlineVariant.withValues(alpha: 0.68),
+        ),
+        boxShadow: selected
+            ? <BoxShadow>[
+                BoxShadow(
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                  color: colorScheme.primary.withValues(alpha: 0.16),
+                ),
+              ]
+            : const <BoxShadow>[],
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          ClipOval(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    primaryColor,
+                    primaryColor,
+                    secondaryColor,
+                    secondaryColor,
+                  ],
+                  stops: const <double>[0, 0.5, 0.5, 1],
+                ),
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+          if (selected)
+            Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.84),
+                  shape: BoxShape.circle,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(3),
+                  child: Icon(
+                    Icons.check,
+                    size: 16,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1559,6 +1694,7 @@ String _themeColorPresetLabel(BuildContext context, String id) {
     'matcha' => l10n.settingsAppearanceColorMatcha,
     'ember' => l10n.settingsAppearanceColorEmber,
     'rose' => l10n.settingsAppearanceColorRose,
+    'custom' => l10n.settingsAppearanceColorCustom,
     _ => id,
   };
 }
@@ -1700,10 +1836,12 @@ class _MessageColorPresetSelector extends StatelessWidget {
   const _MessageColorPresetSelector({
     required this.value,
     required this.onChanged,
+    required this.onCustomTap,
   });
 
   final _MessageColorPreset value;
   final ValueChanged<_MessageColorPreset> onChanged;
+  final VoidCallback onCustomTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1711,49 +1849,54 @@ class _MessageColorPresetSelector extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+        spacing: 10,
+        runSpacing: 10,
         children: <Widget>[
           for (final preset in _messageColorPresetChoices)
-            ChoiceChip(
+            _ColorPresetTile(
               selected: value == preset,
               label: Text(_messageColorPresetName(l10n, preset)),
-              avatar: _MessageColorDot(preset: preset),
-              onSelected: (_) => onChanged(preset),
+              primaryColor: _messagePresetPrimaryColor(context, preset),
+              secondaryColor: _messagePresetSecondaryColor(context, preset),
+              onTap: () => onChanged(preset),
             ),
+          _ColorPresetTile(
+            selected: value == _MessageColorPreset.custom,
+            label: Text(
+              _messageColorPresetName(l10n, _MessageColorPreset.custom),
+            ),
+            primaryColor: _customPresetPrimaryPreviewColor,
+            secondaryColor: _customPresetSecondaryPreviewColor,
+            onTap: onCustomTap,
+          ),
         ],
       ),
     );
   }
 }
 
-class _MessageColorDot extends StatelessWidget {
-  const _MessageColorDot({required this.preset});
+Color _messagePresetPrimaryColor(
+  BuildContext context,
+  _MessageColorPreset preset,
+) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return switch (preset) {
+    _MessageColorPreset.theme => colorScheme.primaryContainer,
+    _MessageColorPreset.custom => _customPresetPrimaryPreviewColor,
+    _ => Color(_messageColorPresetValues[preset]!.bubbleUserBubbleColor),
+  };
+}
 
-  final _MessageColorPreset preset;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final userColor = switch (preset) {
-      _MessageColorPreset.theme ||
-      _MessageColorPreset.custom => colorScheme.primaryContainer,
-      _ => Color(_messageColorPresetValues[preset]!.bubbleUserBubbleColor),
-    };
-    final aiColor = switch (preset) {
-      _MessageColorPreset.theme ||
-      _MessageColorPreset.custom => colorScheme.surfaceContainerHighest,
-      _ => Color(_messageColorPresetValues[preset]!.bubbleAiBubbleColor),
-    };
-    return Container(
-      width: 16,
-      height: 16,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(colors: <Color>[userColor, aiColor]),
-      ),
-    );
-  }
+Color _messagePresetSecondaryColor(
+  BuildContext context,
+  _MessageColorPreset preset,
+) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return switch (preset) {
+    _MessageColorPreset.theme => colorScheme.surfaceContainerHighest,
+    _MessageColorPreset.custom => _customPresetSecondaryPreviewColor,
+    _ => Color(_messageColorPresetValues[preset]!.bubbleAiBubbleColor),
+  };
 }
 
 Future<void> _applyMessageColorPreset(
@@ -1780,17 +1923,12 @@ Future<void> _showThemeColorDialog(
 ) async {
   final l10n = AppLocalizations.of(context)!;
   final colorScheme = Theme.of(context).colorScheme;
-  final primaryController = TextEditingController(
-    text: _hexColorText(
-      Color(snapshot.customPrimaryColor ?? colorScheme.primary.toARGB32()),
-    ),
+  var primaryColor = Color(
+    snapshot.customPrimaryColor ?? colorScheme.primary.toARGB32(),
   );
-  final secondaryController = TextEditingController(
-    text: _hexColorText(
-      Color(snapshot.customSecondaryColor ?? colorScheme.secondary.toARGB32()),
-    ),
+  var secondaryColor = Color(
+    snapshot.customSecondaryColor ?? colorScheme.secondary.toARGB32(),
   );
-  String? errorText;
   await showDialog<void>(
     context: context,
     builder: (dialogContext) {
@@ -1801,19 +1939,41 @@ Future<void> _showThemeColorDialog(
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                _HexColorField(
+                _EditableColorRow(
                   label: l10n.settingsAppearancePrimaryColor,
-                  controller: primaryController,
+                  color: primaryColor,
+                  onTap: () async {
+                    final picked = await _showSingleColorPickerDialog(
+                      context,
+                      title: l10n.settingsAppearancePrimaryColor,
+                      initialColor: primaryColor,
+                    );
+                    if (picked == null || !dialogContext.mounted) {
+                      return;
+                    }
+                    setDialogState(() {
+                      primaryColor = picked;
+                    });
+                  },
                 ),
                 const SizedBox(height: 12),
-                _HexColorField(
+                _EditableColorRow(
                   label: l10n.settingsAppearanceSecondaryColor,
-                  controller: secondaryController,
+                  color: secondaryColor,
+                  onTap: () async {
+                    final picked = await _showSingleColorPickerDialog(
+                      context,
+                      title: l10n.settingsAppearanceSecondaryColor,
+                      initialColor: secondaryColor,
+                    );
+                    if (picked == null || !dialogContext.mounted) {
+                      return;
+                    }
+                    setDialogState(() {
+                      secondaryColor = picked;
+                    });
+                  },
                 ),
-                if (errorText != null) ...<Widget>[
-                  const SizedBox(height: 12),
-                  Text(errorText!, style: TextStyle(color: colorScheme.error)),
-                ],
               ],
             ),
             actions: <Widget>[
@@ -1823,24 +1983,14 @@ Future<void> _showThemeColorDialog(
               ),
               FilledButton(
                 onPressed: () {
-                  try {
-                    final primaryColor = _parseHexColor(primaryController.text);
-                    final secondaryColor = _parseHexColor(
-                      secondaryController.text,
-                    );
-                    unawaited(
-                      themeController.saveThemeSettings(
-                        useCustomColors: true,
-                        customPrimaryColor: primaryColor,
-                        customSecondaryColor: secondaryColor,
-                      ),
-                    );
-                    Navigator.of(dialogContext).pop();
-                  } on FormatException {
-                    setDialogState(() {
-                      errorText = l10n.settingsAppearanceHexColorInvalid;
-                    });
-                  }
+                  unawaited(
+                    themeController.saveThemeSettings(
+                      useCustomColors: true,
+                      customPrimaryColor: primaryColor.toARGB32(),
+                      customSecondaryColor: secondaryColor.toARGB32(),
+                    ),
+                  );
+                  Navigator.of(dialogContext).pop();
                 },
                 child: Text(l10n.save),
               ),
@@ -1859,44 +2009,22 @@ Future<void> _showMessageColorDialog(
 ) async {
   final l10n = AppLocalizations.of(context)!;
   final colorScheme = Theme.of(context).colorScheme;
-  final cursorUserController = TextEditingController(
-    text: _hexColorText(
-      Color(
-        snapshot.cursorUserBubbleColor ??
-            colorScheme.primaryContainer.toARGB32(),
-      ),
-    ),
+  var cursorUserColor = Color(
+    snapshot.cursorUserBubbleColor ?? colorScheme.primaryContainer.toARGB32(),
   );
-  final userBubbleController = TextEditingController(
-    text: _hexColorText(
-      Color(
-        snapshot.bubbleUserBubbleColor ??
-            colorScheme.primaryContainer.toARGB32(),
-      ),
-    ),
+  var userBubbleColor = Color(
+    snapshot.bubbleUserBubbleColor ?? colorScheme.primaryContainer.toARGB32(),
   );
-  final aiBubbleController = TextEditingController(
-    text: _hexColorText(
-      Color(
-        snapshot.bubbleAiBubbleColor ??
-            colorScheme.surfaceContainerHighest.toARGB32(),
-      ),
-    ),
+  var aiBubbleColor = Color(
+    snapshot.bubbleAiBubbleColor ??
+        colorScheme.surfaceContainerHighest.toARGB32(),
   );
-  final userTextController = TextEditingController(
-    text: _hexColorText(
-      Color(
-        snapshot.bubbleUserTextColor ??
-            colorScheme.onPrimaryContainer.toARGB32(),
-      ),
-    ),
+  var userTextColor = Color(
+    snapshot.bubbleUserTextColor ?? colorScheme.onPrimaryContainer.toARGB32(),
   );
-  final aiTextController = TextEditingController(
-    text: _hexColorText(
-      Color(snapshot.bubbleAiTextColor ?? colorScheme.onSurface.toARGB32()),
-    ),
+  var aiTextColor = Color(
+    snapshot.bubbleAiTextColor ?? colorScheme.onSurface.toARGB32(),
   );
-  String? errorText;
   await showDialog<void>(
     context: context,
     builder: (dialogContext) {
@@ -1908,37 +2036,95 @@ Future<void> _showMessageColorDialog(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  _HexColorField(
+                  _EditableColorRow(
                     label: l10n.settingsAppearanceCursorUserBubbleColor,
-                    controller: cursorUserController,
+                    color: cursorUserColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceCursorUserBubbleColor,
+                        initialColor: cursorUserColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        cursorUserColor = picked;
+                      });
+                    },
                   ),
                   const SizedBox(height: 12),
-                  _HexColorField(
+                  _EditableColorRow(
                     label: l10n.settingsAppearanceUserBubbleColor,
-                    controller: userBubbleController,
+                    color: userBubbleColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceUserBubbleColor,
+                        initialColor: userBubbleColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        userBubbleColor = picked;
+                      });
+                    },
                   ),
                   const SizedBox(height: 12),
-                  _HexColorField(
+                  _EditableColorRow(
                     label: l10n.settingsAppearanceAiBubbleColor,
-                    controller: aiBubbleController,
+                    color: aiBubbleColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceAiBubbleColor,
+                        initialColor: aiBubbleColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        aiBubbleColor = picked;
+                      });
+                    },
                   ),
                   const SizedBox(height: 12),
-                  _HexColorField(
+                  _EditableColorRow(
                     label: l10n.settingsAppearanceUserTextColor,
-                    controller: userTextController,
+                    color: userTextColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceUserTextColor,
+                        initialColor: userTextColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        userTextColor = picked;
+                      });
+                    },
                   ),
                   const SizedBox(height: 12),
-                  _HexColorField(
+                  _EditableColorRow(
                     label: l10n.settingsAppearanceAiTextColor,
-                    controller: aiTextController,
+                    color: aiTextColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceAiTextColor,
+                        initialColor: aiTextColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        aiTextColor = picked;
+                      });
+                    },
                   ),
-                  if (errorText != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    Text(
-                      errorText!,
-                      style: TextStyle(color: colorScheme.error),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -1949,35 +2135,16 @@ Future<void> _showMessageColorDialog(
               ),
               FilledButton(
                 onPressed: () {
-                  try {
-                    final cursorUserColor = _parseHexColor(
-                      cursorUserController.text,
-                    );
-                    final userBubbleColor = _parseHexColor(
-                      userBubbleController.text,
-                    );
-                    final aiBubbleColor = _parseHexColor(
-                      aiBubbleController.text,
-                    );
-                    final userTextColor = _parseHexColor(
-                      userTextController.text,
-                    );
-                    final aiTextColor = _parseHexColor(aiTextController.text);
-                    unawaited(
-                      themeController.saveThemeSettings(
-                        cursorUserBubbleColor: cursorUserColor,
-                        bubbleUserBubbleColor: userBubbleColor,
-                        bubbleAiBubbleColor: aiBubbleColor,
-                        bubbleUserTextColor: userTextColor,
-                        bubbleAiTextColor: aiTextColor,
-                      ),
-                    );
-                    Navigator.of(dialogContext).pop();
-                  } on FormatException {
-                    setDialogState(() {
-                      errorText = l10n.settingsAppearanceHexColorInvalid;
-                    });
-                  }
+                  unawaited(
+                    themeController.saveThemeSettings(
+                      cursorUserBubbleColor: cursorUserColor.toARGB32(),
+                      bubbleUserBubbleColor: userBubbleColor.toARGB32(),
+                      bubbleAiBubbleColor: aiBubbleColor.toARGB32(),
+                      bubbleUserTextColor: userTextColor.toARGB32(),
+                      bubbleAiTextColor: aiTextColor.toARGB32(),
+                    ),
+                  );
+                  Navigator.of(dialogContext).pop();
                 },
                 child: Text(l10n.save),
               ),
@@ -1989,23 +2156,334 @@ Future<void> _showMessageColorDialog(
   );
 }
 
-class _HexColorField extends StatelessWidget {
-  const _HexColorField({required this.label, required this.controller});
+Future<Color?> _showSingleColorPickerDialog(
+  BuildContext context, {
+  required String title,
+  required Color initialColor,
+}) {
+  var hsvColor = HSVColor.fromColor(initialColor);
+  return showDialog<Color>(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          final color = hsvColor.toColor();
+          return AlertDialog(
+            title: Text(title),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    _ColorPickerPreview(color: color),
+                    const SizedBox(height: 16),
+                    _ColorPickerSlider(
+                      label: '色相',
+                      value: hsvColor.hue,
+                      min: 0,
+                      max: 360,
+                      divisions: 360,
+                      activeColor: color,
+                      valueLabel: hsvColor.hue.round().toString(),
+                      onChanged: (value) {
+                        setDialogState(() {
+                          hsvColor = HSVColor.fromAHSV(
+                            hsvColor.alpha,
+                            value,
+                            hsvColor.saturation,
+                            hsvColor.value,
+                          );
+                        });
+                      },
+                    ),
+                    _ColorPickerSlider(
+                      label: '饱和度',
+                      value: hsvColor.saturation,
+                      min: 0,
+                      max: 1,
+                      divisions: 100,
+                      activeColor: color,
+                      valueLabel: '${(hsvColor.saturation * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          hsvColor = HSVColor.fromAHSV(
+                            hsvColor.alpha,
+                            hsvColor.hue,
+                            value,
+                            hsvColor.value,
+                          );
+                        });
+                      },
+                    ),
+                    _ColorPickerSlider(
+                      label: '明度',
+                      value: hsvColor.value,
+                      min: 0,
+                      max: 1,
+                      divisions: 100,
+                      activeColor: color,
+                      valueLabel: '${(hsvColor.value * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          hsvColor = HSVColor.fromAHSV(
+                            hsvColor.alpha,
+                            hsvColor.hue,
+                            hsvColor.saturation,
+                            value,
+                          );
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text('预设', style: Theme.of(context).textTheme.labelLarge),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final preset in _pickerPresetColors)
+                          _ColorSwatchButton(
+                            color: preset,
+                            selected: preset.toARGB32() == color.toARGB32(),
+                            onTap: () {
+                              setDialogState(() {
+                                hsvColor = HSVColor.fromColor(preset);
+                              });
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(AppLocalizations.of(context)!.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(color),
+                child: Text(AppLocalizations.of(context)!.save),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
-  final String label;
-  final TextEditingController controller;
+const List<Color> _pickerPresetColors = <Color>[
+  Color(0xFFE53935),
+  Color(0xFFD81B60),
+  Color(0xFF8E24AA),
+  Color(0xFF5E35B1),
+  Color(0xFF3949AB),
+  Color(0xFF1E88E5),
+  Color(0xFF039BE5),
+  Color(0xFF00ACC1),
+  Color(0xFF00897B),
+  Color(0xFF43A047),
+  Color(0xFF7CB342),
+  Color(0xFFC0CA33),
+  Color(0xFFFDD835),
+  Color(0xFFFFB300),
+  Color(0xFFFB8C00),
+  Color(0xFFF4511E),
+  Color(0xFF6D4C41),
+  Color(0xFF546E7A),
+  Color(0xFF111827),
+  Color(0xFFFFFFFF),
+];
+
+class _ColorPickerPreview extends StatelessWidget {
+  const _ColorPickerPreview({required this.color});
+
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return TextField(
-      controller: controller,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: l10n.settingsAppearanceHexColorHint,
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+        ),
       ),
-      textCapitalization: TextCapitalization.characters,
-      style: const TextStyle(fontFamily: 'monospace'),
+      child: SizedBox(
+        height: 72,
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: colorScheme.surface.withValues(alpha: 0.78),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Text(
+                _hexColorText(color),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ColorPickerSlider extends StatelessWidget {
+  const _ColorPickerSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.activeColor,
+    required this.valueLabel,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final Color activeColor;
+  final String valueLabel;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(label, style: Theme.of(context).textTheme.labelLarge),
+            ),
+            Text(valueLabel, style: Theme.of(context).textTheme.labelMedium),
+          ],
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          activeColor: activeColor,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _ColorSwatchButton extends StatelessWidget {
+  const _ColorSwatchButton({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        width: 34,
+        height: 34,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            width: selected ? 2 : 1,
+            color: selected
+                ? colorScheme.primary
+                : colorScheme.outlineVariant.withValues(alpha: 0.72),
+          ),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          child: selected
+              ? Icon(Icons.check, size: 16, color: colorScheme.onPrimary)
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _EditableColorRow extends StatelessWidget {
+  const _EditableColorRow({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Row(
+            children: <Widget>[
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+                  ),
+                ),
+                child: const SizedBox.square(dimension: 32),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                _hexColorText(color),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.palette_outlined, size: 18),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2013,15 +2491,6 @@ class _HexColorField extends StatelessWidget {
 String _hexColorText(Color color) {
   final value = color.toARGB32() & 0xFFFFFF;
   return '#${value.toRadixString(16).padLeft(6, '0').toUpperCase()}';
-}
-
-int _parseHexColor(String input) {
-  final normalized = input.trim().replaceFirst('#', '');
-  final valid = RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(normalized);
-  if (!valid) {
-    throw const FormatException('invalid hex color');
-  }
-  return 0xFF000000 | int.parse(normalized, radix: 16);
 }
 
 _MessageColorPreset _messageColorPresetFromSnapshot(
@@ -2355,64 +2824,10 @@ String _themeTargetLabel(
   OperitThemeController themeController,
 ) {
   final name = themeController.activeThemeTargetName;
-  if (name == null) {
-    return l10n.settingsAppearanceThemeTargetGlobal;
-  }
   if (themeController.isActiveThemeTargetGroup) {
     return l10n.settingsAppearanceThemeTargetGroup(name);
   }
   return l10n.settingsAppearanceThemeTargetCharacter(name);
-}
-
-class _SettingsHero extends StatelessWidget {
-  const _SettingsHero({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Row(
-        children: <Widget>[
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: colorScheme.primaryContainer,
-            child: Icon(icon, color: colorScheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _SectionCard extends StatelessWidget {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../theme/OperitGlassSurface.dart';
 import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 
 class WorkspaceHomeContent extends StatelessWidget {
@@ -30,44 +31,40 @@ class WorkspaceHomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     final boundWorkspacePath = workspacePath?.trim();
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-        children: <Widget>[
-          _WorkspaceStatusSummary(
-            workspacePath: boundWorkspacePath,
-            terminalSessionCountListenable: terminalSessionCountListenable,
-            browserSessionRegistry: browserSessionRegistry,
-            onOpenTerminalSessions: onOpenTerminalSessions,
-            onOpenBrowserSessions: onOpenBrowserSessions,
-          ),
-          const SizedBox(height: 10),
-          _WorkspacePrimaryAction(
-            icon: Icons.folder_open,
-            title: l10n.selectFile,
-            subtitle: l10n.selectFileDescription,
-            onTap: onOpenFiles,
-          ),
-          const SizedBox(height: 10),
-          _WorkspacePrimaryAction(
-            icon: Icons.play_arrow,
-            title: l10n.openTerminal,
-            subtitle: l10n.openTerminalDescription,
-            onTap: onOpenTerminal,
-          ),
-          const SizedBox(height: 10),
-          _WorkspacePrimaryAction(
-            icon: Icons.public,
-            title: l10n.openBrowser,
-            subtitle: l10n.openBrowserDescription,
-            onTap: onOpenBrowser,
-          ),
-        ],
-      ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
+      children: <Widget>[
+        _WorkspaceStatusSummary(
+          workspacePath: boundWorkspacePath,
+          terminalSessionCountListenable: terminalSessionCountListenable,
+          browserSessionRegistry: browserSessionRegistry,
+          onOpenTerminalSessions: onOpenTerminalSessions,
+          onOpenBrowserSessions: onOpenBrowserSessions,
+        ),
+        const SizedBox(height: 10),
+        _WorkspacePrimaryAction(
+          icon: Icons.folder_open,
+          title: l10n.selectFile,
+          subtitle: l10n.selectFileDescription,
+          onTap: onOpenFiles,
+        ),
+        const SizedBox(height: 10),
+        _WorkspacePrimaryAction(
+          icon: Icons.play_arrow,
+          title: l10n.openTerminal,
+          subtitle: l10n.openTerminalDescription,
+          onTap: onOpenTerminal,
+        ),
+        const SizedBox(height: 10),
+        _WorkspacePrimaryAction(
+          icon: Icons.public,
+          title: l10n.openBrowser,
+          subtitle: l10n.openBrowserDescription,
+          onTap: onOpenBrowser,
+        ),
+      ],
     );
   }
 }
@@ -185,14 +182,14 @@ class _WorkspacePrimaryAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerLowest,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-        ),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.72),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(
+        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.34),
       ),
+      material: true,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,

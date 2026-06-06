@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../theme/OperitTheme.dart';
 import 'MarkdownInlineSpannable.dart';
 
 const double tableMinColumnWidth = 80;
@@ -31,8 +32,21 @@ class EnhancedTableBlock extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final theme = Theme.of(context);
-    final outline = theme.colorScheme.outline.withValues(alpha: 0.5);
-    final grid = theme.colorScheme.outline.withValues(alpha: 0.35);
+    final transparentSurface = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot.transparentSurfaceEnabled;
+    final outline = theme.colorScheme.outline.withValues(
+      alpha: transparentSurface ? 0.32 : 0.5,
+    );
+    final grid = theme.colorScheme.outline.withValues(
+      alpha: transparentSurface ? 0.22 : 0.35,
+    );
+    final headerColor = theme.colorScheme.surfaceContainerHighest.withValues(
+      alpha: transparentSurface ? 0.12 : 0.3,
+    );
+    final bodyColor = transparentSurface
+        ? Colors.transparent
+        : theme.colorScheme.surface;
     final maxColumns = rows.fold<int>(
       0,
       (value, row) => row.length > value ? row.length : value,
@@ -66,10 +80,7 @@ class EnhancedTableBlock extends StatelessWidget {
                   for (var rowIndex = 0; rowIndex < rows.length; rowIndex++)
                     TableRow(
                       decoration: BoxDecoration(
-                        color: rowIndex == 0
-                            ? theme.colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.3)
-                            : theme.colorScheme.surface,
+                        color: rowIndex == 0 ? headerColor : bodyColor,
                       ),
                       children: <Widget>[
                         for (

@@ -458,24 +458,15 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   }
 
   Future<void> _activateCard(core_proxy.CharacterCard card) async {
-    await widget.clients.preferencesCharacterCardManager.setActiveCharacterCard(
-      id: card.id,
-    );
-    await widget.clients.preferencesActivePromptManager.setActivePrompt(
-      prompt: <String, Object?>{
-        'CharacterCard': <String, Object?>{'id': card.id},
-      },
+    await widget.clients.chatRuntimeHolderMain.switchActiveCharacterCardTarget(
+      characterCardId: card.id,
     );
     _reload();
   }
 
   Future<void> _activateGroup(core_proxy.CharacterGroupCard group) async {
-    await widget.clients.preferencesCharacterGroupCardManager
-        .setActiveCharacterGroupCard(groupId: group.id);
-    await widget.clients.preferencesActivePromptManager.setActivePrompt(
-      prompt: <String, Object?>{
-        'CharacterGroup': <String, Object?>{'id': group.id},
-      },
+    await widget.clients.chatRuntimeHolderMain.switchActiveCharacterGroupTarget(
+      characterGroupId: group.id,
     );
     _reload();
   }
@@ -622,6 +613,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = width < 520 ? 16.0 : 28.0;
     return FutureBuilder<_CharacterSettingsData>(
       future: _future,
       builder: (context, snapshot) {
@@ -630,30 +623,30 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
           return const M3LoadingPane();
         }
         return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            24,
+            horizontalPadding,
+            36,
+          ),
           children: <Widget>[
-            _SettingsHero(
-              icon: Icons.badge_outlined,
-              title: l10n.settingsCategoryCharactersTitle,
-              description: l10n.settingsCategoryCharactersDescription,
-            ),
             _SectionCard(
               title: l10n.settingsCharactersCardsSection,
-              action: Row(
-                mainAxisSize: MainAxisSize.min,
+              action: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.end,
                 children: <Widget>[
                   TextButton.icon(
                     onPressed: _importCharacterCardJson,
                     icon: const Icon(Icons.upload_file_outlined),
                     label: Text(l10n.settingsCharactersImportJson),
                   ),
-                  const SizedBox(width: 8),
                   TextButton.icon(
                     onPressed: _importTavernCharacterCardJson,
                     icon: const Icon(Icons.person_add_alt_1_outlined),
                     label: Text(l10n.settingsCharactersImportTavernJson),
                   ),
-                  const SizedBox(width: 8),
                   FilledButton.icon(
                     onPressed: () => _createCard(data),
                     icon: const Icon(Icons.add),
@@ -699,15 +692,16 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
             ),
             _SectionCard(
               title: l10n.settingsCharactersGroupsSection,
-              action: Row(
-                mainAxisSize: MainAxisSize.min,
+              action: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.end,
                 children: <Widget>[
                   TextButton.icon(
                     onPressed: _importCharacterGroupJson,
                     icon: const Icon(Icons.upload_file_outlined),
                     label: Text(l10n.settingsCharactersImportJson),
                   ),
-                  const SizedBox(width: 8),
                   FilledButton.icon(
                     onPressed: () => _createGroup(data),
                     icon: const Icon(Icons.add),
@@ -841,8 +835,7 @@ class _CharacterCardTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return _SettingsEntityTile(
       leading: Icon(active ? Icons.check_circle : Icons.face_outlined),
       title: Text(card.name),
       subtitle: Text(
@@ -853,50 +846,47 @@ class _CharacterCardTile extends StatelessWidget {
           card.memoryProfileBindingMode,
         ].join(' · '),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          TextButton(
-            onPressed: active ? null : onActivate,
-            child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
-          ),
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          PopupMenuButton<_CharacterCardExportAction>(
-            tooltip: l10n.settingsCharactersCopyJson,
-            icon: const Icon(Icons.copy_outlined),
-            onSelected: (action) {
-              switch (action) {
-                case _CharacterCardExportAction.nativeJson:
-                  onExport();
-                  break;
-                case _CharacterCardExportAction.tavernJson:
-                  onExportTavern();
-                  break;
-              }
-            },
-            itemBuilder: (context) =>
-                <PopupMenuEntry<_CharacterCardExportAction>>[
-                  PopupMenuItem<_CharacterCardExportAction>(
-                    value: _CharacterCardExportAction.nativeJson,
-                    child: Text(l10n.settingsCharactersCopyJson),
-                  ),
-                  PopupMenuItem<_CharacterCardExportAction>(
-                    value: _CharacterCardExportAction.tavernJson,
-                    child: Text(l10n.settingsCharactersCopyTavernJson),
-                  ),
-                ],
-          ),
-          IconButton(
-            tooltip: l10n.delete,
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: active ? null : onActivate,
+          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
+        ),
+        IconButton(
+          tooltip: l10n.edit,
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+        ),
+        PopupMenuButton<_CharacterCardExportAction>(
+          tooltip: l10n.settingsCharactersCopyJson,
+          icon: const Icon(Icons.copy_outlined),
+          onSelected: (action) {
+            switch (action) {
+              case _CharacterCardExportAction.nativeJson:
+                onExport();
+                break;
+              case _CharacterCardExportAction.tavernJson:
+                onExportTavern();
+                break;
+            }
+          },
+          itemBuilder: (context) =>
+              <PopupMenuEntry<_CharacterCardExportAction>>[
+                PopupMenuItem<_CharacterCardExportAction>(
+                  value: _CharacterCardExportAction.nativeJson,
+                  child: Text(l10n.settingsCharactersCopyJson),
+                ),
+                PopupMenuItem<_CharacterCardExportAction>(
+                  value: _CharacterCardExportAction.tavernJson,
+                  child: Text(l10n.settingsCharactersCopyTavernJson),
+                ),
+              ],
+        ),
+        IconButton(
+          tooltip: l10n.delete,
+          onPressed: onDelete,
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
     );
   }
 }
@@ -917,8 +907,7 @@ class _PromptTagTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return _SettingsEntityTile(
       leading: const Icon(Icons.sell_outlined),
       title: Text(tag.name),
       subtitle: Text(
@@ -927,21 +916,18 @@ class _PromptTagTile extends StatelessWidget {
           _tagTypeText(tag.tagType),
         ].join(' · '),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          IconButton(
-            tooltip: l10n.delete,
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
+      actions: <Widget>[
+        IconButton(
+          tooltip: l10n.edit,
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+        ),
+        IconButton(
+          tooltip: l10n.delete,
+          onPressed: onDelete,
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
     );
   }
 }
@@ -971,8 +957,7 @@ class _CharacterGroupTile extends StatelessWidget {
     final memberNames = group.members
         .map((member) => _cardNameFor(cards, member.characterCardId))
         .join(', ');
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return _SettingsEntityTile(
       leading: Icon(active ? Icons.check_circle : Icons.groups_outlined),
       title: Text(group.name),
       subtitle: Text(
@@ -981,30 +966,27 @@ class _CharacterGroupTile extends StatelessWidget {
           if (memberNames.isNotEmpty) memberNames,
         ].join(' · '),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          TextButton(
-            onPressed: active ? null : onActivate,
-            child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
-          ),
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          IconButton(
-            tooltip: l10n.settingsCharactersCopyJson,
-            onPressed: onExport,
-            icon: const Icon(Icons.copy_outlined),
-          ),
-          IconButton(
-            tooltip: l10n.delete,
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: active ? null : onActivate,
+          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
+        ),
+        IconButton(
+          tooltip: l10n.edit,
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+        ),
+        IconButton(
+          tooltip: l10n.settingsCharactersCopyJson,
+          onPressed: onExport,
+          icon: const Icon(Icons.copy_outlined),
+        ),
+        IconButton(
+          tooltip: l10n.delete,
+          onPressed: onDelete,
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
     );
   }
 }
@@ -1025,8 +1007,7 @@ class _PreferenceProfileTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return _SettingsEntityTile(
       leading: Icon(active ? Icons.check_circle : Icons.psychology_outlined),
       title: Text(profile.name),
       subtitle: Text(
@@ -1036,18 +1017,98 @@ class _PreferenceProfileTile extends StatelessWidget {
           if (profile.aiStyle.trim().isNotEmpty) profile.aiStyle.trim(),
         ].join(' · '),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      actions: <Widget>[
+        TextButton(
+          onPressed: active ? null : onActivate,
+          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
+        ),
+        IconButton(
+          tooltip: l10n.edit,
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+        ),
+      ],
+    );
+  }
+}
+
+class _SettingsEntityTile extends StatelessWidget {
+  const _SettingsEntityTile({
+    required this.leading,
+    required this.title,
+    required this.subtitle,
+    required this.actions,
+  });
+
+  final Widget leading;
+  final Widget title;
+  final Widget subtitle;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          TextButton(
-            onPressed: active ? null : onActivate,
-            child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                width: 48,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: IconTheme.merge(
+                    data: IconThemeData(color: colorScheme.onSurfaceVariant),
+                    child: leading,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: DefaultTextStyle.merge(
+                  style: TextStyle(color: colorScheme.onSurface),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      DefaultTextStyle.merge(
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                        child: title,
+                      ),
+                      const SizedBox(height: 4),
+                      DefaultTextStyle.merge(
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.35,
+                        ),
+                        child: subtitle,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 48),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: actions,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2326,57 +2387,6 @@ class _DialogDropdown<T> extends StatelessWidget {
   }
 }
 
-class _SettingsHero extends StatelessWidget {
-  const _SettingsHero({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Row(
-        children: <Widget>[
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: colorScheme.primaryContainer,
-            child: Icon(icon, color: colorScheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
@@ -2405,17 +2415,11 @@ class _SectionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  ?action,
-                ],
-              ),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+              if (action != null) ...[
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: action!),
+              ],
               const SizedBox(height: 8),
               ...children,
             ],
@@ -2461,7 +2465,15 @@ String _cardNameFor(List<core_proxy.CharacterCard> cards, String id) {
       return card.name;
     }
   }
-  return id;
+  return _shortIdentifier(id);
+}
+
+String _shortIdentifier(String value) {
+  final text = value.trim();
+  if (text.length <= 12) {
+    return text;
+  }
+  return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
 }
 
 List<String> _tagNamesFor(List<core_proxy.PromptTag> tags, List<String> ids) {

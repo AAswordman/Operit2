@@ -3,26 +3,33 @@
 import 'package:flutter/material.dart';
 
 class OperitLogoMark extends StatelessWidget {
-  const OperitLogoMark({super.key, this.size = 32, this.contentScale = 0.88});
+  const OperitLogoMark({
+    super.key,
+    this.size = 32,
+    this.contentScale = 0.88,
+    this.color = const Color(0xFF3882C7),
+  });
 
   final double size;
   final double contentScale;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox.square(
       dimension: size,
       child: CustomPaint(
-        painter: _OperitLogoPainter(contentScale: contentScale),
+        painter: _OperitLogoPainter(contentScale: contentScale, color: color),
       ),
     );
   }
 }
 
 class _OperitLogoPainter extends CustomPainter {
-  const _OperitLogoPainter({required this.contentScale});
+  const _OperitLogoPainter({required this.contentScale, required this.color});
 
   final double contentScale;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -38,7 +45,7 @@ class _OperitLogoPainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = const Color(0xFF3882C7)
+        ..color = color
         ..style = PaintingStyle.fill
         ..isAntiAlias = true,
     );
@@ -47,7 +54,8 @@ class _OperitLogoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _OperitLogoPainter oldDelegate) {
-    return oldDelegate.contentScale != contentScale;
+    return oldDelegate.contentScale != contentScale ||
+        oldDelegate.color != color;
   }
 }
 

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../theme/OperitGlassSurface.dart';
 
 class WorkspaceFilePreviewActionBar extends StatelessWidget {
   const WorkspaceFilePreviewActionBar({
@@ -24,11 +25,12 @@ class WorkspaceFilePreviewActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        border: Border(
-          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.58),
+      layer: OperitGlassSurfaceLayer.control,
+      border: Border(
+        bottom: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.36),
         ),
       ),
       child: SizedBox(

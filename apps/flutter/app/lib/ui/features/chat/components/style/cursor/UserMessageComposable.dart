@@ -52,12 +52,14 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final messageFontFamilyFallback = widget.useBubbleStyle
         ? operitMessageFontFamilyFallback(themePreferenceSnapshot, isUser: true)
         : null;
-    final contentPadding = EdgeInsets.fromLTRB(
-      themePreferenceSnapshot.bubbleUserContentPaddingLeft,
-      16,
-      themePreferenceSnapshot.bubbleUserContentPaddingRight,
-      16,
-    );
+    final contentPadding = widget.useBubbleStyle
+        ? EdgeInsets.fromLTRB(
+            themePreferenceSnapshot.bubbleUserContentPaddingLeft,
+            16,
+            themePreferenceSnapshot.bubbleUserContentPaddingRight,
+            16,
+          )
+        : const EdgeInsets.fromLTRB(16, 16, 16, 16);
     final bubbleBorderRadius = BorderRadius.circular(
       themePreferenceSnapshot.bubbleUserRoundedCornersEnabled ? 12 : 4,
     );

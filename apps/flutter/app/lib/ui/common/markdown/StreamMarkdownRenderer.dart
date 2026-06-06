@@ -83,10 +83,13 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     if (stateChanged) {
       _rendererState = widget.state!;
     }
+    final streamChanged = oldWidget.contentStream != widget.contentStream;
+    final staticContentChanged =
+        widget.contentStream == null && oldWidget.content != widget.content;
     if (nextRendererId != _rendererId ||
         stateChanged ||
-        oldWidget.contentStream != widget.contentStream ||
-        oldWidget.content != widget.content) {
+        streamChanged ||
+        staticContentChanged) {
       _rendererId = nextRendererId;
       _startCurrentContent();
     }
@@ -224,6 +227,14 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   void _applyMarkdownEvent(Object event) {
     final normalized = _NormalizedMarkdownEvent.from(event);
+    final parentBlockId = normalized.parentBlockId;
+    if (parentBlockId != null) {
+      _rendererState.eventBuilder.appendXmlMarkdownEvent(
+        parentBlockId: parentBlockId,
+        event: normalized.asLocalEvent(),
+      );
+      return;
+    }
     switch (normalized.type) {
       case 'chunk':
         final value = normalized.value;
@@ -343,6 +354,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       backgroundColor: widget.backgroundColor,
       nodeGrouper: widget.nodeGrouper,
       xmlNodeStreams: _rendererState.xmlNodeStreams,
+      xmlMarkdownEventStreams: _rendererState.xmlMarkdownEventStreams,
       nodeAnimationStates: _rendererState.nodeAnimationStates,
       onLinkClick: widget.onLinkClick,
       showThinkingProcess: widget.showThinkingProcess,
@@ -390,6 +402,7 @@ class _NormalizedMarkdownEvent {
     required this.value,
     required this.blockId,
     required this.inlineId,
+    required this.parentBlockId,
     required this.nodeType,
     required this.headerLevel,
   });
@@ -402,19 +415,35 @@ class _NormalizedMarkdownEvent {
         value: event.value,
         blockId: event.blockId,
         inlineId: event.inlineId,
+        parentBlockId: event.parentBlockId,
         nodeType: event.nodeType,
         headerLevel: event.headerLevel,
       );
     }
-    final dynamic dynamicEvent = event;
-    return _NormalizedMarkdownEvent(
-      type: dynamicEvent.type as String,
-      id: dynamicEvent.id as String?,
-      value: dynamicEvent.value as String?,
-      blockId: dynamicEvent.blockId as int?,
-      inlineId: dynamicEvent.inlineId as int?,
-      nodeType: dynamicEvent.nodeType as String?,
-      headerLevel: dynamicEvent.headerLevel as int?,
+    if (event is _LocalMarkdownStreamEvent) {
+      return _NormalizedMarkdownEvent(
+        type: event.type,
+        id: event.id,
+        value: event.value,
+        blockId: event.blockId,
+        inlineId: event.inlineId,
+        parentBlockId: event.parentBlockId,
+        nodeType: event.nodeType,
+        headerLevel: event.headerLevel,
+      );
+    }
+    throw StateError('Unsupported markdown event ${event.runtimeType}');
+  }
+
+  _LocalMarkdownStreamEvent asLocalEvent() {
+    return _LocalMarkdownStreamEvent(
+      type: type,
+      id: id,
+      value: value,
+      blockId: blockId,
+      inlineId: inlineId,
+      nodeType: nodeType,
+      headerLevel: headerLevel,
     );
   }
 
@@ -423,8 +452,30 @@ class _NormalizedMarkdownEvent {
   final String? value;
   final int? blockId;
   final int? inlineId;
+  final int? parentBlockId;
   final String? nodeType;
   final int? headerLevel;
+}
+
+class _LocalMarkdownStreamEvent {
+  const _LocalMarkdownStreamEvent({
+    required this.type,
+    required this.id,
+    required this.value,
+    required this.blockId,
+    required this.inlineId,
+    required this.nodeType,
+    required this.headerLevel,
+  });
+
+  final String type;
+  final String? id;
+  final String? value;
+  final int? blockId;
+  final int? inlineId;
+  final String? nodeType;
+  final int? headerLevel;
+  int? get parentBlockId => null;
 }
 
 MarkdownNodeType _nodeTypeFromLabel(String? label) {
@@ -460,6 +511,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
     required this.backgroundColor,
     required this.nodeGrouper,
     required this.xmlNodeStreams,
+    required this.xmlMarkdownEventStreams,
     required this.showThinkingProcess,
     required this.initialThinkingExpanded,
     required this.allowExpandedThinkingFullHeight,
@@ -473,6 +525,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
   final Color backgroundColor;
   final MarkdownNodeGrouper nodeGrouper;
   final Map<int, Stream<String>> xmlNodeStreams;
+  final Map<int, Stream<Object>> xmlMarkdownEventStreams;
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
@@ -530,6 +583,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       required bool isStreaming,
       required Color textColor,
       Stream<String>? xmlStream,
+      Stream<Object>? xmlMarkdownEventStream,
       String? renderInstanceKey,
     }) {
       return CustomXmlRenderer(
@@ -540,6 +594,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         isStreaming: isStreaming,
         textColor: textColor,
         xmlStream: xmlStream,
+        xmlMarkdownEventStream: xmlMarkdownEventStream,
         showThinkingProcess: widget.showThinkingProcess,
         initialThinkingExpanded: widget.initialThinkingExpanded,
         allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
@@ -554,6 +609,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
           isStreaming: node.isStreaming,
           textColor: widget.textColor,
           xmlStream: widget.xmlNodeStreams[index],
+          xmlMarkdownEventStream: widget.xmlMarkdownEventStreams[index],
         );
       }
       return CanvasMarkdownNodeRenderer(
@@ -574,12 +630,14 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       final isVisible = isVisibleAt(index);
       final isLastNode = index == lastRenderableIndex;
       final xmlStream = widget.xmlNodeStreams[index];
+      final xmlMarkdownEventStream = widget.xmlMarkdownEventStreams[index];
       final cached = _singleNodeCache[cacheKey];
       if (cached != null &&
           cached.node == node &&
           cached.isVisible == isVisible &&
           cached.isLastNode == isLastNode &&
-          identical(cached.xmlStream, xmlStream)) {
+          identical(cached.xmlStream, xmlStream) &&
+          identical(cached.xmlMarkdownEventStream, xmlMarkdownEventStream)) {
         return cached.widget;
       }
       late final Widget rendered;
@@ -596,6 +654,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         isVisible: isVisible,
         isLastNode: isLastNode,
         xmlStream: xmlStream,
+        xmlMarkdownEventStream: xmlMarkdownEventStream,
         widget: rendered,
       );
       return rendered;
@@ -622,6 +681,14 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         )
           widget.xmlNodeStreams[index],
       ];
+      final xmlMarkdownEventStreams = <Stream<Object>?>[
+        for (
+          var index = group.startIndex;
+          index <= group.endIndexInclusive;
+          index++
+        )
+          widget.xmlMarkdownEventStreams[index],
+      ];
       final cached = _groupCache[cacheKey];
       if (cached != null &&
           cached.group.startIndex == group.startIndex &&
@@ -630,7 +697,11 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
           cached.isVisible == isVisible &&
           cached.isLastNode == isLastNode &&
           _markdownNodeListEquals(cached.nodes, slice) &&
-          _streamListIdentical(cached.xmlStreams, xmlStreams)) {
+          _streamListIdentical(cached.xmlStreams, xmlStreams) &&
+          _streamListIdentical(
+            cached.xmlMarkdownEventStreams,
+            xmlMarkdownEventStreams,
+          )) {
         return cached.widget;
       }
       final rendered = widget.nodeGrouper.renderGroup(
@@ -642,6 +713,8 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         textColor: widget.textColor,
         xmlRenderer: renderXmlContent,
         xmlStreamResolver: (index) => widget.xmlNodeStreams[index],
+        xmlMarkdownEventStreamResolver: (index) =>
+            widget.xmlMarkdownEventStreams[index],
         onLinkClick: widget.onLinkClick,
         fillMaxWidth: true,
         fontSize: 14,
@@ -650,6 +723,9 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         group: group,
         nodes: List<MarkdownNodeStable>.unmodifiable(slice),
         xmlStreams: List<Stream<String>?>.unmodifiable(xmlStreams),
+        xmlMarkdownEventStreams: List<Stream<Object>?>.unmodifiable(
+          xmlMarkdownEventStreams,
+        ),
         isVisible: isVisible,
         isLastNode: isLastNode,
         widget: rendered,
@@ -681,6 +757,7 @@ class _CachedSingleMarkdownNode {
     required this.isVisible,
     required this.isLastNode,
     required this.xmlStream,
+    required this.xmlMarkdownEventStream,
     required this.widget,
   });
 
@@ -688,6 +765,7 @@ class _CachedSingleMarkdownNode {
   final bool isVisible;
   final bool isLastNode;
   final Stream<String>? xmlStream;
+  final Stream<Object>? xmlMarkdownEventStream;
   final Widget widget;
 }
 
@@ -696,6 +774,7 @@ class _CachedMarkdownGroup {
     required this.group,
     required this.nodes,
     required this.xmlStreams,
+    required this.xmlMarkdownEventStreams,
     required this.isVisible,
     required this.isLastNode,
     required this.widget,
@@ -704,15 +783,13 @@ class _CachedMarkdownGroup {
   final MarkdownGroupItem group;
   final List<MarkdownNodeStable> nodes;
   final List<Stream<String>?> xmlStreams;
+  final List<Stream<Object>?> xmlMarkdownEventStreams;
   final bool isVisible;
   final bool isLastNode;
   final Widget widget;
 }
 
-bool _streamListIdentical(
-  List<Stream<String>?> left,
-  List<Stream<String>?> right,
-) {
+bool _streamListIdentical<T>(List<Stream<T>?> left, List<Stream<T>?> right) {
   if (left.length != right.length) {
     return false;
   }

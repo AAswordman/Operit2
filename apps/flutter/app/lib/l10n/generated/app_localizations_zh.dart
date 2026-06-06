@@ -208,6 +208,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get messageSenderThinking => '思考';
 
   @override
+  String get thinkingProcess => '思考过程';
+
+  @override
+  String thinkingToolsGroupTitleWithCount(int count) {
+    return '思考与工具调用（$count）';
+  }
+
+  @override
+  String toolsGroupTitleWithCount(int count) {
+    return '工具调用（$count）';
+  }
+
+  @override
   String get messageSenderOther => '其他';
 
   @override

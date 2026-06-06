@@ -25,6 +25,7 @@ class BubbleAiMessageComposable extends StatefulWidget {
     this.bubbleRoundedCornersEnabled = true,
     this.bubbleContentPaddingLeft = 12,
     this.bubbleContentPaddingRight = 12,
+    this.avatarImagePath,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
     this.expandThinkToolsGroups = false,
@@ -44,6 +45,7 @@ class BubbleAiMessageComposable extends StatefulWidget {
   final bool bubbleRoundedCornersEnabled;
   final double bubbleContentPaddingLeft;
   final double bubbleContentPaddingRight;
+  final String? avatarImagePath;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
   final bool expandThinkToolsGroups;
@@ -91,7 +93,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
         ? widget.message.roleName
         : '';
     final metadataText = _metadataText(widget.message, snapshot);
-    final avatarImagePath = snapshot.customAiAvatarUri;
+    final avatarImagePath = widget.avatarImagePath;
     final messageFontFamily = operitMessageFontFamily(snapshot, isUser: false);
     final messageFontFamilyFallback = operitMessageFontFamilyFallback(
       snapshot,
@@ -106,6 +108,9 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: showThinkingProcess,
       forceExpandGroups: widget.expandThinkToolsGroups,
+      toolCollapseMode: toolCollapseModeFromPreferenceValue(
+        snapshot.toolCollapseMode,
+      ),
     );
     final effectiveBubbleImageStyle = widget.transparentSurface
         ? null
@@ -540,9 +545,10 @@ class _MessageAvatar extends StatelessWidget {
   final double cornerRadius;
   final VoidCallback? onLongPress;
 
+  static const String _operitAvatarAsset = 'assets/images/operit_avatar.png';
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final square = avatarShape == UserPreferencesManager.AVATAR_SHAPE_SQUARE;
     final avatarImagePath = imagePath;
     return GestureDetector(
@@ -557,7 +563,7 @@ class _MessageAvatar extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: avatarImagePath != null && avatarImagePath.isNotEmpty
             ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
-            : Icon(Icons.assistant, color: colorScheme.secondary, size: 22),
+            : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
       ),
     );
   }

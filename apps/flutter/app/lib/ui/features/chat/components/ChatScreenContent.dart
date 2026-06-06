@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../common/components/M3LoadingIndicator.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
@@ -27,6 +28,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.modelLabelListenable,
     required this.viewModel,
     required this.currentChatId,
+    required this.currentCharacterCardAvatarUri,
     required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
@@ -59,6 +61,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.toastMessageListenable,
     required this.onDismissToast,
     required this.isMultiSelectMode,
+    required this.isPreparingChatSwitch,
     this.selectedMessageIndices = const <int>{},
   });
 
@@ -72,6 +75,7 @@ class ChatScreenContent extends StatelessWidget {
   final ValueListenable<String> modelLabelListenable;
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final String? currentCharacterCardAvatarUri;
   final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
@@ -104,6 +108,7 @@ class ChatScreenContent extends StatelessWidget {
   final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
+  final bool isPreparingChatSwitch;
   final Set<int> selectedMessageIndices;
 
   @override
@@ -114,80 +119,64 @@ class ChatScreenContent extends StatelessWidget {
         Column(
           children: <Widget>[
             Expanded(
-              child: ChatArea(
-                messages: messages,
-                isLoading: loading,
-                errorMessage: errorMessage,
-                scrollController: scrollController,
-                currentChatId: currentChatId,
-                autoScrollToBottomListenable: autoScrollToBottomListenable,
-                hasOlderDisplayHistory: hasOlderDisplayHistory,
-                hasNewerDisplayHistory: hasNewerDisplayHistory,
-                isLoadingDisplayWindow: isLoadingDisplayWindow,
-                loadLocatorEntries: loadLocatorEntries,
-                onAutoScrollToBottomChanged: onAutoScrollToBottomChanged,
-                onLoadOlderDisplayWindow: onLoadOlderDisplayWindow,
-                onLoadNewerDisplayWindow: onLoadNewerDisplayWindow,
-                onShowLatestDisplayWindow: onShowLatestDisplayWindow,
-                onToggleFavoriteMessage: onToggleFavoriteMessage,
-                onDeleteMessage: onDeleteMessage,
-                onDeleteMessagesFrom: onDeleteMessagesFrom,
-                onDeleteMessageVariant: onDeleteMessageVariant,
-                onRollbackToMessage: onRollbackToMessage,
-                onSelectMessageToEdit: onSelectMessageToEdit,
-                onRegenerateMessage: onRegenerateMessage,
-                onInsertSummary: onInsertSummary,
-                onCreateBranch: onCreateBranch,
-                onReplyToMessage: onReplyToMessage,
-                onToggleMultiSelectMode: onToggleMultiSelectMode,
-                onToggleMessageSelection: onToggleMessageSelection,
-                onRefreshRequested: onRefreshRequested,
-                isMultiSelectMode: isMultiSelectMode,
-                selectedMessageIndices: selectedMessageIndices,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  IgnorePointer(
+                    ignoring: isPreparingChatSwitch,
+                    child: Opacity(
+                      opacity: isPreparingChatSwitch ? 0 : 1,
+                      child: _buildChatArea(),
+                    ),
+                  ),
+                  if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
+                ],
               ),
             ),
-            if (isMultiSelectMode)
-              ChatMultiSelectBar(
-                selectedCount: selectedMessageIndices.length,
-                allSelected:
-                    _selectableMessageIndices.isNotEmpty &&
-                    _selectableMessageIndices.length ==
-                        selectedMessageIndices.length,
-                onClose: onExitMultiSelectMode,
-                onToggleSelectAll:
-                    _selectableMessageIndices.isNotEmpty &&
-                        _selectableMessageIndices.length ==
-                            selectedMessageIndices.length
-                    ? onClearMessageSelection
-                    : onSelectAllMessages,
-                onCopy: selectedMessageIndices.isEmpty
-                    ? null
-                    : () => _copySelectedMessages(context),
-                onShareImage: selectedMessageIndices.isEmpty
-                    ? null
-                    : () => _generateShareImage(context),
-                onDelete: selectedMessageIndices.isEmpty
-                    ? null
-                    : () => _confirmDeleteSelected(context),
-              )
-            else
-              ValueListenableBuilder<String>(
-                valueListenable: modelLabelListenable,
-                builder: (context, modelLabel, _) {
-                  return AgentChatInputSection(
-                    controller: messageController,
-                    focusNode: inputFocusNode,
-                    isLoading: loading,
-                    inputState: inputProcessingState,
-                    modelLabel: modelLabel,
-                    viewModel: viewModel,
-                    currentChatId: currentChatId,
-                    onSendMessage: onSendMessage,
-                    onCancelMessage: onCancelMessage,
-                    onModelChanged: onModelChanged,
-                  );
-                },
-              ),
+            if (!isPreparingChatSwitch) ...<Widget>[
+              if (isMultiSelectMode)
+                ChatMultiSelectBar(
+                  selectedCount: selectedMessageIndices.length,
+                  allSelected:
+                      _selectableMessageIndices.isNotEmpty &&
+                      _selectableMessageIndices.length ==
+                          selectedMessageIndices.length,
+                  onClose: onExitMultiSelectMode,
+                  onToggleSelectAll:
+                      _selectableMessageIndices.isNotEmpty &&
+                          _selectableMessageIndices.length ==
+                              selectedMessageIndices.length
+                      ? onClearMessageSelection
+                      : onSelectAllMessages,
+                  onCopy: selectedMessageIndices.isEmpty
+                      ? null
+                      : () => _copySelectedMessages(context),
+                  onShareImage: selectedMessageIndices.isEmpty
+                      ? null
+                      : () => _generateShareImage(context),
+                  onDelete: selectedMessageIndices.isEmpty
+                      ? null
+                      : () => _confirmDeleteSelected(context),
+                )
+              else
+                ValueListenableBuilder<String>(
+                  valueListenable: modelLabelListenable,
+                  builder: (context, modelLabel, _) {
+                    return AgentChatInputSection(
+                      controller: messageController,
+                      focusNode: inputFocusNode,
+                      isLoading: loading,
+                      inputState: inputProcessingState,
+                      modelLabel: modelLabel,
+                      viewModel: viewModel,
+                      currentChatId: currentChatId,
+                      onSendMessage: onSendMessage,
+                      onCancelMessage: onCancelMessage,
+                      onModelChanged: onModelChanged,
+                    );
+                  },
+                ),
+            ],
           ],
         ),
         SafeArea(
@@ -206,6 +195,41 @@ class ChatScreenContent extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildChatArea() {
+    return ChatArea(
+      messages: messages,
+      isLoading: loading,
+      errorMessage: errorMessage,
+      scrollController: scrollController,
+      currentChatId: currentChatId,
+      currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
+      autoScrollToBottomListenable: autoScrollToBottomListenable,
+      hasOlderDisplayHistory: hasOlderDisplayHistory,
+      hasNewerDisplayHistory: hasNewerDisplayHistory,
+      isLoadingDisplayWindow: isLoadingDisplayWindow,
+      loadLocatorEntries: loadLocatorEntries,
+      onAutoScrollToBottomChanged: onAutoScrollToBottomChanged,
+      onLoadOlderDisplayWindow: onLoadOlderDisplayWindow,
+      onLoadNewerDisplayWindow: onLoadNewerDisplayWindow,
+      onShowLatestDisplayWindow: onShowLatestDisplayWindow,
+      onToggleFavoriteMessage: onToggleFavoriteMessage,
+      onDeleteMessage: onDeleteMessage,
+      onDeleteMessagesFrom: onDeleteMessagesFrom,
+      onDeleteMessageVariant: onDeleteMessageVariant,
+      onRollbackToMessage: onRollbackToMessage,
+      onSelectMessageToEdit: onSelectMessageToEdit,
+      onRegenerateMessage: onRegenerateMessage,
+      onInsertSummary: onInsertSummary,
+      onCreateBranch: onCreateBranch,
+      onReplyToMessage: onReplyToMessage,
+      onToggleMultiSelectMode: onToggleMultiSelectMode,
+      onToggleMessageSelection: onToggleMessageSelection,
+      onRefreshRequested: onRefreshRequested,
+      isMultiSelectMode: isMultiSelectMode,
+      selectedMessageIndices: selectedMessageIndices,
     );
   }
 

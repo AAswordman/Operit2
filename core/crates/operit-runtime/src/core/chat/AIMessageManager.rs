@@ -280,7 +280,7 @@ impl AIMessageManager {
                         stream,
                     },
                     usize::MAX,
-                    StreamStart::Eagerly,
+                    StreamStart::Lazily,
                 );
                 Self::rememberActiveResponseStream(chatKey.clone(), shared.clone());
                 shared

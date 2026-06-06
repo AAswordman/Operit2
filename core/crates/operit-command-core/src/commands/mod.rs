@@ -61,19 +61,9 @@ pub fn run_core_command(
         "memory" => {
             memory::run_memory_command(application.applicationContext.clone(), &args[1..], output)
         }
-        "character" => people::run_character_command(
-            application.applicationContext.clone(),
-            &args[1..],
-            output,
-        ),
-        "group" => {
-            people::run_group_command(application.applicationContext.clone(), &args[1..], output)
-        }
-        "active-prompt" => people::run_active_prompt_command(
-            application.applicationContext.clone(),
-            &args[1..],
-            output,
-        ),
+        "character" => people::run_character_command(application, &args[1..], output),
+        "group" => people::run_group_command(application, &args[1..], output),
+        "active-prompt" => people::run_active_prompt_command(application, &args[1..], output),
         "model" => {
             model::run_model_command(application.applicationContext.clone(), &args[1..], output)
         }

@@ -7,11 +7,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
-import '../../../main/navigation/AppNavigationModels.dart';
-import '../../../main/screens/OperitScreens.dart';
-import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../theme/OperitGlassSurface.dart';
-import '../../../features/packages/components/PackageTab.dart';
 
 class ToolSettingsPanel extends StatefulWidget {
   const ToolSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -119,17 +115,6 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
     _reload();
   }
 
-  void _openPackageTab(PackageTab tab) {
-    final entry = ScreenRouteRegistry.toEntry(
-      screen: PackageManagerScreenRoute(initialTab: tab),
-    );
-    AppRouterGateway.navigate(
-      routeId: entry.routeId,
-      args: entry.args,
-      source: entry.source,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -143,11 +128,6 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
           children: <Widget>[
-            _SettingsHero(
-              icon: Icons.admin_panel_settings_outlined,
-              title: l10n.settingsCategoryToolsTitle,
-              description: l10n.settingsCategoryToolsDescription,
-            ),
             _SectionCard(
               title: l10n.settingsToolsPermissionMode,
               children: <Widget>[
@@ -190,34 +170,8 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
               ],
             ),
             _SectionCard(
-              title: l10n.settingsToolsExtensions,
+              title: l10n.settingsToolsMcpStartupTimeout,
               children: <Widget>[
-                _NavigationTile(
-                  icon: Icons.extension_outlined,
-                  title: l10n.settingsToolsPlugins,
-                  subtitle: l10n.settingsToolsPluginsDescription,
-                  onTap: () => _openPackageTab(PackageTab.plugins),
-                ),
-                _NavigationTile(
-                  icon: Icons.inventory_2_outlined,
-                  title: l10n.settingsToolsPackages,
-                  subtitle: l10n.settingsToolsPackagesDescription,
-                  onTap: () => _openPackageTab(PackageTab.packages),
-                ),
-                _NavigationTile(
-                  icon: Icons.auto_awesome_outlined,
-                  title: l10n.settingsToolsSkills,
-                  subtitle: l10n.settingsToolsSkillsDescription,
-                  onTap: () => _openPackageTab(PackageTab.skills),
-                ),
-                _NavigationTile(
-                  icon: Icons.account_tree_outlined,
-                  title: l10n.settingsToolsMcp,
-                  subtitle: l10n.settingsToolsMcpDescription(
-                    data.mcpStartupTimeoutSeconds,
-                  ),
-                  onTap: () => _openPackageTab(PackageTab.mcp),
-                ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.timer_outlined),
@@ -543,32 +497,6 @@ class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
   }
 }
 
-class _NavigationTile extends StatelessWidget {
-  const _NavigationTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(icon),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
-    );
-  }
-}
-
 class _NumberInputDialog extends StatefulWidget {
   const _NumberInputDialog({
     required this.title,
@@ -651,57 +579,6 @@ class _NumberInputDialogState extends State<_NumberInputDialog> {
           child: Text(l10n.save),
         ),
       ],
-    );
-  }
-}
-
-class _SettingsHero extends StatelessWidget {
-  const _SettingsHero({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Row(
-        children: <Widget>[
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: colorScheme.primaryContainer,
-            child: Icon(icon, color: colorScheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -96,6 +96,7 @@ class _MarkdownTextState extends State<_MarkdownText>
   int _targetLength = 0;
 
   bool get _enableTypewriter =>
+      widget.isStreaming &&
       !widget.nodeKey.startsWith('static-node-') &&
       widget.isLastNode &&
       (widget.text.isNotEmpty || widget.children.isNotEmpty) &&

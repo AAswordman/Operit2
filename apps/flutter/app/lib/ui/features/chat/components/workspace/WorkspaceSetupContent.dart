@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../theme/OperitGlassSurface.dart';
 
 class WorkspaceSetupContent extends StatefulWidget {
   const WorkspaceSetupContent({
@@ -28,57 +29,54 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Center(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                Icon(Icons.widgets, size: 48, color: theme.colorScheme.primary),
-                const SizedBox(height: 16),
-                Text(
-                  l10n.workspaceSetupTitle,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Icon(Icons.widgets, size: 48, color: theme.colorScheme.primary),
+              const SizedBox(height: 16),
+              Text(
+                l10n.workspaceSetupTitle,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  l10n.workspaceSetupSubtitle,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    l10n.workspaceSetupSubtitle,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+              ),
+              const SizedBox(height: 24),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 12,
+                children: <Widget>[
+                  _WorkspaceOption(
+                    icon: Icons.create_new_folder,
+                    title: l10n.workspaceCreateDefaultTitle,
+                    description: l10n.workspaceCreateDefaultDescription,
+                    onTap: _showProjectTypeDialog,
                   ),
-                ),
-                const SizedBox(height: 24),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: <Widget>[
-                    _WorkspaceOption(
-                      icon: Icons.create_new_folder,
-                      title: l10n.workspaceCreateDefaultTitle,
-                      description: l10n.workspaceCreateDefaultDescription,
-                      onTap: _showProjectTypeDialog,
-                    ),
-                    _WorkspaceOption(
-                      icon: Icons.folder_open,
-                      title: l10n.workspaceBindExistingTitle,
-                      description: l10n.workspaceBindExistingDescription,
-                      onTap: _pickAndBindWorkspace,
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                  _WorkspaceOption(
+                    icon: Icons.folder_open,
+                    title: l10n.workspaceBindExistingTitle,
+                    description: l10n.workspaceBindExistingDescription,
+                    onTap: _pickAndBindWorkspace,
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -340,14 +338,14 @@ class _ProjectTypeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: theme.colorScheme.outline.withValues(alpha: 0.2),
-        ),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: theme.colorScheme.outline.withValues(alpha: 0.18),
       ),
+      material: true,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: busy ? null : onTap,
@@ -423,14 +421,16 @@ class _WorkspaceOption extends StatelessWidget {
     return SizedBox(
       width: 132,
       height: 132,
-      child: Material(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: theme.colorScheme.outline.withValues(alpha: 0.2),
-          ),
+      child: OperitGlassSurface(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.42,
         ),
+        layer: OperitGlassSurfaceLayer.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.18),
+        ),
+        material: true,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,

@@ -45,8 +45,8 @@ pub fn run_chat_command(
         "pin" => update_chat_pinned(application, &args[1..], output),
         "send" => send_chat_message_command(application, &args[1..], output),
         "stats" => show_chat_stats(output),
-        "bind-character" => bind_chat_character(&args[1..], output),
-        "bind-group" => bind_chat_group_card(&args[1..], output),
+        "bind-character" => bind_chat_character(application, &args[1..], output),
+        "bind-group" => bind_chat_group_card(application, &args[1..], output),
         "set-group" => set_chat_group(&args[1..], output),
         _ => {
             print_chat_usage(output);
@@ -314,7 +314,11 @@ fn show_chat_stats(output: &mut CoreCommandOutput) -> Result<(), String> {
     Ok(())
 }
 
-fn bind_chat_character(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+fn bind_chat_character(
+    application: &mut OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let chatId = args
         .get(0)
         .ok_or_else(|| {
@@ -328,15 +332,19 @@ fn bind_chat_character(args: &[String], output: &mut CoreCommandOutput) -> Resul
         .ok_or_else(|| {
             "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
         })?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatCharacterBinding(chatId.clone(), Some(characterCardName), None)
-        .map_err(|error| error.to_string())?;
+    application
+        .chatRuntimeHolder
+        .getCore(ChatRuntimeSlot::MAIN)
+        .updateChatCharacterCard(chatId.clone(), Some(characterCardName));
     output.push_stdout_line(format!("chat character binding updated: {chatId}"));
     Ok(())
 }
 
-fn bind_chat_group_card(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+fn bind_chat_group_card(
+    application: &mut OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let chatId = args
         .get(0)
         .ok_or_else(|| "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string())?
@@ -348,10 +356,10 @@ fn bind_chat_group_card(args: &[String], output: &mut CoreCommandOutput) -> Resu
         .ok_or_else(|| {
             "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string()
         })?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatCharacterBinding(chatId.clone(), None, Some(characterGroupId))
-        .map_err(|error| error.to_string())?;
+    application
+        .chatRuntimeHolder
+        .getCore(ChatRuntimeSlot::MAIN)
+        .updateChatCharacterGroup(chatId.clone(), Some(characterGroupId));
     output.push_stdout_line(format!("chat group binding updated: {chatId}"));
     Ok(())
 }

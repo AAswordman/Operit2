@@ -10,6 +10,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
@@ -48,6 +49,7 @@ class _DrawerContentState extends State<DrawerContent> {
   final ScrollController _historyScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final List<core_proxy.ChatHistory> _histories = <core_proxy.ChatHistory>[];
+  final Map<String, String> _characterGroupNamesById = <String, String>{};
   final Set<String> _collapsedCharacterSections = Set<String>.of(
     _rememberedCollapsedCharacterSections,
   );
@@ -56,6 +58,8 @@ class _DrawerContentState extends State<DrawerContent> {
   );
   StreamSubscription<List<core_proxy.ChatHistory>>? _historiesSubscription;
   StreamSubscription<String?>? _currentChatSubscription;
+  StreamSubscription<List<core_proxy.CharacterGroupCard>>?
+  _characterGroupsSubscription;
   String? _currentChatId;
   String? _errorMessage;
   bool _loading = true;
@@ -65,6 +69,11 @@ class _DrawerContentState extends State<DrawerContent> {
   GeneratedChatRuntimeHolderMainCoreProxy get _chatCoreProxy =>
       GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain;
 
+  GeneratedPreferencesCharacterGroupCardManagerCoreProxy
+  get _characterGroupCoreProxy => GeneratedCoreProxyClients(
+    widget.bridge,
+  ).preferencesCharacterGroupCardManager;
+
   String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';
 
   @override
@@ -73,12 +82,14 @@ class _DrawerContentState extends State<DrawerContent> {
     _searchController.addListener(_onSearchChanged);
     _loadConversations();
     _watchConversations();
+    _watchCharacterGroups();
   }
 
   @override
   void dispose() {
     _historiesSubscription?.cancel();
     _currentChatSubscription?.cancel();
+    _characterGroupsSubscription?.cancel();
     _historyScrollController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -91,12 +102,15 @@ class _DrawerContentState extends State<DrawerContent> {
       _errorMessage = null;
     });
     try {
+      await _characterGroupCoreProxy.initializeIfNeeded();
       final results = await Future.wait<Object?>(<Future<Object?>>[
         _chatCoreProxy.chatHistoriesFlowSnapshot(),
         _chatCoreProxy.currentChatIdFlowSnapshot(),
+        _characterGroupCoreProxy.allCharacterGroupCardsFlowSnapshot(),
       ]);
       final histories = results[0] as List<core_proxy.ChatHistory>;
       final currentChatId = results[1] as String?;
+      final characterGroups = results[2] as List<core_proxy.CharacterGroupCard>;
       if (!mounted) {
         return;
       }
@@ -104,6 +118,9 @@ class _DrawerContentState extends State<DrawerContent> {
         _histories
           ..clear()
           ..addAll(histories);
+        _characterGroupNamesById
+          ..clear()
+          ..addAll(_characterGroupNameMap(characterGroups));
         _currentChatId = currentChatId;
         _loading = false;
       });
@@ -166,6 +183,43 @@ class _DrawerContentState extends State<DrawerContent> {
         });
       },
     );
+  }
+
+  void _watchCharacterGroups() {
+    _characterGroupsSubscription?.cancel();
+    _characterGroupsSubscription = _characterGroupCoreProxy
+        .allCharacterGroupCardsFlowChanges()
+        .listen(
+          (groups) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _characterGroupNamesById
+                ..clear()
+                ..addAll(_characterGroupNameMap(groups));
+            });
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('Failed to watch character groups: $error\n$stackTrace');
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _errorMessage = error.toString();
+            });
+          },
+        );
+  }
+
+  Map<String, String> _characterGroupNameMap(
+    List<core_proxy.CharacterGroupCard> groups,
+  ) {
+    return <String, String>{
+      for (final group in groups)
+        if (group.id.trim().isNotEmpty && group.name.trim().isNotEmpty)
+          group.id.trim(): group.name.trim(),
+    };
   }
 
   void _onSearchChanged() {
@@ -309,9 +363,15 @@ class _DrawerContentState extends State<DrawerContent> {
       _errorMessage = null;
     });
     try {
-      await _chatCoreProxy.switchChat(chatId: history.id);
+      ChatSwitchRenderCoordinator.prepareForChat(history.id);
       widget.onConversationActivated();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) {
+        return;
+      }
+      await _chatCoreProxy.switchChat(chatId: history.id);
     } catch (error, stackTrace) {
+      ChatSwitchRenderCoordinator.clear();
       debugPrint('Failed to switch chat: $error\n$stackTrace');
       if (!mounted) {
         return;
@@ -580,7 +640,7 @@ class _DrawerContentState extends State<DrawerContent> {
 
   bool _historyMatchesQuery(core_proxy.ChatHistory history, String query) {
     return history.title.toLowerCase().contains(query) ||
-        _characterCardLabel(history).toLowerCase().contains(query) ||
+        _bindingLabel(history).toLowerCase().contains(query) ||
         _groupLabel(history).toLowerCase().contains(query);
   }
 
@@ -599,7 +659,8 @@ class _DrawerContentState extends State<DrawerContent> {
         sections.add(
           _CharacterHistorySection(
             key: sectionKey,
-            label: _characterCardLabel(history),
+            label: _bindingLabel(history),
+            kind: _bindingKind(history),
             groups: <_HistoryGroupSection>[
               _HistoryGroupSection(
                 key: groupKey,
@@ -672,6 +733,7 @@ class _DrawerContentState extends State<DrawerContent> {
         _CharacterHistorySection(
           key: section.key,
           label: section.label,
+          kind: section.kind,
           groups: plannedGroups,
         ),
       );
@@ -684,13 +746,33 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   String _characterSectionKey(core_proxy.ChatHistory history) {
+    final characterGroupId = history.characterGroupId?.trim();
+    if (characterGroupId != null && characterGroupId.isNotEmpty) {
+      return 'character-group:$characterGroupId';
+    }
     final name = history.characterCardName?.trim();
     return name == null || name.isEmpty
         ? 'character:unbound'
         : 'character:$name';
   }
 
-  String _characterCardLabel(core_proxy.ChatHistory history) {
+  _HistoryBindingKind _bindingKind(core_proxy.ChatHistory history) {
+    final characterGroupId = history.characterGroupId?.trim();
+    if (characterGroupId != null && characterGroupId.isNotEmpty) {
+      return _HistoryBindingKind.characterGroup;
+    }
+    final name = history.characterCardName?.trim();
+    return name == null || name.isEmpty
+        ? _HistoryBindingKind.unbound
+        : _HistoryBindingKind.characterCard;
+  }
+
+  String _bindingLabel(core_proxy.ChatHistory history) {
+    final characterGroupId = history.characterGroupId?.trim();
+    if (characterGroupId != null && characterGroupId.isNotEmpty) {
+      return _characterGroupNamesById[characterGroupId] ??
+          _shortIdentifier(characterGroupId);
+    }
     final name = history.characterCardName?.trim();
     return name == null || name.isEmpty ? '未绑定' : name;
   }
@@ -918,6 +1000,7 @@ class _DrawerContentState extends State<DrawerContent> {
                         _CharacterHeaderEntry(:final section) =>
                           _CharacterSectionHeader(
                             label: section.label,
+                            kind: section.kind,
                             count: section.historyCount,
                             expanded: !_collapsedCharacterSections.contains(
                               section.key,
@@ -1031,11 +1114,13 @@ class _CharacterHistorySection {
   _CharacterHistorySection({
     required this.key,
     required this.label,
+    required this.kind,
     required this.groups,
   });
 
   final String key;
   final String label;
+  final _HistoryBindingKind kind;
   final List<_HistoryGroupSection> groups;
 
   int get historyCount {
@@ -1046,6 +1131,8 @@ class _CharacterHistorySection {
     return count;
   }
 }
+
+enum _HistoryBindingKind { characterCard, characterGroup, unbound }
 
 class _HistoryGroupSection {
   _HistoryGroupSection({
@@ -1103,9 +1190,18 @@ class _ChatBindingForCreate {
   final String? characterGroupId;
 }
 
+String _shortIdentifier(String value) {
+  final text = value.trim();
+  if (text.length <= 12) {
+    return text;
+  }
+  return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
+}
+
 class _CharacterSectionHeader extends StatelessWidget {
   const _CharacterSectionHeader({
     required this.label,
+    required this.kind,
     required this.count,
     required this.expanded,
     required this.appearance,
@@ -1113,6 +1209,7 @@ class _CharacterSectionHeader extends StatelessWidget {
   });
 
   final String label;
+  final _HistoryBindingKind kind;
   final int count;
   final bool expanded;
   final NavigationDrawerAppearance appearance;
@@ -1143,7 +1240,8 @@ class _CharacterSectionHeader extends StatelessWidget {
                 color: avatarContainerColor,
               ),
               alignment: Alignment.center,
-              child: label == 'Operit'
+              child:
+                  kind == _HistoryBindingKind.characterCard && label == 'Operit'
                   ? ClipOval(
                       child: ColoredBox(
                         color: Colors.white,
@@ -1156,9 +1254,14 @@ class _CharacterSectionHeader extends StatelessWidget {
                       ),
                     )
                   : Icon(
-                      label == '未绑定'
-                          ? Icons.account_tree_outlined
-                          : Icons.person_outline,
+                      switch (kind) {
+                        _HistoryBindingKind.characterGroup =>
+                          Icons.groups_outlined,
+                        _HistoryBindingKind.unbound =>
+                          Icons.account_tree_outlined,
+                        _HistoryBindingKind.characterCard =>
+                          Icons.person_outline,
+                      },
                       size: 14,
                       color: appearance.itemColor,
                     ),

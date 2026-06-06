@@ -8,9 +8,12 @@ class StreamMarkdownRendererState {
   final List<MutableMarkdownNode> nodes = <MutableMarkdownNode>[];
   final List<MarkdownNodeStable> renderNodes = <MarkdownNodeStable>[];
   final Map<int, Stream<String>> xmlNodeStreams = <int, Stream<String>>{};
+  final Map<int, Stream<Object>> xmlMarkdownEventStreams =
+      <int, Stream<Object>>{};
   late final MarkdownEventNodeBuilder eventBuilder = MarkdownEventNodeBuilder(
     nodes: nodes,
     xmlNodeStreams: xmlNodeStreams,
+    xmlMarkdownEventStreams: xmlMarkdownEventStreams,
   );
   final Map<String, bool> nodeAnimationStates = <String, bool>{};
   final Map<int, (int, MarkdownNodeStable)> conversionCache =
@@ -29,6 +32,7 @@ class StreamMarkdownRendererState {
     nodeAnimationStates.clear();
     conversionCache.clear();
     xmlNodeStreams.clear();
+    xmlMarkdownEventStreams.clear();
     collectedContent.clear();
     streamParsingCompletedSuccessfully = false;
   }
@@ -80,10 +84,12 @@ class MarkdownEventNodeBuilder {
   MarkdownEventNodeBuilder({
     required this.nodes,
     required this.xmlNodeStreams,
+    required this.xmlMarkdownEventStreams,
   });
 
   final List<MutableMarkdownNode> nodes;
   final Map<int, Stream<String>> xmlNodeStreams;
+  final Map<int, Stream<Object>> xmlMarkdownEventStreams;
   final Map<int, MutableMarkdownNode> _blocks = <int, MutableMarkdownNode>{};
   final Map<String, MutableMarkdownNode> _inlines =
       <String, MutableMarkdownNode>{};
@@ -98,12 +104,17 @@ class MarkdownEventNodeBuilder {
   final Map<int, int> _pendingBlockBreaks = <int, int>{};
   final Map<int, _ReplayStringStream> _xmlControllers =
       <int, _ReplayStringStream>{};
+  final Map<int, _ReplayObjectStream> _xmlMarkdownControllers =
+      <int, _ReplayObjectStream>{};
   final Map<String, _MarkdownEventNodeBuilderSnapshot> _savepoints =
       <String, _MarkdownEventNodeBuilderSnapshot>{};
   int _pendingHtmlBreakCount = 0;
 
   void reset() {
     for (final controller in _xmlControllers.values) {
+      controller.close();
+    }
+    for (final controller in _xmlMarkdownControllers.values) {
       controller.close();
     }
     nodes.clear();
@@ -117,7 +128,9 @@ class MarkdownEventNodeBuilder {
     _pendingInlineBreaks.clear();
     _pendingBlockBreaks.clear();
     _xmlControllers.clear();
+    _xmlMarkdownControllers.clear();
     xmlNodeStreams.clear();
+    xmlMarkdownEventStreams.clear();
     _savepoints.clear();
     _pendingHtmlBreakCount = 0;
   }
@@ -198,8 +211,11 @@ class MarkdownEventNodeBuilder {
     }
     if (type == MarkdownNodeType.xmlBlock) {
       final controller = _ReplayStringStream();
+      final markdownController = _ReplayObjectStream();
       _xmlControllers[blockId] = controller;
+      _xmlMarkdownControllers[blockId] = markdownController;
       xmlNodeStreams[nodes.length - 1] = controller.stream;
+      xmlMarkdownEventStreams[nodes.length - 1] = markdownController.stream;
     }
     _pendingHtmlBreakCount = 0;
   }
@@ -217,6 +233,17 @@ class MarkdownEventNodeBuilder {
     }
     node.content.write(content);
     _xmlControllers[blockId]?.add(content);
+  }
+
+  void appendXmlMarkdownEvent({
+    required int parentBlockId,
+    required Object event,
+  }) {
+    final controller = _xmlMarkdownControllers[parentBlockId];
+    if (controller == null) {
+      throw StateError('Missing XML markdown stream for block $parentBlockId');
+    }
+    controller.add(event);
   }
 
   void startInline({
@@ -294,7 +321,11 @@ class MarkdownEventNodeBuilder {
     for (final controller in _xmlControllers.values) {
       controller.close();
     }
+    for (final controller in _xmlMarkdownControllers.values) {
+      controller.close();
+    }
     _xmlControllers.clear();
+    _xmlMarkdownControllers.clear();
   }
 
   List<MarkdownNodeStable> toStableNodes({required bool isStreaming}) {
@@ -501,6 +532,52 @@ class _ReplayStringStream {
   }
 }
 
+class _ReplayObjectStream {
+  _ReplayObjectStream();
+
+  _ReplayObjectStream.fromHistory(Iterable<Object> history) {
+    _history.addAll(history);
+  }
+
+  final List<Object> _history = <Object>[];
+  final StreamController<Object> _controller =
+      StreamController<Object>.broadcast();
+  bool _closed = false;
+  late final Stream<Object> stream = _buildStream();
+
+  List<Object> get history => _history;
+
+  Stream<Object> _buildStream() {
+    return Stream<Object>.multi((controller) {
+      for (final event in _history) {
+        controller.add(event);
+      }
+      final subscription = _controller.stream.listen(
+        controller.add,
+        onError: controller.addError,
+        onDone: controller.close,
+      );
+      controller.onCancel = subscription.cancel;
+    }, isBroadcast: true);
+  }
+
+  void add(Object event) {
+    if (_closed) {
+      return;
+    }
+    _history.add(event);
+    _controller.add(event);
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    _controller.close();
+  }
+}
+
 class _PendingLineBreakState {
   const _PendingLineBreakState({
     this.count = 0,
@@ -538,7 +615,9 @@ class _MarkdownEventNodeBuilderSnapshot {
     required this.pendingInlineBreaks,
     required this.pendingBlockBreaks,
     required this.xmlControllerHistories,
+    required this.xmlMarkdownControllerHistories,
     required this.xmlStreamIndexes,
+    required this.xmlMarkdownStreamIndexes,
     required this.pendingHtmlBreakCount,
   });
 
@@ -572,9 +651,20 @@ class _MarkdownEventNodeBuilderSnapshot {
         for (final entry in builder._xmlControllers.entries)
           entry.key: <String>[...entry.value.history],
       },
+      xmlMarkdownControllerHistories: <int, List<Object>>{
+        for (final entry in builder._xmlMarkdownControllers.entries)
+          entry.key: <Object>[...entry.value.history],
+      },
       xmlStreamIndexes: <int, int>{
         for (final streamEntry in builder.xmlNodeStreams.entries)
           for (final controllerEntry in builder._xmlControllers.entries)
+            if (identical(streamEntry.value, controllerEntry.value.stream))
+              controllerEntry.key: streamEntry.key,
+      },
+      xmlMarkdownStreamIndexes: <int, int>{
+        for (final streamEntry in builder.xmlMarkdownEventStreams.entries)
+          for (final controllerEntry
+              in builder._xmlMarkdownControllers.entries)
             if (identical(streamEntry.value, controllerEntry.value.stream))
               controllerEntry.key: streamEntry.key,
       },
@@ -593,7 +683,9 @@ class _MarkdownEventNodeBuilderSnapshot {
   final Map<int, _PendingLineBreakState> pendingInlineBreaks;
   final Map<int, int> pendingBlockBreaks;
   final Map<int, List<String>> xmlControllerHistories;
+  final Map<int, List<Object>> xmlMarkdownControllerHistories;
   final Map<int, int> xmlStreamIndexes;
+  final Map<int, int> xmlMarkdownStreamIndexes;
   final int pendingHtmlBreakCount;
 
   void restore(MarkdownEventNodeBuilder builder) {
@@ -646,14 +738,27 @@ class _MarkdownEventNodeBuilderSnapshot {
     for (final controller in builder._xmlControllers.values) {
       controller.close();
     }
+    for (final controller in builder._xmlMarkdownControllers.values) {
+      controller.close();
+    }
     builder._xmlControllers.clear();
+    builder._xmlMarkdownControllers.clear();
     builder.xmlNodeStreams.clear();
+    builder.xmlMarkdownEventStreams.clear();
     for (final entry in xmlControllerHistories.entries) {
       final controller = _ReplayStringStream.fromHistory(entry.value);
       builder._xmlControllers[entry.key] = controller;
       final streamIndex = xmlStreamIndexes[entry.key];
       if (streamIndex != null) {
         builder.xmlNodeStreams[streamIndex] = controller.stream;
+      }
+    }
+    for (final entry in xmlMarkdownControllerHistories.entries) {
+      final controller = _ReplayObjectStream.fromHistory(entry.value);
+      builder._xmlMarkdownControllers[entry.key] = controller;
+      final streamIndex = xmlMarkdownStreamIndexes[entry.key];
+      if (streamIndex != null) {
+        builder.xmlMarkdownEventStreams[streamIndex] = controller.stream;
       }
     }
     builder._pendingHtmlBreakCount = pendingHtmlBreakCount;

@@ -4,6 +4,7 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
@@ -55,6 +56,7 @@ pub struct ChatHistoryDelegate {
     pub chatHistoryManager: ChatHistoryManager,
     pub characterCardManager: CharacterCardManager,
     pub activePromptManager: ActivePromptManager,
+    pub characterGroupCardManager: CharacterGroupCardManager,
     pub selectionMode: ChatSelectionMode,
     pub chatHistory: Vec<ChatMessage>,
     pub chatHistoryFlow: MutableStateFlow<Vec<ChatMessage>>,
@@ -82,6 +84,7 @@ impl ChatHistoryDelegate {
                 .expect("ChatHistoryManager must initialize for ChatHistoryDelegate"),
             characterCardManager: CharacterCardManager::getInstance(),
             activePromptManager: ActivePromptManager::getInstance(),
+            characterGroupCardManager: CharacterGroupCardManager::getInstance(),
             selectionMode,
             chatHistory: Vec::new(),
             chatHistoryFlow: mutableStateFlow(Vec::new()),
@@ -110,8 +113,9 @@ impl ChatHistoryDelegate {
                 .expect("ChatHistoryManager must initialize for ChatHistoryDelegate"),
             characterCardManager: CharacterCardManager::getInstance(),
             activePromptManager: ActivePromptManager::getInstance(),
+            characterGroupCardManager: CharacterGroupCardManager::getInstance(),
             selectionMode: self.selectionMode.clone(),
-            chatHistory: self.chatHistory.clone(),
+            chatHistory: self.chatHistoryFlow.value(),
             chatHistoryFlow: self.chatHistoryFlow.clone(),
             currentChatWindow: self.currentChatWindow.clone(),
             hasOlderDisplayHistory: self.hasOlderDisplayHistory,
@@ -119,9 +123,9 @@ impl ChatHistoryDelegate {
             isLoadingDisplayWindow: self.isLoadingDisplayWindow,
             latestDisplayPageCountByChatId: self.latestDisplayPageCountByChatId.clone(),
             showChatHistorySelector: self.showChatHistorySelector,
-            chatHistories: self.chatHistories.clone(),
+            chatHistories: self.chatHistoriesFlow.value(),
             chatHistoriesFlow: self.chatHistoriesFlow.clone(),
-            currentChatId: self.currentChatId.clone(),
+            currentChatId: self.currentChatIdFlow.value(),
             currentChatIdFlow: self.currentChatIdFlow.clone(),
             isInitialized: self.isInitialized,
             allowAddMessage: self.allowAddMessage,
@@ -496,6 +500,7 @@ impl ChatHistoryDelegate {
         self.allowAddMessage = false;
         let messages = self.getChatHistory(chatId.clone());
         self.currentChatId = Some(chatId.clone());
+        self.activatePromptForChat(chatId.clone());
         self.emitCurrentChatIdState();
         self.applyCurrentChatDisplayWindow(chatId, messages);
         self.allowAddMessage = true;
@@ -504,6 +509,120 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn reloadChatMessagesSmart(&mut self, chatId: String) {
         self.reloadCurrentChatDisplayHistory(chatId);
+    }
+
+    #[allow(non_snake_case)]
+    fn activatePromptForChat(&self, chatId: String) {
+        if let Some(chat) = self.chatHistories.iter().find(|chat| chat.id == chatId) {
+            self.activePromptManager
+                .activateForChatBinding(
+                    chat.characterCardName.clone(),
+                    chat.characterGroupId.clone(),
+                )
+                .expect("ActivePromptManager.activateForChatBinding must succeed");
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn switchActiveCharacterCardTarget(&mut self, characterCardId: String) {
+        let targetCard = self
+            .characterCardManager
+            .getCharacterCard(&characterCardId)
+            .expect("CharacterCardManager.getCharacterCard must succeed");
+        self.activePromptManager
+            .setActivePrompt(ActivePrompt::CharacterCard {
+                id: targetCard.id.clone(),
+            })
+            .expect("ActivePromptManager.setActivePrompt must succeed");
+        if let Some(chatId) =
+            self.findLatestChatForCharacterCard(targetCard.name.clone(), targetCard.isDefault)
+        {
+            self.switchChat(chatId, true);
+        } else {
+            self.createNewChat(None, None, None, true, true, Some(targetCard.id));
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn switchActiveCharacterGroupTarget(&mut self, characterGroupId: String) {
+        let targetGroup = self
+            .characterGroupCardManager
+            .getCharacterGroupCard(&characterGroupId)
+            .expect("CharacterGroupCardManager.getCharacterGroupCard must succeed")
+            .expect("Character group card must exist");
+        self.activePromptManager
+            .setActivePrompt(ActivePrompt::CharacterGroup {
+                id: targetGroup.id.clone(),
+            })
+            .expect("ActivePromptManager.setActivePrompt must succeed");
+        if let Some(chatId) = self.findLatestChatForCharacterGroup(targetGroup.id.clone()) {
+            self.switchChat(chatId, true);
+        } else {
+            self.createNewChat(None, Some(targetGroup.id.clone()), None, true, true, None);
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn findLatestChatForCharacterCard(
+        &self,
+        targetCardName: String,
+        targetCardIsDefault: bool,
+    ) -> Option<String> {
+        self.chatHistories
+            .iter()
+            .filter(|history| {
+                history
+                    .characterGroupId
+                    .as_ref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+                    == false
+            })
+            .filter(|history| {
+                let historyCardName = history
+                    .characterCardName
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                if targetCardIsDefault {
+                    historyCardName
+                        .as_ref()
+                        .map(|value| value == &targetCardName)
+                        .unwrap_or(true)
+                } else {
+                    historyCardName
+                        .as_ref()
+                        .map(|value| value == &targetCardName)
+                        .unwrap_or(false)
+                }
+            })
+            .max_by_key(|history| {
+                history
+                    .updatedAt
+                    .parse::<i64>()
+                    .expect("ChatHistory.updatedAt must be an epoch millis string")
+            })
+            .map(|history| history.id.clone())
+    }
+
+    #[allow(non_snake_case)]
+    fn findLatestChatForCharacterGroup(&self, targetGroupId: String) -> Option<String> {
+        self.chatHistories
+            .iter()
+            .filter(|history| {
+                history
+                    .characterGroupId
+                    .as_ref()
+                    .map(|value| value.trim() == targetGroupId)
+                    .unwrap_or(false)
+            })
+            .max_by_key(|history| {
+                history
+                    .updatedAt
+                    .parse::<i64>()
+                    .expect("ChatHistory.updatedAt must be an epoch millis string")
+            })
+            .map(|history| history.id.clone())
     }
 
     #[allow(non_snake_case)]
@@ -946,10 +1065,22 @@ impl ChatHistoryDelegate {
         characterCardName: Option<String>,
         characterGroupId: Option<String>,
     ) {
+        self.chatHistoryManager
+            .updateChatCharacterBinding(
+                chatId.clone(),
+                characterCardName.clone(),
+                characterGroupId.clone(),
+            )
+            .expect("ChatHistoryManager.updateChatCharacterBinding must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.characterCardName = characterCardName;
             chat.characterGroupId = characterGroupId;
+            chat.updatedAt = operit_host_api::TimeUtils::currentTimeMillis().to_string();
         }
+        if self.currentChatId.as_ref() == Some(&chatId) {
+            self.activatePromptForChat(chatId);
+        }
+        self.emitChatHistoriesState();
     }
 
     #[allow(non_snake_case)]

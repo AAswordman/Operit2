@@ -464,6 +464,24 @@ abstract class AppLocalizations {
   /// **'Thinking'**
   String get messageSenderThinking;
 
+  /// No description provided for @thinkingProcess.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking Process'**
+  String get thinkingProcess;
+
+  /// No description provided for @thinkingToolsGroupTitleWithCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking & Tool Calls ({count})'**
+  String thinkingToolsGroupTitleWithCount(int count);
+
+  /// No description provided for @toolsGroupTitleWithCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool Calls ({count})'**
+  String toolsGroupTitleWithCount(int count);
+
   /// No description provided for @messageSenderOther.
   ///
   /// In en, this message translates to:

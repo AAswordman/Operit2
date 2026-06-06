@@ -23,6 +23,7 @@ class BubbleUserMessageComposable extends StatefulWidget {
     this.bubbleRoundedCornersEnabled = true,
     this.bubbleContentPaddingLeft = 12,
     this.bubbleContentPaddingRight = 12,
+    this.proxyAvatarImagePath,
     this.enableDialogs = true,
   });
 
@@ -34,6 +35,7 @@ class BubbleUserMessageComposable extends StatefulWidget {
   final bool bubbleRoundedCornersEnabled;
   final double bubbleContentPaddingLeft;
   final double bubbleContentPaddingRight;
+  final String? proxyAvatarImagePath;
   final bool enableDialogs;
 
   @override
@@ -114,7 +116,7 @@ class _BubbleUserMessageComposableState
               resolvedDisplayName: resolvedDisplayName,
               isProxySender: isProxySender,
               avatarImagePath: isProxySender
-                  ? snapshot.customAiAvatarUri
+                  ? widget.proxyAvatarImagePath
                   : snapshot.customUserAvatarUri,
               avatarShape: snapshot.avatarShape,
               avatarCornerRadius: snapshot.avatarCornerRadius,
@@ -135,7 +137,7 @@ class _BubbleUserMessageComposableState
               resolvedDisplayName: resolvedDisplayName,
               isProxySender: isProxySender,
               avatarImagePath: isProxySender
-                  ? snapshot.customAiAvatarUri
+                  ? widget.proxyAvatarImagePath
                   : snapshot.customUserAvatarUri,
               avatarShape: snapshot.avatarShape,
               avatarCornerRadius: snapshot.avatarCornerRadius,

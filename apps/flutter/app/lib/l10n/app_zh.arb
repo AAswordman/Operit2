@@ -123,6 +123,23 @@
   "messageSenderSummary": "摘要",
   "messageSenderSystem": "系统",
   "messageSenderThinking": "思考",
+  "thinkingProcess": "思考过程",
+  "thinkingToolsGroupTitleWithCount": "思考与工具调用（{count}）",
+  "@thinkingToolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "toolsGroupTitleWithCount": "工具调用（{count}）",
+  "@toolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "messageSenderOther": "其他",
   "hiddenUserMessage": "隐藏的用户消息",
   "workspaceSetupTitle": "设置工作区",

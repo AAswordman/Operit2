@@ -139,10 +139,10 @@ LiquidGlassSettings _bubbleTransparentGlassSettings(Color color) {
   return LiquidGlassSettings(
     glassColor: color.withValues(alpha: 0.018),
     thickness: 80,
-    blur: 2,
+    blur: 5,
     chromaticAberration: 0.18,
     lightIntensity: 0.42,
-    ambientStrength: 0.2,
+    ambientStrength: 0.3,
     refractiveIndex: 1.16,
     saturation: 1.04,
     glowIntensity: 0.17,

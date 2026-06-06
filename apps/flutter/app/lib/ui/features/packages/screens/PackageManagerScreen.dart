@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../common/components/LazyIndexedStack.dart';
+import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/screens/OperitScreens.dart';
@@ -310,7 +310,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
     return RefreshIndicator(
       onRefresh: _loadSnapshot,
-      child: LazyIndexedStack(
+      child: AnimatedLazyIndexedStack(
         index: _selectedTab.index,
         itemCount: PackageTab.values.length,
         itemBuilder: (context, index) {
@@ -619,7 +619,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   }
 }
 
-class _PackageTabBar extends StatelessWidget {
+class _PackageTabBar extends StatefulWidget {
   const _PackageTabBar({
     required this.selectedTab,
     required this.onTabSelected,
@@ -627,6 +627,39 @@ class _PackageTabBar extends StatelessWidget {
 
   final PackageTab selectedTab;
   final ValueChanged<PackageTab> onTabSelected;
+
+  @override
+  State<_PackageTabBar> createState() => _PackageTabBarState();
+}
+
+class _PackageTabBarState extends State<_PackageTabBar>
+    with SingleTickerProviderStateMixin {
+  late final TabController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TabController(
+      length: PackageTab.values.length,
+      initialIndex: widget.selectedTab.index,
+      vsync: this,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _PackageTabBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedTab != widget.selectedTab &&
+        _controller.index != widget.selectedTab.index) {
+      _controller.animateTo(widget.selectedTab.index);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -637,40 +670,36 @@ class _PackageTabBar extends StatelessWidget {
       transparentAlpha: 0.035,
       clip: false,
       material: true,
-      child: DefaultTabController(
-        key: ValueKey<PackageTab>(selectedTab),
-        length: PackageTab.values.length,
-        initialIndex: selectedTab.index,
-        child: TabBar(
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-          onTap: (index) => onTabSelected(PackageTab.values[index]),
-          dividerHeight: 1,
-          indicatorSize: TabBarIndicatorSize.label,
-          tabs: <Widget>[
-            _PackageTabItem(
-              selected: selectedTab == PackageTab.plugins,
-              icon: Icons.apps,
-              label: '插件',
-            ),
-            _PackageTabItem(
-              selected: selectedTab == PackageTab.packages,
-              icon: Icons.extension,
-              label: '包',
-            ),
-            _PackageTabItem(
-              selected: selectedTab == PackageTab.skills,
-              icon: Icons.build,
-              label: '技能',
-            ),
-            _PackageTabItem(
-              selected: selectedTab == PackageTab.mcp,
-              icon: Icons.cloud,
-              label: 'MCP',
-            ),
-          ],
-        ),
+      child: TabBar(
+        controller: _controller,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+        onTap: (index) => widget.onTabSelected(PackageTab.values[index]),
+        dividerHeight: 1,
+        indicatorSize: TabBarIndicatorSize.label,
+        tabs: <Widget>[
+          _PackageTabItem(
+            selected: widget.selectedTab == PackageTab.plugins,
+            icon: Icons.apps,
+            label: '插件',
+          ),
+          _PackageTabItem(
+            selected: widget.selectedTab == PackageTab.packages,
+            icon: Icons.extension,
+            label: '包',
+          ),
+          _PackageTabItem(
+            selected: widget.selectedTab == PackageTab.skills,
+            icon: Icons.build,
+            label: '技能',
+          ),
+          _PackageTabItem(
+            selected: widget.selectedTab == PackageTab.mcp,
+            icon: Icons.cloud,
+            label: 'MCP',
+          ),
+        ],
       ),
     );
   }

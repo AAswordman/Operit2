@@ -12,6 +12,7 @@ import 'package:webview_all_windows/webview_all_windows.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../theme/OperitGlassSurface.dart';
 import 'WorkspaceBrowserStores.dart';
 import 'automation/WorkspaceBrowserAutomationController.dart';
 import 'automation/WorkspaceBrowserSessionRegistry.dart';
@@ -793,67 +794,76 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: Material(
-                  color: Colors.transparent,
-                  child: Card(
-                    margin: EdgeInsets.zero,
-                    elevation: 4,
-                    color: Theme.of(context).colorScheme.surfaceContainer,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: OperitGlassSurface(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainer.withValues(alpha: 0.62),
+                  layer: OperitGlassSurfaceLayer.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.2),
+                  ),
+                  shadows: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 18,
+                      offset: Offset(0, 8),
                     ),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: maxHeight),
-                      child: WorkspaceBrowserMenuSheet(
-                        onHistory: () {
-                          _dismissMenuPopup();
-                          _openHistorySheet();
-                        },
-                        onBookmarks: () {
-                          _dismissMenuPopup();
-                          _openBookmarkSheet();
-                        },
-                        onDownloads: () {
-                          _dismissMenuPopup();
-                          _openDownloadSheet();
-                        },
-                        onUserscripts: () {
-                          _dismissMenuPopup();
-                          _openUserscriptSheet();
-                        },
-                        onPermissions: () {
-                          _dismissMenuPopup();
-                          _openPermissionSheet();
-                        },
-                        onClearStorage: () {
-                          _dismissMenuPopup();
-                          _openSiteDataSheet();
-                        },
-                        zoomLabel: '${_currentTab.zoomPercent}%',
-                        onZoomOut: _zoomOut,
-                        onZoomReset: _resetZoom,
-                        onZoomIn: _zoomIn,
-                        desktopMode: _currentTab.desktopMode,
-                        onDesktopModeChanged: (enabled) {
-                          _dismissMenuPopup();
-                          _setDesktopMode(enabled);
-                        },
-                        onLoadMenuCommands: () {
-                          return _stores.userscriptRuntime.menuCommands(
+                  ],
+                  material: true,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxHeight),
+                    child: WorkspaceBrowserMenuSheet(
+                      onHistory: () {
+                        _dismissMenuPopup();
+                        _openHistorySheet();
+                      },
+                      onBookmarks: () {
+                        _dismissMenuPopup();
+                        _openBookmarkSheet();
+                      },
+                      onDownloads: () {
+                        _dismissMenuPopup();
+                        _openDownloadSheet();
+                      },
+                      onUserscripts: () {
+                        _dismissMenuPopup();
+                        _openUserscriptSheet();
+                      },
+                      onPermissions: () {
+                        _dismissMenuPopup();
+                        _openPermissionSheet();
+                      },
+                      onClearStorage: () {
+                        _dismissMenuPopup();
+                        _openSiteDataSheet();
+                      },
+                      zoomLabel: '${_currentTab.zoomPercent}%',
+                      onZoomOut: _zoomOut,
+                      onZoomReset: _resetZoom,
+                      onZoomIn: _zoomIn,
+                      desktopMode: _currentTab.desktopMode,
+                      onDesktopModeChanged: (enabled) {
+                        _dismissMenuPopup();
+                        _setDesktopMode(enabled);
+                      },
+                      onLoadMenuCommands: () {
+                        return _stores.userscriptRuntime.menuCommands(
+                          _currentTab.controller,
+                        );
+                      },
+                      onRunMenuCommand: (index) {
+                        _dismissMenuPopup();
+                        unawaited(
+                          _stores.userscriptRuntime.runMenuCommand(
                             _currentTab.controller,
-                          );
-                        },
-                        onRunMenuCommand: (index) {
-                          _dismissMenuPopup();
-                          unawaited(
-                            _stores.userscriptRuntime.runMenuCommand(
-                              _currentTab.controller,
-                              index,
-                            ),
-                          );
-                        },
-                        activeDownloadCount: _activeDownloadCount,
-                      ),
+                            index,
+                          ),
+                        );
+                      },
+                      activeDownloadCount: _activeDownloadCount,
                     ),
                   ),
                 ),
@@ -910,19 +920,28 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
-                child: Material(
-                  color: Colors.transparent,
-                  child: Card(
-                    margin: EdgeInsets.zero,
-                    elevation: 4,
-                    color: Theme.of(context).colorScheme.surfaceContainer,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: OperitGlassSurface(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainer.withValues(alpha: 0.62),
+                  layer: OperitGlassSurfaceLayer.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.2),
+                  ),
+                  shadows: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 18,
+                      offset: Offset(0, 8),
                     ),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: maxHeight),
-                      child: child,
-                    ),
+                  ],
+                  material: true,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxHeight),
+                    child: child,
                   ),
                 ),
               ),
@@ -971,7 +990,8 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
 
   Future<void> _applyUserAgentForTab(WorkspaceBrowserTabState tab) async {
     final preferredUserAgent = tab.preferredUserAgent?.trim();
-    final userAgent = preferredUserAgent != null && preferredUserAgent.isNotEmpty
+    final userAgent =
+        preferredUserAgent != null && preferredUserAgent.isNotEmpty
         ? preferredUserAgent
         : tab.desktopMode
         ? _desktopUserAgent
@@ -1185,39 +1205,49 @@ class _BrowserErrorOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                Icons.error_outline,
-                size: 42,
-                color: theme.colorScheme.error,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                l10n.pageLoadFailed,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: OperitGlassSurface(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.42,
+          ),
+          layer: OperitGlassSurfaceLayer.card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.2),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  Icons.error_outline,
+                  size: 42,
+                  color: theme.colorScheme.error,
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall,
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: Text(l10n.retry),
-              ),
-            ],
+                const SizedBox(height: 12),
+                Text(
+                  l10n.pageLoadFailed,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(l10n.retry),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -65,107 +65,104 @@ class _WorkspaceFileBrowserContentState
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: Column(
-        children: <Widget>[
-          WorkspacePathBar.editable(
-            path: _displayPath(),
-            controller: _pathController,
-            isEditing: _editingPath,
-            leading: WorkspacePathIconButton(
-              tooltip: l10n.back,
-              onPressed: _history.isEmpty ? null : _openPreviousPath,
-              icon: Icons.arrow_back,
-            ),
-            onRefresh: () {
-              setState(_loadCurrentPath);
-            },
-            onEditToggle: _startEditingPath,
-            onSubmitted: _submitEditedPath,
+    return Column(
+      children: <Widget>[
+        WorkspacePathBar.editable(
+          path: _displayPath(),
+          controller: _pathController,
+          isEditing: _editingPath,
+          leading: WorkspacePathIconButton(
+            tooltip: l10n.back,
+            onPressed: _history.isEmpty ? null : _openPreviousPath,
+            icon: Icons.arrow_back,
           ),
-          Expanded(
-            child: FutureBuilder<List<WorkspaceFileEntry>>(
-              future: _entriesFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return _WorkspaceFileMessage(
-                    icon: Icons.error_outline,
-                    message: snapshot.error.toString(),
-                  );
-                }
-                final entries = snapshot.data ?? const <WorkspaceFileEntry>[];
-                if (entries.isEmpty) {
-                  return _WorkspaceFileMessage(
-                    icon: Icons.folder_off_outlined,
-                    message: l10n.emptyFolder,
-                  );
-                }
-                return ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    dragDevices: const <PointerDeviceKind>{
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.trackpad,
-                      PointerDeviceKind.stylus,
+          onRefresh: () {
+            setState(_loadCurrentPath);
+          },
+          onEditToggle: _startEditingPath,
+          onSubmitted: _submitEditedPath,
+        ),
+        Expanded(
+          child: FutureBuilder<List<WorkspaceFileEntry>>(
+            future: _entriesFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return _WorkspaceFileMessage(
+                  icon: Icons.error_outline,
+                  message: snapshot.error.toString(),
+                );
+              }
+              final entries = snapshot.data ?? const <WorkspaceFileEntry>[];
+              if (entries.isEmpty) {
+                return _WorkspaceFileMessage(
+                  icon: Icons.folder_off_outlined,
+                  message: l10n.emptyFolder,
+                );
+              }
+              return ScrollConfiguration(
+                behavior: ScrollConfiguration.of(context).copyWith(
+                  dragDevices: const <PointerDeviceKind>{
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.trackpad,
+                    PointerDeviceKind.stylus,
+                  },
+                ),
+                child: Scrollbar(
+                  controller: _scrollController,
+                  thumbVisibility: true,
+                  child: ListView.separated(
+                    controller: _scrollController,
+                    primary: false,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: entries.length,
+                    separatorBuilder: (context, index) => Divider(
+                      height: 1,
+                      indent: 56,
+                      color: theme.colorScheme.outlineVariant,
+                    ),
+                    itemBuilder: (context, index) {
+                      final entry = entries[index];
+                      final previewKind = entry.isDirectory
+                          ? null
+                          : workspacePreviewKindForPath(entry.path);
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          entry.isDirectory
+                              ? Icons.folder_outlined
+                              : workspacePreviewIconForKind(previewKind!),
+                          color: entry.isDirectory
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                        title: Text(
+                          entry.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: entry.isDirectory
+                            ? null
+                            : Text(_previewLabel(l10n, previewKind!)),
+                        onTap: () {
+                          if (entry.isDirectory) {
+                            _openDirectory(entry.relativePath);
+                            return;
+                          }
+                          widget.onOpenFile(entry);
+                        },
+                      );
                     },
                   ),
-                  child: Scrollbar(
-                    controller: _scrollController,
-                    thumbVisibility: true,
-                    child: ListView.separated(
-                      controller: _scrollController,
-                      primary: false,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: entries.length,
-                      separatorBuilder: (context, index) => Divider(
-                        height: 1,
-                        indent: 56,
-                        color: theme.colorScheme.outlineVariant,
-                      ),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        final previewKind = entry.isDirectory
-                            ? null
-                            : workspacePreviewKindForPath(entry.path);
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            entry.isDirectory
-                                ? Icons.folder_outlined
-                                : workspacePreviewIconForKind(previewKind!),
-                            color: entry.isDirectory
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                          ),
-                          title: Text(
-                            entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: entry.isDirectory
-                              ? null
-                              : Text(_previewLabel(l10n, previewKind!)),
-                          onTap: () {
-                            if (entry.isDirectory) {
-                              _openDirectory(entry.relativePath);
-                              return;
-                            }
-                            widget.onOpenFile(entry);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

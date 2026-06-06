@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../MainLayoutController.dart';
 import '../../theme/OperitTheme.dart';
 import '../TopBarController.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -171,14 +172,12 @@ class _AppContentState extends State<AppContent> {
         themeSnapshot.backgroundImageUri != null &&
         themeSnapshot.backgroundImageUri!.isNotEmpty;
     final transparentSurface = themeSnapshot.transparentSurfaceEnabled;
-    final appBarColor = backgroundVisible
-        ? theme.colorScheme.surface.withValues(alpha: 0.72)
-        : theme.colorScheme.surface;
     final contentColor = backgroundVisible || transparentSurface
         ? Colors.transparent
         : theme.colorScheme.surface;
     final appBarContentColor = theme.colorScheme.onSurface;
     final topPadding = MediaQuery.paddingOf(context).top;
+    final mainLayoutController = MainLayoutScope.of(context);
     final currentScreenKey = _currentScreenKey;
     final effectivePreviousKey = !_transitionAllowsCrossfade
         ? null
@@ -197,103 +196,111 @@ class _AppContentState extends State<AppContent> {
       currentScreenKey,
     }.toList(growable: false);
 
-    return SizedBox.expand(
-      child: Column(
-        children: <Widget>[
-          AnimatedBuilder(
-            animation: widget.topBarController,
-            builder: (context, _) {
-              final titleContent = widget.topBarController.titleContent;
-              final actions = widget.topBarController.actions;
-              final navigationIcon = widget.canGoBack
-                  ? Icons.arrow_back
-                  : widget.useTabletLayout && widget.isTabletSidebarExpanded
-                  ? Icons.chevron_left
-                  : Icons.segment;
-              final navigationIconWidget = Icon(
-                navigationIcon,
-                color: appBarContentColor,
-              );
-              final shouldFlipNavigationIcon =
-                  !widget.canGoBack &&
-                  !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
-              final topBarContent = SizedBox(
-                height: topPadding + _topBarHeight,
-                child: Padding(
-                  padding: EdgeInsets.only(top: topPadding),
-                  child: Row(
-                    children: <Widget>[
-                      const SizedBox(width: _navigationIconStartPadding),
-                      SizedBox(
-                        width: _navigationIconSize,
-                        height: _navigationIconSize,
-                        child: IconButton(
-                          onPressed: widget.canGoBack
-                              ? widget.onGoBack
-                              : widget.onNavigationButtonPressed,
-                          icon: shouldFlipNavigationIcon
-                              ? Transform(
-                                  alignment: Alignment.center,
-                                  transform: Matrix4.identity()
-                                    ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
-                                  child: navigationIconWidget,
-                                )
-                              : navigationIconWidget,
-                          tooltip: widget.canGoBack
-                              ? 'Back'
-                              : widget.useTabletLayout &&
-                                    widget.isTabletSidebarExpanded
-                              ? 'Collapse sidebar'
-                              : 'Navigation',
+    return AnimatedBuilder(
+      animation: mainLayoutController,
+      builder: (context, _) {
+        final frame = Column(
+          children: <Widget>[
+            AnimatedBuilder(
+              animation: widget.topBarController,
+              builder: (context, _) {
+                final titleContent = widget.topBarController.titleContent;
+                final actions = widget.topBarController.actions;
+                final navigationIcon = widget.canGoBack
+                    ? Icons.arrow_back
+                    : widget.useTabletLayout && widget.isTabletSidebarExpanded
+                    ? Icons.chevron_left
+                    : Icons.segment;
+                final navigationIconWidget = Icon(
+                  navigationIcon,
+                  color: appBarContentColor,
+                );
+                final shouldFlipNavigationIcon =
+                    !widget.canGoBack &&
+                    !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
+                return ColoredBox(
+                  color: contentColor,
+                  child: SizedBox(
+                    height: topPadding + _topBarHeight,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: topPadding),
+                      child: Row(
+                        children: <Widget>[
+                          const SizedBox(width: _navigationIconStartPadding),
+                          SizedBox(
+                            width: _navigationIconSize,
+                            height: _navigationIconSize,
+                            child: IconButton(
+                              onPressed: widget.canGoBack
+                                  ? widget.onGoBack
+                                  : widget.onNavigationButtonPressed,
+                              icon: shouldFlipNavigationIcon
+                                  ? Transform(
+                                      alignment: Alignment.center,
+                                      transform: Matrix4.identity()
+                                        ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
+                                      child: navigationIconWidget,
+                                    )
+                                  : navigationIconWidget,
+                              tooltip: widget.canGoBack
+                                  ? 'Back'
+                                  : widget.useTabletLayout &&
+                                        widget.isTabletSidebarExpanded
+                                  ? 'Collapse sidebar'
+                                  : 'Navigation',
+                            ),
+                          ),
+                          Expanded(
+                            child:
+                                titleContent?.content(context) ??
+                                TopBarTitleText(
+                                  primaryText: widget.currentRouteTitle,
+                                  contentColor: appBarContentColor,
+                                ),
+                          ),
+                          if (actions != null) ...actions(context),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: ColoredBox(
+                color: contentColor,
+                child: Stack(
+                  children: <Widget>[
+                    for (final screenKey in renderKeys)
+                      _AnimatedScreenSlot(
+                        key: ValueKey<String>(screenKey),
+                        screenKey: screenKey,
+                        isCurrentScreen: screenKey == currentScreenKey,
+                        isNavigatingBack: widget.isNavigatingBack,
+                        enableNavigationAnimation:
+                            widget.enableNavigationAnimation,
+                        isDrawerRelayTransition: _isDrawerRelayTransition,
+                        allowCrossfade: _transitionAllowsCrossfade,
+                        duration: _activeTransitionDuration,
+                        pageOffset: widget.useTabletLayout
+                            ? _tabletPageTransitionOffset
+                            : _phonePageTransitionOffset,
+                        drawerNavigationOffset: _phoneDrawerNavigationOffset,
+                        child: MainScreenActivityScope(
+                          isCurrentScreen: screenKey == currentScreenKey,
+                          child: _screenCache[screenKey]!,
                         ),
                       ),
-                      Expanded(
-                        child:
-                            titleContent?.content(context) ??
-                            TopBarTitleText(
-                              primaryText: widget.currentRouteTitle,
-                              contentColor: appBarContentColor,
-                            ),
-                      ),
-                      if (actions != null) ...actions(context),
-                    ],
-                  ),
+                  ],
                 ),
-              );
-              if (transparentSurface) {
-                return topBarContent;
-              }
-              return Material(color: appBarColor, child: topBarContent);
-            },
-          ),
-          Expanded(
-            child: ColoredBox(
-              color: contentColor,
-              child: Stack(
-                children: <Widget>[
-                  for (final screenKey in renderKeys)
-                    _AnimatedScreenSlot(
-                      key: ValueKey<String>(screenKey),
-                      screenKey: screenKey,
-                      isCurrentScreen: screenKey == currentScreenKey,
-                      isNavigatingBack: widget.isNavigatingBack,
-                      enableNavigationAnimation:
-                          widget.enableNavigationAnimation,
-                      isDrawerRelayTransition: _isDrawerRelayTransition,
-                      allowCrossfade: _transitionAllowsCrossfade,
-                      duration: _activeTransitionDuration,
-                      pageOffset: widget.useTabletLayout
-                          ? _tabletPageTransitionOffset
-                          : _phonePageTransitionOffset,
-                      drawerNavigationOffset: _phoneDrawerNavigationOffset,
-                      child: _screenCache[screenKey]!,
-                    ),
-                ],
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+        return SizedBox.expand(
+          child: mainLayoutController.decorate(context, frame),
+        );
+      },
     );
   }
 }
@@ -330,27 +337,41 @@ class _AnimatedScreenSlot extends StatefulWidget {
 
 class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
   bool _visible = false;
+  int _showRequestId = 0;
 
   @override
   void initState() {
     super.initState();
-    _visible = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _visible = widget.isCurrentScreen;
-      });
-    });
+    if (widget.isCurrentScreen) {
+      _scheduleShow();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _AnimatedScreenSlot oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.isCurrentScreen != widget.isCurrentScreen) {
-      _visible = widget.isCurrentScreen;
+    if (oldWidget.isCurrentScreen == widget.isCurrentScreen) {
+      return;
     }
+    if (widget.isCurrentScreen) {
+      _visible = false;
+      _scheduleShow();
+      return;
+    }
+    _showRequestId++;
+    _visible = false;
+  }
+
+  void _scheduleShow() {
+    final requestId = ++_showRequestId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || requestId != _showRequestId || !widget.isCurrentScreen) {
+        return;
+      }
+      setState(() {
+        _visible = true;
+      });
+    });
   }
 
   @override

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../theme/OperitGlassSurface.dart';
 import 'WorkspaceHtmlPreviewServer.dart';
 
 class WorkspaceHtmlPreviewWidget extends StatefulWidget {
@@ -164,11 +165,12 @@ class _WorkspaceHtmlPreviewToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
+      layer: OperitGlassSurfaceLayer.control,
+      border: Border(
+        bottom: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.36),
         ),
       ),
       child: SizedBox(

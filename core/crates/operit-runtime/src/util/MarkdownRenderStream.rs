@@ -15,12 +15,15 @@ pub struct MarkdownStreamEvent {
     pub id: Option<String>,
     pub blockId: Option<u64>,
     pub inlineId: Option<u64>,
+    pub parentBlockId: Option<u64>,
     pub nodeType: Option<String>,
     pub headerLevel: Option<usize>,
 }
 
 pub struct MarkdownRenderEventStream {
     chatId: String,
+    parentBlockId: Option<u64>,
+    parseXmlChildren: bool,
     block: MarkdownGroupSession,
     nextBlockId: u64,
     activeBlock: Option<ActiveBlock>,
@@ -29,6 +32,7 @@ pub struct MarkdownRenderEventStream {
 struct ActiveBlock {
     id: u64,
     inline: Option<MarkdownGroupSession>,
+    xmlChild: Option<Box<XmlChildMarkdownStream>>,
     nextInlineId: u64,
     activeInline: Option<ActiveInline>,
 }
@@ -53,6 +57,7 @@ impl MarkdownStreamEvent {
             id: Some(id),
             blockId: None,
             inlineId: None,
+            parentBlockId: None,
             nodeType: None,
             headerLevel: None,
         }
@@ -66,6 +71,7 @@ impl MarkdownStreamEvent {
             id: Some(id),
             blockId: None,
             inlineId: None,
+            parentBlockId: None,
             nodeType: None,
             headerLevel: None,
         }
@@ -76,6 +82,19 @@ impl MarkdownRenderEventStream {
     pub fn new(chatId: String) -> Self {
         Self {
             chatId,
+            parentBlockId: None,
+            parseXmlChildren: true,
+            block: MarkdownGroupSession::block(),
+            nextBlockId: 0,
+            activeBlock: None,
+        }
+    }
+
+    fn child(chatId: String, parentBlockId: u64) -> Self {
+        Self {
+            chatId,
+            parentBlockId: Some(parentBlockId),
+            parseXmlChildren: false,
             block: MarkdownGroupSession::block(),
             nextBlockId: 0,
             activeBlock: None,
@@ -97,6 +116,7 @@ impl MarkdownRenderEventStream {
             id: None,
             blockId: None,
             inlineId: None,
+            parentBlockId: self.parentBlockId,
             nodeType: None,
             headerLevel: None,
         }];
@@ -124,6 +144,7 @@ impl MarkdownRenderEventStream {
                     } else {
                         None
                     },
+                    xmlChild: None,
                     nextInlineId: 0,
                     activeInline: None,
                 });
@@ -134,9 +155,22 @@ impl MarkdownRenderEventStream {
                     id: None,
                     blockId: Some(self.nextBlockId),
                     inlineId: None,
+                    parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: headerLevel(nodeType, &nodeContent),
                 });
+                let xmlChild =
+                    if self.parseXmlChildren && nodeType == Some(MarkdownProcessorType::XmlBlock) {
+                        Some(Box::new(XmlChildMarkdownStream::new(
+                            self.chatId.clone(),
+                            self.nextBlockId,
+                        )))
+                    } else {
+                        None
+                    };
+                if let Some(block) = self.activeBlock.as_mut() {
+                    block.xmlChild = xmlChild;
+                }
             }
 
             if isInlineContainer(nodeType) {
@@ -145,13 +179,25 @@ impl MarkdownRenderEventStream {
                 events.push(MarkdownStreamEvent {
                     chatId: self.chatId.clone(),
                     eventType: "markdownBlockChunk".to_string(),
-                    value: Some(nodeContent),
+                    value: Some(nodeContent.clone()),
                     id: None,
                     blockId: Some(blockId),
                     inlineId: None,
+                    parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: None,
                 });
+                if nodeType == Some(MarkdownProcessorType::XmlBlock) {
+                    if let Some(block) = self.activeBlock.as_mut() {
+                        if let Some(child) = block.xmlChild.as_mut() {
+                            events.extend(child.pushChunk(
+                                self.chatId.clone(),
+                                blockId,
+                                &nodeContent,
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -166,6 +212,7 @@ impl MarkdownRenderEventStream {
             id: None,
             blockId: None,
             inlineId: None,
+            parentBlockId: self.parentBlockId,
             nodeType: None,
             headerLevel: None,
         }
@@ -208,6 +255,7 @@ impl MarkdownRenderEventStream {
                     id: None,
                     blockId: Some(blockId),
                     inlineId: Some(block.nextInlineId),
+                    parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: None,
                 });
@@ -221,6 +269,7 @@ impl MarkdownRenderEventStream {
                     id: None,
                     blockId: Some(blockId),
                     inlineId: Some(activeInline.id),
+                    parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(activeInline.nodeType).map(ToString::to_string),
                     headerLevel: None,
                 });
@@ -228,6 +277,180 @@ impl MarkdownRenderEventStream {
         }
         events
     }
+}
+
+struct XmlChildMarkdownStream {
+    raw: String,
+    emittedBodyEnd: usize,
+    tagName: Option<String>,
+    markdown: MarkdownRenderEventStream,
+    closed: bool,
+}
+
+impl XmlChildMarkdownStream {
+    fn new(chatId: String, parentBlockId: u64) -> Self {
+        Self {
+            raw: String::new(),
+            emittedBodyEnd: 0,
+            tagName: None,
+            markdown: MarkdownRenderEventStream::child(chatId, parentBlockId),
+            closed: false,
+        }
+    }
+
+    fn pushChunk(
+        &mut self,
+        chatId: String,
+        parentBlockId: u64,
+        chunk: &str,
+    ) -> Vec<MarkdownStreamEvent> {
+        if self.closed {
+            return Vec::new();
+        }
+        self.raw.push_str(chunk);
+
+        let Some((tagName, bodyStart)) = self.openingThinkTag() else {
+            return Vec::new();
+        };
+        if self.tagName.is_none() {
+            self.tagName = Some(tagName.clone());
+            self.emittedBodyEnd = bodyStart;
+        }
+
+        let closePattern = format!("</{}>", tagName);
+        let searchStart = self.emittedBodyEnd.max(bodyStart);
+        let closeStart = findAsciiCaseInsensitive(&self.raw, &closePattern, searchStart);
+        let bodyEnd = if let Some(closeStart) = closeStart {
+            self.closed = true;
+            closeStart
+        } else {
+            let pendingCloseBytes = closingPrefixSuffixLength(&self.raw, bodyStart, &closePattern);
+            self.raw.len() - pendingCloseBytes
+        };
+
+        let emitStart = self.emittedBodyEnd.max(bodyStart);
+        if bodyEnd <= emitStart {
+            if self.closed {
+                return vec![self.markdown.completed()];
+            }
+            return Vec::new();
+        }
+
+        let bodyChunk = self.raw[emitStart..bodyEnd].to_string();
+        self.emittedBodyEnd = bodyEnd;
+        let mut events = self.markdown.pushChunk(&bodyChunk);
+        if self.closed {
+            events.push(MarkdownStreamEvent {
+                chatId,
+                eventType: "completed".to_string(),
+                value: None,
+                id: None,
+                blockId: None,
+                inlineId: None,
+                parentBlockId: Some(parentBlockId),
+                nodeType: None,
+                headerLevel: None,
+            });
+        }
+        events
+    }
+
+    fn openingThinkTag(&self) -> Option<(String, usize)> {
+        let bytes = self.raw.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if index >= bytes.len() || bytes[index] != b'<' {
+            return None;
+        }
+        let nameStart = index + 1;
+        let mut nameEnd = nameStart;
+        while nameEnd < bytes.len()
+            && (bytes[nameEnd].is_ascii_alphanumeric()
+                || bytes[nameEnd] == b'_'
+                || bytes[nameEnd] == b':'
+                || bytes[nameEnd] == b'-')
+        {
+            nameEnd += 1;
+        }
+        if nameEnd == nameStart {
+            return None;
+        }
+        let tagName = self.raw[nameStart..nameEnd].to_ascii_lowercase();
+        if tagName != "think" && tagName != "thinking" {
+            return None;
+        }
+        let tagEnd = findOpeningTagEnd(bytes, nameEnd)?;
+        Some((tagName, tagEnd + 1))
+    }
+}
+
+fn findOpeningTagEnd(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut quote: Option<u8> = None;
+    let mut index = start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(currentQuote) = quote {
+            if byte == currentQuote {
+                quote = None;
+            }
+        } else if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+        } else if byte == b'>' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn findAsciiCaseInsensitive(haystack: &str, needle: &str, start: usize) -> Option<usize> {
+    let haystackBytes = haystack.as_bytes();
+    let needleBytes = needle.as_bytes();
+    if needleBytes.is_empty() || haystackBytes.len() < needleBytes.len() {
+        return None;
+    }
+    let lastStart = haystackBytes.len() - needleBytes.len();
+    if start > lastStart {
+        return None;
+    }
+    let mut index = start;
+    while index <= lastStart {
+        let mut matched = true;
+        for offset in 0..needleBytes.len() {
+            if !haystackBytes[index + offset].eq_ignore_ascii_case(&needleBytes[offset]) {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn closingPrefixSuffixLength(raw: &str, bodyStart: usize, closingPattern: &str) -> usize {
+    let bytes = raw.as_bytes();
+    let pattern = closingPattern.as_bytes();
+    let bodyLength = raw.len().saturating_sub(bodyStart);
+    let maxLength = pattern.len().min(bodyLength);
+    for length in (1..=maxLength).rev() {
+        let suffixStart = raw.len() - length;
+        let mut matched = true;
+        for offset in 0..length {
+            if !bytes[suffixStart + offset].eq_ignore_ascii_case(&pattern[offset]) {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return length;
+        }
+    }
+    0
 }
 
 impl MarkdownGroupSession {
@@ -339,4 +562,67 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
             | Some(MarkdownProcessorType::Table)
             | Some(MarkdownProcessorType::XmlBlock)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_tool_events_immediately_after_think_closes() {
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+
+        let think_open_events = stream.pushChunk("<think>");
+        let think_body_events = stream.pushChunk("plan");
+        let think_close_events = stream.pushChunk("</think>");
+        let tool_events = stream
+            .pushChunk(r#"<tool name="read_file"><param name="path">README.md</param></tool>"#);
+        let tool_result_events =
+            stream.pushChunk(r#"<tool_result name="read_file">ok</tool_result>"#);
+
+        assert!(
+            think_open_events.iter().any(|event| {
+                event.parentBlockId.is_none()
+                    && event.eventType == "markdownBlockStart"
+                    && event.nodeType.as_deref() == Some("XmlBlock")
+            }),
+            "top-level think XML block should start immediately"
+        );
+        assert!(
+            think_body_events.iter().any(|event| {
+                event.parentBlockId.is_some()
+                    && event.eventType == "markdownInlineChunk"
+                    && event.value.as_deref() == Some("plan")
+            }),
+            "think body should emit child markdown while thinking is open"
+        );
+        assert!(
+            think_close_events
+                .iter()
+                .any(|event| { event.parentBlockId.is_some() && event.eventType == "completed" }),
+            "think child markdown stream should complete when </think> arrives"
+        );
+        assert!(
+            tool_events.iter().any(|event| {
+                event.parentBlockId.is_none()
+                    && event.eventType == "markdownBlockChunk"
+                    && event
+                        .value
+                        .as_deref()
+                        .is_some_and(|value| value.contains("<tool name=\"read_file\""))
+            }),
+            "tool XML should emit as a top-level markdown block immediately after think"
+        );
+        assert!(
+            tool_result_events.iter().any(|event| {
+                event.parentBlockId.is_none()
+                    && event.eventType == "markdownBlockChunk"
+                    && event
+                        .value
+                        .as_deref()
+                        .is_some_and(|value| value.contains("<tool_result name=\"read_file\""))
+            }),
+            "tool_result XML should emit as a top-level markdown block immediately after tool"
+        );
+    }
 }

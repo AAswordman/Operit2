@@ -123,6 +123,23 @@
   "messageSenderSummary": "Summary",
   "messageSenderSystem": "System",
   "messageSenderThinking": "Thinking",
+  "thinkingProcess": "Thinking Process",
+  "thinkingToolsGroupTitleWithCount": "Thinking & Tool Calls ({count})",
+  "@thinkingToolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "toolsGroupTitleWithCount": "Tool Calls ({count})",
+  "@toolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "messageSenderOther": "Other",
   "hiddenUserMessage": "Hidden user message",
   "workspaceSetupTitle": "Set up workspace",

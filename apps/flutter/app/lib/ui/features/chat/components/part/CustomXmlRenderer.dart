@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
@@ -20,6 +21,7 @@ class CustomXmlRenderer extends StatelessWidget {
     required this.isStreaming,
     required this.textColor,
     this.xmlStream,
+    this.xmlMarkdownEventStream,
     this.showThinkingProcess = true,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
@@ -29,6 +31,7 @@ class CustomXmlRenderer extends StatelessWidget {
   final bool isStreaming;
   final Color textColor;
   final Stream<String>? xmlStream;
+  final Stream<Object>? xmlMarkdownEventStream;
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
@@ -74,6 +77,7 @@ class CustomXmlRenderer extends StatelessWidget {
           textColor: textColor,
           isStreaming: xmlStream != null && !_isXmlFullyClosed(xmlContent),
           xmlStream: xmlStream,
+          markdownEventStream: xmlMarkdownEventStream,
           initiallyExpanded: initialThinkingExpanded,
           fullHeight: allowExpandedThinkingFullHeight,
         );
@@ -259,12 +263,13 @@ class _ToolResultRenderState {
   final List<FileDiff> fileDiffs;
 }
 
-class _ThinkPanel extends StatelessWidget {
+class _ThinkPanel extends StatefulWidget {
   const _ThinkPanel({
     required this.text,
     required this.textColor,
     required this.isStreaming,
     required this.xmlStream,
+    required this.markdownEventStream,
     required this.initiallyExpanded,
     required this.fullHeight,
   });
@@ -273,34 +278,410 @@ class _ThinkPanel extends StatelessWidget {
   final Color textColor;
   final bool isStreaming;
   final Stream<String>? xmlStream;
+  final Stream<Object>? markdownEventStream;
   final bool initiallyExpanded;
   final bool fullHeight;
 
   @override
-  Widget build(BuildContext context) {
-    if (!initiallyExpanded) {
-      return _LabeledPanel(
-        label: 'Thinking',
-        text: text,
-        color: Theme.of(context).colorScheme.secondary,
-        isStreaming: isStreaming,
-      );
+  State<_ThinkPanel> createState() => _ThinkPanelState();
+}
+
+class _ThinkPanelState extends State<_ThinkPanel> {
+  late bool _expanded;
+  late bool _bodyFullHeight;
+  late final ScrollController _scrollController;
+  bool _skipCollapseAnimationOnce = false;
+  bool _autoScrollEnabled = true;
+  bool _userHasInteractedWithScroll = false;
+  bool _isProgrammaticScroll = false;
+  int _expandSession = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = _targetExpandedFor(widget);
+    _bodyFullHeight = widget.fullHeight && widget.initiallyExpanded;
+    _expandSession = _expanded ? 1 : 0;
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ThinkPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isStreaming != widget.isStreaming ||
+        oldWidget.initiallyExpanded != widget.initiallyExpanded) {
+      final targetExpanded = _targetExpandedFor(widget);
+      if (targetExpanded && !_expanded) {
+        _expandSession += 1;
+      }
+      if (!targetExpanded && oldWidget.isStreaming && !widget.isStreaming) {
+        _skipCollapseAnimationOnce = true;
+        _bodyFullHeight = false;
+      }
+      _expanded = targetExpanded;
+      if (_expanded) {
+        _resetAutoScrollState();
+      }
+      if (_skipCollapseAnimationOnce) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _skipCollapseAnimationOnce = false;
+          });
+        });
+      }
     }
 
-    final panel = _LabeledPanel(
-      label: 'Thinking',
-      text: text,
-      color: Theme.of(context).colorScheme.secondary,
-      isStreaming: isStreaming,
-    );
-    if (fullHeight) {
-      return panel;
+    if (_expanded && widget.isStreaming && _autoScrollEnabled) {
+      _scrollToBottomAfterFrame();
     }
-    return _LabeledPanel(
-      label: 'Thinking',
-      text: text,
-      color: Theme.of(context).colorScheme.secondary,
-      isStreaming: isStreaming,
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  bool _targetExpandedFor(_ThinkPanel widget) {
+    if (widget.initiallyExpanded && !widget.isStreaming) {
+      return true;
+    }
+    if (widget.isStreaming) {
+      return true;
+    }
+    return false;
+  }
+
+  void _handleHeaderTap() {
+    setState(() {
+      _skipCollapseAnimationOnce = false;
+      final nextExpanded = !_expanded;
+      if (nextExpanded) {
+        _expandSession += 1;
+        _resetAutoScrollState();
+      }
+      _expanded = nextExpanded;
+    });
+  }
+
+  void _handleBodyTap() {
+    setState(() {
+      _bodyFullHeight = !_bodyFullHeight;
+    });
+  }
+
+  void _resetAutoScrollState() {
+    _autoScrollEnabled = true;
+    _userHasInteractedWithScroll = false;
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (!_expanded || _isProgrammaticScroll || !_scrollController.hasClients) {
+      return false;
+    }
+    final isUserScroll = notification is UserScrollNotification ||
+        (notification is ScrollUpdateNotification &&
+            notification.dragDetails != null);
+    if (!isUserScroll) {
+      return false;
+    }
+    _userHasInteractedWithScroll = true;
+    _updateAutoScrollFromPosition();
+    return false;
+  }
+
+  void _updateAutoScrollFromPosition() {
+    if (!_userHasInteractedWithScroll || !_scrollController.hasClients) {
+      return;
+    }
+    final position = _scrollController.position;
+    const threshold = 80.0;
+    _autoScrollEnabled =
+        position.pixels >= position.maxScrollExtent - threshold;
+  }
+
+  void _scrollToBottomAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients || !_autoScrollEnabled) {
+        return;
+      }
+      _isProgrammaticScroll = true;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      _isProgrammaticScroll = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.secondary;
+    final contentText = widget.text.trim();
+    final titleColor = widget.textColor.withValues(alpha: 0.7);
+    final l10n = AppLocalizations.of(context)!;
+    final thinkingTitle = l10n.thinkingProcess;
+    final hasStreamingMarkdown =
+        widget.isStreaming && widget.markdownEventStream != null;
+    final shouldRenderBody =
+        _expanded && (contentText.isNotEmpty || hasStreamingMarkdown);
+    final renderFullHeight = (widget.fullHeight || _bodyFullHeight) && _expanded;
+    final switchDuration = _skipCollapseAnimationOnce
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+    return Semantics(
+      label: contentText.isEmpty
+          ? thinkingTitle
+          : '$thinkingTitle\n$contentText',
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            InkWell(
+              onTap: _handleHeaderTap,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: <Widget>[
+                    AnimatedRotation(
+                      turns: _expanded ? 0.25 : 0,
+                      duration: _skipCollapseAnimationOnce
+                          ? Duration.zero
+                          : const Duration(milliseconds: 300),
+                      child: Icon(
+                        Icons.keyboard_arrow_right,
+                        size: 20,
+                        color: titleColor,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    _ThinkingTitle(
+                      text: thinkingTitle,
+                      color: titleColor,
+                      streaming: widget.isStreaming,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedSwitcher(
+              duration: switchDuration,
+              reverseDuration: switchDuration,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              transitionBuilder: (child, animation) {
+                return SizeTransition(
+                  sizeFactor: animation,
+                  alignment: Alignment.topCenter,
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: shouldRenderBody
+                  ? Padding(
+                      key: ValueKey<int>(_expandSession),
+                      padding: const EdgeInsets.only(top: 2, bottom: 4),
+                      child: Stack(
+                        children: <Widget>[
+                          PositionedDirectional(
+                            start: 10,
+                            top: 0,
+                            bottom: 0,
+                            child: Container(
+                              width: 1,
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsetsDirectional.only(start: 24),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onTap: _handleBodyTap,
+                              child: ConstrainedBox(
+                                constraints: renderFullHeight
+                                    ? const BoxConstraints()
+                                    : const BoxConstraints(maxHeight: 300),
+                                child: renderFullHeight
+                                    ? _ThinkMarkdownBody(
+                                        contentText: contentText,
+                                        contentStream: hasStreamingMarkdown
+                                            ? widget.markdownEventStream
+                                            : null,
+                                        textColor: widget.textColor,
+                                      )
+                                    : NotificationListener<
+                                        ScrollNotification>(
+                                        onNotification:
+                                            _handleScrollNotification,
+                                        child: SingleChildScrollView(
+                                          controller: _scrollController,
+                                          child: _ThinkMarkdownBody(
+                                            contentText: contentText,
+                                            contentStream: hasStreamingMarkdown
+                                                ? widget.markdownEventStream
+                                                : null,
+                                            textColor: widget.textColor,
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(key: ValueKey<String>('empty')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinkMarkdownBody extends StatelessWidget {
+  const _ThinkMarkdownBody({
+    required this.contentText,
+    required this.contentStream,
+    required this.textColor,
+  });
+
+  final String contentText;
+  final Stream<Object>? contentStream;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final stream = contentStream;
+    return Theme(
+      data: theme.copyWith(
+        textTheme: theme.textTheme.copyWith(
+          bodyMedium: theme.textTheme.bodySmall,
+        ),
+      ),
+      child: stream == null
+          ? StreamMarkdownRenderer(
+              content: contentText,
+              isStreaming: false,
+              textColor: textColor.withValues(alpha: 0.6),
+              backgroundColor: Colors.transparent,
+            )
+          : StreamMarkdownRenderer(
+              content: '',
+              contentStream: stream,
+              isStreaming: true,
+              textColor: textColor.withValues(alpha: 0.6),
+              backgroundColor: Colors.transparent,
+            ),
+    );
+  }
+}
+
+class _ThinkingTitle extends StatefulWidget {
+  const _ThinkingTitle({
+    required this.text,
+    required this.color,
+    required this.streaming,
+  });
+
+  final String text;
+  final Color color;
+  final bool streaming;
+
+  @override
+  State<_ThinkingTitle> createState() => _ThinkingTitleState();
+}
+
+class _ThinkingTitleState extends State<_ThinkingTitle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    if (widget.streaming) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ThinkingTitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.streaming == widget.streaming) {
+      return;
+    }
+    if (widget.streaming) {
+      _controller.repeat();
+    } else {
+      _controller.stop();
+      _controller.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall?.copyWith(
+      color: widget.color,
+      fontWeight: FontWeight.w500,
+    );
+    final text = Text(widget.text, style: style);
+    if (!widget.streaming) {
+      return text;
+    }
+    final highlightStyle = style?.copyWith(color: Colors.white);
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final shift = _controller.value;
+        return Stack(
+          fit: StackFit.passthrough,
+          children: <Widget>[
+            child!,
+            IgnorePointer(
+              child: ExcludeSemantics(
+                child: ShaderMask(
+                  blendMode: BlendMode.srcIn,
+                  shaderCallback: (bounds) {
+                    return LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: <Color>[
+                        Colors.transparent,
+                        theme.colorScheme.primary.withValues(alpha: 0.95),
+                        Colors.transparent,
+                      ],
+                      stops: <double>[
+                        (shift - 0.25).clamp(0.0, 1.0),
+                        shift.clamp(0.0, 1.0),
+                        (shift + 0.25).clamp(0.0, 1.0),
+                      ],
+                    ).createShader(bounds);
+                  },
+                  child: Text(widget.text, style: highlightStyle),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+      child: text,
     );
   }
 }

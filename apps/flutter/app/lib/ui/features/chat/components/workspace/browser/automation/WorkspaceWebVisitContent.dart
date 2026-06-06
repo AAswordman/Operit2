@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import 'package:webview_all/webview_all.dart';
 
+import '../../../../../../theme/OperitGlassSurface.dart';
+
 class WorkspaceWebVisitContent extends StatefulWidget {
   const WorkspaceWebVisitContent({
     super.key,
@@ -90,10 +92,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
       if (userAgent.isNotEmpty) {
         await _controller.setUserAgent(userAgent);
       }
-      await _controller.loadRequest(
-        Uri.parse(_currentUrl),
-        headers: _headers,
-      );
+      await _controller.loadRequest(Uri.parse(_currentUrl), headers: _headers);
     } catch (error) {
       _finishError(error.toString());
     }
@@ -199,7 +198,8 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
   }
 
   Future<bool> _detectCaptcha() async {
-    final raw = await _controller.runJavaScriptReturningResult(r'''
+    final raw = await _controller
+        .runJavaScriptReturningResult(r'''
 (function() {
   const body = document.body;
   if (!body) return false;
@@ -207,7 +207,8 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
   const html = String(body.innerHTML || "");
   return text.includes("人机验证") || /captcha/i.test(html);
 })()
-''').timeout(_scriptTimeout);
+''')
+        .timeout(_scriptTimeout);
     return raw == true || raw.toString() == 'true';
   }
 
@@ -258,12 +259,16 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
       });
     }
     try {
-      await _controller.runJavaScript(r'''
+      await _controller
+          .runJavaScript(r'''
 window.scrollTo(0, document.body ? document.body.scrollHeight : document.documentElement.scrollHeight);
-''').timeout(_scriptTimeout);
-      final raw = await _controller.runJavaScriptReturningResult(
-        _webVisitExtractionScript(widget.request.includeImageLinks),
-      ).timeout(_scriptTimeout);
+''')
+          .timeout(_scriptTimeout);
+      final raw = await _controller
+          .runJavaScriptReturningResult(
+            _webVisitExtractionScript(widget.request.includeImageLinks),
+          )
+          .timeout(_scriptTimeout);
       final result = _decodeVisitResult(raw);
       if (_completed || !mounted) {
         return;
@@ -487,176 +492,171 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ColoredBox(
-      color: theme.colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-        child: Column(
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                const Expanded(
-                  child: Text(
-                    'Visit Web',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      child: Column(
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text(
+                  'Visit Web',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    child: ValueListenableBuilder<int>(
-                      valueListenable: _autoCountdownSeconds,
-                      builder: (context, _, _) {
-                        return Text(
-                          _statusText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onPrimaryContainer,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(color: theme.colorScheme.outlineVariant),
-                borderRadius: BorderRadius.circular(10),
               ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                child: Column(
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        if (_hasSslError) ...<Widget>[
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFE6CC),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              child: Text(
-                                'SSL',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF7A3E00),
-                                ),
-                              ),
-                            ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _autoCountdownSeconds,
+                    builder: (context, _, _) {
+                      return Text(
+                        _statusText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          OperitGlassSurface(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.34,
+            ),
+            layer: OperitGlassSurfaceLayer.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.2),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Column(
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      if (_hasSslError) ...<Widget>[
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFE6CC),
+                            borderRadius: BorderRadius.circular(999),
                           ),
-                          const SizedBox(width: 8),
-                        ],
-                        Expanded(
-                          child: Text(
-                            _currentUrl,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: theme.colorScheme.onSurfaceVariant,
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              'SSL',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF7A3E00),
+                              ),
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                       ],
-                    ),
-                    if (_pageTitle.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: Alignment.centerLeft,
+                      Expanded(
                         child: Text(
-                          _pageTitle,
+                          _currentUrl,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
                     ],
+                  ),
+                  if (_pageTitle.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _pageTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: ColoredBox(
-                  color: Colors.white,
-                  child: WebViewWidget(controller: _controller),
-                ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: ColoredBox(
+                color: Colors.white,
+                child: WebViewWidget(controller: _controller),
               ),
             ),
-            const SizedBox(height: 10),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: _handleLeftAction,
-                    child: Text(
-                      _leftButtonText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: _handleLeftAction,
+                  child: Text(
+                    _leftButtonText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _pageLoaded ? _handleRightAction : null,
-                    child: ValueListenableBuilder<int>(
-                      valueListenable: _autoCountdownSeconds,
-                      builder: (context, _, _) {
-                        return Text(
-                          _rightButtonText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        );
-                      },
-                    ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _pageLoaded ? _handleRightAction : null,
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _autoCountdownSeconds,
+                    builder: (context, _, _) {
+                      return Text(
+                        _rightButtonText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      );
+                    },
                   ),
-                ),
-              ],
-            ),
-            if (_helperText.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 4),
-              Text(
-                _helperText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
+          ),
+          if (_helperText.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 4),
+            Text(
+              _helperText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

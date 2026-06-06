@@ -71,7 +71,12 @@ class CollapsedDrawerContent extends StatelessWidget {
           height: topPadding + _topBarHeight,
           child: Padding(
             padding: EdgeInsets.only(top: topPadding),
-            child: Center(child: const OperitLogoMark(size: 34)),
+            child: Center(
+              child: OperitLogoMark(
+                size: 34,
+                color: appearance.statusAvailableColor,
+              ),
+            ),
           ),
         ),
         const SizedBox(height: 24),

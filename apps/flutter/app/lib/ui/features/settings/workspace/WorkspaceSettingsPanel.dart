@@ -28,11 +28,6 @@ class WorkspaceSettingsPanel extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
       children: <Widget>[
-        _SettingsHero(
-          icon: Icons.folder_outlined,
-          title: l10n.settingsCategoryWorkspaceTitle,
-          description: l10n.settingsCategoryWorkspaceDescription,
-        ),
         _SectionCard(
           title: l10n.settingsWorkspaceCurrentDesign,
           children: <Widget>[
@@ -60,57 +55,6 @@ class WorkspaceSettingsPanel extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _SettingsHero extends StatelessWidget {
-  const _SettingsHero({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Row(
-        children: <Widget>[
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: colorScheme.primaryContainer,
-            child: Icon(icon, color: colorScheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

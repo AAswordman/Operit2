@@ -25,9 +25,12 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   final _exitCode = Completer<int>();
   Timer? _readTimer;
   Timer? _exitTimer;
+  Timer? _resizeTimer;
   bool _closed = false;
   bool _reading = false;
   bool _pollingExit = false;
+  int? _pendingRows;
+  int? _pendingColumns;
 
   @override
   String get sessionId => _sessionId;
@@ -56,6 +59,21 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     if (_closed) {
       return;
     }
+    _pendingRows = rows;
+    _pendingColumns = columns;
+    _resizeTimer?.cancel();
+    _resizeTimer = Timer(const Duration(milliseconds: 80), _flushResize);
+  }
+
+  void _flushResize() {
+    if (_closed) {
+      return;
+    }
+    final rows = _pendingRows;
+    final columns = _pendingColumns;
+    if (rows == null || columns == null) {
+      return;
+    }
     unawaited(
       _invokeJson('resizeTerminalPty', <String, Object>{
         'sessionId': _sessionId,
@@ -73,6 +91,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     _closed = true;
     _readTimer?.cancel();
     _exitTimer?.cancel();
+    _resizeTimer?.cancel();
     unawaited(_output.close());
     if (!_exitCode.isCompleted) {
       _exitCode.complete(-1);
@@ -86,9 +105,9 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     _reading = true;
     try {
       final response = await _invokeJson('readTerminalPty', _sessionId);
-      final rawData = response['data'];
-      if (rawData is List && rawData.isNotEmpty && !_output.isClosed) {
-        final data = Uint8List.fromList(rawData.cast<int>());
+      final dataBase64 = response['dataBase64'];
+      if (dataBase64 is String && dataBase64.isNotEmpty && !_output.isClosed) {
+        final data = base64Decode(dataBase64);
         _output.add(data);
       }
     } catch (error, stackTrace) {

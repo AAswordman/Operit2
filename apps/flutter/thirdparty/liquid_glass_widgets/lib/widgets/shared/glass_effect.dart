@@ -262,6 +262,13 @@ class _GlassEffectState extends State<GlassEffect>
       return true;
     }());
 
+    bool needsPaint = false;
+    assert(() {
+      needsPaint = boundary.debugNeedsPaint;
+      return true;
+    }());
+    if (needsPaint) return;
+
     if (kIsWeb) {
       _captureBackgroundAsync(boundary, size, pos);
     } else {

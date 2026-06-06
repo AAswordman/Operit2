@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../../theme/OperitGlassSurface.dart';
 import '../tabs/WorkspaceBrowserTabModels.dart';
 
 class WorkspaceBrowserUrlBar extends StatefulWidget {
@@ -72,179 +73,171 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
     final urlText = tab.url.trim().isEmpty
         ? (tab.title.trim().isEmpty ? 'about:blank' : tab.title)
         : tab.url;
-    return Material(
-      color: theme.colorScheme.surfaceContainerLow,
-      elevation: 0,
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
+      layer: OperitGlassSurfaceLayer.control,
+      border: Border(
+        bottom: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.36),
+        ),
+      ),
       child: SafeArea(
         top: false,
         bottom: false,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-              ),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    if (!_isEditing) ...<Widget>[
-                      _ToolbarIconButton(
-                        tooltip: l10n.back,
-                        icon: Icons.arrow_back,
-                        onPressed: tab.canGoBack ? widget.onBack : null,
-                      ),
-                      _ToolbarIconButton(
-                        tooltip: l10n.forward,
-                        icon: Icons.arrow_forward,
-                        onPressed: tab.canGoForward ? widget.onForward : null,
-                      ),
-                      _ToolbarIconButton(
-                        tooltip: tab.isLoading ? l10n.stop : l10n.refresh,
-                        icon: tab.isLoading ? Icons.close : Icons.refresh,
-                        onPressed: widget.onRefreshOrStop,
-                      ),
-                      const SizedBox(width: 6),
-                    ],
-                    Expanded(
-                      child: _AddressSurface(
-                        isEditing: _isEditing,
-                        child: _isEditing
-                            ? Row(
-                                children: <Widget>[
-                                  const SizedBox(width: 11),
-                                  Icon(
-                                    tab.url.startsWith('https://')
-                                        ? Icons.lock
-                                        : Icons.language,
-                                    size: 18,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: 7),
-                                  Expanded(
-                                    child: TextField(
-                                      controller:
-                                          tab.addressController.controller,
-                                      focusNode: _focusNode,
-                                      minLines: 1,
-                                      maxLines: 1,
-                                      textInputAction: TextInputAction.go,
-                                      onSubmitted: (_) => _submit(),
-                                      decoration: const InputDecoration(
-                                        isDense: true,
-                                        border: InputBorder.none,
-                                        contentPadding: EdgeInsets.symmetric(
-                                          vertical: 7,
-                                        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  if (!_isEditing) ...<Widget>[
+                    _ToolbarIconButton(
+                      tooltip: l10n.back,
+                      icon: Icons.arrow_back,
+                      onPressed: tab.canGoBack ? widget.onBack : null,
+                    ),
+                    _ToolbarIconButton(
+                      tooltip: l10n.forward,
+                      icon: Icons.arrow_forward,
+                      onPressed: tab.canGoForward ? widget.onForward : null,
+                    ),
+                    _ToolbarIconButton(
+                      tooltip: tab.isLoading ? l10n.stop : l10n.refresh,
+                      icon: tab.isLoading ? Icons.close : Icons.refresh,
+                      onPressed: widget.onRefreshOrStop,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: _AddressSurface(
+                      isEditing: _isEditing,
+                      child: _isEditing
+                          ? Row(
+                              children: <Widget>[
+                                const SizedBox(width: 11),
+                                Icon(
+                                  tab.url.startsWith('https://')
+                                      ? Icons.lock
+                                      : Icons.language,
+                                  size: 18,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                  child: TextField(
+                                    controller:
+                                        tab.addressController.controller,
+                                    focusNode: _focusNode,
+                                    minLines: 1,
+                                    maxLines: 1,
+                                    textInputAction: TextInputAction.go,
+                                    onSubmitted: (_) => _submit(),
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        vertical: 7,
                                       ),
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w600,
-                                          ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    tooltip: l10n.open,
-                                    onPressed: _submit,
-                                    icon: const Icon(Icons.check, size: 20),
-                                    visualDensity: VisualDensity.compact,
-                                    constraints: const BoxConstraints.tightFor(
-                                      width: 30,
-                                      height: 30,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    padding: EdgeInsets.zero,
-                                  ),
-                                ],
-                              )
-                            : InkWell(
-                                borderRadius: BorderRadius.circular(20),
-                                onTap: _startEditing,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 11,
-                                    vertical: 6,
-                                  ),
-                                  child: Row(
-                                    children: <Widget>[
-                                      Icon(
-                                        tab.url.startsWith('https://')
-                                            ? Icons.lock
-                                            : Icons.language,
-                                        size: 18,
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 7),
-                                      Expanded(
-                                        child: Text(
-                                          urlText,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodyMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        tooltip: widget.isBookmarked
-                                            ? l10n.removeBookmark
-                                            : l10n.addBookmark,
-                                        onPressed: widget.onToggleBookmark,
-                                        icon: Icon(
-                                          widget.isBookmarked
-                                              ? Icons.star
-                                              : Icons.star_border,
-                                          size: 20,
-                                        ),
-                                        color: widget.isBookmarked
-                                            ? theme.colorScheme.primary
-                                            : theme
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
-                                        visualDensity: VisualDensity.compact,
-                                        constraints:
-                                            const BoxConstraints.tightFor(
-                                              width: 30,
-                                              height: 30,
-                                            ),
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                    ],
                                   ),
                                 ),
+                                IconButton(
+                                  tooltip: l10n.open,
+                                  onPressed: _submit,
+                                  icon: const Icon(Icons.check, size: 20),
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 30,
+                                    height: 30,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ],
+                            )
+                          : InkWell(
+                              borderRadius: BorderRadius.circular(20),
+                              onTap: _startEditing,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 11,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  children: <Widget>[
+                                    Icon(
+                                      tab.url.startsWith('https://')
+                                          ? Icons.lock
+                                          : Icons.language,
+                                      size: 18,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 7),
+                                    Expanded(
+                                      child: Text(
+                                        urlText,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: widget.isBookmarked
+                                          ? l10n.removeBookmark
+                                          : l10n.addBookmark,
+                                      onPressed: widget.onToggleBookmark,
+                                      icon: Icon(
+                                        widget.isBookmarked
+                                            ? Icons.star
+                                            : Icons.star_border,
+                                        size: 20,
+                                      ),
+                                      color: widget.isBookmarked
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurfaceVariant,
+                                      visualDensity: VisualDensity.compact,
+                                      constraints:
+                                          const BoxConstraints.tightFor(
+                                            width: 30,
+                                            height: 30,
+                                          ),
+                                      padding: EdgeInsets.zero,
+                                    ),
+                                  ],
+                                ),
                               ),
-                      ),
-                    ),
-                    if (!_isEditing)
-                      _ToolbarIconButton(
-                        key: widget.menuButtonKey,
-                        tooltip: l10n.menu,
-                        icon: Icons.more_horiz,
-                        onPressed: widget.onOpenMenu,
-                      ),
-                  ],
-                ),
-                if (tab.isLoading)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      width: _isEditing ? double.infinity : 72,
-                      height: 2,
-                      margin: const EdgeInsets.only(top: 6),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
+                            ),
                     ),
                   ),
-              ],
-            ),
+                  if (!_isEditing)
+                    _ToolbarIconButton(
+                      key: widget.menuButtonKey,
+                      tooltip: l10n.menu,
+                      icon: Icons.more_horiz,
+                      onPressed: widget.onOpenMenu,
+                    ),
+                ],
+              ),
+              if (tab.isLoading)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    width: _isEditing ? double.infinity : 72,
+                    height: 2,
+                    margin: const EdgeInsets.only(top: 6),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -274,17 +267,14 @@ class _AddressSurface extends StatelessWidget {
         ),
       );
     }
-    return Material(
-      color: theme.colorScheme.surfaceContainer,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(
-          color: isEditing
-              ? theme.colorScheme.outlineVariant.withValues(alpha: 0.9)
-              : theme.colorScheme.outlineVariant.withValues(alpha: 0.38),
-        ),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainer.withValues(alpha: 0.58),
+      layer: OperitGlassSurfaceLayer.control,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(
+        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.32),
       ),
-      clipBehavior: Clip.antiAlias,
+      material: true,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 36),
         child: child,

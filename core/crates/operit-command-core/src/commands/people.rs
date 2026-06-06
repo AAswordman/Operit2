@@ -2,7 +2,8 @@ use std::cell::Cell;
 
 use crate::commands::util::parseCsvList;
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryProfileBindingMode,
@@ -56,7 +57,7 @@ impl PeopleCommand {
 }
 
 pub fn run_character_command(
-    _context: OperitApplicationContext,
+    application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -199,9 +200,10 @@ pub fn run_character_command(
             let id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 character set-active <id>".to_string())?;
-            core.preferences_active_prompt_manager()
-                .setActivePrompt(ActivePrompt::CharacterCard { id: id.clone() })
-                .map_err(|error| error.to_string())?;
+            application
+                .chatRuntimeHolder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .switchActiveCharacterCardTarget(id.clone());
             println!("active character: {id}");
         }
         "combine" => {
@@ -231,7 +233,7 @@ pub fn run_character_command(
 }
 
 pub fn run_group_command(
-    _context: OperitApplicationContext,
+    application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -344,9 +346,10 @@ pub fn run_group_command(
             let id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 group set-active <id>".to_string())?;
-            core.preferences_active_prompt_manager()
-                .setActivePrompt(ActivePrompt::CharacterGroup { id: id.clone() })
-                .map_err(|error| error.to_string())?;
+            application
+                .chatRuntimeHolder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .switchActiveCharacterGroupTarget(id.clone());
             println!("active group: {id}");
         }
         "duplicate" => {
@@ -367,7 +370,7 @@ pub fn run_group_command(
 }
 
 pub fn run_active_prompt_command(
-    _context: OperitApplicationContext,
+    application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -393,18 +396,20 @@ pub fn run_active_prompt_command(
             let id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 active-prompt set-card <id>".to_string())?;
-            core.preferences_active_prompt_manager()
-                .setActivePrompt(ActivePrompt::CharacterCard { id: id.clone() })
-                .map_err(|error| error.to_string())?;
+            application
+                .chatRuntimeHolder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .switchActiveCharacterCardTarget(id.clone());
             println!("active character card: {id}");
         }
         "set-group" => {
             let id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 active-prompt set-group <id>".to_string())?;
-            core.preferences_active_prompt_manager()
-                .setActivePrompt(ActivePrompt::CharacterGroup { id: id.clone() })
-                .map_err(|error| error.to_string())?;
+            application
+                .chatRuntimeHolder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .switchActiveCharacterGroupTarget(id.clone());
             println!("active character group: {id}");
         }
         "activate-for-chat" => {

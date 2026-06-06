@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../../../../theme/OperitGlassSurface.dart';
 import 'WorkspacePtyProcess.dart';
 import 'WorkspaceTerminalSessions.dart';
 
@@ -41,7 +42,10 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   Object? _startupError;
   int? _pendingRows;
   int? _pendingColumns;
+  final StringBuffer _pendingTerminalOutput = StringBuffer();
   String _lastShellContent = '';
+  bool _terminalFlushScheduled = false;
+  bool _shellRefreshRunning = false;
   bool _exited = false;
 
   @override
@@ -78,6 +82,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     _outputSubscription?.cancel();
     _screenTimer?.cancel();
     _pty?.kill();
+    _pendingTerminalOutput.clear();
     _focusNode.dispose();
     super.dispose();
   }
@@ -87,41 +92,51 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     final theme = Theme.of(context);
     final startupError = _startupError;
     if (startupError != null) {
-      return ColoredBox(
-        color: theme.colorScheme.surface,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(
-                  Icons.terminal_outlined,
-                  size: 42,
-                  color: theme.colorScheme.error,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '终端启动失败',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: OperitGlassSurface(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.42,
+            ),
+            layer: OperitGlassSurfaceLayer.card,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.2),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(
+                    Icons.terminal_outlined,
+                    size: 42,
+                    color: theme.colorScheme.error,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  startupError.toString(),
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 12),
+                  Text(
+                    '终端启动失败',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _restartSession,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('重试'),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    startupError.toString(),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _restartSession,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -131,8 +146,11 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: (_) => _focusNode.requestFocus(),
-      child: ColoredBox(
-        color: TerminalThemes.defaultTheme.background,
+      child: OperitGlassSurface(
+        color: TerminalThemes.defaultTheme.background.withValues(alpha: 0.42),
+        layer: OperitGlassSurfaceLayer.panel,
+        transparentAlpha: 0.08,
+        clip: false,
         child: MediaQuery.removePadding(
           context: context,
           removeLeft: true,
@@ -146,6 +164,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
             autofocus: true,
             padding: const EdgeInsets.all(8),
             theme: TerminalThemes.defaultTheme,
+            backgroundOpacity: 0.38,
             textStyle: const TerminalStyle(fontSize: 13, height: 1.25),
             onSecondaryTapDown: (details, offset) => _copyOrPasteSelection(),
           ),
@@ -179,11 +198,11 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
       _outputSubscription = pty.output
           .cast<List<int>>()
           .transform(const Utf8Decoder(allowMalformed: true))
-          .listen(_terminal.write);
+          .listen(_queueTerminalWrite);
       unawaited(
         pty.exitCode.then((code) {
           if (!_exited) {
-            _terminal.write('\r\n[process exited with code $code]\r\n');
+            _queueTerminalWrite('\r\n[process exited with code $code]\r\n');
           }
           _exited = true;
         }),
@@ -225,6 +244,8 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     _screenTimer = null;
     _pty?.kill();
     _pty = null;
+    _pendingTerminalOutput.clear();
+    _terminalFlushScheduled = false;
     _terminal.eraseDisplay();
     _startupError = null;
     _lastShellContent = '';
@@ -246,13 +267,45 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   }
 
   Future<void> _refreshShellScreen() async {
-    final screen = await _terminalSessions.getSessionScreen(widget.sessionId);
-    if (screen.content == _lastShellContent) {
+    if (_shellRefreshRunning) {
       return;
     }
-    _lastShellContent = screen.content;
-    _terminal.eraseDisplay();
-    _terminal.write(screen.content.replaceAll('\n', '\r\n'));
+    _shellRefreshRunning = true;
+    try {
+      final screen = await _terminalSessions.getSessionScreen(widget.sessionId);
+      if (screen.content == _lastShellContent) {
+        return;
+      }
+      _lastShellContent = screen.content;
+      _terminal.eraseDisplay();
+      _terminal.write(screen.content.replaceAll('\n', '\r\n'));
+    } finally {
+      _shellRefreshRunning = false;
+    }
+  }
+
+  void _queueTerminalWrite(String data) {
+    if (data.isEmpty) {
+      return;
+    }
+    _pendingTerminalOutput.write(data);
+    if (_terminalFlushScheduled) {
+      return;
+    }
+    _terminalFlushScheduled = true;
+    WidgetsBinding.instance.scheduleFrameCallback((_) {
+      if (!mounted) {
+        _pendingTerminalOutput.clear();
+        _terminalFlushScheduled = false;
+        return;
+      }
+      final output = _pendingTerminalOutput.toString();
+      _pendingTerminalOutput.clear();
+      _terminalFlushScheduled = false;
+      if (output.isNotEmpty) {
+        _terminal.write(output);
+      }
+    });
   }
 
   void _syncPtySize() {

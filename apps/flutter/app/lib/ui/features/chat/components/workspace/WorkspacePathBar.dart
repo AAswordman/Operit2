@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../theme/OperitGlassSurface.dart';
 
 class WorkspacePathBar extends StatelessWidget {
   const WorkspacePathBar.readOnly({
@@ -124,11 +125,12 @@ class _WorkspacePathStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border(
-          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+    return OperitGlassSurface(
+      color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
+      layer: OperitGlassSurfaceLayer.control,
+      border: Border(
+        bottom: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.36),
         ),
       ),
       child: Padding(

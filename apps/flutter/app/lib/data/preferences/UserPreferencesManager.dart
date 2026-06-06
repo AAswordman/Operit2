@@ -81,6 +81,7 @@ class ThemePreferenceSnapshot {
     required this.bubbleAiSystemFontName,
     required this.bubbleAiCustomFontPath,
     required this.showThinkingProcess,
+    required this.toolCollapseMode,
     required this.showModelProvider,
     required this.showModelName,
     required this.showRoleName,
@@ -162,6 +163,7 @@ class ThemePreferenceSnapshot {
   final String? bubbleAiSystemFontName;
   final String? bubbleAiCustomFontPath;
   final bool showThinkingProcess;
+  final String toolCollapseMode;
   final bool showModelProvider;
   final bool showModelName;
   final bool showRoleName;
@@ -214,8 +216,12 @@ class UserPreferencesManager {
   static const String SYSTEM_FONT_SANS_SERIF = 'sans-serif';
   static const String SYSTEM_FONT_MONOSPACE = 'monospace';
   static const String SYSTEM_FONT_CURSIVE = 'cursive';
+  static const String TOOL_COLLAPSE_MODE_READ_ONLY = 'read_only';
+  static const String TOOL_COLLAPSE_MODE_ALL = 'all';
+  static const String TOOL_COLLAPSE_MODE_FULL = 'full';
 
   static const String _fileName = 'user_preferences.preferences.json';
+  static const String _displayPreferencesFileName = 'display_preferences';
   static const String _ACTIVE_PROFILE_ID = 'active_profile_id';
   static const String _PROFILE_LIST = 'profile_list';
   static const String _BIRTH_DATE_LOCKED = 'birth_date_locked';
@@ -298,6 +304,7 @@ class UserPreferencesManager {
         bubbleAiSystemFontName: SYSTEM_FONT_DEFAULT,
         bubbleAiCustomFontPath: null,
         showThinkingProcess: true,
+        toolCollapseMode: TOOL_COLLAPSE_MODE_ALL,
         showModelProvider: false,
         showModelName: false,
         showRoleName: true,
@@ -404,6 +411,7 @@ class UserPreferencesManager {
   static const String _BUBBLE_AI_CONTENT_PADDING_RIGHT =
       'bubble_ai_content_padding_right';
   static const String _KEY_SHOW_THINKING_PROCESS = 'show_thinking_process';
+  static const String _KEY_TOOL_COLLAPSE_MODE = 'tool_collapse_mode';
   static const String _KEY_SHOW_MODEL_PROVIDER = 'show_model_provider';
   static const String _KEY_SHOW_MODEL_NAME = 'show_model_name';
   static const String _KEY_SHOW_ROLE_NAME = 'show_role_name';
@@ -425,8 +433,6 @@ class UserPreferencesManager {
     _BACKGROUND_IMAGE_URI,
     _BACKGROUND_MEDIA_TYPE,
     _CHAT_STYLE,
-    _KEY_CUSTOM_USER_AVATAR_URI,
-    _KEY_CUSTOM_AI_AVATAR_URI,
     _KEY_AVATAR_SHAPE,
     _FONT_TYPE,
     _SYSTEM_FONT_NAME,
@@ -441,6 +447,11 @@ class UserPreferencesManager {
     _BUBBLE_AI_IMAGE_URI,
     _BUBBLE_USER_IMAGE_RENDER_MODE,
     _BUBBLE_AI_IMAGE_RENDER_MODE,
+  ];
+
+  static const List<String> _avatarThemeKeys = <String>[
+    _KEY_CUSTOM_USER_AVATAR_URI,
+    _KEY_CUSTOM_AI_AVATAR_URI,
   ];
 
   static const List<String> _booleanThemeKeys = <String>[
@@ -518,91 +529,10 @@ class UserPreferencesManager {
     ..._floatThemeKeys,
   ];
 
-  static const List<String> _resetThemeKeys = <String>[
-    _THEME_MODE,
-    _USE_SYSTEM_THEME,
-    _CUSTOM_PRIMARY_COLOR,
-    _CUSTOM_SECONDARY_COLOR,
-    _USE_CUSTOM_COLORS,
-    _USE_BACKGROUND_IMAGE,
-    _BACKGROUND_IMAGE_URI,
-    _BACKGROUND_IMAGE_OPACITY,
-    _BACKGROUND_MEDIA_TYPE,
-    _VIDEO_BACKGROUND_MUTED,
-    _VIDEO_BACKGROUND_LOOP,
-    _TRANSPARENT_SURFACE_ENABLED,
-    _CHAT_INPUT_FLOATING,
-    _USE_BACKGROUND_BLUR,
-    _BACKGROUND_BLUR_RADIUS,
-    _CHAT_STYLE,
-    _BUBBLE_SHOW_AVATAR,
-    _BUBBLE_WIDE_LAYOUT_ENABLED,
-    _CURSOR_USER_BUBBLE_COLOR,
-    _BUBBLE_USER_BUBBLE_COLOR,
-    _BUBBLE_AI_BUBBLE_COLOR,
-    _BUBBLE_USER_TEXT_COLOR,
-    _BUBBLE_AI_TEXT_COLOR,
-    _BUBBLE_USER_USE_CUSTOM_FONT,
-    _BUBBLE_USER_FONT_TYPE,
-    _BUBBLE_USER_SYSTEM_FONT_NAME,
-    _BUBBLE_USER_CUSTOM_FONT_PATH,
-    _BUBBLE_AI_USE_CUSTOM_FONT,
-    _BUBBLE_AI_FONT_TYPE,
-    _BUBBLE_AI_SYSTEM_FONT_NAME,
-    _BUBBLE_AI_CUSTOM_FONT_PATH,
-    _BUBBLE_USER_USE_IMAGE,
-    _BUBBLE_AI_USE_IMAGE,
-    _BUBBLE_USER_IMAGE_URI,
-    _BUBBLE_AI_IMAGE_URI,
-    _BUBBLE_USER_IMAGE_CROP_LEFT,
-    _BUBBLE_USER_IMAGE_CROP_TOP,
-    _BUBBLE_USER_IMAGE_CROP_RIGHT,
-    _BUBBLE_USER_IMAGE_CROP_BOTTOM,
-    _BUBBLE_USER_IMAGE_REPEAT_START,
-    _BUBBLE_USER_IMAGE_REPEAT_END,
-    _BUBBLE_USER_IMAGE_REPEAT_Y_START,
-    _BUBBLE_USER_IMAGE_REPEAT_Y_END,
-    _BUBBLE_USER_IMAGE_SCALE,
-    _BUBBLE_AI_IMAGE_CROP_LEFT,
-    _BUBBLE_AI_IMAGE_CROP_TOP,
-    _BUBBLE_AI_IMAGE_CROP_RIGHT,
-    _BUBBLE_AI_IMAGE_CROP_BOTTOM,
-    _BUBBLE_AI_IMAGE_REPEAT_START,
-    _BUBBLE_AI_IMAGE_REPEAT_END,
-    _BUBBLE_AI_IMAGE_REPEAT_Y_START,
-    _BUBBLE_AI_IMAGE_REPEAT_Y_END,
-    _BUBBLE_AI_IMAGE_SCALE,
-    _BUBBLE_USER_IMAGE_RENDER_MODE,
-    _BUBBLE_AI_IMAGE_RENDER_MODE,
-    _BUBBLE_USER_ROUNDED_CORNERS_ENABLED,
-    _BUBBLE_AI_ROUNDED_CORNERS_ENABLED,
-    _BUBBLE_USER_CONTENT_PADDING_LEFT,
-    _BUBBLE_USER_CONTENT_PADDING_RIGHT,
-    _BUBBLE_AI_CONTENT_PADDING_LEFT,
-    _BUBBLE_AI_CONTENT_PADDING_RIGHT,
-    _KEY_SHOW_THINKING_PROCESS,
-    _KEY_SHOW_MODEL_PROVIDER,
-    _KEY_SHOW_MODEL_NAME,
-    _KEY_SHOW_ROLE_NAME,
-    _KEY_SHOW_USER_NAME,
-    _KEY_SHOW_MESSAGE_TOKEN_STATS,
-    _KEY_SHOW_MESSAGE_TIMING_STATS,
-    _KEY_SHOW_MESSAGE_TIMESTAMP,
-    _KEY_CUSTOM_USER_AVATAR_URI,
-    _KEY_CUSTOM_AI_AVATAR_URI,
-    _KEY_AVATAR_SHAPE,
-    _KEY_AVATAR_CORNER_RADIUS,
-    _KEY_SHOW_INPUT_PROCESSING_STATUS,
-    _USE_CUSTOM_FONT,
-    _FONT_TYPE,
-    _SYSTEM_FONT_NAME,
-    _CUSTOM_FONT_PATH,
-    _FONT_SCALE,
+  static const List<String> _targetThemeKeys = <String>[
+    ..._themeKeys,
+    ..._avatarThemeKeys,
   ];
-
-  Future<String> themeMode() async {
-    return await _stringValue(_THEME_MODE) ?? THEME_MODE_LIGHT;
-  }
 
   Future<void> initializeIfNeeded({required String defaultProfileName}) async {
     final profiles = await profileListFlowSnapshot();
@@ -772,43 +702,28 @@ class UserPreferencesManager {
     return updatedProfile;
   }
 
-  Future<bool> useSystemTheme() {
-    return _booleanValue(_USE_SYSTEM_THEME, true);
-  }
-
-  Future<ThemeMode> flutterThemeMode() async {
-    return (await resolveThemePreferenceSnapshot()).flutterThemeMode;
-  }
-
   Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot({
     String? characterCardId,
     String? characterGroupId,
   }) async {
-    final normalizedGroupId = _normalizedThemeId(characterGroupId);
-    final normalizedCardId = _normalizedThemeId(characterCardId);
-    final groupPrefix = normalizedGroupId == null
-        ? null
-        : _characterGroupThemePrefix(normalizedGroupId);
-    final cardPrefix = normalizedCardId == null
-        ? null
-        : _characterCardThemePrefix(normalizedCardId);
-    final keys = <String>[
-      ..._themeKeys,
-      if (groupPrefix != null) ..._prefixedThemeKeys(groupPrefix),
-      if (cardPrefix != null) ..._prefixedThemeKeys(cardPrefix),
-    ];
+    final prefix = _requiredThemePrefix(
+      characterCardId: characterCardId,
+      characterGroupId: characterGroupId,
+    );
+    final keys = _prefixedTargetThemeKeys(prefix);
     final preferences = await _getStrings(keys);
-    String? prefix;
-
-    if (groupPrefix != null && _containsThemePrefix(preferences, groupPrefix)) {
-      prefix = groupPrefix;
-    } else if (cardPrefix != null &&
-        _containsThemePrefix(preferences, cardPrefix)) {
-      prefix = cardPrefix;
-    }
+    final toolCollapseMode = await _clients.preferencesPreferenceStorageManager
+        .getPreference(
+          fileName: _displayPreferencesFileName,
+          key: _KEY_TOOL_COLLAPSE_MODE,
+        );
 
     String? stringValue(String key, {String? defaultValue}) {
       return preferences[_keyWithPrefix(key, prefix)] ?? defaultValue;
+    }
+
+    String? targetStringValue(String key) {
+      return preferences[_keyWithPrefix(key, prefix)];
     }
 
     bool booleanValue(String key, bool defaultValue) {
@@ -924,8 +839,8 @@ class UserPreferencesManager {
         _BUBBLE_AI_CONTENT_PADDING_RIGHT,
         12,
       ),
-      customUserAvatarUri: stringValue(_KEY_CUSTOM_USER_AVATAR_URI),
-      customAiAvatarUri: stringValue(_KEY_CUSTOM_AI_AVATAR_URI),
+      customUserAvatarUri: targetStringValue(_KEY_CUSTOM_USER_AVATAR_URI),
+      customAiAvatarUri: targetStringValue(_KEY_CUSTOM_AI_AVATAR_URI),
       avatarShape: stringValue(_KEY_AVATAR_SHAPE) ?? AVATAR_SHAPE_CIRCLE,
       avatarCornerRadius: doubleValue(_KEY_AVATAR_CORNER_RADIUS, 8),
       useCustomFont: booleanValue(_USE_CUSTOM_FONT, false),
@@ -948,6 +863,7 @@ class UserPreferencesManager {
           stringValue(_BUBBLE_AI_SYSTEM_FONT_NAME) ?? SYSTEM_FONT_DEFAULT,
       bubbleAiCustomFontPath: stringValue(_BUBBLE_AI_CUSTOM_FONT_PATH),
       showThinkingProcess: booleanValue(_KEY_SHOW_THINKING_PROCESS, true),
+      toolCollapseMode: toolCollapseMode ?? TOOL_COLLAPSE_MODE_ALL,
       showModelProvider: booleanValue(_KEY_SHOW_MODEL_PROVIDER, false),
       showModelName: booleanValue(_KEY_SHOW_MODEL_NAME, false),
       showRoleName: booleanValue(_KEY_SHOW_ROLE_NAME, true),
@@ -966,6 +882,8 @@ class UserPreferencesManager {
   }
 
   Future<void> saveThemeSettings({
+    String? characterCardId,
+    String? characterGroupId,
     String? themeMode,
     bool? useSystemTheme,
     bool? useCustomColors,
@@ -1027,8 +945,6 @@ class UserPreferencesManager {
     bool? showMessageTokenStats,
     bool? showMessageTimingStats,
     bool? showMessageTimestamp,
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
     String? avatarShape,
     double? avatarCornerRadius,
     bool? showInputProcessingStatus,
@@ -1046,13 +962,17 @@ class UserPreferencesManager {
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
   }) async {
+    final prefix = _requiredThemePrefix(
+      characterCardId: characterCardId,
+      characterGroupId: characterGroupId,
+    );
     final values = <String, String>{};
 
     void setIfPresent(String key, Object? value) {
       if (value == null) {
         return;
       }
-      values[key] = value.toString();
+      values[_keyWithPrefix(key, prefix)] = value.toString();
     }
 
     setIfPresent(_THEME_MODE, themeMode);
@@ -1131,8 +1051,6 @@ class UserPreferencesManager {
     setIfPresent(_KEY_SHOW_MESSAGE_TOKEN_STATS, showMessageTokenStats);
     setIfPresent(_KEY_SHOW_MESSAGE_TIMING_STATS, showMessageTimingStats);
     setIfPresent(_KEY_SHOW_MESSAGE_TIMESTAMP, showMessageTimestamp);
-    setIfPresent(_KEY_CUSTOM_USER_AVATAR_URI, customUserAvatarUri);
-    setIfPresent(_KEY_CUSTOM_AI_AVATAR_URI, customAiAvatarUri);
     setIfPresent(_KEY_AVATAR_SHAPE, avatarShape);
     setIfPresent(_KEY_AVATAR_CORNER_RADIUS, avatarCornerRadius);
     setIfPresent(_KEY_SHOW_INPUT_PROCESSING_STATUS, showInputProcessingStatus);
@@ -1155,119 +1073,6 @@ class UserPreferencesManager {
     }
   }
 
-  Future<void> saveThemeSnapshot(ThemePreferenceSnapshot snapshot) async {
-    await _removeStrings(_resetThemeKeys);
-    await saveThemeSettings(
-      themeMode: snapshot.themeMode,
-      useSystemTheme: snapshot.useSystemTheme,
-      useCustomColors: snapshot.useCustomColors,
-      customPrimaryColor: snapshot.customPrimaryColor,
-      customSecondaryColor: snapshot.customSecondaryColor,
-      useBackgroundImage: snapshot.useBackgroundImage,
-      backgroundImageUri: snapshot.backgroundImageUri,
-      backgroundImageOpacity: snapshot.backgroundImageOpacity,
-      backgroundMediaType: snapshot.backgroundMediaType,
-      videoBackgroundMuted: snapshot.videoBackgroundMuted,
-      videoBackgroundLoop: snapshot.videoBackgroundLoop,
-      useBackgroundBlur: snapshot.useBackgroundBlur,
-      backgroundBlurRadius: snapshot.backgroundBlurRadius,
-      transparentSurfaceEnabled: snapshot.transparentSurfaceEnabled,
-      chatInputFloating: snapshot.chatInputFloating,
-      chatStyle: snapshot.chatStyle,
-      bubbleShowAvatar: snapshot.bubbleShowAvatar,
-      bubbleWideLayoutEnabled: snapshot.bubbleWideLayoutEnabled,
-      cursorUserBubbleColor: snapshot.cursorUserBubbleColor,
-      bubbleUserBubbleColor: snapshot.bubbleUserBubbleColor,
-      bubbleAiBubbleColor: snapshot.bubbleAiBubbleColor,
-      bubbleUserTextColor: snapshot.bubbleUserTextColor,
-      bubbleAiTextColor: snapshot.bubbleAiTextColor,
-      bubbleUserUseImage: snapshot.bubbleUserUseImage,
-      bubbleAiUseImage: snapshot.bubbleAiUseImage,
-      bubbleUserImageUri: snapshot.bubbleUserImageUri,
-      bubbleAiImageUri: snapshot.bubbleAiImageUri,
-      bubbleUserImageRenderMode: snapshot.bubbleUserImageRenderMode,
-      bubbleAiImageRenderMode: snapshot.bubbleAiImageRenderMode,
-      bubbleUserImageCropLeft: snapshot.bubbleUserImageCropLeft,
-      bubbleUserImageCropTop: snapshot.bubbleUserImageCropTop,
-      bubbleUserImageCropRight: snapshot.bubbleUserImageCropRight,
-      bubbleUserImageCropBottom: snapshot.bubbleUserImageCropBottom,
-      bubbleUserImageRepeatStart: snapshot.bubbleUserImageRepeatStart,
-      bubbleUserImageRepeatEnd: snapshot.bubbleUserImageRepeatEnd,
-      bubbleUserImageRepeatYStart: snapshot.bubbleUserImageRepeatYStart,
-      bubbleUserImageRepeatYEnd: snapshot.bubbleUserImageRepeatYEnd,
-      bubbleUserImageScale: snapshot.bubbleUserImageScale,
-      bubbleAiImageCropLeft: snapshot.bubbleAiImageCropLeft,
-      bubbleAiImageCropTop: snapshot.bubbleAiImageCropTop,
-      bubbleAiImageCropRight: snapshot.bubbleAiImageCropRight,
-      bubbleAiImageCropBottom: snapshot.bubbleAiImageCropBottom,
-      bubbleAiImageRepeatStart: snapshot.bubbleAiImageRepeatStart,
-      bubbleAiImageRepeatEnd: snapshot.bubbleAiImageRepeatEnd,
-      bubbleAiImageRepeatYStart: snapshot.bubbleAiImageRepeatYStart,
-      bubbleAiImageRepeatYEnd: snapshot.bubbleAiImageRepeatYEnd,
-      bubbleAiImageScale: snapshot.bubbleAiImageScale,
-      bubbleUserRoundedCornersEnabled: snapshot.bubbleUserRoundedCornersEnabled,
-      bubbleAiRoundedCornersEnabled: snapshot.bubbleAiRoundedCornersEnabled,
-      bubbleUserContentPaddingLeft: snapshot.bubbleUserContentPaddingLeft,
-      bubbleUserContentPaddingRight: snapshot.bubbleUserContentPaddingRight,
-      bubbleAiContentPaddingLeft: snapshot.bubbleAiContentPaddingLeft,
-      bubbleAiContentPaddingRight: snapshot.bubbleAiContentPaddingRight,
-      showThinkingProcess: snapshot.showThinkingProcess,
-      showModelProvider: snapshot.showModelProvider,
-      showModelName: snapshot.showModelName,
-      showRoleName: snapshot.showRoleName,
-      showUserName: snapshot.showUserName,
-      showMessageTokenStats: snapshot.showMessageTokenStats,
-      showMessageTimingStats: snapshot.showMessageTimingStats,
-      showMessageTimestamp: snapshot.showMessageTimestamp,
-      customUserAvatarUri: snapshot.customUserAvatarUri,
-      customAiAvatarUri: snapshot.customAiAvatarUri,
-      avatarShape: snapshot.avatarShape,
-      avatarCornerRadius: snapshot.avatarCornerRadius,
-      showInputProcessingStatus: snapshot.showInputProcessingStatus,
-      useCustomFont: snapshot.useCustomFont,
-      fontType: snapshot.fontType,
-      systemFontName: snapshot.systemFontName,
-      customFontPath: snapshot.customFontPath,
-      fontScale: snapshot.fontScale,
-      bubbleUserUseCustomFont: snapshot.bubbleUserUseCustomFont,
-      bubbleUserFontType: snapshot.bubbleUserFontType,
-      bubbleUserSystemFontName: snapshot.bubbleUserSystemFontName,
-      bubbleUserCustomFontPath: snapshot.bubbleUserCustomFontPath,
-      bubbleAiUseCustomFont: snapshot.bubbleAiUseCustomFont,
-      bubbleAiFontType: snapshot.bubbleAiFontType,
-      bubbleAiSystemFontName: snapshot.bubbleAiSystemFontName,
-      bubbleAiCustomFontPath: snapshot.bubbleAiCustomFontPath,
-    );
-  }
-
-  Future<void> saveFlutterThemeMode(ThemeMode themeMode) {
-    return switch (themeMode) {
-      ThemeMode.system => saveThemeSettings(useSystemTheme: true),
-      ThemeMode.light => saveThemeSettings(
-        themeMode: THEME_MODE_LIGHT,
-        useSystemTheme: false,
-      ),
-      ThemeMode.dark => saveThemeSettings(
-        themeMode: THEME_MODE_DARK,
-        useSystemTheme: false,
-      ),
-    };
-  }
-
-  Future<void> resetThemeSettings() async {
-    await _removeStrings(_resetThemeKeys);
-  }
-
-  Future<void> resetMessageColorSettings() async {
-    await _removeStrings(<String>[
-      _CURSOR_USER_BUBBLE_COLOR,
-      _BUBBLE_USER_BUBBLE_COLOR,
-      _BUBBLE_AI_BUBBLE_COLOR,
-      _BUBBLE_USER_TEXT_COLOR,
-      _BUBBLE_AI_TEXT_COLOR,
-    ]);
-  }
-
   Future<void> resetMessageColorSettingsForCharacterCard(
     String characterCardId,
   ) {
@@ -1284,12 +1089,6 @@ class UserPreferencesManager {
     );
   }
 
-  Future<void> copyCurrentThemeToCharacterCard(String characterCardId) {
-    return _copyCurrentThemeToPrefix(
-      _characterCardThemePrefix(characterCardId),
-    );
-  }
-
   Future<void> cloneThemeBetweenCharacterCards(
     String sourceCharacterCardId,
     String targetCharacterCardId,
@@ -1300,14 +1099,6 @@ class UserPreferencesManager {
     );
   }
 
-  Future<void> switchToCharacterCardTheme(String characterCardId) {
-    return _switchToThemeByPrefix(_characterCardThemePrefix(characterCardId));
-  }
-
-  Future<void> saveCurrentThemeToCharacterCard(String characterCardId) {
-    return copyCurrentThemeToCharacterCard(characterCardId);
-  }
-
   Future<void> deleteCharacterCardTheme(String characterCardId) {
     return _deleteThemeByPrefix(_characterCardThemePrefix(characterCardId));
   }
@@ -1316,9 +1107,15 @@ class UserPreferencesManager {
     return _hasThemePrefix(_characterCardThemePrefix(characterCardId));
   }
 
-  Future<void> copyCurrentThemeToCharacterGroup(String characterGroupId) {
-    return _copyCurrentThemeToPrefix(
-      _characterGroupThemePrefix(characterGroupId),
+  Future<void> saveThemeAvatarSettingsForCharacterCard(
+    String characterCardId, {
+    String? customUserAvatarUri,
+    String? customAiAvatarUri,
+  }) {
+    return _saveThemeAvatarSettingsWithPrefix(
+      _characterCardThemePrefix(characterCardId),
+      customUserAvatarUri: customUserAvatarUri,
+      customAiAvatarUri: customAiAvatarUri,
     );
   }
 
@@ -1332,14 +1129,6 @@ class UserPreferencesManager {
     );
   }
 
-  Future<void> switchToCharacterGroupTheme(String characterGroupId) {
-    return _switchToThemeByPrefix(_characterGroupThemePrefix(characterGroupId));
-  }
-
-  Future<void> saveCurrentThemeToCharacterGroup(String characterGroupId) {
-    return copyCurrentThemeToCharacterGroup(characterGroupId);
-  }
-
   Future<void> deleteCharacterGroupTheme(String characterGroupId) {
     return _deleteThemeByPrefix(_characterGroupThemePrefix(characterGroupId));
   }
@@ -1348,10 +1137,15 @@ class UserPreferencesManager {
     return _hasThemePrefix(_characterGroupThemePrefix(characterGroupId));
   }
 
-  Future<void> _copyCurrentThemeToPrefix(String prefix) async {
-    final values = await _getStrings(_themeKeys);
-    await _setStrings(
-      values.map((key, value) => MapEntry('$prefix$key', value)),
+  Future<void> saveThemeAvatarSettingsForCharacterGroup(
+    String characterGroupId, {
+    String? customUserAvatarUri,
+    String? customAiAvatarUri,
+  }) {
+    return _saveThemeAvatarSettingsWithPrefix(
+      _characterGroupThemePrefix(characterGroupId),
+      customUserAvatarUri: customUserAvatarUri,
+      customAiAvatarUri: customAiAvatarUri,
     );
   }
 
@@ -1359,7 +1153,7 @@ class UserPreferencesManager {
     String sourcePrefix,
     String targetPrefix,
   ) async {
-    final sourceKeys = _prefixedThemeKeys(sourcePrefix);
+    final sourceKeys = _prefixedTargetThemeKeys(sourcePrefix);
     final values = await _getStrings(sourceKeys);
     await _setStrings(
       values.map(
@@ -1371,17 +1165,8 @@ class UserPreferencesManager {
     );
   }
 
-  Future<void> _switchToThemeByPrefix(String prefix) async {
-    final sourceKeys = _prefixedThemeKeys(prefix);
-    final values = await _getStrings(sourceKeys);
-    await _removeStrings(_themeKeys);
-    await _setStrings(
-      values.map((key, value) => MapEntry(key.substring(prefix.length), value)),
-    );
-  }
-
   Future<void> _deleteThemeByPrefix(String prefix) async {
-    await _removeStrings(_prefixedThemeKeys(prefix));
+    await _removeStrings(_prefixedTargetThemeKeys(prefix));
   }
 
   Future<void> _resetMessageColorSettingsWithPrefix(String prefix) async {
@@ -1398,9 +1183,28 @@ class UserPreferencesManager {
 
   Future<bool> _hasThemePrefix(String prefix) async {
     return _containsThemePrefix(
-      await _getStrings(_prefixedThemeKeys(prefix)),
+      await _getStrings(_prefixedTargetThemeKeys(prefix)),
       prefix,
     );
+  }
+
+  Future<void> _saveThemeAvatarSettingsWithPrefix(
+    String prefix, {
+    String? customUserAvatarUri,
+    String? customAiAvatarUri,
+  }) async {
+    final values = <String, String>{};
+    void setIfPresent(String key, String? value) {
+      if (value != null) {
+        values['$prefix$key'] = value;
+      }
+    }
+
+    setIfPresent(_KEY_CUSTOM_USER_AVATAR_URI, customUserAvatarUri);
+    setIfPresent(_KEY_CUSTOM_AI_AVATAR_URI, customAiAvatarUri);
+    if (values.isNotEmpty) {
+      await _setStrings(values);
+    }
   }
 
   Future<String?> _stringValue(String key, {String? prefix}) {
@@ -1466,6 +1270,21 @@ String? _normalizedThemeId(String? value) {
   return normalized == null || normalized.isEmpty ? null : normalized;
 }
 
+String _requiredThemePrefix({
+  required String? characterCardId,
+  required String? characterGroupId,
+}) {
+  final normalizedGroupId = _normalizedThemeId(characterGroupId);
+  if (normalizedGroupId != null) {
+    return _characterGroupThemePrefix(normalizedGroupId);
+  }
+  final normalizedCardId = _normalizedThemeId(characterCardId);
+  if (normalizedCardId != null) {
+    return _characterCardThemePrefix(normalizedCardId);
+  }
+  throw StateError('No active character theme target');
+}
+
 String _characterCardThemePrefix(String characterCardId) {
   return 'character_card_theme_${characterCardId}_';
 }
@@ -1478,12 +1297,14 @@ String _keyWithPrefix(String key, String? prefix) {
   return prefix == null ? key : '$prefix$key';
 }
 
-List<String> _prefixedThemeKeys(String prefix) {
-  return UserPreferencesManager._themeKeys.map((key) => '$prefix$key').toList();
+List<String> _prefixedTargetThemeKeys(String prefix) {
+  return UserPreferencesManager._targetThemeKeys
+      .map((key) => '$prefix$key')
+      .toList();
 }
 
 bool _containsThemePrefix(Map<String, String> preferences, String prefix) {
-  for (final key in UserPreferencesManager._themeKeys) {
+  for (final key in UserPreferencesManager._targetThemeKeys) {
     if (preferences.containsKey('$prefix$key')) {
       return true;
     }

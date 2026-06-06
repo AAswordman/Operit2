@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 
@@ -13,6 +14,15 @@ const Duration _arrowRotationDuration = Duration(milliseconds: 300);
 const Duration _instantDuration = Duration.zero;
 
 enum ToolCollapseMode { full, readOnly, all }
+
+ToolCollapseMode toolCollapseModeFromPreferenceValue(String value) {
+  return switch (value) {
+    'read_only' => ToolCollapseMode.readOnly,
+    'all' => ToolCollapseMode.all,
+    'full' => ToolCollapseMode.full,
+    _ => throw FormatException('invalid tool collapse mode: $value'),
+  };
+}
 
 class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
   const ThinkToolsXmlNodeGrouper({
@@ -204,6 +214,7 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
     required Color textColor,
     required MarkdownXmlRenderer xmlRenderer,
     required Stream<String>? Function(int index) xmlStreamResolver,
+    required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
     required double fontSize,
@@ -217,6 +228,7 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
       textColor: textColor,
       xmlRenderer: xmlRenderer,
       xmlStreamResolver: xmlStreamResolver,
+      xmlMarkdownEventStreamResolver: xmlMarkdownEventStreamResolver,
       forceExpandGroups: forceExpandGroups,
       toolCollapseMode: toolCollapseMode,
     );
@@ -233,6 +245,7 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
     required this.textColor,
     required this.xmlRenderer,
     required this.xmlStreamResolver,
+    required this.xmlMarkdownEventStreamResolver,
     required this.forceExpandGroups,
     required this.toolCollapseMode,
   });
@@ -244,6 +257,7 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
   final Color textColor;
   final MarkdownXmlRenderer xmlRenderer;
   final Stream<String>? Function(int index) xmlStreamResolver;
+  final Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver;
   final bool forceExpandGroups;
   final ToolCollapseMode toolCollapseMode;
 
@@ -274,14 +288,13 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
       return node.type == MarkdownNodeType.xmlBlock &&
           _extractXmlTagName(node.content) == 'tool';
     }).length;
+    final l10n = AppLocalizations.of(context)!;
     final titleText = widget.group.stableKey.startsWith('tools-only-')
-        ? 'Tools ($toolCount)'
-        : 'Thinking & tools ($toolCount)';
+        ? l10n.toolsGroupTitleWithCount(toolCount)
+        : l10n.thinkingToolsGroupTitleWithCount(toolCount);
 
     final hasLiveXmlStream = List<int>.generate(slice.length, (idx) => idx).any(
-      (idx) =>
-          slice[idx].type == MarkdownNodeType.xmlBlock &&
-          widget.xmlStreamResolver(widget.group.startIndex + idx) != null,
+      (idx) => widget.xmlStreamResolver(widget.group.startIndex + idx) != null,
     );
     final tailStartIndex = (widget.group.endIndexInclusive + 1).clamp(
       0,
@@ -384,6 +397,9 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
       isStreaming: node.isStreaming,
       textColor: widget.textColor,
       xmlStream: widget.xmlStreamResolver(absoluteIndex),
+      xmlMarkdownEventStream: widget.xmlMarkdownEventStreamResolver(
+        absoluteIndex,
+      ),
       renderInstanceKey: itemKey,
     );
     if (widget.forceExpandGroups) {

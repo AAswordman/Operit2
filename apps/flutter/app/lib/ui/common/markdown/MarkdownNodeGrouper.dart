@@ -10,6 +10,7 @@ typedef MarkdownXmlRenderer =
       required bool isStreaming,
       required Color textColor,
       Stream<String>? xmlStream,
+      Stream<Object>? xmlMarkdownEventStream,
       String? renderInstanceKey,
     });
 
@@ -131,6 +132,7 @@ abstract class MarkdownNodeGrouper {
     required Color textColor,
     required MarkdownXmlRenderer xmlRenderer,
     required Stream<String>? Function(int index) xmlStreamResolver,
+    required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
     required double fontSize,
@@ -160,6 +162,7 @@ class NoopMarkdownNodeGrouper extends MarkdownNodeGrouper {
     required Color textColor,
     required MarkdownXmlRenderer xmlRenderer,
     required Stream<String>? Function(int index) xmlStreamResolver,
+    required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
     required double fontSize,

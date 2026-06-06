@@ -210,6 +210,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get messageSenderThinking => 'Thinking';
 
   @override
+  String get thinkingProcess => 'Thinking Process';
+
+  @override
+  String thinkingToolsGroupTitleWithCount(int count) {
+    return 'Thinking & Tool Calls ($count)';
+  }
+
+  @override
+  String toolsGroupTitleWithCount(int count) {
+    return 'Tool Calls ($count)';
+  }
+
+  @override
   String get messageSenderOther => 'Other';
 
   @override

@@ -12,9 +12,12 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val runtimeLock = Any()
+    private val runtimeExecutor: ExecutorService = Executors.newCachedThreadPool()
     private var runtimeHandle: Long = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +76,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        runtimeExecutor.shutdownNow()
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
                 OperitRuntimeNative.destroy(runtimeHandle)
@@ -98,7 +102,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun runRuntime(result: MethodChannel.Result, block: () -> String) {
-        Thread {
+        runtimeExecutor.execute {
             try {
                 val response = block()
                 runOnUiThread { result.success(response) }
@@ -107,7 +111,7 @@ class MainActivity : FlutterActivity() {
                     result.error("RUNTIME_BRIDGE_ERROR", error.message, null)
                 }
             }
-        }.start()
+        }
     }
 
     private fun pollWatchStream(call: MethodCall, result: MethodChannel.Result) {

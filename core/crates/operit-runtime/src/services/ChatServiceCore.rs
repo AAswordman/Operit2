@@ -183,6 +183,34 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    #[allow(non_snake_case)]
+    pub fn switchActiveCharacterCardTarget(&mut self, characterCardId: String) {
+        self.chatHistoryDelegate
+            .switchActiveCharacterCardTarget(characterCardId);
+        self.syncTokenStatisticsForCurrentChat();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn switchActiveCharacterGroupTarget(&mut self, characterGroupId: String) {
+        self.chatHistoryDelegate
+            .switchActiveCharacterGroupTarget(characterGroupId);
+        self.syncTokenStatisticsForCurrentChat();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn updateChatCharacterCard(&mut self, chatId: String, characterCardName: Option<String>) {
+        self.chatHistoryDelegate
+            .updateChatCharacterCard(chatId, characterCardName);
+        self.syncTokenStatisticsForCurrentChat();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn updateChatCharacterGroup(&mut self, chatId: String, characterGroupId: Option<String>) {
+        self.chatHistoryDelegate
+            .updateChatCharacterGroup(chatId, characterGroupId);
+        self.syncTokenStatisticsForCurrentChat();
+    }
+
     pub fn syncCurrentChatIdToGlobal(&mut self) {}
 
     pub fn deleteChatHistory(&mut self, chatId: String) {

@@ -135,7 +135,16 @@ class OperitThemeController {
   ThemeMode get themeMode => _themeMode;
   ThemePreferenceSnapshot get themePreferenceSnapshot =>
       _themePreferenceSnapshot;
-  String? get activeThemeTargetName => _activeThemeTargetName;
+  String get activeThemeTargetName {
+    final name = _activeThemeTargetName;
+    if (name == null || name.trim().isEmpty) {
+      throw StateError('No active theme target name');
+    }
+    return name;
+  }
+
+  bool get hasActiveThemeTarget =>
+      _activeCharacterGroupId != null || _activeCharacterCardId != null;
   bool get isActiveThemeTargetGroup => _activeCharacterGroupId != null;
 
   Future<void> start() async {
@@ -179,9 +188,7 @@ class OperitThemeController {
     if (_themeMode == themeMode) {
       return;
     }
-    await _syncActiveThemeSnapshotToCurrentTheme();
-    await _preferencesManager.saveFlutterThemeMode(themeMode);
-    await _saveCurrentThemeToActiveTarget();
+    await _saveThemeModeToCurrentTarget(themeMode);
     await _reloadThemePreferenceSnapshot();
   }
 
@@ -266,8 +273,6 @@ class OperitThemeController {
     bool? showMessageTimingStats,
     bool? showMessageTimestamp,
     bool? showInputProcessingStatus,
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
     String? avatarShape,
     bool? bubbleUserUseCustomFont,
     String? bubbleUserFontType,
@@ -278,8 +283,9 @@ class OperitThemeController {
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
   }) async {
-    await _syncActiveThemeSnapshotToCurrentTheme();
     await _preferencesManager.saveThemeSettings(
+      characterCardId: _activeCharacterCardId,
+      characterGroupId: _activeCharacterGroupId,
       chatStyle: chatStyle,
       bubbleShowAvatar: bubbleShowAvatar,
       bubbleWideLayoutEnabled: bubbleWideLayoutEnabled,
@@ -344,8 +350,6 @@ class OperitThemeController {
       showMessageTimingStats: showMessageTimingStats,
       showMessageTimestamp: showMessageTimestamp,
       showInputProcessingStatus: showInputProcessingStatus,
-      customUserAvatarUri: customUserAvatarUri,
-      customAiAvatarUri: customAiAvatarUri,
       avatarShape: avatarShape,
       bubbleUserUseCustomFont: bubbleUserUseCustomFont,
       bubbleUserFontType: bubbleUserFontType,
@@ -356,19 +360,40 @@ class OperitThemeController {
       bubbleAiSystemFontName: bubbleAiSystemFontName,
       bubbleAiCustomFontPath: bubbleAiCustomFontPath,
     );
-    await _saveCurrentThemeToActiveTarget();
+    await _reloadThemePreferenceSnapshot();
+  }
+
+  Future<void> saveActiveThemeAvatarSettings({
+    String? customUserAvatarUri,
+    String? customAiAvatarUri,
+  }) async {
+    final groupId = _activeCharacterGroupId;
+    final cardId = _activeCharacterCardId;
+    if (groupId != null) {
+      await _preferencesManager.saveThemeAvatarSettingsForCharacterGroup(
+        groupId,
+        customUserAvatarUri: customUserAvatarUri,
+        customAiAvatarUri: customAiAvatarUri,
+      );
+    } else if (cardId != null) {
+      await _preferencesManager.saveThemeAvatarSettingsForCharacterCard(
+        cardId,
+        customUserAvatarUri: customUserAvatarUri,
+        customAiAvatarUri: customAiAvatarUri,
+      );
+    } else {
+      throw StateError('No active theme target for avatar settings');
+    }
     await _reloadThemePreferenceSnapshot();
   }
 
   Future<void> resetMessageColorSettings() async {
-    await _preferencesManager.resetMessageColorSettings();
-    await _resetActiveTargetMessageColorSettings();
+    await _resetCurrentTargetMessageColorSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
   Future<void> resetThemeSettings() async {
-    await _preferencesManager.resetThemeSettings();
-    await _deleteActiveTargetTheme();
+    await _resetCurrentTargetThemeSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
@@ -387,12 +412,6 @@ class OperitThemeController {
     );
   }
 
-  Future<void> _syncActiveThemeSnapshotToCurrentTheme() async {
-    if (_activeCharacterGroupId != null || _activeCharacterCardId != null) {
-      await _preferencesManager.saveThemeSnapshot(_themePreferenceSnapshot);
-    }
-  }
-
   Future<void> _handleActivePromptChange(Object? activePrompt) async {
     if (_applyActivePrompt(activePrompt)) {
       await _loadActiveThemeTargetName();
@@ -400,27 +419,41 @@ class OperitThemeController {
     }
   }
 
-  Future<void> _saveCurrentThemeToActiveTarget() async {
-    final groupId = _activeCharacterGroupId;
-    final cardId = _activeCharacterCardId;
-    if (groupId != null) {
-      await _preferencesManager.saveCurrentThemeToCharacterGroup(groupId);
-    } else if (cardId != null) {
-      await _preferencesManager.saveCurrentThemeToCharacterCard(cardId);
-    }
+  Future<void> _saveThemeModeToCurrentTarget(ThemeMode themeMode) {
+    return switch (themeMode) {
+      ThemeMode.system => _preferencesManager.saveThemeSettings(
+        characterCardId: _activeCharacterCardId,
+        characterGroupId: _activeCharacterGroupId,
+        useSystemTheme: true,
+      ),
+      ThemeMode.light => _preferencesManager.saveThemeSettings(
+        characterCardId: _activeCharacterCardId,
+        characterGroupId: _activeCharacterGroupId,
+        themeMode: UserPreferencesManager.THEME_MODE_LIGHT,
+        useSystemTheme: false,
+      ),
+      ThemeMode.dark => _preferencesManager.saveThemeSettings(
+        characterCardId: _activeCharacterCardId,
+        characterGroupId: _activeCharacterGroupId,
+        themeMode: UserPreferencesManager.THEME_MODE_DARK,
+        useSystemTheme: false,
+      ),
+    };
   }
 
-  Future<void> _deleteActiveTargetTheme() async {
+  Future<void> _resetCurrentTargetThemeSettings() async {
     final groupId = _activeCharacterGroupId;
     final cardId = _activeCharacterCardId;
     if (groupId != null) {
       await _preferencesManager.deleteCharacterGroupTheme(groupId);
     } else if (cardId != null) {
       await _preferencesManager.deleteCharacterCardTheme(cardId);
+    } else {
+      throw StateError('No active theme target for theme settings');
     }
   }
 
-  Future<void> _resetActiveTargetMessageColorSettings() async {
+  Future<void> _resetCurrentTargetMessageColorSettings() async {
     final groupId = _activeCharacterGroupId;
     final cardId = _activeCharacterCardId;
     if (groupId != null) {
@@ -431,6 +464,8 @@ class OperitThemeController {
       await _preferencesManager.resetMessageColorSettingsForCharacterCard(
         cardId,
       );
+    } else {
+      throw StateError('No active theme target for message color settings');
     }
   }
 
@@ -569,6 +604,7 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
     bubbleAiSystemFontName: snapshot.bubbleAiSystemFontName,
     bubbleAiCustomFontPath: snapshot.bubbleAiCustomFontPath,
     showThinkingProcess: snapshot.showThinkingProcess,
+    toolCollapseMode: snapshot.toolCollapseMode,
     showModelProvider: snapshot.showModelProvider,
     showModelName: snapshot.showModelName,
     showRoleName: snapshot.showRoleName,
@@ -631,6 +667,10 @@ class _OperitThemeBackground extends StatelessWidget {
     required this.child,
   });
 
+  static const Duration _backgroundAnimationDuration = Duration(
+    milliseconds: 360,
+  );
+
   final ThemePreferenceSnapshot themePreferenceSnapshot;
   final Widget child;
 
@@ -638,6 +678,10 @@ class _OperitThemeBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final mediaPath = themePreferenceSnapshot.backgroundImageUri;
+    final hasBackgroundMedia =
+        themePreferenceSnapshot.useBackgroundImage &&
+        mediaPath != null &&
+        mediaPath.isNotEmpty;
     return LiquidGlassScope(
       child: Stack(
         fit: StackFit.expand,
@@ -647,19 +691,36 @@ class _OperitThemeBackground extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  ColoredBox(color: colorScheme.surface),
-                  if (themePreferenceSnapshot.useBackgroundImage &&
-                      mediaPath != null &&
-                      mediaPath.isNotEmpty)
-                    _ThemeBackgroundMedia(
-                      mediaPath: mediaPath,
-                      mediaType: themePreferenceSnapshot.backgroundMediaType,
-                      opacity: themePreferenceSnapshot.backgroundImageOpacity,
-                      muted: themePreferenceSnapshot.videoBackgroundMuted,
-                      loop: themePreferenceSnapshot.videoBackgroundLoop,
-                      blurEnabled: themePreferenceSnapshot.useBackgroundBlur,
-                      blurRadius: themePreferenceSnapshot.backgroundBlurRadius,
-                    ),
+                  AnimatedContainer(
+                    duration: _backgroundAnimationDuration,
+                    curve: Curves.easeOutCubic,
+                    color: colorScheme.surface,
+                  ),
+                  AnimatedSwitcher(
+                    duration: _backgroundAnimationDuration,
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: hasBackgroundMedia
+                        ? _ThemeBackgroundMedia(
+                            key: ValueKey<String>(
+                              '${themePreferenceSnapshot.backgroundMediaType}|$mediaPath',
+                            ),
+                            mediaPath: mediaPath,
+                            mediaType:
+                                themePreferenceSnapshot.backgroundMediaType,
+                            opacity:
+                                themePreferenceSnapshot.backgroundImageOpacity,
+                            muted: themePreferenceSnapshot.videoBackgroundMuted,
+                            loop: themePreferenceSnapshot.videoBackgroundLoop,
+                            blurEnabled:
+                                themePreferenceSnapshot.useBackgroundBlur,
+                            blurRadius:
+                                themePreferenceSnapshot.backgroundBlurRadius,
+                          )
+                        : const SizedBox.expand(
+                            key: ValueKey<String>('empty-theme-background'),
+                          ),
+                  ),
                 ],
               ),
             ),
@@ -673,6 +734,7 @@ class _OperitThemeBackground extends StatelessWidget {
 
 class _ThemeBackgroundMedia extends StatelessWidget {
   const _ThemeBackgroundMedia({
+    super.key,
     required this.mediaPath,
     required this.mediaType,
     required this.opacity,
@@ -694,7 +756,9 @@ class _ThemeBackgroundMedia extends StatelessWidget {
   Widget build(BuildContext context) {
     final media = mediaType == UserPreferencesManager.MEDIA_TYPE_VIDEO
         ? _VideoThemeBackground(mediaPath: mediaPath, muted: muted, loop: loop)
-        : Image.file(File(mediaPath), fit: BoxFit.cover);
+        : SizedBox.expand(
+            child: Image.file(File(mediaPath), fit: BoxFit.cover),
+          );
     final blurred = blurEnabled
         ? ImageFiltered(
             imageFilter: ui.ImageFilter.blur(
@@ -704,7 +768,12 @@ class _ThemeBackgroundMedia extends StatelessWidget {
             child: media,
           )
         : media;
-    return Opacity(opacity: opacity.clamp(0, 1), child: blurred);
+    return AnimatedOpacity(
+      duration: _OperitThemeBackground._backgroundAnimationDuration,
+      curve: Curves.easeOutCubic,
+      opacity: opacity.clamp(0, 1),
+      child: blurred,
+    );
   }
 }
 
