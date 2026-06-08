@@ -14,6 +14,7 @@ class PackageListItem extends StatelessWidget {
     required this.enabled,
     required this.onTap,
     required this.onEnabledChanged,
+    this.trailingActions = const <Widget>[],
   });
 
   final IconData icon;
@@ -23,6 +24,7 @@ class PackageListItem extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
   final ValueChanged<bool> onEnabledChanged;
+  final List<Widget> trailingActions;
 
   @override
   Widget build(BuildContext context) {
@@ -102,6 +104,13 @@ class PackageListItem extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (trailingActions.isNotEmpty) ...<Widget>[
+                    const SizedBox(width: 8),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: trailingActions,
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   Switch(value: enabled, onChanged: onEnabledChanged),
                 ],

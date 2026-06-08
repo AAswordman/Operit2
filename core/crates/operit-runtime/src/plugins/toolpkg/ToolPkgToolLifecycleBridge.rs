@@ -7,7 +7,9 @@ use crate::api::chat::enhance::ToolExecutionManager::AITool;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::core::tools::AIToolHook::AIToolHook;
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgToolLifecycleHookRegistration;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    toolPkgPackageManager, toolPkgToolHandler, ToolPkgToolLifecycleHookRegistration,
+};
 
 static TOOL_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgToolLifecycleHookRegistration>>> =
     OnceLock::new();
@@ -16,9 +18,7 @@ pub struct ToolPkgToolLifecycleBridge;
 
 impl ToolPkgToolLifecycleBridge {
     pub fn register() {
-        let mut handler = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        );
+        let mut handler = toolPkgToolHandler();
         handler.addToolHook(Arc::new(ToolLifecycleBridge));
     }
 
@@ -119,23 +119,20 @@ fn deliver(eventName: &str, eventPayload: Value) {
         .expect("toolpkg tool lifecycle hook mutex poisoned")
         .clone();
     for hook in snapshot {
-        let _ = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .runToolPkgMainHook(
-            &hook.containerPackageName,
-            &hook.functionName,
-            TOOLPKG_EVENT_TOOL_LIFECYCLE,
-            Some(eventName),
-            Some(&hook.hookId),
-            hook.functionSource.as_deref(),
-            eventPayload.clone(),
-            None,
-            None,
-            None,
-        );
+        let _ = toolPkgPackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .runToolPkgMainHook(
+                &hook.containerPackageName,
+                &hook.functionName,
+                TOOLPKG_EVENT_TOOL_LIFECYCLE,
+                Some(eventName),
+                Some(&hook.hookId),
+                hook.functionSource.as_deref(),
+                eventPayload.clone(),
+                None,
+                None,
+                None,
+            );
     }
 }

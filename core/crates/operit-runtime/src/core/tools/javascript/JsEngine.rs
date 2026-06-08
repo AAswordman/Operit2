@@ -22,24 +22,33 @@ use rquickjs::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::core::tools::javascript::JsExecutionResultProtocol::buildJsExecutionErrorPayload;
-use crate::core::tools::javascript::JsExecutionScriptBuilder;
-use crate::core::tools::javascript::JsInitRuntimeScriptBuilder;
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::javascript::JsComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
+use crate::core::tools::javascript::JsExecutionResultProtocol::{
+    buildJsExecutionErrorPayload, decodeJsExecutionResultValue, extractJsExecutionErrorMessage,
+};
+use crate::core::tools::javascript::JsJavaBridgeDelegates::{
+    nativeJavaCallInstanceStrings, nativeJavaCallStaticString, nativeJavaClassExistsString,
+    nativeJavaGetApplicationContextString, nativeJavaNewInstanceString,
+};
+use crate::core::tools::javascript::JsLibraries::buildRuntimeBootstrapScript;
 use crate::core::tools::javascript::JsNativeInterfaceDelegates;
 use crate::core::tools::javascript::JsToolPkgRegistration::{
     buildToolPkgRegistrationBridgeScript, ToolPkgMainRegistrationCapture,
 };
-use crate::core::tools::javascript::JsTools::getJsToolsDefinition;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::util::AppLogger::AppLogger;
+use crate::util::LocaleUtils::LocaleUtils;
 
 const TAG: &str = "OperitQuickJsEngine";
+type ToolPkgTextResources = BTreeMap<String, String>;
 
 thread_local! {
     static CURRENT_TOOL_HANDLER: RefCell<Option<AIToolHandler>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
+    static CURRENT_TOOLPKG_TEXT_RESOURCES: RefCell<Option<Arc<ToolPkgTextResources>>> = RefCell::new(None);
     #[cfg(target_arch = "wasm32")]
     static WASM_JS_ENGINE_STATES: RefCell<BTreeMap<usize, JsEngineState>> = RefCell::new(BTreeMap::new());
 }
@@ -77,6 +86,7 @@ enum JsEngineRequest {
         script: String,
         functionName: String,
         params: BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
         response: mpsc::Sender<Result<ToolPkgMainRegistrationCapture, String>>,
     },
 }
@@ -103,6 +113,13 @@ impl JsEngine {
     pub fn newToolPkgRegistrationEngine() -> Self {
         Self {
             worker: JsEngineWorker::new(None),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newToolPkgRegistrationEngineWithContext(context: OperitApplicationContext) -> Self {
+        Self {
+            worker: JsEngineWorker::new(Some(AIToolHandler::getInstance(context))),
         }
     }
 
@@ -172,12 +189,29 @@ impl JsEngine {
         functionName: &str,
         params: &BTreeMap<String, Value>,
     ) -> Result<ToolPkgMainRegistrationCapture, String> {
+        self.executeToolPkgMainRegistrationFunctionWithTextResources(
+            script,
+            functionName,
+            params,
+            None,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn executeToolPkgMainRegistrationFunctionWithTextResources(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+    ) -> Result<ToolPkgMainRegistrationCapture, String> {
         #[cfg(target_arch = "wasm32")]
         {
             return self.worker.executeToolPkgMainRegistrationFunction(
                 script,
                 functionName,
                 params,
+                textResources,
             );
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -187,6 +221,7 @@ impl JsEngine {
                 script: script.to_string(),
                 functionName: functionName.to_string(),
                 params: params.clone(),
+                textResources,
                 response,
             };
             if let Err(error) = self.worker.sender.send(request) {
@@ -219,6 +254,58 @@ impl JsEngine {
                 }
             }
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeComposeDslScript(
+        &self,
+        script: &str,
+        runtimeOptions: &BTreeMap<String, Value>,
+    ) -> Option<String> {
+        self.executeScriptFunction(
+            &buildComposeDslRuntimeWrappedScript(script),
+            "__operit_render_compose_dsl",
+            runtimeOptions,
+            None,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeComposeDslAction(
+        &self,
+        actionId: &str,
+        payload: Option<Value>,
+        runtimeOptions: &BTreeMap<String, Value>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> Option<String> {
+        let normalizedActionId = actionId.trim();
+        if normalizedActionId.is_empty() {
+            return Some(buildJsExecutionErrorPayload(
+                "compose action id is required",
+            ));
+        }
+        let mut params = runtimeOptions.clone();
+        params.insert(
+            "__action_id".to_string(),
+            Value::String(normalizedActionId.to_string()),
+        );
+        if let Some(payload) = payload {
+            params.insert("__action_payload".to_string(), payload);
+        }
+        self.executeScriptFunction(
+            "",
+            "__operit_dispatch_compose_dsl_action",
+            &params,
+            onIntermediateResult,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn rerenderComposeDslTree(
+        &self,
+        runtimeOptions: &BTreeMap<String, Value>,
+    ) -> Option<String> {
+        self.executeScriptFunction("", "__operit_rerender_compose_dsl", runtimeOptions, None)
     }
 }
 
@@ -260,6 +347,7 @@ impl JsEngineWorker {
                             script,
                             functionName,
                             params,
+                            textResources,
                             response,
                         } => {
                             let output = state
@@ -267,6 +355,7 @@ impl JsEngineWorker {
                                     &script,
                                     &functionName,
                                     &params,
+                                    textResources,
                                 );
                             if let Err(error) = response.send(output) {
                                 AppLogger::e(
@@ -326,13 +415,19 @@ impl JsEngineWorker {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
     ) -> Result<ToolPkgMainRegistrationCapture, String> {
         WASM_JS_ENGINE_STATES.with(|states| {
             states
                 .borrow_mut()
                 .get_mut(&self.stateId)
                 .expect("wasm JsEngine state must exist")
-                .executeToolPkgMainRegistrationFunctionOnCurrentThread(script, functionName, params)
+                .executeToolPkgMainRegistrationFunctionOnCurrentThread(
+                    script,
+                    functionName,
+                    params,
+                    textResources,
+                )
         })
     }
 }
@@ -388,7 +483,28 @@ impl JsEngineState {
             *callback.borrow_mut() = onIntermediateResult;
         });
 
-        let paramsJson = match serde_json::to_string(params) {
+        let mut effectiveParams = params.clone();
+        let explicitLanguage = effectiveParams
+            .get("__operit_package_lang")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if explicitLanguage.is_empty() {
+            let language = match self.resolveCurrentPackageLanguage() {
+                Ok(language) => language,
+                Err(error) => {
+                    clearThreadLocalCallState();
+                    return Some(buildJsExecutionErrorPayload(&error));
+                }
+            };
+            effectiveParams.insert(
+                "__operit_package_lang".to_string(),
+                Value::String(language),
+            );
+        }
+
+        let paramsJson = match serde_json::to_string(&effectiveParams) {
             Ok(value) => value,
             Err(error) => {
                 clearThreadLocalCallState();
@@ -436,13 +552,30 @@ impl JsEngineState {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
     ) -> Result<ToolPkgMainRegistrationCapture, String> {
         self.initJavaScriptEnvironment()?;
         let bridge = buildToolPkgRegistrationBridgeScript();
         self.evalJavaScriptVoid(&bridge)?;
+        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+            *resources.borrow_mut() = textResources;
+        });
 
         let mut registrationParams = params.clone();
         registrationParams.insert("__operit_registration_mode".to_string(), Value::Bool(true));
+        let explicitLanguage = registrationParams
+            .get("__operit_package_lang")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if explicitLanguage.is_empty() {
+            let language = self.resolveCurrentPackageLanguage()?;
+            registrationParams.insert(
+                "__operit_package_lang".to_string(),
+                Value::String(language),
+            );
+        }
         let paramsJson =
             serde_json::to_string(&registrationParams).map_err(|error| error.to_string())?;
         let scriptJson = serde_json::to_string(script).map_err(|error| error.to_string())?;
@@ -457,10 +590,19 @@ impl JsEngineState {
         let executionScript = format!(
             "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
         );
-        self.evalJavaScriptVoid(&executionScript)?;
+        if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
+            CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+                *resources.borrow_mut() = None;
+            });
+            return Err(error);
+        }
         self.runJavaScriptJobs();
         let output = readNativeExecutionSession(&callId)
-            .ok_or_else(|| "ToolPkg registration JavaScript did not complete".to_string())?;
+            .ok_or_else(|| "ToolPkg registration JavaScript did not complete".to_string());
+        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+            *resources.borrow_mut() = None;
+        });
+        let output = output?;
         clearNativeExecutionSession(&callId);
         ensureRegistrationExecutionSucceeded(&output)?;
 
@@ -523,6 +665,21 @@ impl JsEngineState {
             self.context
                 .execute_pending()
                 .expect("OperitQuickJsEngine pending jobs must execute");
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn resolveCurrentPackageLanguage(&self) -> Result<String, String> {
+        let toolHandler = self
+            .toolHandler
+            .as_ref()
+            .ok_or_else(|| "AIToolHandler is required to resolve package language".to_string())?;
+        let language = LocaleUtils::getCurrentLanguage(&toolHandler.getContext())?;
+        let trimmed = language.trim();
+        if trimmed.is_empty() {
+            Ok("en".to_string())
+        } else {
+            Ok(trimmed.to_string())
         }
     }
 
@@ -603,6 +760,29 @@ impl JsEngineState {
                     .set("__operitNativeGetPluginConfigDir", getPluginConfigDir)
                     .map_err(|error| error.to_string())?;
 
+                let invokeToolPkgIpc = QuickJsFunction::new(
+                    ctx.clone(),
+                    |packageTarget: String,
+                     callerContextKey: String,
+                     targetContextKey: String,
+                     targetRuntime: String,
+                     channel: String,
+                     payloadJson: String| {
+                        nativeInvokeToolPkgIpcStrings(
+                            packageTarget,
+                            callerContextKey,
+                            targetContextKey,
+                            targetRuntime,
+                            channel,
+                            payloadJson,
+                        )
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeInvokeToolPkgIpc", invokeToolPkgIpc)
+                    .map_err(|error| error.to_string())?;
+
                 let logJsExecutionTrace =
                     QuickJsFunction::new(ctx.clone(), |callId: String, message: String| {
                         nativeLogJsExecutionTraceStrings(callId, message)
@@ -641,6 +821,55 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
                 globals
                     .set("__operitNativeImageProcessing", imageProcessing)
+                    .map_err(|error| error.to_string())?;
+
+                let javaClassExists = QuickJsFunction::new(ctx.clone(), |className: String| {
+                    nativeJavaClassExistsString(className)
+                })
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeJavaClassExists", javaClassExists)
+                    .map_err(|error| error.to_string())?;
+
+                let javaGetApplicationContext =
+                    QuickJsFunction::new(ctx.clone(), || nativeJavaGetApplicationContextString())
+                        .map_err(|error| error.to_string())?;
+                globals
+                    .set(
+                        "__operitNativeJavaGetApplicationContext",
+                        javaGetApplicationContext,
+                    )
+                    .map_err(|error| error.to_string())?;
+
+                let javaCallInstance = QuickJsFunction::new(
+                    ctx.clone(),
+                    |instanceHandle: String, methodName: String, argsJson: String| {
+                        nativeJavaCallInstanceStrings(instanceHandle, methodName, argsJson)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeJavaCallInstance", javaCallInstance)
+                    .map_err(|error| error.to_string())?;
+
+                let javaNewInstance =
+                    QuickJsFunction::new(ctx.clone(), |className: String, _argsJson: String| {
+                        nativeJavaNewInstanceString(className)
+                    })
+                    .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeJavaNewInstance", javaNewInstance)
+                    .map_err(|error| error.to_string())?;
+
+                let javaCallStatic = QuickJsFunction::new(
+                    ctx.clone(),
+                    |className: String, methodName: String, _argsJson: String| {
+                        nativeJavaCallStaticString(className, methodName)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeJavaCallStatic", javaCallStatic)
                     .map_err(|error| error.to_string())?;
                 Ok(())
             })
@@ -750,6 +979,23 @@ impl JsEngineState {
                 .set_property("__operitNativeGetPluginConfigDir", getPluginConfigDir)
                 .map_err(|error| error.to_string())?;
 
+            let invokeToolPkgIpc = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeInvokeToolPkgIpcStrings(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                        wasmQuickJsArgString(args, 2),
+                        wasmQuickJsArgString(args, 3),
+                        wasmQuickJsArgString(args, 4),
+                        wasmQuickJsArgString(args, 5),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeInvokeToolPkgIpc", invokeToolPkgIpc)
+                .map_err(|error| error.to_string())?;
+
             let logJsExecutionTrace = self
                 .context
                 .wrap_callback(|_, _, args| {
@@ -818,6 +1064,272 @@ impl JsEngineState {
         self.jsEnvironmentInitialized = true;
         Ok(())
     }
+}
+
+#[allow(non_snake_case)]
+fn buildToolPkgIpcFailure(message: &str) -> String {
+    serde_json::json!({
+        "success": false,
+        "message": message.trim()
+    })
+    .to_string()
+}
+
+#[allow(non_snake_case)]
+fn inferToolPkgIpcRuntimeFromContextKey(contextKey: &str) -> String {
+    let normalized = contextKey.trim().to_ascii_lowercase();
+    if normalized.starts_with("toolpkg_main:") {
+        return "main".to_string();
+    }
+    if normalized.starts_with("toolpkg_provider:") {
+        return "provider".to_string();
+    }
+    if normalized.starts_with("toolpkg_compose:")
+        || normalized.starts_with("toolpkg_compose_dsl:")
+        || normalized.starts_with("toolpkg_xml_render:")
+    {
+        return "ui".to_string();
+    }
+    String::new()
+}
+
+#[allow(non_snake_case)]
+fn nativeInvokeToolPkgIpcStrings(
+    packageTarget: String,
+    callerContextKey: String,
+    targetContextKey: String,
+    targetRuntime: String,
+    channel: String,
+    payloadJson: String,
+) -> String {
+    let normalizedTarget = packageTarget.trim().to_string();
+    if normalizedTarget.is_empty() {
+        return buildToolPkgIpcFailure("ToolPkg.ipc package target is empty");
+    }
+    let normalizedChannel = channel.trim().to_string();
+    if normalizedChannel.is_empty() {
+        return buildToolPkgIpcFailure("ToolPkg.ipc channel is required");
+    }
+    let requestedRuntime = targetRuntime.trim().to_ascii_lowercase();
+    if !requestedRuntime.is_empty()
+        && requestedRuntime != "main"
+        && requestedRuntime != "ui"
+        && requestedRuntime != "sandbox"
+        && requestedRuntime != "provider"
+    {
+        return buildToolPkgIpcFailure(&format!(
+            "ToolPkg.ipc targetRuntime is invalid: {requestedRuntime}"
+        ));
+    }
+
+    let resolved = CURRENT_TOOL_HANDLER.with(|handler| -> Result<(JsEngine, String, String, String, String), String> {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return Err("NativeInterface tool handler is unavailable".to_string());
+        };
+        let managerSnapshot = {
+            let packageManager = toolHandler.getOrCreatePackageManager();
+            let guard = packageManager
+                .lock()
+                .expect("package manager mutex poisoned");
+            guard.clone()
+        };
+        let Some(containerRuntime) = managerSnapshot.getToolPkgContainerRuntime(&normalizedTarget) else {
+            return Err(format!("ToolPkg container not found: {normalizedTarget}"));
+        };
+        let explicitTargetContextKey = targetContextKey.trim().to_string();
+        let resolvedTargetContextKey = if !explicitTargetContextKey.is_empty() {
+            explicitTargetContextKey.clone()
+        } else if requestedRuntime.is_empty() || requestedRuntime == "main" {
+            format!("toolpkg_main:{normalizedTarget}")
+        } else {
+            return Err(format!(
+                "ToolPkg.ipc targetContextKey is required for targetRuntime={requestedRuntime}"
+            ));
+        };
+        let inferredRuntime = inferToolPkgIpcRuntimeFromContextKey(&resolvedTargetContextKey);
+        if !requestedRuntime.is_empty()
+            && !inferredRuntime.is_empty()
+            && requestedRuntime != inferredRuntime
+        {
+            return Err(format!(
+                "ToolPkg.ipc targetRuntime does not match targetContextKey: {requestedRuntime} != {inferredRuntime}"
+            ));
+        }
+        let resolvedTargetRuntime = if !requestedRuntime.is_empty() {
+            requestedRuntime.clone()
+        } else if !inferredRuntime.is_empty() {
+            inferredRuntime
+        } else {
+            return Err(format!(
+                "ToolPkg.ipc targetRuntime is required for targetContextKey={resolvedTargetContextKey}"
+            ));
+        };
+        let isMainTarget = resolvedTargetRuntime == "main";
+        if isMainTarget
+            && resolvedTargetContextKey.to_ascii_lowercase()
+                != format!("toolpkg_main:{normalizedTarget}").to_ascii_lowercase()
+        {
+            return Err(format!(
+                "ToolPkg.ipc main targetContextKey is invalid: {resolvedTargetContextKey}"
+            ));
+        }
+        if !isMainTarget && explicitTargetContextKey.is_empty() {
+            return Err(format!(
+                "ToolPkg.ipc targetContextKey is required for targetRuntime={resolvedTargetRuntime}"
+            ));
+        }
+        let engine = if isMainTarget {
+            managerSnapshot.getToolPkgExecutionEngine(&resolvedTargetContextKey)
+        } else {
+            let Some(engine) = managerSnapshot.findToolPkgExecutionEngine(&resolvedTargetContextKey) else {
+                return Err(format!(
+                    "ToolPkg.ipc target runtime is not active: {resolvedTargetContextKey}"
+                ));
+            };
+            engine
+        };
+        let (scriptPath, script) = if isMainTarget {
+            let mainEntry = containerRuntime.mainEntry.trim().to_string();
+            if mainEntry.is_empty() {
+                return Err(format!("ToolPkg main entry is unavailable: {normalizedTarget}"));
+            }
+            let Some(mainScript) = managerSnapshot.getToolPkgMainScriptInternal(&normalizedTarget) else {
+                return Err(format!("ToolPkg main script is unavailable: {normalizedTarget}"));
+            };
+            (mainEntry, mainScript)
+        } else {
+            (String::new(), String::new())
+        };
+        Ok((
+            engine,
+            scriptPath,
+            script,
+            resolvedTargetContextKey,
+            resolvedTargetRuntime,
+        ))
+    });
+
+    let (engine, scriptPath, script, resolvedTargetContextKey, resolvedTargetRuntime) =
+        match resolved {
+            Ok(value) => value,
+            Err(error) => return buildToolPkgIpcFailure(&error),
+        };
+
+    let dispatchFunctionName = "__operit_toolpkg_runtime_dispatch__";
+    let dispatchFunctionSource = r#"
+        async function(params) {
+            var dispatch = globalThis.__operitInvokeToolPkgIpcLocal;
+            if (typeof dispatch !== 'function') {
+                throw new Error('ToolPkg.ipc runtime is unavailable in target context');
+            }
+            var payloadJson =
+                params && typeof params.__operit_toolpkg_ipc_payload_json === 'string'
+                    ? params.__operit_toolpkg_ipc_payload_json
+                    : 'null';
+            var payload;
+            try {
+                payload = JSON.parse(payloadJson);
+            } catch (error) {
+                throw new Error(
+                    'ToolPkg.ipc payload JSON is invalid: ' +
+                    String(error && error.message ? error.message : error)
+                );
+            }
+            var channel =
+                params && typeof params.__operit_toolpkg_ipc_channel === 'string'
+                    ? params.__operit_toolpkg_ipc_channel.trim()
+                    : '';
+            if (!channel) {
+                throw new Error('ToolPkg.ipc channel is required');
+            }
+            var callerContextKey =
+                params && typeof params.__operit_toolpkg_ipc_caller_context_key === 'string'
+                    ? params.__operit_toolpkg_ipc_caller_context_key
+                    : '';
+            var currentContextKey =
+                params && typeof params.__operit_execution_context_key === 'string'
+                    ? params.__operit_execution_context_key
+                    : '';
+            var packageTarget =
+                params && typeof params.__operit_ui_package_name === 'string'
+                    ? params.__operit_ui_package_name
+                    : '';
+            var currentRuntime =
+                params && typeof params.__operit_toolpkg_runtime_kind === 'string'
+                    ? params.__operit_toolpkg_runtime_kind.trim()
+                    : '';
+            return await dispatch(channel, payload, {
+                channel: channel,
+                callerContextKey: callerContextKey,
+                currentContextKey: currentContextKey,
+                currentRuntime: currentRuntime,
+                packageTarget: packageTarget
+            });
+        }
+    "#
+    .trim();
+
+    let mut params = BTreeMap::new();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String(normalizedTarget.clone()),
+    );
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String(normalizedTarget.clone()),
+    );
+    params.insert(
+        "containerPackageName".to_string(),
+        Value::String(normalizedTarget.clone()),
+    );
+    params.insert(
+        "__operit_execution_context_key".to_string(),
+        Value::String(resolvedTargetContextKey.clone()),
+    );
+    params.insert(
+        "__operit_toolpkg_runtime_kind".to_string(),
+        Value::String(resolvedTargetRuntime.clone()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String(scriptPath),
+    );
+    params.insert(
+        "__operit_inline_function_name".to_string(),
+        Value::String(dispatchFunctionName.to_string()),
+    );
+    params.insert(
+        "__operit_inline_function_source".to_string(),
+        Value::String(dispatchFunctionSource.to_string()),
+    );
+    params.insert(
+        "__operit_toolpkg_ipc_channel".to_string(),
+        Value::String(normalizedChannel),
+    );
+    let normalizedPayloadJson = if payloadJson.trim().is_empty() {
+        "null".to_string()
+    } else {
+        payloadJson.trim().to_string()
+    };
+    params.insert(
+        "__operit_toolpkg_ipc_payload_json".to_string(),
+        Value::String(normalizedPayloadJson),
+    );
+    params.insert(
+        "__operit_toolpkg_ipc_caller_context_key".to_string(),
+        Value::String(callerContextKey.trim().to_string()),
+    );
+
+    let result = engine.executeScriptFunction(&script, dispatchFunctionName, &params, None);
+    if let Some(errorMessage) = extractJsExecutionErrorMessage(result.as_deref()) {
+        return buildToolPkgIpcFailure(&errorMessage);
+    }
+    serde_json::json!({
+        "success": true,
+        "value": decodeJsExecutionResultValue(result.as_deref())
+    })
+    .to_string()
 }
 
 #[allow(non_snake_case)]
@@ -923,415 +1435,11 @@ impl JsEngine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::JsEngineState;
-    use crate::data::preferences::EnvPreferences::EnvPreferences;
-    use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
-    use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-    use operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot;
-    use serde_json::Value;
-    use std::collections::BTreeMap;
-    use std::path::{Component, Path, PathBuf};
-    use std::sync::Arc;
-
-    #[derive(Clone, Debug)]
-    struct TestRuntimeStorageHost {
-        root: PathBuf,
-    }
-
-    impl TestRuntimeStorageHost {
-        fn new(root: PathBuf) -> Self {
-            Self { root }
-        }
-
-        fn resolve(&self, path: &str) -> HostResult<PathBuf> {
-            let path = Path::new(path);
-            if path.is_absolute() {
-                return Err(HostError::new(format!(
-                    "Runtime storage path must be relative: {}",
-                    path.display()
-                )));
-            }
-            let mut resolved = self.root.clone();
-            for component in path.components() {
-                match component {
-                    Component::Normal(segment) => resolved.push(segment),
-                    Component::CurDir => {}
-                    _ => {
-                        return Err(HostError::new(format!(
-                            "Invalid runtime storage path: {}",
-                            path.display()
-                        )))
-                    }
-                }
-            }
-            Ok(resolved)
-        }
-    }
-
-    impl RuntimeStorageHost for TestRuntimeStorageHost {
-        fn rootDir(&self) -> Option<PathBuf> {
-            Some(self.root.clone())
-        }
-
-        fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-            Ok(std::fs::read(self.resolve(path)?)?)
-        }
-
-        fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-            let path = self.resolve(path)?;
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(path, content)?;
-            Ok(())
-        }
-
-        fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-            let path = self.resolve(path)?;
-            if !path.exists() {
-                return Ok(());
-            }
-            if path.is_dir() {
-                if recursive {
-                    std::fs::remove_dir_all(path)?;
-                } else {
-                    std::fs::remove_dir(path)?;
-                }
-            } else {
-                std::fs::remove_file(path)?;
-            }
-            Ok(())
-        }
-
-        fn exists(&self, path: &str) -> HostResult<bool> {
-            Ok(self.resolve(path)?.exists())
-        }
-
-        fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-            let directory = self.resolve(prefix)?;
-            let mut entries = Vec::new();
-            if !directory.exists() {
-                return Ok(entries);
-            }
-            for entry in std::fs::read_dir(directory)? {
-                let entry = entry?;
-                let metadata = entry.metadata()?;
-                let path = entry
-                    .path()
-                    .strip_prefix(&self.root)
-                    .map_err(|error| HostError::new(error.to_string()))?
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                entries.push(RuntimeStorageEntry {
-                    path,
-                    isDirectory: metadata.is_dir(),
-                    size: metadata.len() as i64,
-                });
-            }
-            Ok(entries)
-        }
-    }
-
-    fn ensure_test_runtime_root() {
-        let root = std::env::temp_dir().join("operit-runtime-js-engine-tests");
-        std::fs::create_dir_all(&root).expect("test runtime root");
-        let host = Arc::new(TestRuntimeStorageHost::new(root.clone()));
-        setDefaultRuntimeStoreRoot(root);
-        setDefaultRuntimeStorageHost(host);
-    }
-
-    #[test]
-    fn execute_promise_script_repeatedly_on_same_engine() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            globalThis.__operit_cached_async_echo = globalThis.__operit_cached_async_echo || function(params) {
-                return Promise.resolve("ASYNC_ECHO:" + params.text);
-            };
-            exports.async_echo = globalThis.__operit_cached_async_echo;
-        "#;
-
-        for index in 0..16 {
-            let mut params = BTreeMap::new();
-            params.insert(
-                "text".to_string(),
-                Value::String(format!("same-engine-{index}")),
-            );
-            let output =
-                state.executeScriptFunctionOnCurrentThread(script, "async_echo", &params, None);
-            assert_eq!(
-                output.as_deref(),
-                Some(format!("\"ASYNC_ECHO:same-engine-{index}\"").as_str())
-            );
-        }
-    }
-
-    #[test]
-    fn execute_complete_finishes_call_before_return_value() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.complete_first = function(_params) {
-                complete("first");
-                return "second";
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "complete_first", &params, None);
-
-        assert_eq!(output.as_deref(), Some("\"first\""));
-    }
-
-    #[test]
-    fn execute_function_with_active_module_context() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.marker = "root-marker";
-            exports.inspect_context = function(_params) {
-                return String(globalThis.__operitActiveModuleExports === exports) +
-                    ":" +
-                    String(globalThis.__operitActiveModule && globalThis.__operitActiveModule.exports === exports) +
-                    ":" +
-                    globalThis.__operitActiveModuleExports.marker;
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "inspect_context", &params, None);
-
-        assert_eq!(output.as_deref(), Some("\"true:true:root-marker\""));
-    }
-
-    #[test]
-    fn bootstrap_exposes_ui_android_okhttp_api() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.inspect_bootstrap_api = function(_params) {
-                return [
-                    typeof UINode,
-                    typeof Android,
-                    typeof Intent,
-                    typeof PackageManager,
-                    typeof ContentProvider,
-                    typeof SystemManager,
-                    typeof DeviceController,
-                    typeof OkHttp,
-                    typeof OkHttp.newClient,
-                    typeof OkHttpClientBuilder,
-                    typeof OkHttpClient,
-                    typeof RequestBuilder
-                ].join(":");
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output = state.executeScriptFunctionOnCurrentThread(
-            script,
-            "inspect_bootstrap_api",
-            &params,
-            None,
-        );
-
-        assert_eq!(
-            output.as_deref(),
-            Some("\"function:function:function:function:function:function:function:object:function:function:function:function\"")
-        );
-    }
-
-    #[test]
-    fn execute_inline_hook_function_source() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.marker = "inline-root";
-        "#;
-        let mut params = BTreeMap::new();
-        params.insert(
-            "__operit_inline_function_name".to_string(),
-            Value::String("__operit_inline_test".to_string()),
-        );
-        params.insert(
-            "__operit_inline_function_source".to_string(),
-            Value::String(
-                r#"function(_params) { return globalThis.__operitActiveModuleExports.marker; }"#
-                    .to_string(),
-            ),
-        );
-
-        let output = state.executeScriptFunctionOnCurrentThread(
-            script,
-            "__operit_inline_test",
-            &params,
-            None,
-        );
-
-        assert_eq!(output.as_deref(), Some("\"inline-root\""));
-    }
-
-    #[test]
-    fn execute_function_from_module_exports() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            module.exports = {
-                module_only: function(params) {
-                    return "module:" + params.text;
-                }
-            };
-        "#;
-        let mut params = BTreeMap::new();
-        params.insert("text".to_string(), Value::String("exports".to_string()));
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "module_only", &params, None);
-
-        assert_eq!(output.as_deref(), Some("\"module:exports\""));
-    }
-
-    #[test]
-    fn register_thinking_guidance_toolpkg_main() {
-        let engine = super::JsEngine::newToolPkgRegistrationEngine();
-        let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .expect("repo root");
-        let scriptPath = repoRoot.join("plugins/buildin/thinking_guidance/dist/main.js");
-        let script = std::fs::read_to_string(&scriptPath).expect("thinking_guidance main.js");
-        let mut params = BTreeMap::new();
-        params.insert(
-            "toolPkgId".to_string(),
-            Value::String("thinking_guidance".to_string()),
-        );
-
-        let capture = engine
-            .executeToolPkgMainRegistrationFunction(&script, "registerToolPkg", &params)
-            .expect("thinking_guidance registration");
-
-        assert_eq!(capture.inputMenuTogglePlugins.len(), 1);
-        assert_eq!(capture.systemPromptComposeHooks.len(), 1);
-        let menu = serde_json::from_str::<Value>(&capture.inputMenuTogglePlugins[0]).unwrap();
-        assert_eq!(menu["function"], "onInputMenuToggle");
-        let prompt = serde_json::from_str::<Value>(&capture.systemPromptComposeHooks[0]).unwrap();
-        assert_eq!(prompt["function"], "onSystemPromptCompose");
-    }
-
-    #[test]
-    fn execute_script_can_require_axios_and_uuid() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.inspect_require = function(_params) {
-                var axios = require('axios');
-                var uuid = require('uuid');
-                return typeof axios.get + ":" + typeof axios.post + ":" + uuid.v4().length;
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "inspect_require", &params, None);
-
-        assert_eq!(output.as_deref(), Some("\"function:function:36\""));
-    }
-
-    #[test]
-    fn registration_mode_uses_ui_module_placeholder() {
-        let engine = super::JsEngine::newToolPkgRegistrationEngine();
-        let script = r#"
-            var Screen = require('./screens/main.ui.js');
-            exports.registerToolPkg = function(_params) {
-                ToolPkg.registerUiRoute({
-                    id: "main",
-                    path: "/main",
-                    screen: Screen
-                });
-                return true;
-            };
-        "#;
-        let mut params = BTreeMap::new();
-        params.insert("toolPkgId".to_string(), Value::String("ui_pkg".to_string()));
-
-        let capture = engine
-            .executeToolPkgMainRegistrationFunction(script, "registerToolPkg", &params)
-            .expect("ui registration");
-
-        assert_eq!(capture.uiRoutes.len(), 1);
-        let route = serde_json::from_str::<Value>(&capture.uiRoutes[0]).unwrap();
-        assert_eq!(route["screen"], "screens/main.ui.js");
-    }
-
-    #[test]
-    fn native_interface_reads_env_for_call() {
-        ensure_test_runtime_root();
-        let key = "OPERIT_JS_NATIVE_ENV_TEST";
-        std::env::set_var(key, "enabled");
-        EnvPreferences::getInstance()
-            .setEnv(key, "enabled")
-            .expect("set env");
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.read_env = function(_params) {
-                return getEnv("OPERIT_JS_NATIVE_ENV_TEST");
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output = state.executeScriptFunctionOnCurrentThread(script, "read_env", &params, None);
-
-        assert_eq!(output.as_deref(), Some("\"enabled\""));
-        EnvPreferences::getInstance()
-            .removeEnv(key)
-            .expect("remove env");
-        std::env::remove_var(key);
-    }
-
-    #[test]
-    fn native_interface_resolves_plugin_config_dir() {
-        ensure_test_runtime_root();
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            exports.config_dir = function(_params) {
-                return getPluginConfigDir('plugin:name');
-            };
-        "#;
-        let params = BTreeMap::new();
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "config_dir", &params, None);
-        let path = serde_json::from_str::<String>(&output.expect("config dir"))
-            .expect("serialized config dir");
-
-        let normalized = path.replace('\\', "/");
-        assert!(normalized.contains("/plugins/plugin_name-"));
-        assert!(std::path::Path::new(&path).is_dir());
-    }
-
-    #[test]
-    fn probe_async_function_declaration_inside_iife() {
-        let mut state = JsEngineState::new(None);
-        let script = r#"
-            const SystemTools = (function () {
-                async function get_device_info(_params) {
-                    const result = Tools.System.getDeviceInfo();
-                    return { success: true, data: result };
-                }
-                async function wrapToolExecution(func, params) {
-                    const result = await func(params);
-                    complete(result);
-                }
-                return {
-                    get_device_info: (params) => wrapToolExecution(get_device_info, params),
-                };
-            })();
-            exports.get_device_info = SystemTools.get_device_info;
-        "#;
-        let params = BTreeMap::new();
-
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "get_device_info", &params, None);
-
-        assert!(output.is_some());
-    }
-}
+#[path = "tests/JsEngineTests.rs"]
+mod JsEngineTests;
+#[cfg(test)]
+#[path = "tests/PluginConfigTests.rs"]
+mod PluginConfigTests;
 
 #[allow(non_snake_case)]
 fn nativeCallToolStrings(toolType: String, toolName: String, paramsJson: String) -> String {
@@ -1371,6 +1479,15 @@ fn nativeReadToolPkgTextResourceStrings(
     packageNameOrSubpackageId: String,
     resourcePath: String,
 ) -> String {
+    let resourceKey = normalizeToolPkgTextResourcePath(&resourcePath);
+    if let Some(text) = CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+        resources
+            .borrow()
+            .as_ref()
+            .and_then(|map| map.get(&resourceKey).cloned())
+    }) {
+        return text;
+    }
     CURRENT_TOOL_HANDLER.with(|handler| {
         let borrowed = handler.borrow();
         let Some(toolHandler) = borrowed.as_ref() else {
@@ -1384,6 +1501,14 @@ fn nativeReadToolPkgTextResourceStrings(
             .readToolPkgTextResource(&packageNameOrSubpackageId, &resourcePath)
             .unwrap_or_default()
     })
+}
+
+#[allow(non_snake_case)]
+fn normalizeToolPkgTextResourcePath(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim()
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
 }
 
 #[allow(non_snake_case)]
@@ -1419,8 +1544,7 @@ fn nativeGetPluginConfigDirString(pluginId: String) -> String {
 
 #[allow(non_snake_case)]
 fn nativeLogJsExecutionTraceStrings(callId: String, message: String) {
-    let _ = callId;
-    let _ = message;
+    let _ = (callId, message);
 }
 
 #[allow(non_snake_case)]
@@ -1534,976 +1658,4 @@ fn ensureRegistrationExecutionSucceeded(output: &str) -> Result<(), String> {
         return Err(message.to_string());
     }
     Ok(())
-}
-
-#[allow(non_snake_case)]
-fn buildExecutionPreludeSource() -> String {
-    r#"
-        function __operitGetActiveCallRuntime() {
-            var root = typeof globalThis !== 'undefined'
-                ? globalThis
-                : (typeof window !== 'undefined' ? window : this);
-            var runtime =
-                root &&
-                root.__operit_call_runtime_ref &&
-                typeof root.__operit_call_runtime_ref === 'object'
-                    ? root.__operit_call_runtime_ref
-                    : __operit_call_runtime;
-            return runtime && typeof runtime === 'object' ? runtime : __operit_call_runtime;
-        }
-        function __operitInvokeCallRuntime(methodName, argsLike) {
-            var runtime = __operitGetActiveCallRuntime();
-            var method = runtime ? runtime[methodName] : undefined;
-            if (typeof method !== 'function') {
-                return undefined;
-            }
-            return method.apply(runtime, Array.prototype.slice.call(argsLike || []));
-        }
-        function __operitInvokeCallRuntimeConsole(methodName, argsLike) {
-            var runtime = __operitGetActiveCallRuntime();
-            var runtimeConsole = runtime && runtime.console ? runtime.console : null;
-            var method = runtimeConsole ? runtimeConsole[methodName] : undefined;
-            if (typeof method !== 'function') {
-                return undefined;
-            }
-            return method.apply(runtimeConsole, Array.prototype.slice.call(argsLike || []));
-        }
-        var sendIntermediateResult = function() { return __operitInvokeCallRuntime('sendIntermediateResult', arguments); };
-        var emit = function() { return __operitInvokeCallRuntime('emit', arguments); };
-        var delta = function() { return __operitInvokeCallRuntime('delta', arguments); };
-        var log = function() { return __operitInvokeCallRuntime('log', arguments); };
-        var update = function() { return __operitInvokeCallRuntime('update', arguments); };
-        var done = function() { return __operitInvokeCallRuntime('done', arguments); };
-        var complete = function() { return __operitInvokeCallRuntime('complete', arguments); };
-        var getEnv = function() { return __operitInvokeCallRuntime('getEnv', arguments); };
-        var getPluginConfigDir = function() { return __operitInvokeCallRuntime('getPluginConfigDir', arguments); };
-        var getState = function() { return __operitInvokeCallRuntime('getState', arguments); };
-        var getLang = function() { return __operitInvokeCallRuntime('getLang', arguments); };
-        var getCallerName = function() { return __operitInvokeCallRuntime('getCallerName', arguments); };
-        var getChatId = function() { return __operitInvokeCallRuntime('getChatId', arguments); };
-        var getCallerCardId = function() { return __operitInvokeCallRuntime('getCallerCardId', arguments); };
-        var __handleAsync = function() { return __operitInvokeCallRuntime('handleAsync', arguments); };
-        var console = {
-            log: function() { return __operitInvokeCallRuntimeConsole('log', arguments); },
-            info: function() { return __operitInvokeCallRuntimeConsole('info', arguments); },
-            warn: function() { return __operitInvokeCallRuntimeConsole('warn', arguments); },
-            error: function() { return __operitInvokeCallRuntimeConsole('error', arguments); }
-        };
-        var reportDetailedError = function() { return __operitInvokeCallRuntime('reportDetailedError', arguments); };
-        var ToolPkg = globalThis.ToolPkg;
-        var Tools = globalThis.Tools;
-        var Java = globalThis.Java;
-        var Android = globalThis.Android;
-        var Intent = globalThis.Intent;
-        var PackageManager = globalThis.PackageManager;
-        var ContentProvider = globalThis.ContentProvider;
-        var SystemManager = globalThis.SystemManager;
-        var DeviceController = globalThis.DeviceController;
-        var OperitComposeDslRuntime = globalThis.OperitComposeDslRuntime;
-        var CryptoJS = globalThis.CryptoJS;
-        var Jimp = globalThis.Jimp;
-        var UINode = globalThis.UINode;
-        var OkHttpClientBuilder = globalThis.OkHttpClientBuilder;
-        var OkHttpClient = globalThis.OkHttpClient;
-        var RequestBuilder = globalThis.RequestBuilder;
-        var OkHttp = globalThis.OkHttp;
-        var pako = globalThis.pako;
-        var _ = globalThis._;
-        var dataUtils = globalThis.dataUtils;
-        var toolCall = globalThis.toolCall;
-    "#
-    .to_string()
-}
-
-#[allow(non_snake_case)]
-fn buildRuntimeBootstrapScript() -> String {
-    let executionPreludeJson = serde_json::to_string(&buildExecutionPreludeSource())
-        .unwrap_or_else(|_| "\"\"".to_string());
-    format!(
-        r#"
-        {}
-        var globalThis = this;
-        var window = globalThis;
-        var __operitRuntimePrelude = {};
-        var console = {{
-            log: function() {{ NativeInterface.logInfoForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            info: function() {{ NativeInterface.logInfoForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            warn: function() {{ NativeInterface.logInfoForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            error: function() {{ NativeInterface.logErrorForCall('', Array.prototype.slice.call(arguments).join(' ')); }}
-        }};
-        var NativeInterface = {{
-            callTool: function(toolType, toolName, paramsJson) {{
-                return __operitNativeCallTool(String(toolType || 'default'), String(toolName || ''), String(paramsJson || '{{}}'));
-            }},
-            callToolAsync: function(callbackId, toolType, toolName, paramsJson) {{
-                var raw = __operitNativeCallTool(String(toolType || 'default'), String(toolName || ''), String(paramsJson || '{{}}'));
-                var parsed;
-                try {{
-                    parsed = JSON.parse(raw);
-                }} catch (_error) {{
-                    parsed = {{ success: false, message: String(raw || '') }};
-                }}
-                if (typeof window[callbackId] === 'function') {{
-                    window[callbackId](parsed, !parsed.success);
-                }}
-            }},
-            callToolAsyncStreaming: function(callbackId, intermediateCallbackId, toolType, toolName, paramsJson) {{
-                this.callToolAsync(callbackId, toolType, toolName, paramsJson);
-            }},
-            logInfoForCall: function() {{}},
-            logErrorForCall: function() {{}},
-            reportErrorForCall: function() {{}},
-            sendCallIntermediateResult: function(_callId, result) {{
-                __operitSendIntermediateResult(String(result == null ? '' : result));
-            }},
-            readToolPkgTextResource: function(packageNameOrSubpackageId, resourcePath) {{
-                return __operitNativeReadToolPkgTextResource(
-                    String(packageNameOrSubpackageId || ''),
-                    String(resourcePath || '')
-                );
-            }},
-            getEnvForCall: function(callId, key) {{
-                return __operitNativeGetEnvForCall(String(callId || ''), String(key || ''));
-            }},
-            getPluginConfigDir: function(pluginId) {{
-                return __operitNativeGetPluginConfigDir(String(pluginId || ''));
-            }},
-            logJsExecutionTrace: function(callId, message) {{
-                __operitNativeLogJsExecutionTrace(String(callId || ''), String(message || ''));
-            }},
-            decompress: function(data, algorithm) {{
-                return __operitNativeDecompress(String(data), String(algorithm));
-            }},
-            crypto: function(algorithm, operation, argsJson) {{
-                return __operitNativeCrypto(
-                    String(algorithm),
-                    String(operation),
-                    String(argsJson)
-                );
-            }},
-            image_processing: function(callbackId, operation, argsJson) {{
-                var raw = __operitNativeImageProcessing(
-                    String(callbackId),
-                    String(operation),
-                    String(argsJson)
-                );
-                var parsed = JSON.parse(raw);
-                var callback = window[String(callbackId)];
-                if (typeof callback === 'function') {{
-                    if (parsed.success) {{
-                        callback(parsed.result, false);
-                    }} else {{
-                        callback(parsed.error, true);
-                    }}
-                }} else {{
-                    console.error("Callback not found: " + String(callbackId));
-                }}
-            }},
-            setCallResult: function(callId, result) {{
-                __operitNativeSetCallResult(String(callId || ''), String(result == null ? '' : result));
-            }},
-            setCallError: function(callId, error) {{
-                __operitNativeSetCallError(String(callId || ''), String(error == null ? '' : error));
-            }}
-        }};
-
-        function __operitParseToolResult(result, isError) {{
-            if (isError) {{
-                if (result && typeof result === 'object' && result.success === false) {{
-                    var err = new Error(String(result.message || 'Tool call failed'));
-                    err.data = result.data;
-                    throw err;
-                }}
-                throw new Error(typeof result === 'string' ? result : JSON.stringify(result));
-            }}
-            if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'success')) {{
-                if (result.success) {{
-                    return result.data;
-                }}
-                var error = new Error(String(result.message || 'Tool call failed'));
-                error.data = result.data;
-                throw error;
-            }}
-            if (typeof result === 'string' && result.length > 1) {{
-                var first = result.charAt(0);
-                if (first === '{{' || first === '[') {{
-                    try {{
-                        return __operitParseToolResult(JSON.parse(result), false);
-                    }} catch (_error) {{
-                        return result;
-                    }}
-                }}
-            }}
-            return result;
-        }}
-
-        function toolCall() {{
-            var type = 'default';
-            var name = '';
-            var params = {{}};
-            if (arguments.length === 1 && typeof arguments[0] === 'object') {{
-                type = String(arguments[0].type || 'default');
-                name = String(arguments[0].name || '');
-                params = arguments[0].params || {{}};
-            }} else if (arguments.length === 1) {{
-                name = String(arguments[0] || '');
-            }} else if (arguments.length === 2) {{
-                name = String(arguments[0] || '');
-                params = arguments[1] || {{}};
-            }} else {{
-                type = String(arguments[0] || 'default');
-                name = String(arguments[1] || '');
-                params = arguments[2] || {{}};
-            }}
-            var raw = NativeInterface.callTool(type, name, JSON.stringify(params));
-            var parsed;
-            try {{
-                parsed = JSON.parse(raw);
-            }} catch (_parseError) {{
-                parsed = raw;
-            }}
-            return __operitParseToolResult(parsed, false);
-        }}
-
-        globalThis.__operitCompleteCalled = false;
-        globalThis.__operitCompleteValue = undefined;
-        function complete(value) {{
-            globalThis.__operitCompleteCalled = true;
-            globalThis.__operitCompleteValue = value;
-        }}
-
-        function sendIntermediateResult(value) {{
-            __operitSendIntermediateResult(__operitFinishExecutionResult(value));
-        }}
-        var emit = sendIntermediateResult;
-        var delta = sendIntermediateResult;
-        var log = sendIntermediateResult;
-        var update = sendIntermediateResult;
-
-        function __operitFinishExecutionResult(result) {{
-            if (result && result.__operit_error) {{
-                return JSON.stringify({{
-                    success: false,
-                    message: String(result.message || ''),
-                    data: result.data
-                }});
-            }}
-            if (result !== null && typeof result === 'object') {{
-                return JSON.stringify(result);
-            }}
-            return result === undefined ? "undefined" : String(result);
-        }}
-
-        function __operitHasUsableJavaInstanceMarker(value) {{
-            if (!value || typeof value !== 'object') {{
-                return false;
-            }}
-            try {{
-                return (
-                    Object.prototype.hasOwnProperty.call(value, '__javaHandle') &&
-                    Object.prototype.hasOwnProperty.call(value, '__javaClass') &&
-                    typeof value.__javaHandle === 'string' &&
-                    typeof value.__javaClass === 'string' &&
-                    __operitText(value.__javaHandle).trim().length > 0 &&
-                    __operitText(value.__javaClass).trim().length > 0
-                );
-            }} catch (_javaMarkerError) {{
-                return false;
-            }}
-        }}
-
-        function __operitNormalizeSerializableValue(value, seen) {{
-            if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {{
-                return value;
-            }}
-            if (typeof value === 'bigint' || typeof value === 'function') {{
-                return String(value);
-            }}
-            if (typeof value !== 'object') {{
-                return String(value);
-            }}
-            seen = seen || [];
-            if (seen.indexOf(value) >= 0) {{
-                return '[Circular]';
-            }}
-            seen.push(value);
-            try {{
-                if (typeof value.toJSON === 'function') {{
-                    return __operitNormalizeSerializableValue(value.toJSON(), seen);
-                }}
-                if (Array.isArray(value)) {{
-                    return value.map(function(item) {{
-                        return __operitNormalizeSerializableValue(item, seen);
-                    }});
-                }}
-                if (__operitHasUsableJavaInstanceMarker(value)) {{
-                    return {{
-                        __javaHandle: __operitText(value.__javaHandle),
-                        __javaClass: __operitText(value.__javaClass)
-                    }};
-                }}
-                var out = {{}};
-                Object.keys(value).forEach(function(key) {{
-                    out[key] = __operitNormalizeSerializableValue(value[key], seen);
-                }});
-                return out;
-            }} finally {{
-                seen.pop();
-            }}
-        }}
-
-        function __operitSerializeOrThrow(value) {{
-            return JSON.stringify(__operitNormalizeSerializableValue(value, []));
-        }}
-
-        function __operitSafeSerialize(value) {{
-            try {{
-                return __operitSerializeOrThrow(value);
-            }} catch (error) {{
-                return JSON.stringify({{
-                    error: 'Failed to serialize value',
-                    message: __operitText(error && error.message ? error.message : error),
-                    value: __operitText(value).slice(0, 1000)
-                }});
-            }}
-        }}
-
-        function __operitNormalizeComposeResult(value) {{
-            if (!value || typeof value !== 'object' || !value.composeDsl || typeof value.composeDsl !== 'object') {{
-                return value;
-            }}
-            if (!Object.prototype.hasOwnProperty.call(value.composeDsl, 'screen')) {{
-                return value;
-            }}
-            var screenRef = value.composeDsl.screen;
-            var resolved = '';
-            if (typeof screenRef === 'function') {{
-                resolved = __operitText(screenRef.__operit_toolpkg_module_path).trim();
-            }} else if (
-                screenRef &&
-                typeof screenRef === 'object' &&
-                typeof screenRef.default === 'function'
-            ) {{
-                resolved = __operitText(screenRef.default.__operit_toolpkg_module_path).trim();
-            }} else if (typeof screenRef === 'string') {{
-                throw new Error('composeDsl.screen must be a compose_dsl screen function, not a string path');
-            }}
-            if (!resolved) {{
-                throw new Error('composeDsl.screen is missing a toolpkg module path marker');
-            }}
-            value.composeDsl.screen = resolved.replace(/\\/g, '/');
-            return value;
-        }}
-
-        function __operitGetFactoryCache() {{
-            if (!globalThis.__operitFactoryCache || typeof globalThis.__operitFactoryCache !== 'object') {{
-                globalThis.__operitFactoryCache = {{}};
-            }}
-            return globalThis.__operitFactoryCache;
-        }}
-
-        function __operitGetModuleInstanceCache() {{
-            if (!globalThis.__operitModuleInstanceCache || typeof globalThis.__operitModuleInstanceCache !== 'object') {{
-                globalThis.__operitModuleInstanceCache = {{}};
-            }}
-            return globalThis.__operitModuleInstanceCache;
-        }}
-
-        function __operitNormalizePath(pathValue) {{
-            var parts = String(pathValue == null ? '' : pathValue).replace(/\\/g, '/').split('/');
-            var stack = [];
-            for (var i = 0; i < parts.length; i += 1) {{
-                var part = parts[i];
-                if (!part || part === '.') {{
-                    continue;
-                }}
-                if (part === '..') {{
-                    if (stack.length > 0) {{
-                        stack.pop();
-                    }}
-                    continue;
-                }}
-                stack.push(part);
-            }}
-            return stack.join('/');
-        }}
-
-        function __operitDirname(pathValue) {{
-            var normalized = __operitNormalizePath(pathValue);
-            var index = normalized.lastIndexOf('/');
-            return index < 0 ? '' : normalized.slice(0, index);
-        }}
-
-        function __operitResolveModulePath(request, fromPath) {{
-            var normalized = String(request == null ? '' : request).replace(/\\/g, '/').trim();
-            if (!normalized) {{
-                return '';
-            }}
-            if (!(normalized.startsWith('.') || normalized.startsWith('/'))) {{
-                return normalized;
-            }}
-            if (normalized.startsWith('/')) {{
-                return __operitNormalizePath(normalized);
-            }}
-            var base = __operitDirname(fromPath);
-            return __operitNormalizePath(base ? base + '/' + normalized : normalized);
-        }}
-
-        function __operitBuildCandidatePaths(modulePath) {{
-            var normalized = __operitNormalizePath(modulePath);
-            if (!normalized) {{
-                return [];
-            }}
-            if (/\.[a-z0-9]+$/i.test(normalized)) {{
-                return [normalized];
-            }}
-            return [
-                normalized,
-                normalized + '.js',
-                normalized + '.json',
-                normalized + '/index.js',
-                normalized + '/index.json'
-            ];
-        }}
-
-        function __operitHashText(value) {{
-            var textValue = String(value == null ? '' : value);
-            var hash = 0;
-            for (var i = 0; i < textValue.length; i += 1) {{
-                hash = (((hash << 5) - hash) + textValue.charCodeAt(i)) | 0;
-            }}
-            return (hash >>> 0).toString(16);
-        }}
-
-        function __operitBuildFactoryKey(kind, identity, source) {{
-            return [String(kind || ''), String(identity || ''), String(source || '').length, __operitHashText(source)].join(':');
-        }}
-
-        function __operitGetFactory(kind, identity, source) {{
-            var key = __operitBuildFactoryKey(kind, identity, source);
-            var cache = __operitGetFactoryCache();
-            if (typeof cache[key] === 'function') {{
-                return cache[key];
-            }}
-            var factory = new Function(
-                'module',
-                'exports',
-                'require',
-                '__operit_call_runtime',
-                __operitRuntimePrelude + '\n' + source
-            );
-            cache[key] = factory;
-            return factory;
-        }}
-
-        function __operitTagModuleExports(modulePath, exportsRef) {{
-            if (typeof exportsRef === 'function') {{
-                exportsRef.__operit_toolpkg_module_path = modulePath;
-                return;
-            }}
-            if (!exportsRef || typeof exportsRef !== 'object') {{
-                return;
-            }}
-            exportsRef.__operit_toolpkg_module_path = modulePath;
-            Object.keys(exportsRef).forEach(function(key) {{
-                if (typeof exportsRef[key] === 'function') {{
-                    exportsRef[key].__operit_toolpkg_module_path = modulePath;
-                    exportsRef[key].__operit_toolpkg_export_name = key;
-                }}
-            }});
-        }}
-
-        function __operitText(value) {{
-            return value == null ? '' : String(value);
-        }}
-
-        function __operitToBoolean(value) {{
-            if (typeof value === 'boolean') {{
-                return value;
-            }}
-            var normalized = __operitText(value).trim().toLowerCase();
-            return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
-        }}
-
-        function __operitCreateRegistrationScreenPlaceholder(modulePath) {{
-            function ScreenPlaceholder() {{
-                return null;
-            }}
-            ScreenPlaceholder.__operit_toolpkg_module_path = modulePath;
-            return ScreenPlaceholder;
-        }}
-
-        function __operitIsLocalUiModulePath(modulePath) {{
-            var normalized = __operitNormalizePath(modulePath);
-            return /\.ui\.js$/i.test(normalized);
-        }}
-
-        function __operitFindTargetFunction(exportsRef, moduleRef, functionName) {{
-            if (exportsRef && typeof exportsRef[functionName] === 'function') {{
-                return exportsRef[functionName];
-            }}
-            if (moduleRef && moduleRef.exports && typeof moduleRef.exports[functionName] === 'function') {{
-                return moduleRef.exports[functionName];
-            }}
-            if (typeof globalThis[functionName] === 'function') {{
-                return globalThis[functionName];
-            }}
-            return null;
-        }}
-
-        function __operitBuildAvailableFunctions(exportsRef, moduleRef) {{
-            var names = [];
-            function collect(target) {{
-                if (!target || typeof target !== 'object') {{
-                    return;
-                }}
-                Object.keys(target).forEach(function(key) {{
-                    if (typeof target[key] === 'function' && names.indexOf(key) < 0) {{
-                        names.push(key);
-                    }}
-                }});
-            }}
-            collect(exportsRef);
-            collect(moduleRef && moduleRef.exports ? moduleRef.exports : null);
-            return names;
-        }}
-
-        function __operitExecuteScriptFunction(callId, params, scriptText, targetFunctionName, timeoutSec, preTimeoutMs) {{
-            var previousCallRuntime = globalThis.__operit_call_runtime_ref;
-            var previousCallId = globalThis.__operitCurrentCallId;
-            var registerCallSession = globalThis.__operitRegisterCallSession;
-            if (typeof registerCallSession !== 'function') {{
-                NativeInterface.setCallError(callId, JSON.stringify({{
-                    success: false,
-                    message: 'JS execution runtime bridge is unavailable'
-                }}));
-                return;
-            }}
-            var callState = registerCallSession(callId, params);
-            globalThis.__operitCurrentCallId = callId;
-            function getCallState() {{
-                return typeof globalThis.__operitGetCallState === 'function'
-                    ? globalThis.__operitGetCallState(callId)
-                    : null;
-            }}
-            function finalizeCall() {{
-                if (globalThis.__operitCurrentCallId === callId) {{
-                    globalThis.__operitCurrentCallId =
-                        typeof previousCallId === 'string' ? previousCallId : '';
-                }}
-                if (globalThis.__operit_call_runtime_ref === callRuntime) {{
-                    if (previousCallRuntime && typeof previousCallRuntime === 'object') {{
-                        globalThis.__operit_call_runtime_ref = previousCallRuntime;
-                    }} else {{
-                        delete globalThis.__operit_call_runtime_ref;
-                    }}
-                }}
-                if (typeof globalThis.__operitCleanupCallSession === 'function') {{
-                    globalThis.__operitCleanupCallSession(callId);
-                }}
-            }}
-            function isActive() {{
-                var state = getCallState();
-                return !!(state && !state.completed);
-            }}
-            function readCallValue(key, fallbackValue) {{
-                var state = getCallState();
-                var currentParams = state && state.params && typeof state.params === 'object'
-                    ? state.params
-                    : null;
-                var value = currentParams ? currentParams[key] : undefined;
-                return value == null || value === '' ? fallbackValue : __operitText(value);
-            }}
-            function markStage(stage) {{
-                callState.lastExecStage = __operitText(stage);
-                NativeInterface.logJsExecutionTrace(
-                    callId,
-                    'stage=' + callState.lastExecStage +
-                        ' function=' + __operitText(callState.lastExecFunction) +
-                        ' module=' + __operitText(callState.lastModulePath) +
-                        ' require=' + __operitText(callState.lastRequireRequest) +
-                        ' from=' + __operitText(callState.lastRequireFrom) +
-                        ' resolved=' + __operitText(callState.lastRequireResolved)
-                );
-            }}
-            function markFunction(name) {{
-                callState.lastExecFunction = __operitText(name);
-                NativeInterface.logJsExecutionTrace(
-                    callId,
-                    'function=' + callState.lastExecFunction +
-                        ' package=' + __operitText(params && (params.__operit_ui_package_name || params.toolPkgId || params.__operit_package_name)) +
-                        ' screen=' + __operitText(params && params.__operit_script_screen) +
-                        ' context=' + __operitText(params && params.__operit_execution_context_key)
-                );
-            }}
-            function markRequire(request, fromPath, resolvedPath) {{
-                callState.lastRequireRequest = __operitText(request);
-                callState.lastRequireFrom = __operitText(fromPath);
-                callState.lastRequireResolved = __operitText(resolvedPath);
-                NativeInterface.logJsExecutionTrace(
-                    callId,
-                    'require=' + callState.lastRequireRequest +
-                        ' from=' + callState.lastRequireFrom +
-                        ' resolved=' + callState.lastRequireResolved
-                );
-            }}
-            function markModule(modulePath) {{
-                callState.lastModulePath = __operitText(modulePath);
-                NativeInterface.logJsExecutionTrace(callId, 'module=' + callState.lastModulePath);
-            }}
-            function completeCall(resultText) {{
-                var state = getCallState();
-                if (!state || state.completed) {{
-                    return;
-                }}
-                state.completed = true;
-                NativeInterface.logJsExecutionTrace(callId, 'complete ' + __operitText(resultText).slice(0, 240));
-                NativeInterface.setCallResult(callId, resultText);
-                finalizeCall();
-            }}
-            function emitError(message) {{
-                var state = getCallState();
-                if (!state || state.completed) {{
-                    return;
-                }}
-                state.completed = true;
-                NativeInterface.logJsExecutionTrace(callId, 'error ' + __operitText(message).slice(0, 240));
-                NativeInterface.setCallError(callId, JSON.stringify({{
-                    success: false,
-                    message: __operitText(message)
-                }}));
-                finalizeCall();
-            }}
-            function callRuntimeReport(error, context) {{
-                if (typeof globalThis.__operitReportDetailedErrorForCall === 'function') {{
-                    return globalThis.__operitReportDetailedErrorForCall(callId, error, context);
-                }}
-                return {{
-                    formatted: __operitText(context) + ': ' + __operitText(error),
-                    details: {{
-                        message: __operitText(error && error.message ? error.message : error),
-                        stack: __operitText(error && error.stack ? error.stack : error),
-                        lineNumber: 0
-                    }}
-                }};
-            }}
-            function emitIntermediate(value) {{
-                if (isActive()) {{
-                    NativeInterface.sendCallIntermediateResult(callId, __operitSafeSerialize(value));
-                }}
-            }}
-            function complete(value) {{
-                try {{
-                    completeCall(__operitSerializeOrThrow(__operitNormalizeComposeResult(value)));
-                }} catch (error) {{
-                    var report = callRuntimeReport(error, 'Result Serialization Failure');
-                    var serializationMessage =
-                        report &&
-                        report.details &&
-                        typeof report.details.message === 'string' &&
-                        report.details.message
-                            ? report.details.message
-                            : __operitText(error && error.message ? error.message : error);
-                    emitError('Result serialization failed: ' + serializationMessage);
-                }}
-            }}
-            var callRuntime = {{
-                callId: callId,
-                emit: emitIntermediate,
-                delta: emitIntermediate,
-                log: emitIntermediate,
-                update: emitIntermediate,
-                sendIntermediateResult: emitIntermediate,
-                done: complete,
-                complete: complete,
-                getState: function() {{ return readCallValue('__operit_package_state', undefined); }},
-                getLang: function() {{ return readCallValue('__operit_package_lang', 'en'); }},
-                getCallerName: function() {{ return readCallValue('__operit_package_caller_name', undefined); }},
-                getChatId: function() {{ return readCallValue('__operit_package_chat_id', undefined); }},
-                getCallerCardId: function() {{ return readCallValue('__operit_package_caller_card_id', undefined); }},
-                getEnv: function(key) {{
-                    var value = NativeInterface.getEnvForCall(callId, __operitText(key).trim());
-                    return value == null || value === '' ? undefined : __operitText(value);
-                }},
-                getPluginConfigDir: function(pluginId) {{
-                    var explicitId = pluginId == null ? '' : __operitText(pluginId).trim();
-                    var resolvedId =
-                        explicitId ||
-                        readCallValue('__operit_ui_package_name', '') ||
-                        readCallValue('toolPkgId', '') ||
-                        readCallValue('containerPackageName', '') ||
-                        readCallValue('__operit_package_name', '');
-                    if (
-                        !resolvedId ||
-                        typeof NativeInterface === 'undefined' ||
-                        !NativeInterface ||
-                        typeof NativeInterface.getPluginConfigDir !== 'function'
-                    ) {{
-                        return '';
-                    }}
-                    var path = NativeInterface.getPluginConfigDir(resolvedId);
-                    return typeof path === 'string' ? path : '';
-                }},
-                reportDetailedError: callRuntimeReport,
-                handleAsync: function(value) {{
-                    if (!value || typeof value.then !== 'function') {{
-                        return false;
-                    }}
-                    Promise.resolve(value).then(
-                        function(result) {{
-                            if (isActive()) {{
-                                complete(result);
-                            }}
-                        }},
-                        function(error) {{
-                            if (isActive()) {{
-                                var report = callRuntimeReport(error, 'Async Promise Rejection');
-                                var rejectionMessage =
-                                    report &&
-                                    report.details &&
-                                    typeof report.details.message === 'string' &&
-                                    report.details.message
-                                        ? report.details.message
-                                        : __operitText(error && error.message ? error.message : error);
-                                emitError(rejectionMessage || 'Promise rejection');
-                            }}
-                        }}
-                    );
-                    return true;
-                }},
-                console: console
-            }};
-            globalThis.__operit_call_runtime_ref = callRuntime;
-            try {{
-                var registrationMode = __operitToBoolean(readCallValue('__operit_registration_mode', false));
-                var packageTarget =
-                    readCallValue('__operit_ui_package_name', '') ||
-                    readCallValue('toolPkgId', '');
-                var screenPath = __operitNormalizePath(readCallValue(
-                    '__operit_script_screen',
-                    params && params.moduleSpec && params.moduleSpec.screen
-                        ? __operitText(params.moduleSpec.screen)
-                        : ''
-                ));
-                var moduleCache = registrationMode ? {{}} : __operitGetModuleInstanceCache();
-                var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, String(scriptText || '').length, __operitHashText(scriptText)].join(':');
-                var module = moduleCache[mainModuleKey];
-                var exports = module && module.exports ? module.exports : null;
-                function readToolPkgModule(modulePath) {{
-                    if (!packageTarget || !NativeInterface || typeof NativeInterface.readToolPkgTextResource !== 'function') {{
-                        return null;
-                    }}
-                    var candidates = __operitBuildCandidatePaths(modulePath);
-                    for (var i = 0; i < candidates.length; i += 1) {{
-                        var candidate = candidates[i];
-                        var textResult = NativeInterface.readToolPkgTextResource(packageTarget, candidate);
-                        if (typeof textResult === 'string' && textResult.length > 0) {{
-                            return {{ path: candidate, text: textResult }};
-                        }}
-                    }}
-                    return null;
-                }}
-                function executeModule(modulePath, moduleText, requireInternal) {{
-                    var moduleKey = ['instance', 'module', packageTarget + ':' + modulePath, String(moduleText || '').length, __operitHashText(moduleText)].join(':');
-                    if (moduleCache[moduleKey]) {{
-                        return moduleCache[moduleKey].exports;
-                    }}
-                    var requiredModule = {{ exports: {{}} }};
-                    moduleCache[moduleKey] = requiredModule;
-                    if (/\.json$/i.test(modulePath)) {{
-                        try {{
-                            requiredModule.exports = JSON.parse(moduleText);
-                            return requiredModule.exports;
-                        }} catch (error) {{
-                            delete moduleCache[moduleKey];
-                            throw error;
-                        }}
-                    }}
-                    var localRequire = function(nextName) {{
-                        return requireInternal(nextName, modulePath);
-                    }};
-                    var factory = __operitGetFactory('module', packageTarget + ':' + modulePath, moduleText);
-                    var previousActiveModule = globalThis.__operitActiveModule;
-                    var previousActiveExports = globalThis.__operitActiveModuleExports;
-                    var previousModule = callState.currentModule;
-                    var previousExports = callState.currentModuleExports;
-                    globalThis.__operitActiveModule = requiredModule;
-                    globalThis.__operitActiveModuleExports = requiredModule.exports;
-                    callState.currentModule = requiredModule;
-                    callState.currentModuleExports = requiredModule.exports;
-                    try {{
-                        factory(requiredModule, requiredModule.exports, localRequire, callRuntime);
-                    }} catch (error) {{
-                        delete moduleCache[moduleKey];
-                        throw error;
-                    }} finally {{
-                        callState.currentModule = previousModule;
-                        callState.currentModuleExports = previousExports;
-                        globalThis.__operitActiveModule = previousActiveModule;
-                        globalThis.__operitActiveModuleExports = previousActiveExports;
-                    }}
-                    __operitTagModuleExports(modulePath, requiredModule.exports);
-                    return requiredModule.exports;
-                }}
-                function requireInternal(moduleName, fromPath) {{
-                    var request = String(moduleName == null ? '' : moduleName).trim();
-                    if (request === 'lodash') {{
-                        return globalThis._;
-                    }}
-                    if (request === 'uuid') {{
-                        return {{
-                            v4: function() {{
-                                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(char) {{
-                                    var random = Math.random() * 16 | 0;
-                                    var value = char === 'x' ? random : ((random & 0x3) | 0x8);
-                                    return value.toString(16);
-                                }});
-                            }}
-                        }};
-                    }}
-                    if (request === 'axios') {{
-                        return {{
-                            get: function(url, config) {{
-                                return toolCall('http_request', config ? Object.assign({{ url: url }}, config) : {{ url: url }});
-                            }},
-                            post: function(url, data, config) {{
-                                return toolCall('http_request', config ? Object.assign({{ url: url, data: data }}, config) : {{ url: url, data: data }});
-                            }}
-                        }};
-                    }}
-                    if (!(request.startsWith('.') || request.startsWith('/'))) {{
-                        return {{}};
-                    }}
-                    var resolvedPath = __operitResolveModulePath(request, fromPath || screenPath);
-                    markStage('require_module');
-                    markRequire(request, fromPath || screenPath || '<root>', resolvedPath);
-                    markModule(resolvedPath);
-                    if (registrationMode && __operitIsLocalUiModulePath(resolvedPath)) {{
-                        return __operitCreateRegistrationScreenPlaceholder(resolvedPath);
-                    }}
-                    var loaded = readToolPkgModule(resolvedPath);
-                    if (!loaded) {{
-                        throw new Error('Cannot resolve module "' + request + '" from "' + (fromPath || screenPath || '<root>') + '"');
-                    }}
-                    return executeModule(loaded.path, loaded.text, requireInternal);
-                }}
-                var require = function(moduleName) {{
-                    markStage('require_request');
-                    markRequire(moduleName, screenPath || '<root>', '');
-                    return requireInternal(moduleName, screenPath);
-                }};
-                markFunction(targetFunctionName);
-                if (!module) {{
-                    module = {{ exports: {{}} }};
-                    moduleCache[mainModuleKey] = module;
-                    exports = module.exports;
-                    markStage('compile_main_script');
-                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath, scriptText);
-                    markStage('execute_main_script');
-                    var previousActiveModule = globalThis.__operitActiveModule;
-                    var previousActiveExports = globalThis.__operitActiveModuleExports;
-                    var previousModule = callState.currentModule;
-                    var previousExports = callState.currentModuleExports;
-                    globalThis.__operitActiveModule = module;
-                    globalThis.__operitActiveModuleExports = exports;
-                    callState.currentModule = module;
-                    callState.currentModuleExports = exports;
-                    try {{
-                        mainFactory(module, exports, require, callRuntime);
-                    }} catch (error) {{
-                        delete moduleCache[mainModuleKey];
-                        throw error;
-                    }} finally {{
-                        callState.currentModule = previousModule;
-                        callState.currentModuleExports = previousExports;
-                        globalThis.__operitActiveModule = previousActiveModule;
-                        globalThis.__operitActiveModuleExports = previousActiveExports;
-                    }}
-                }} else {{
-                    if (exports == null) {{
-                        exports = {{}};
-                        module.exports = exports;
-                    }}
-                    markStage('reuse_main_script');
-                }}
-                var rootExports = module.exports || exports || {{}};
-                __operitTagModuleExports(screenPath || '<root>', rootExports);
-
-                var inlineFunctionName = readCallValue('__operit_inline_function_name', '');
-                var inlineFunctionSource = readCallValue('__operit_inline_function_source', '');
-                if (inlineFunctionName && inlineFunctionSource) {{
-                    markStage('evaluate_inline_hook_function');
-                    var inlineFunction = eval('(' + inlineFunctionSource + ')');
-                    if (typeof inlineFunction !== 'function') {{
-                        throw new Error('inline hook source did not evaluate to function');
-                    }}
-                    rootExports[inlineFunctionName] = inlineFunction;
-                    module.exports[inlineFunctionName] = inlineFunction;
-                }}
-
-                var targetFunction = __operitFindTargetFunction(rootExports, module, targetFunctionName);
-                if (typeof targetFunction !== 'function') {{
-                    emitError(
-                        "Function '" +
-                            targetFunctionName +
-                            "' not found in script. Available functions: " +
-                            __operitBuildAvailableFunctions(rootExports, module).join(', ')
-                    );
-                    return;
-                }}
-                markStage('invoke_target_function');
-                var invokePreviousActiveModule = globalThis.__operitActiveModule;
-                var invokePreviousActiveExports = globalThis.__operitActiveModuleExports;
-                var previousModule = callState.currentModule;
-                var previousExports = callState.currentModuleExports;
-                globalThis.__operitActiveModule = module;
-                globalThis.__operitActiveModuleExports = rootExports;
-                callState.currentModule = module;
-                callState.currentModuleExports = rootExports;
-                var functionResult;
-                try {{
-                    functionResult = targetFunction(params);
-                }} finally {{
-                    callState.currentModule = previousModule;
-                    callState.currentModuleExports = previousExports;
-                    globalThis.__operitActiveModule = invokePreviousActiveModule;
-                    globalThis.__operitActiveModuleExports = invokePreviousActiveExports;
-                }}
-                markStage('handle_function_result');
-                if (!callRuntime.handleAsync(functionResult)) {{
-                    complete(functionResult);
-                }}
-            }} catch (error) {{
-                var runtimeContext = typeof globalThis.__operitBuildRuntimeContext === 'function'
-                    ? __operitText(globalThis.__operitBuildRuntimeContext(callId))
-                    : '';
-                emitError(
-                    'Script error: ' +
-                        __operitText(error && error.message ? error.message : error) +
-                        (runtimeContext ? '\nRuntime Context: ' + runtimeContext : '') +
-                        (error && error.stack ? '\nStack: ' + __operitText(error.stack) : '')
-                );
-            }}
-        }}
-
-        {}
-        {}
-        {}
-        {}
-        {}
-        {}
-        {}
-        {}
-        "#,
-        JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
-        executionPreludeJson,
-        getJsToolsDefinition(),
-        include_str!("CryptoJS.script.js"),
-        include_str!("Jimp.script.js"),
-        include_str!("UINode.script.js"),
-        include_str!("AndroidUtils.script.js"),
-        include_str!("OkHttp3.script.js"),
-        include_str!("pako.script.js"),
-        JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript()
-    )
 }

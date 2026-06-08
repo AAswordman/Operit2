@@ -12,11 +12,13 @@ class PluginDetailsDialog extends StatelessWidget {
     required this.plugin,
     required this.enabled,
     required this.onEnabledChanged,
+    required this.onOpenUi,
   });
 
   final core_proxy.ToolPkgContainerRuntime plugin;
   final bool enabled;
   final ValueChanged<bool> onEnabledChanged;
+  final ValueChanged<String?> onOpenUi;
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +65,17 @@ class PluginDetailsDialog extends StatelessWidget {
                     title: localizedText(module.title),
                     subtitle: '${module.id} · ${module.runtime}',
                     icon: Icons.tune_outlined,
+                    trailing: FilledButton.tonalIcon(
+                      onPressed: enabled
+                          ? () => onOpenUi(_routeIdForModule(plugin, module.id))
+                          : null,
+                      icon: const Icon(Icons.open_in_new, size: 18),
+                      label: Text(enabled ? '打开' : '启用后打开'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                    ),
                   ),
               ],
               const SizedBox(height: 14),
@@ -116,6 +129,12 @@ class PluginDetailsDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.close),
         ),
+        if (toolPkgHasUi(plugin))
+          OutlinedButton.icon(
+            onPressed: enabled ? () => onOpenUi(null) : null,
+            icon: const Icon(Icons.open_in_new_outlined),
+            label: Text(enabled ? '打开' : '启用后打开'),
+          ),
         FilledButton.icon(
           onPressed: () => onEnabledChanged(!enabled),
           icon: Icon(enabled ? Icons.toggle_off_outlined : Icons.toggle_on),
@@ -124,6 +143,19 @@ class PluginDetailsDialog extends StatelessWidget {
       ],
     );
   }
+}
+
+String? _routeIdForModule(
+  core_proxy.ToolPkgContainerRuntime plugin,
+  String moduleId,
+) {
+  final normalizedModuleId = moduleId.trim();
+  for (final route in plugin.uiRoutes) {
+    if (route.id.trim() == normalizedModuleId) {
+      return route.routeId;
+    }
+  }
+  return null;
 }
 
 class PackageDetailsDialog extends StatelessWidget {

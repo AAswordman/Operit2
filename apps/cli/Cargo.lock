@@ -1643,6 +1643,7 @@ dependencies = [
  "image",
  "operit-command-core",
  "operit-core-proxy",
+ "operit-host-api",
  "operit-host-linux-native",
  "operit-host-windows-native",
  "operit-link",
@@ -1691,6 +1692,8 @@ name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1702,8 +1705,10 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
  "zip",
 ]
 
@@ -1716,8 +1721,11 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
+ "windows-sys 0.59.0",
  "zip",
 ]
 

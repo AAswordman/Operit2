@@ -30,6 +30,10 @@ String toolPkgSubpackageDisplayName(
   return subpackage.packageName;
 }
 
+bool toolPkgHasUi(core_proxy.ToolPkgContainerRuntime plugin) {
+  return plugin.uiModules.isNotEmpty || plugin.uiRoutes.isNotEmpty;
+}
+
 String localizedText(Object? value) {
   if (value == null) {
     return '';

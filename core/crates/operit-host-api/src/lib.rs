@@ -6,6 +6,11 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub type HostResult<T> = Result<T, HostError>;
 
@@ -606,6 +611,61 @@ pub trait RuntimeSqliteHost: Send + Sync {
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>>;
 }
 
+pub type ExternalRuntimeEventHandler =
+    dyn Fn(ExternalRuntimeEvent) -> HostResult<Value> + Send + Sync + 'static;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExternalRuntimeEvent {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub payload: Value,
+    pub createdAtMillis: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExternalRuntimeEventResponse {
+    pub eventId: String,
+    pub runtimeId: String,
+    pub accepted: bool,
+    pub result: Option<Value>,
+    pub error: Option<String>,
+    pub handledAtMillis: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExternalRuntimeRegistrationDescriptor {
+    pub protocolVersion: i32,
+    pub runtimeId: String,
+    pub processId: u32,
+    pub processKind: String,
+    pub inboxDir: String,
+    pub eventsDir: String,
+    pub responsesDir: String,
+    pub capabilities: Vec<String>,
+    pub createdAtMillis: u64,
+}
+
+#[derive(Clone)]
+pub struct ExternalRuntimeEventBusConfig {
+    pub processKind: String,
+    pub capabilities: Vec<String>,
+    pub pollInterval: Duration,
+}
+
+pub trait ExternalRuntimeEventRegistration: Send {
+    fn runtimeId(&self) -> &str;
+}
+
+pub trait ExternalRuntimeEventHost: Send + Sync {
+    fn externalRuntimeEventRegistryDir(&self) -> HostResult<PathBuf>;
+    fn startExternalRuntimeEventBus(
+        &self,
+        config: ExternalRuntimeEventBusConfig,
+        handler: Arc<ExternalRuntimeEventHandler>,
+    ) -> HostResult<Box<dyn ExternalRuntimeEventRegistration>>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemSettingData {
     pub namespace: String,
@@ -695,6 +755,7 @@ pub struct DeviceInfoData {
 }
 
 pub trait SystemOperationHost: Send + Sync {
+    fn getSystemLanguageCode(&self) -> HostResult<String>;
     fn toast(&self, message: &str) -> HostResult<()>;
     fn sendNotification(&self, title: &str, message: &str) -> HostResult<()>;
     fn modifySystemSetting(

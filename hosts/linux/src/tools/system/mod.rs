@@ -23,6 +23,10 @@ impl LinuxSystemOperationHost {
 }
 
 impl SystemOperationHost for LinuxSystemOperationHost {
+    fn getSystemLanguageCode(&self) -> HostResult<String> {
+        get_linux_system_language_code()
+    }
+
     fn toast(&self, message: &str) -> HostResult<()> {
         if message.trim().is_empty() {
             return Err(HostError::new("Must provide message parameter"));
@@ -163,6 +167,20 @@ impl SystemOperationHost for LinuxSystemOperationHost {
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData> {
         get_linux_device_info()
     }
+}
+
+fn get_linux_system_language_code() -> HostResult<String> {
+    let lang = env::var("LANG")
+        .map_err(|error| HostError::new(format!("LANG is required to resolve language: {error}")))?;
+    let tag = lang
+        .split('.')
+        .next()
+        .ok_or_else(|| HostError::new("LANG did not contain a language tag"))?
+        .replace('_', "-");
+    if tag.trim().is_empty() {
+        return Err(HostError::new("LANG did not contain a language tag"));
+    }
+    Ok(tag)
 }
 
 fn get_linux_notifications(limit: i32) -> HostResult<NotificationData> {

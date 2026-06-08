@@ -1,6 +1,7 @@
 use serde_json;
 
 use crate::data::model::PreferenceProfile::PreferenceProfile;
+use crate::util::LocaleUtils::LanguageCodes;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -18,6 +19,7 @@ pub struct PreferencesManager {
 
 impl UserPreferencesManager {
     pub const DEFAULT_PROFILE_ID: &'static str = "default";
+    pub const DEFAULT_LANGUAGE: &'static str = LanguageCodes::AUTO;
 
     pub fn getInstance() -> Self {
         Self {
@@ -50,6 +52,31 @@ impl UserPreferencesManager {
                 .cloned()
                 .unwrap_or_else(|| Self::DEFAULT_PROFILE_ID.to_string())
         })
+    }
+
+    #[allow(non_snake_case)]
+    pub fn appLanguage(&self) -> Flow<String> {
+        self.dataStore.dataFlow().map(|preferences| {
+            preferences
+                .get(&stringPreferencesKey("app_language"))
+                .cloned()
+                .unwrap_or_else(|| Self::DEFAULT_LANGUAGE.to_string())
+        })
+    }
+
+    #[allow(non_snake_case)]
+    pub fn saveAppLanguage(
+        &self,
+        languageCode: String,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.dataStore.edit(|preferences| {
+            preferences.set(&stringPreferencesKey("app_language"), languageCode.clone());
+        })
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
+        self.appLanguage().first()
     }
 
     pub fn profileListFlow(&self) -> Flow<Vec<String>> {
@@ -288,6 +315,24 @@ impl PreferencesManager {
 
     pub fn activeProfileIdFlow(&self) -> Flow<String> {
         self.inner.activeProfileIdFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn appLanguage(&self) -> Flow<String> {
+        self.inner.appLanguage()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn saveAppLanguage(
+        &self,
+        languageCode: String,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.inner.saveAppLanguage(languageCode)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
+        self.inner.getCurrentLanguage()
     }
 
     pub fn activeProfileId(&self) -> Result<String, PreferencesDataStoreError> {

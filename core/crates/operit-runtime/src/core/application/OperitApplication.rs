@@ -27,6 +27,9 @@ use operit_store::RuntimeStorePaths::{setDefaultRuntimeStoreRoot, RuntimeStorePa
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
+use std::sync::{Mutex, OnceLock};
+
+static APPLICATION_CONTEXT: OnceLock<Mutex<Option<OperitApplicationContext>>> = OnceLock::new();
 
 pub struct OperitApplication {
     pub appStartupTimeMs: i64,
@@ -65,6 +68,7 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn onCreate(&mut self) -> Result<(), String> {
         self.appStartupTimeMs = currentTimeMillis();
+        setApplicationContext(self.applicationContext.clone());
         self.configureOpenMpEnvironment();
         self.ensureWorkManagerInitialized();
         AIMessageManager::initialize();
@@ -134,6 +138,16 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn coreVersion(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn applicationContext() -> OperitApplicationContext {
+        APPLICATION_CONTEXT
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("OperitApplication application context mutex poisoned")
+            .clone()
+            .expect("OperitApplication application context must be initialized")
     }
 
     #[allow(non_snake_case)]
@@ -261,6 +275,14 @@ impl OperitApplication {
             )),
         }
     }
+}
+
+#[allow(non_snake_case)]
+fn setApplicationContext(applicationContext: OperitApplicationContext) {
+    *APPLICATION_CONTEXT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("OperitApplication application context mutex poisoned") = Some(applicationContext);
 }
 
 impl Default for OperitApplication {

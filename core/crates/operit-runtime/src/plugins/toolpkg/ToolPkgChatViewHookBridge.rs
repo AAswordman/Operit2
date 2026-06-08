@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgChatViewHookRegistration;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    toolPkgPackageManager, ToolPkgChatViewHookRegistration,
+};
 
 static CHAT_VIEW_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatViewHookRegistration>>> = OnceLock::new();
 static REPLAYABLE_OPEN_VIEW_PARAMS: OnceLock<Mutex<Vec<ChatViewHookParams>>> = OnceLock::new();
@@ -48,10 +50,7 @@ impl ToolPkgChatViewHookBridge {
         if INSTALLED.swap(true, Ordering::SeqCst) {
             return;
         }
-        let manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager();
+        let manager = toolPkgPackageManager();
         manager
             .lock()
             .expect("package manager mutex poisoned")
@@ -169,24 +168,21 @@ fn replayOpenViews(
 
 #[allow(non_snake_case)]
 fn runChatViewHook(hook: &ToolPkgChatViewHookRegistration, eventName: &str, eventPayload: Value) {
-    let _ = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-    )
-    .getOrCreatePackageManager()
-    .lock()
-    .expect("package manager mutex poisoned")
-    .runToolPkgMainHook(
-        &hook.containerPackageName,
-        &hook.functionName,
-        TOOLPKG_EVENT_CHAT_VIEW,
-        Some(eventName),
-        Some(&hook.hookId),
-        hook.functionSource.as_deref(),
-        eventPayload,
-        None,
-        None,
-        None,
-    );
+    let _ = toolPkgPackageManager()
+        .lock()
+        .expect("package manager mutex poisoned")
+        .runToolPkgMainHook(
+            &hook.containerPackageName,
+            &hook.functionName,
+            TOOLPKG_EVENT_CHAT_VIEW,
+            Some(eventName),
+            Some(&hook.hookId),
+            hook.functionSource.as_deref(),
+            eventPayload,
+            None,
+            None,
+            None,
+        );
 }
 
 #[allow(non_snake_case)]

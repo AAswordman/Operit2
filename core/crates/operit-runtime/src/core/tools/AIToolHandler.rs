@@ -35,7 +35,7 @@ pub struct AIToolHandlerState {
     context: OperitApplicationContext,
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
-    packageManager: Arc<Mutex<PackageManager>>,
+    packageManager: Option<Arc<Mutex<PackageManager>>>,
 }
 
 impl AIToolHandler {
@@ -48,10 +48,7 @@ impl AIToolHandler {
                 context: OperitApplicationContext::new(),
                 hooks: Vec::new(),
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
-                packageManager: Arc::new(Mutex::new(PackageManager::newWithContext(
-                    RuntimeStorePaths::default(),
-                    OperitApplicationContext::new(),
-                ))),
+                packageManager: None,
             })),
         }
     }
@@ -67,10 +64,7 @@ impl AIToolHandler {
                     context: context.clone(),
                     hooks: Vec::new(),
                     toolPermissionSystem: ToolPermissionSystem::getInstance(),
-                    packageManager: Arc::new(Mutex::new(PackageManager::newWithContext(
-                        RuntimeStorePaths::default(),
-                        context.clone(),
-                    ))),
+                    packageManager: None,
                 }))
             })
             .clone();
@@ -79,8 +73,10 @@ impl AIToolHandler {
             guard.context = context.clone();
             guard.packageManager.clone()
         };
-        if let Ok(mut packageManager) = packageManager.lock() {
-            packageManager.updateContext(context);
+        if let Some(packageManager) = packageManager {
+            if let Ok(mut packageManager) = packageManager.lock() {
+                packageManager.updateContext(context);
+            }
         }
         Self { inner }
     }
@@ -208,11 +204,23 @@ impl AIToolHandler {
 
     #[allow(non_snake_case)]
     pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<PackageManager>> {
-        self.inner
-            .lock()
-            .expect("AIToolHandler mutex poisoned")
-            .packageManager
-            .clone()
+        let context = {
+            let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+            if let Some(packageManager) = &guard.packageManager {
+                return packageManager.clone();
+            }
+            guard.context.clone()
+        };
+        let packageManager = Arc::new(Mutex::new(PackageManager::newWithContext(
+            RuntimeStorePaths::default(),
+            context,
+        )));
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        if let Some(existingPackageManager) = &guard.packageManager {
+            return existingPackageManager.clone();
+        }
+        guard.packageManager = Some(packageManager.clone());
+        packageManager
     }
 
     #[allow(non_snake_case)]

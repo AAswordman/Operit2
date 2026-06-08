@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -126,6 +126,16 @@ impl ToolPkgManager {
     }
 
     #[allow(non_snake_case)]
+    pub(crate) fn replaceRuntimeMaps(
+        &mut self,
+        containers: BTreeMap<String, ToolPkgContainerRuntime>,
+        subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) {
+        self.containers = containers;
+        self.subpackageByPackageName = subpackageByPackageName;
+    }
+
+    #[allow(non_snake_case)]
     pub fn getEnabledToolPkgContainerRuntimes(
         &self,
         enabledPackageNames: &[String],
@@ -245,6 +255,19 @@ impl ToolPkgManager {
     }
 
     #[allow(non_snake_case)]
+    pub(crate) fn findToolPkgExecutionEngine(&self, contextKey: &str) -> Option<JsEngine> {
+        let normalizedKey = contextKey.trim();
+        if normalizedKey.is_empty() {
+            return None;
+        }
+        self.toolPkgExecutionEngines
+            .lock()
+            .expect("toolpkg execution engine mutex poisoned")
+            .get(normalizedKey)
+            .cloned()
+    }
+
+    #[allow(non_snake_case)]
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
         let normalizedKey = contextKey.trim();
         if normalizedKey.is_empty() {
@@ -256,6 +279,57 @@ impl ToolPkgManager {
             .expect("toolpkg execution engine mutex poisoned")
             .remove(normalizedKey)
         {
+            engine.destroy();
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn destroyDefaultToolPkgExecutionEngine(&self, packageName: &str) {
+        let normalizedPackageName = packageName.trim();
+        if normalizedPackageName.is_empty() {
+            return;
+        }
+        let providerPrefix = format!("toolpkg_provider:{normalizedPackageName}:");
+        let composePrefix = format!("toolpkg_compose:{normalizedPackageName}:");
+        let composeDslPrefix = format!("toolpkg_compose_dsl:{normalizedPackageName}:");
+        let xmlRenderPrefix = format!("toolpkg_xml_render:{normalizedPackageName}:");
+        let keys = {
+            let engines = self
+                .toolPkgExecutionEngines
+                .lock()
+                .expect("toolpkg execution engine mutex poisoned");
+            engines
+                .keys()
+                .filter(|key| {
+                    *key == &format!("toolpkg_main:{normalizedPackageName}")
+                        || key.starts_with(&providerPrefix)
+                        || key.starts_with(&composePrefix)
+                        || key.starts_with(&composeDslPrefix)
+                        || key.starts_with(&xmlRenderPrefix)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        for key in keys {
+            self.releaseToolPkgExecutionEngine(&key);
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn clear(&mut self) {
+        self.containers.clear();
+        self.subpackageByPackageName.clear();
+    }
+
+    pub fn destroy(&self) {
+        let engines = {
+            let mut stored = self
+                .toolPkgExecutionEngines
+                .lock()
+                .expect("toolpkg execution engine mutex poisoned");
+            std::mem::take(&mut *stored)
+        };
+        for (_, engine) in engines {
             engine.destroy();
         }
     }
@@ -290,11 +364,9 @@ impl ToolPkgManager {
                 None
             }
             ToolPkgSourceType::ASSET => {
-                let asset = crate::plugins::BuiltinPluginAssets::BUILTIN_PLUGIN_ASSETS
-                    .iter()
-                    .find(|asset| asset.name == runtime.sourcePath)?;
-                let cursor = Cursor::new(asset.bytes);
-                let mut archive = zip::ZipArchive::new(cursor).ok()?;
+                let sourcePath = builtInPackageAssetPath(&runtime.sourcePath);
+                let file = fs::File::open(sourcePath).ok()?;
+                let mut archive = zip::ZipArchive::new(file).ok()?;
                 let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                 let mut text = String::new();
                 entry.read_to_string(&mut text).ok()?;
@@ -302,6 +374,15 @@ impl ToolPkgManager {
             }
         }
     }
+}
+
+#[allow(non_snake_case)]
+fn builtInPackageAssetPath(assetName: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("plugins")
+        .join("buildin")
+        .join(assetName)
 }
 
 #[allow(non_snake_case)]

@@ -15,7 +15,7 @@ use crate::data::model::ModelConfigData::ModelConfigData;
 use crate::data::model::OpenAIModels::ModelOption;
 use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgAiProviderRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgAiProviderRegistration,
 };
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::stream::RevisableTextStream::{
@@ -73,30 +73,29 @@ impl ToolPkgJsAiProviderService {
                 Value::String(self.executionChatId.clone()),
             );
         }
-        crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .runToolPkgMainHook(
-            &self.provider.containerPackageName,
-            functionName,
-            event,
-            None,
-            Some(&format!("{}:{}", self.provider.providerId, event)),
-            functionSource,
-            payload,
-            Some(&self.providerRuntimeContextKey),
-            Some("provider"),
-            onIntermediateResult,
-        )
-        .map_err(AiServiceError::RequestFailed)
-        .and_then(|raw| {
-            decodeToolPkgHookResult(raw).ok_or_else(|| {
-                AiServiceError::RequestFailed("ToolPkg AI provider call returned null".to_string())
+        toolPkgPackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .runToolPkgMainHook(
+                &self.provider.containerPackageName,
+                functionName,
+                event,
+                None,
+                Some(&format!("{}:{}", self.provider.providerId, event)),
+                functionSource,
+                payload,
+                Some(&self.providerRuntimeContextKey),
+                Some("provider"),
+                onIntermediateResult,
+            )
+            .map_err(AiServiceError::RequestFailed)
+            .and_then(|raw| {
+                decodeToolPkgHookResult(raw).ok_or_else(|| {
+                    AiServiceError::RequestFailed(
+                        "ToolPkg AI provider call returned null".to_string(),
+                    )
+                })
             })
-        })
     }
 
     #[allow(non_snake_case)]

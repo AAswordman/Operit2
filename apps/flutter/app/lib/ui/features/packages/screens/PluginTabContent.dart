@@ -18,6 +18,7 @@ class PluginTabContent extends StatelessWidget {
     required this.isLoading,
     required this.isSearchActive,
     required this.onOpenMarket,
+    required this.onOpenPluginUi,
     required this.onPluginTap,
     required this.onPluginEnabledChanged,
   });
@@ -27,6 +28,7 @@ class PluginTabContent extends StatelessWidget {
   final bool isLoading;
   final bool isSearchActive;
   final VoidCallback onOpenMarket;
+  final ValueChanged<core_proxy.ToolPkgContainerRuntime> onOpenPluginUi;
   final ValueChanged<core_proxy.ToolPkgContainerRuntime> onPluginTap;
   final void Function(core_proxy.ToolPkgContainerRuntime plugin, bool enabled)
   onPluginEnabledChanged;
@@ -76,6 +78,25 @@ class PluginTabContent extends StatelessWidget {
                     onTap: () => onPluginTap(plugin),
                     onEnabledChanged: (enabled) =>
                         onPluginEnabledChanged(plugin, enabled),
+                    trailingActions: toolPkgHasUi(plugin)
+                        ? <Widget>[
+                            IconButton(
+                              tooltip:
+                                  enabledPluginNames.contains(
+                                    plugin.packageName,
+                                  )
+                                  ? '打开'
+                                  : '启用后打开',
+                              onPressed:
+                                  enabledPluginNames.contains(
+                                    plugin.packageName,
+                                  )
+                                  ? () => onOpenPluginUi(plugin)
+                                  : null,
+                              icon: const Icon(Icons.open_in_new_outlined),
+                            ),
+                          ]
+                        : const <Widget>[],
                   );
                 },
               ),

@@ -41,6 +41,11 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let shell_args = parse_shell_args(args)?;
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
+    let _externalRuntimeEventRegistration =
+        operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
+            core.localApplicationMut().applicationContext.clone(),
+            "cli-tui",
+        )?;
     let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
     install_local_permission_requester(&mut core, approval_bridge.clone());
@@ -98,14 +103,7 @@ async fn build_startup_update_prompt() -> Result<Option<StartupUpdatePrompt>, St
     let status =
         match GithubReleaseUtil::checkForFullUpdate(env!("CARGO_PKG_VERSION"), target).await {
             Ok(status) => status,
-            Err(message) => {
-                return Ok(Some(StartupUpdatePrompt {
-                    release_info: None,
-                    download_selected: false,
-                    download_state: FullUpdateDownloadState::CheckError { message },
-                    progress_rx: None,
-                }));
-            }
+            Err(_) => return Ok(None),
         };
     match status {
         FullUpdateStatus::Available(release_info) => Ok(Some(StartupUpdatePrompt {

@@ -1,3 +1,6 @@
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Language {
     pub code: String,
@@ -9,8 +12,9 @@ pub struct LanguageCodes;
 
 impl LanguageCodes {
     pub const AUTO: &'static str = "system";
-    pub const CHINESE: &'static str = "zh";
+    pub const CHINESE: &'static str = "zh-CN";
     pub const ENGLISH: &'static str = "en";
+    pub const KOREAN: &'static str = "ko";
     pub const SPANISH: &'static str = "es";
     pub const MALAY: &'static str = "ms";
     pub const INDONESIAN: &'static str = "id";
@@ -25,6 +29,7 @@ impl LocaleUtils {
             language(LanguageCodes::AUTO, "Follow system", "跟随系统"),
             language(LanguageCodes::CHINESE, "Chinese", "中文"),
             language(LanguageCodes::ENGLISH, "English", "English"),
+            language(LanguageCodes::KOREAN, "Korean", "한국어"),
             language(LanguageCodes::SPANISH, "Spanish", "Español"),
             language(LanguageCodes::MALAY, "Malay", "Bahasa Melayu"),
             language(LanguageCodes::INDONESIAN, "Indonesian", "Bahasa Indonesia"),
@@ -36,17 +41,16 @@ impl LocaleUtils {
         ]
     }
 
-    pub fn get_locale_for_language_code(language_code: &str) -> String {
+    pub fn get_locale_for_language_code(
+        language_code: &str,
+        context: &OperitApplicationContext,
+    ) -> Result<String, String> {
         let resolved = if language_code.trim().is_empty() || language_code == LanguageCodes::AUTO {
-            Self::resolve_supported_language_code(&system_language_tag())
+            current_system_language_code(context)?
         } else {
             Self::resolve_supported_language_code(language_code)
         };
-        if resolved.is_empty() {
-            LanguageCodes::ENGLISH.to_string()
-        } else {
-            resolved
-        }
+        Ok(resolved)
     }
 
     pub fn normalize_stored_language_code(language_code: &str) -> String {
@@ -55,6 +59,7 @@ impl LocaleUtils {
         }
         let normalized = language_code.replace('_', "-").replace("-r", "-");
         match normalized.as_str() {
+            "zh" | "zh-Hans" | "zh-Hans-CN" => LanguageCodes::CHINESE.to_string(),
             "pt" => LanguageCodes::PORTUGUESE_BRAZIL.to_string(),
             "in" => LanguageCodes::INDONESIAN.to_string(),
             other => canonical_language_tag(other),
@@ -98,6 +103,17 @@ impl LocaleUtils {
             normalized
         }
     }
+
+    #[allow(non_snake_case)]
+    pub fn getCurrentLanguage(context: &OperitApplicationContext) -> Result<String, String> {
+        let savedLanguage = UserPreferencesManager::getInstance()
+            .getCurrentLanguage()
+            .map_err(|error| error.to_string())?;
+        if !savedLanguage.trim().is_empty() && savedLanguage.trim() != LanguageCodes::AUTO {
+            return Ok(Self::resolve_supported_language_code(&savedLanguage));
+        }
+        current_system_language_code(context)
+    }
 }
 
 fn language(code: &str, display_name: &str, native_name: &str) -> Language {
@@ -112,6 +128,7 @@ fn supported_language_codes() -> Vec<&'static str> {
     vec![
         LanguageCodes::CHINESE,
         LanguageCodes::ENGLISH,
+        LanguageCodes::KOREAN,
         LanguageCodes::SPANISH,
         LanguageCodes::MALAY,
         LanguageCodes::INDONESIAN,
@@ -138,9 +155,13 @@ fn canonical_language_tag(code: &str) -> String {
     }
 }
 
-fn system_language_tag() -> String {
-    std::env::var("LANG")
-        .ok()
-        .and_then(|lang| lang.split('.').next().map(|value| value.replace('_', "-")))
-        .unwrap_or_else(|| LanguageCodes::ENGLISH.to_string())
+fn current_system_language_code(context: &OperitApplicationContext) -> Result<String, String> {
+    let host = context
+        .systemOperationHost
+        .as_ref()
+        .ok_or_else(|| "SystemOperationHost is required to resolve system language".to_string())?;
+    let languageCode = host
+        .getSystemLanguageCode()
+        .map_err(|error| error.to_string())?;
+    Ok(LocaleUtils::resolve_supported_language_code(&languageCode))
 }

@@ -400,7 +400,7 @@ impl OperitTui {
         let Some(prompt) = self.startup_workspace_prompt.as_ref() else {
             return;
         };
-        let popup = centered_rect(76, 34, frame.area());
+        let popup = centered_rect(70, 22, frame.area());
         frame.render_widget(Clear, popup);
         let yes_style = if prompt.accept_selected {
             Style::default()
@@ -419,7 +419,7 @@ impl OperitTui {
                 .add_modifier(Modifier::BOLD)
         };
         let lines = vec![
-            Line::from("Use current launch folder as the workspace for this chat?"),
+            Line::from("Use current folder as workspace?"),
             Line::from(""),
             Line::from(Span::styled(
                 prompt.path.clone(),
@@ -427,15 +427,10 @@ impl OperitTui {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled(" 1 Yes ", yes_style),
+                Span::styled(" Y Yes ", yes_style),
                 Span::raw("  "),
-                Span::styled(" 2 No ", no_style),
+                Span::styled(" N No ", no_style),
             ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Enter selects | Left/Right changes | y/n | Esc=no",
-                Style::default().fg(theme::TEXT_SUBTLE),
-            )),
         ];
         let modal = Paragraph::new(Text::from(lines))
             .block(

@@ -11,7 +11,7 @@ use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgInputMenuToggleHookRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgInputMenuToggleHookRegistration,
 };
 use crate::util::AppLogger::AppLogger;
 
@@ -135,10 +135,7 @@ impl ToolPkgInputMenuToggleBridge {
             return;
         }
         InputMenuTogglePluginRegistry::register(Arc::new(BridgePlugin));
-        let manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager();
+        let manager = toolPkgPackageManager();
         manager
             .lock()
             .expect("package manager mutex poisoned")
@@ -598,10 +595,7 @@ fn launchToggle(spec: InputMenuSpec, params: InputMenuToggleHookParams) {
 
 #[allow(non_snake_case)]
 fn packageManager(_params: &InputMenuToggleHookParams) -> PackageManager {
-    let packageManager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-    )
-    .getOrCreatePackageManager();
+    let packageManager = toolPkgPackageManager();
     let manager = packageManager
         .lock()
         .expect("package manager mutex poisoned")

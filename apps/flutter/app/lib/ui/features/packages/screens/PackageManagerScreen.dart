@@ -26,6 +26,7 @@ import 'MCPConfigScreen.dart';
 import 'PackageTabContent.dart';
 import 'PluginTabContent.dart';
 import 'SkillConfigScreen.dart';
+import 'ToolPkgUiLauncherScreen.dart';
 import 'UnifiedMarketScreen.dart';
 
 class PackageManagerScreen extends StatefulWidget {
@@ -321,6 +322,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               isLoading: _loading || _searchFiltering,
               isSearchActive: _searchQuery.trim().isNotEmpty,
               onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
+              onOpenPluginUi: _openPluginUi,
               onPluginTap: _showPluginDetails,
               onPluginEnabledChanged: _setPluginEnabled,
             ),
@@ -484,8 +486,33 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             Navigator.of(context).pop();
             _setPluginEnabled(plugin, enabled);
           },
+          onOpenUi: (initialRouteId) {
+            Navigator.of(context).pop();
+            _openPluginUi(plugin, initialRouteId: initialRouteId);
+          },
         );
       },
+    );
+  }
+
+  void _openPluginUi(
+    core_proxy.ToolPkgContainerRuntime plugin, {
+    String? initialRouteId,
+  }) {
+    if (!_snapshot.enabledPluginContainerNames.contains(plugin.packageName)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('启用插件后可打开专属界面')));
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ToolPkgUiLauncherScreen(
+          clients: widget.clients,
+          plugin: plugin,
+          initialRouteId: initialRouteId,
+        ),
+      ),
     );
   }
 

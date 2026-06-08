@@ -28,6 +28,7 @@ use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
+    AndroidExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
     AndroidFileSystemHost as NativeFileSystemHost, AndroidHttpHost as NativeHttpHost,
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -36,6 +37,7 @@ use operit_host_android_native::{
 };
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
+    LinuxExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
     LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -50,6 +52,7 @@ use operit_host_web::{
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
+    WindowsExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
     WindowsFileSystemHost as NativeFileSystemHost, WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -62,6 +65,8 @@ use wasm_bindgen::prelude::*;
 pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
+    #[cfg(not(target_arch = "wasm32"))]
+    externalRuntimeEventRegistration: Box<dyn operit_host_api::ExternalRuntimeEventRegistration>,
     proxyCore: ConcurrentLocalCoreProxy,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
@@ -508,9 +513,17 @@ impl OperitFlutterBridge {
             .chatRuntimeHolder
             .getCore(ChatRuntimeSlot::MAIN);
         mainCore.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+        #[cfg(not(target_arch = "wasm32"))]
+        let externalRuntimeEventRegistration =
+            operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
+                core.localApplicationMut().applicationContext.clone(),
+                "flutter",
+            )?;
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
+            #[cfg(not(target_arch = "wasm32"))]
+            externalRuntimeEventRegistration,
             proxyCore: ConcurrentLocalCoreProxy::new(core),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
@@ -898,6 +911,9 @@ fn create_local_core(
         context = context.withBrowserAutomationHost(host);
     }
     context = context.withTerminalHost(terminalHost);
+    context = context.withExternalRuntimeEventHost(Arc::new(
+        NativeExternalRuntimeEventHost::new(),
+    ));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }

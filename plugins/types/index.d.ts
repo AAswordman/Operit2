@@ -8,6 +8,20 @@
 // Import types that will be used in global declarations
 import { ToolReturnType, NativeInterface as CoreNativeInterface } from './core';
 import {
+    JavaBridgeApi as JavaBridgeApiType,
+    JavaBridgeClass as JavaBridgeClassType,
+    JavaBridgeInstance as JavaBridgeInstanceType,
+    JavaBridgeHandle as JavaBridgeHandleType,
+    JavaBridgePackage as JavaBridgePackageType,
+    JavaBridgeJsInterfaceMarker as JavaBridgeJsInterfaceMarkerType,
+    JavaBridgeJsInterfaceImpl as JavaBridgeJsInterfaceImplType,
+    JavaBridgeJsMethod as JavaBridgeJsMethodType,
+    JavaBridgeInterfaceRef as JavaBridgeInterfaceRefType,
+    JavaBridgeCallbackResult as JavaBridgeCallbackResultType,
+    JavaBridgeExternalCodeLoadOptions as JavaBridgeExternalCodeLoadOptionsType,
+    JavaBridgeLoadedCodePath as JavaBridgeLoadedCodePathType
+} from './java-bridge';
+import {
     SleepResultData as _SleepResultData,
     SystemSettingData as _SystemSettingData,
     SystemSettingResult as _SystemSettingResult,
@@ -96,6 +110,7 @@ export * from './results';
 
 // Export tool type definitions
 export * from './tool-types';
+export * from './java-bridge';
 export * from './toolpkg';
 export * from './material-icons';
 export * from './okhttp';
@@ -158,6 +173,18 @@ declare global {
     type ComposeDslScreen = ComposeDslScreenType;
     type ComposeNode = ComposeNodeType;
     type ComposeCanvasCommand = ComposeCanvasCommandType;
+    type JavaBridgeApi = JavaBridgeApiType;
+    type JavaBridgeClass = JavaBridgeClassType;
+    type JavaBridgeInstance = JavaBridgeInstanceType;
+    type JavaBridgeHandle = JavaBridgeHandleType;
+    type JavaBridgePackage = JavaBridgePackageType;
+    type JavaBridgeJsInterfaceMarker = JavaBridgeJsInterfaceMarkerType;
+    type JavaBridgeJsInterfaceImpl = JavaBridgeJsInterfaceImplType;
+    type JavaBridgeJsMethod = JavaBridgeJsMethodType;
+    type JavaBridgeInterfaceRef = JavaBridgeInterfaceRefType;
+    type JavaBridgeCallbackResult = JavaBridgeCallbackResultType;
+    type JavaBridgeExternalCodeLoadOptions = JavaBridgeExternalCodeLoadOptionsType;
+    type JavaBridgeLoadedCodePath = JavaBridgeLoadedCodePathType;
     type OkHttpConfig = OkHttpConfigType;
     type HttpRequest = OkHttpRequestType;
     type HttpStreamEvent = OkHttpStreamEventType;
@@ -259,6 +286,9 @@ declare global {
 
     function getState(): string | undefined;
 
+    /**
+     * Returns the current package language tag, such as `zh-CN` or `en`.
+     */
     function getLang(): string;
 
     function getCallerName(): string | undefined;
@@ -301,6 +331,10 @@ declare global {
 
     // CommonJS exports
     const exports: Record<string, any>;
+
+    // Java/Kotlin bridge (Rhino-like)
+    const Java: JavaBridgeApiType;
+    const Kotlin: JavaBridgeApiType;
 
     // NativeInterface
     const NativeInterface: typeof CoreNativeInterface;

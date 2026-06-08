@@ -81,6 +81,11 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     }
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
+    let _externalRuntimeEventRegistration =
+        operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
+            core.localApplicationMut().applicationContext.clone(),
+            "cli-link-serve",
+        )?;
     let main_core = core
         .localApplicationMut()
         .chatRuntimeHolder

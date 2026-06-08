@@ -1,4 +1,10 @@
+use std::sync::{Arc, Mutex};
+
 use serde_json::Value;
+
+use crate::core::application::OperitApplication::OperitApplication;
+use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 
 #[derive(Clone, Debug)]
 pub struct ToolPkgAppLifecycleHookRegistration {
@@ -80,6 +86,18 @@ pub struct ToolPkgAiProviderRegistration {
     pub testConnectionFunctionSource: Option<String>,
     pub calculateInputTokensFunctionName: String,
     pub calculateInputTokensFunctionSource: Option<String>,
+}
+
+#[allow(non_snake_case)]
+pub fn toolPkgPackageManager() -> Arc<Mutex<PackageManager>> {
+    let application = OperitApplication::applicationContext();
+    AIToolHandler::getInstance(application).getOrCreatePackageManager()
+}
+
+#[allow(non_snake_case)]
+pub fn toolPkgToolHandler() -> AIToolHandler {
+    let application = OperitApplication::applicationContext();
+    AIToolHandler::getInstance(application)
 }
 
 #[allow(non_snake_case)]

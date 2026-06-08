@@ -15,7 +15,7 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
 };
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
 };
 use crate::util::AppLogger::AppLogger;
 
@@ -225,11 +225,7 @@ fn dispatch_prompt_hooks(
     let mut changed = false;
     for hook in snapshot {
         let package_manager = {
-            let package_manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-                crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-            )
-            .getOrCreatePackageManager();
-            let cloned_package_manager = package_manager
+            let cloned_package_manager = toolPkgPackageManager()
                 .lock()
                 .expect("package manager mutex poisoned")
                 .clone();

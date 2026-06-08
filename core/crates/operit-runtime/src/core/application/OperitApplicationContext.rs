@@ -1,8 +1,9 @@
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    BrowserAutomationHost, FileSystemHost, HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost,
-    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, WebVisitHost,
+    BrowserAutomationHost, ExternalRuntimeEventHost, FileSystemHost, HostEnvironmentDescriptor,
+    HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost,
+    TerminalHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -33,6 +34,7 @@ pub struct OperitApplicationContext {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
+    pub externalRuntimeEventHost: Option<Arc<dyn ExternalRuntimeEventHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
 }
@@ -49,6 +51,7 @@ impl OperitApplicationContext {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            externalRuntimeEventHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
         }
@@ -67,6 +70,7 @@ impl OperitApplicationContext {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -88,6 +92,7 @@ impl OperitApplicationContext {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -110,6 +115,7 @@ impl OperitApplicationContext {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -136,6 +142,7 @@ impl OperitApplicationContext {
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
             runtimeSqliteHost: Some(runtimeSqliteHost),
+            externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -159,6 +166,15 @@ impl OperitApplicationContext {
         browserAutomationHost: Arc<dyn BrowserAutomationHost>,
     ) -> Self {
         self.browserAutomationHost = Some(browserAutomationHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withExternalRuntimeEventHost(
+        mut self,
+        externalRuntimeEventHost: Arc<dyn ExternalRuntimeEventHost>,
+    ) -> Self {
+        self.externalRuntimeEventHost = Some(externalRuntimeEventHost);
         self
     }
 }

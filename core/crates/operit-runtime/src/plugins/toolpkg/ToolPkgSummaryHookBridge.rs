@@ -8,7 +8,7 @@ use crate::core::chat::hooks::SummaryHookRegistry::{
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
 };
 
 static SUMMARY_GENERATE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> =
@@ -60,26 +60,23 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
         for hook in snapshot {
-            let result = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-                crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-            )
-            .getOrCreatePackageManager()
-            .lock()
-            .expect("package manager mutex poisoned")
-            .runToolPkgMainHook(
-                &hook.containerPackageName,
-                &hook.functionName,
-                TOOLPKG_EVENT_SUMMARY_GENERATE,
-                None,
-                Some(&hook.hookId),
-                hook.functionSource.as_deref(),
-                summary_context_to_value(context),
-                None,
-                None,
-                None,
-            )
-            .ok()
-            .and_then(decodeToolPkgHookResult);
+            let result = toolPkgPackageManager()
+                .lock()
+                .expect("package manager mutex poisoned")
+                .runToolPkgMainHook(
+                    &hook.containerPackageName,
+                    &hook.functionName,
+                    TOOLPKG_EVENT_SUMMARY_GENERATE,
+                    None,
+                    Some(&hook.hookId),
+                    hook.functionSource.as_deref(),
+                    summary_context_to_value(context),
+                    None,
+                    None,
+                    None,
+                )
+                .ok()
+                .and_then(decodeToolPkgHookResult);
             if let Some(Value::Object(object)) = result {
                 changed |= apply_summary_object_result(&mut mutation, object);
             }

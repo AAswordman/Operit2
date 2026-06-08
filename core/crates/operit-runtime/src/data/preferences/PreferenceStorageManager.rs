@@ -100,6 +100,15 @@ impl PreferenceStorageManager {
             }
         })
     }
+
+    pub fn clearPreferences(&self, fileName: &str) -> Result<(), PreferencesDataStoreError> {
+        let fileName = normalizePreferenceFileName(fileName)?;
+        preferencesDataStore(&fileName).edit(|preferences| {
+            for (key, _) in preferences.entries() {
+                preferences.remove(&stringPreferencesKey(&key));
+            }
+        })
+    }
 }
 
 fn preferencesDataStore(fileName: &str) -> PreferencesDataStore {

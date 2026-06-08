@@ -6,12 +6,17 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+import time
+import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST_FILENAMES = ("manifest.hjson", "manifest.json")
 SYNCABLE_SUFFIXES = {".js", ".toolpkg"}
+TOOLPKG_PACKAGES_CHANGED_EVENT = "toolpkg.packages.changed"
+HOT_RELOAD_STATE_FILE = ".sync_hot_reload_state.json"
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,194 @@ def _save_state(path: Path, state: dict[str, str]) -> None:
     path.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def _external_event_registry_dir() -> Path:
+    configured = os.environ.get("OPERIT_EXTERNAL_EVENT_DIR")
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / "operit2" / "external-runtime-events"
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return str(pid) in completed.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _collect_hot_reload_outputs(output_dir: Path) -> list[Path]:
+    if not output_dir.is_dir():
+        return []
+    return [
+        file_path
+        for file_path in output_dir.iterdir()
+        if file_path.is_file() and file_path.suffix.lower() in SYNCABLE_SUFFIXES
+    ]
+
+
+def _compute_hot_reload_signature(output_dir: Path) -> str:
+    digest = hashlib.sha256()
+    if output_dir.is_dir():
+        for file_path in _iter_signature_files(_collect_hot_reload_outputs(output_dir)):
+            digest.update(file_path.name.encode("utf-8"))
+            digest.update(b"\0")
+            with file_path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _load_runtime_registration(path: Path) -> dict[str, object] | None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return None
+    capabilities = data.get("capabilities")
+    if not isinstance(capabilities, list) or TOOLPKG_PACKAGES_CHANGED_EVENT not in capabilities:
+        return None
+    process_id = data.get("processId")
+    if not isinstance(process_id, int) or not _process_is_running(process_id):
+        return None
+    events_dir = data.get("eventsDir")
+    responses_dir = data.get("responsesDir")
+    if not isinstance(events_dir, str) or not isinstance(responses_dir, str):
+        return None
+    if not Path(events_dir).is_dir() or not Path(responses_dir).is_dir():
+        return None
+    return data
+
+
+def _load_runtime_registrations() -> list[dict[str, object]]:
+    registrations_dir = _external_event_registry_dir() / "registrations"
+    if not registrations_dir.is_dir():
+        return []
+    registrations: list[dict[str, object]] = []
+    for descriptor_path in sorted(registrations_dir.glob("*.json"), key=lambda path: path.name.lower()):
+        try:
+            registration = _load_runtime_registration(descriptor_path)
+        except (OSError, json.JSONDecodeError):
+            registration = None
+        if registration is not None:
+            registrations.append(registration)
+    return registrations
+
+
+def _write_external_event(registration: dict[str, object], event: dict[str, object]) -> Path:
+    events_dir = Path(str(registration["eventsDir"]))
+    event_path = events_dir / f"{event['id']}.json"
+    temporary_path = events_dir / f".{event['id']}.tmp"
+    temporary_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(temporary_path, event_path)
+    return event_path
+
+
+def _wait_external_event_response(
+    registration: dict[str, object],
+    event_id: str,
+    timeout_seconds: float,
+) -> dict[str, object] | None:
+    responses_dir = Path(str(registration["responsesDir"]))
+    response_path = responses_dir / f"{event_id}.json"
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if response_path.is_file():
+            data = json.loads(response_path.read_text(encoding="utf-8"))
+            response_path.unlink()
+            if not isinstance(data, dict):
+                raise ValueError(f"External runtime event response must be an object: {response_path}")
+            return data
+        time.sleep(0.05)
+    return None
+
+
+def _send_external_runtime_event(
+    event_name: str,
+    payload: dict[str, object],
+    *,
+    timeout_seconds: float,
+) -> tuple[int, int]:
+    registrations = _load_runtime_registrations()
+    if not registrations:
+        print(f"HOT-RELOAD: no registered runtime supports {event_name}")
+        return (0, 0)
+
+    delivered = 0
+    accepted = 0
+    for registration in registrations:
+        event_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex}"
+        event = {
+            "id": event_id,
+            "name": event_name,
+            "source": "plugins.tools.sync_plugin_packages",
+            "payload": payload,
+            "createdAtMillis": int(time.time() * 1000),
+        }
+        _write_external_event(registration, event)
+        delivered += 1
+        response = _wait_external_event_response(registration, event_id, timeout_seconds)
+        runtime_id = registration.get("runtimeId", "<unknown>")
+        process_kind = registration.get("processKind", "<unknown>")
+        if response is None:
+            print(f"HOT-RELOAD-TIMEOUT: runtime={runtime_id}, kind={process_kind}, event={event_name}")
+            continue
+        if response.get("accepted") is True:
+            accepted += 1
+            print(f"HOT-RELOAD-OK: runtime={runtime_id}, kind={process_kind}, event={event_name}")
+        else:
+            print(
+                "HOT-RELOAD-ERROR: "
+                f"runtime={runtime_id}, kind={process_kind}, event={event_name}, "
+                f"error={response.get('error')}"
+            )
+    return (delivered, accepted)
+
+
+def _maybe_hot_reload_buildin(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    dry_run: bool,
+    disabled: bool,
+    timeout_seconds: float,
+) -> None:
+    if dry_run or disabled:
+        return
+    signature = _compute_hot_reload_signature(output_dir)
+    state_file = source_dir / HOT_RELOAD_STATE_FILE
+    state = _load_state(state_file)
+    key = "buildin-output"
+    if state.get(key) == signature:
+        print("HOT-RELOAD-SKIP: buildin output signature unchanged")
+        return
+    delivered, accepted = _send_external_runtime_event(
+        TOOLPKG_PACKAGES_CHANGED_EVENT,
+        {
+            "source": "buildin",
+            "outputDir": str(output_dir),
+            "signature": signature,
+        },
+        timeout_seconds=timeout_seconds,
+    )
+    if accepted <= 0:
+        print(f"HOT-RELOAD-NOT-RECORDED: delivered={delivered}, accepted={accepted}")
+        return
+    state[key] = signature
+    _save_state(state_file, state)
+    print(f"HOT-RELOAD-DONE: delivered={delivered}, accepted={accepted}")
+
+
 def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem], *, dry_run: bool) -> None:
     state_file = source_dir / ".sync_state.json"
     state = _load_state(state_file)
@@ -313,6 +506,8 @@ def main() -> int:
         "--examples-output",
         default=str(plugins_root / ".out" / "examples"),
     )
+    parser.add_argument("--no-hot-reload", action="store_true")
+    parser.add_argument("--hot-reload-timeout", type=float, default=5.0)
     args = parser.parse_args()
 
     total_copied = 0
@@ -329,6 +524,15 @@ def main() -> int:
         total_copied += copied
         total_packed += packed
         total_deleted += deleted
+
+    if args.source in {"buildin", "all"}:
+        _maybe_hot_reload_buildin(
+            plugins_root / "buildin",
+            Path(args.buildin_output),
+            dry_run=args.dry_run,
+            disabled=bool(args.no_hot_reload),
+            timeout_seconds=float(args.hot_reload_timeout),
+        )
 
     print(
         "Done. "

@@ -400,7 +400,7 @@ const HistoryChat = (function () {
         let chatId = (params?.chat_id ?? '').toString().trim();
         if (!chatId) {
             const lang = (getLang() || '').toLowerCase();
-            const group = lang === 'zh' ? '子任务' : 'subTask';
+            const group = lang === 'zh-cn' ? '子任务' : 'subTask';
             const creation = await Tools.Chat.createNew(
                 group,
                 false,

@@ -1470,6 +1470,8 @@ dependencies = [
  "libc",
  "operit-host-api",
  "operit-host-linux-native",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -1478,6 +1480,8 @@ name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1489,6 +1493,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "serde",
  "serde_json",
  "tungstenite",
  "uuid",
@@ -1513,9 +1518,11 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "serde",
  "serde_json",
  "tungstenite",
  "uuid",
+ "windows-sys 0.59.0",
  "zip",
 ]
 
@@ -3031,6 +3038,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]

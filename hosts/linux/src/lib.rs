@@ -3,7 +3,10 @@
 pub mod bridge;
 pub mod registry;
 pub mod tools;
+#[path = "../../common/external_event.rs"]
+pub mod external_event;
 
+pub use external_event::LocalExternalRuntimeEventHost as LinuxExternalRuntimeEventHost;
 pub use tools::browser::LinuxWebVisitHost;
 pub use tools::fs::LinuxFileSystemHost;
 pub use tools::http::LinuxHttpHost;

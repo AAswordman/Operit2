@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::toolPkgPackageManager;
 use crate::plugins::PluginRegistry::OperitPlugin;
 
 pub struct ToolPkgCommonBridgePlugin;
@@ -23,10 +24,7 @@ impl OperitPlugin for ToolPkgCommonBridgePlugin {
         crate::plugins::toolpkg::ToolPkgChatViewHookBridge::ToolPkgChatViewHookBridge::register();
         crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::register();
         crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::register();
-        let manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager();
+        let manager = toolPkgPackageManager();
         manager
             .lock()
             .expect("package manager mutex poisoned")

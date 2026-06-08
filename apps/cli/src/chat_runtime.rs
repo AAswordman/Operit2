@@ -529,6 +529,11 @@ pub(crate) async fn run_shell_command(args: &[String]) -> Result<(), String> {
     let shellArgs = parse_shell_args(args)?;
     let mut application = create_cli_application();
     application.onCreate()?;
+    let _externalRuntimeEventRegistration =
+        operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
+            application.applicationContext.clone(),
+            "cli-shell",
+        )?;
     let mut queuedAttachmentPaths = Vec::<String>::new();
     let initialChatId = initialize_shell_chat(&mut application, &shellArgs)?;
     println!("interactive shell ready");

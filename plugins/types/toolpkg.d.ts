@@ -760,30 +760,44 @@ export namespace ToolPkg {
         calculateInputTokens: { function: AiProviderCalculateInputTokensHandler };
     }
 
+    /** Runtime area that owns a ToolPkg JavaScript context. */
     export type RuntimeKind = "main" | "ui" | "sandbox" | "provider";
 
+    /** Metadata passed to a handler registered with {@link IpcApi.on}. */
     export interface IpcMeta {
+        /** Channel name used for this call. */
         channel: string;
+        /** Context key of the runtime that initiated the call. */
         callerContextKey?: string;
+        /** Context key of the runtime currently executing the handler. */
         currentContextKey?: string;
+        /** Runtime kind currently executing the handler. */
         currentRuntime?: RuntimeKind;
+        /** ToolPkg container package name for this call. */
         packageTarget?: string;
     }
 
+    /** Options used by {@link IpcApi.call} to select the target runtime. */
     export interface IpcCallOptions {
+        /** Runtime kind to call. Main is selected when no explicit target is given. */
         targetRuntime?: RuntimeKind;
+        /** Exact target context key, required for non-main runtime calls. */
         targetContextKey?: string;
     }
 
+    /** Low-level message API between ToolPkg runtime contexts. */
     export interface IpcApi {
+        /** Registers a handler for a channel and returns a function that removes it. */
         on<TPayload = unknown, TResult = unknown>(
             channel: string,
             handler: (payload: TPayload, meta: IpcMeta) => TResult | Promise<TResult>
         ): () => void;
+        /** Removes a channel handler. Passing the handler checks that the same function is still registered. */
         off<TPayload = unknown, TResult = unknown>(
             channel: string,
             handler?: (payload: TPayload, meta: IpcMeta) => TResult | Promise<TResult>
         ): boolean;
+        /** Calls a handler in the selected runtime context and resolves with its result. */
         call<TPayload = unknown, TResult = unknown>(
             channel: string,
             payload?: TPayload,

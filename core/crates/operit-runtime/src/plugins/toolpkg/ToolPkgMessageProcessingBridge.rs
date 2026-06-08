@@ -11,7 +11,7 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgMessageProcessingHookRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgMessageProcessingHookRegistration,
 };
 use crate::util::stream::HotStream::MutableSharedStreamImpl;
 
@@ -166,26 +166,23 @@ fn runMessageProcessingHook(
     eventPayload: Value,
     onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
 ) -> Option<Value> {
-    crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-        crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-    )
-    .getOrCreatePackageManager()
-    .lock()
-    .expect("package manager mutex poisoned")
-    .runToolPkgMainHook(
-        &hook.containerPackageName,
-        &hook.functionName,
-        TOOLPKG_EVENT_MESSAGE_PROCESSING,
-        None,
-        Some(&hook.pluginId),
-        hook.functionSource.as_deref(),
-        eventPayload,
-        None,
-        None,
-        onIntermediateResult,
-    )
-    .ok()
-    .and_then(decodeToolPkgHookResult)
+    toolPkgPackageManager()
+        .lock()
+        .expect("package manager mutex poisoned")
+        .runToolPkgMainHook(
+            &hook.containerPackageName,
+            &hook.functionName,
+            TOOLPKG_EVENT_MESSAGE_PROCESSING,
+            None,
+            Some(&hook.pluginId),
+            hook.functionSource.as_deref(),
+            eventPayload,
+            None,
+            None,
+            onIntermediateResult,
+        )
+        .ok()
+        .and_then(decodeToolPkgHookResult)
 }
 
 struct ParsedMessageProcessingResult {

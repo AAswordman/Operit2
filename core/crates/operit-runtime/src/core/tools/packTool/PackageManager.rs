@@ -33,11 +33,6 @@ const DISABLED_PACKAGES_KEY: &str = "disabled_packages";
 
 pub type CachedMcpToolInfo = crate::data::mcp::MCPLocalServer::CachedToolInfo;
 
-enum PackageLoadItem {
-    ToolPackage(ToolPackage),
-    ToolPkg(ToolPkgLoadResult),
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct PublishablePackageSource {
@@ -54,6 +49,27 @@ pub struct PublishablePackageSource {
     pub inferredVersion: Option<String>,
 }
 
+#[derive(Clone, Default)]
+struct PackageScanSnapshot {
+    availablePackages: BTreeMap<String, ToolPackage>,
+    toolPkgContainers: BTreeMap<String, ToolPkgContainerRuntime>,
+    toolPkgSubpackages: BTreeMap<String, ToolPkgSubpackageRuntime>,
+}
+
+#[derive(Clone, Default)]
+struct PackageScanCandidateResult {
+    phase: String,
+    toolPackage: Option<ToolPackage>,
+    toolPkgLoadResult: Option<ToolPkgLoadResult>,
+    sourcePath: String,
+}
+
+#[derive(Clone, Default)]
+struct ExternalPackageScanCacheEntry {
+    signature: String,
+    result: PackageScanCandidateResult,
+}
+
 #[derive(Clone)]
 pub struct PackageManager {
     activatedPackages: BTreeSet<String>,
@@ -61,6 +77,7 @@ pub struct PackageManager {
     cachedMcpTools: BTreeMap<String, Vec<CachedMcpToolInfo>>,
     toolPkgManager: ToolPkgManager,
     activePackageStateIds: BTreeMap<String, Option<String>>,
+    externalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
     dataStore: PreferencesDataStore,
     storePaths: RuntimeStorePaths,
     context: OperitApplicationContext,
@@ -86,12 +103,24 @@ impl PackageManager {
             cachedMcpTools: BTreeMap::new(),
             toolPkgManager: ToolPkgManager::new(),
             activePackageStateIds: BTreeMap::new(),
+            externalPackageScanCache: BTreeMap::new(),
             dataStore: PreferencesDataStore::new(paths.package_manager_preferences_path()),
             storePaths: paths,
             mcpManager: MCPManager::getInstance(context.clone()),
             context,
         };
         manager.loadAvailablePackages();
+        manager
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getInstance(context: OperitApplicationContext) -> Self {
+        let packageManager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(context)
+            .getOrCreatePackageManager();
+        let manager = packageManager
+            .lock()
+            .expect("PackageManager mutex poisoned")
+            .clone();
         manager
     }
 
@@ -116,6 +145,11 @@ impl PackageManager {
     pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> JsEngine {
         self.toolPkgManager
             .getToolPkgExecutionEngine(&self.context, contextKey)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn findToolPkgExecutionEngine(&self, contextKey: &str) -> Option<JsEngine> {
+        self.toolPkgManager.findToolPkgExecutionEngine(contextKey)
     }
 
     pub fn isPackageActivated(&self, packageName: &str) -> bool {
@@ -526,6 +560,10 @@ impl PackageManager {
             return false;
         }
 
+        self.availablePackages.insert(
+            loadResult.containerPackage.name.clone(),
+            loadResult.containerPackage.clone(),
+        );
         for subpackage in self.toolPkgManager.registerToolPkg(loadResult) {
             self.availablePackages
                 .insert(subpackage.name.clone(), subpackage);
@@ -553,46 +591,25 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn loadAvailablePackages(&mut self) {
-        self.loadBuiltInPackageAssets();
-        let packagesDir = self.storePaths.packages_dir();
-        if let Err(_) = fs::create_dir_all(&packagesDir) {
-            return;
+        let previousContainerNames = self
+            .toolPkgManager
+            .getToolPkgContainerRuntimes()
+            .into_iter()
+            .map(|runtime| runtime.packageName)
+            .collect::<BTreeSet<_>>();
+        let assetSnapshot = self.scanBuiltInPackageAssets();
+        let mergedSnapshot = self.scanExternalPackages(&assetSnapshot);
+        let nextContainerNames = mergedSnapshot
+            .toolPkgContainers
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for packageName in previousContainerNames.union(&nextContainerNames) {
+            self.toolPkgManager
+                .destroyDefaultToolPkgExecutionEngine(packageName);
         }
-        let Ok(entries) = fs::read_dir(&packagesDir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let lowerPath = path.to_string_lossy().to_ascii_lowercase();
-            let package = if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
-                self.loadPackageFromJsFile(&path)
-                    .map(PackageLoadItem::ToolPackage)
-            } else if lowerPath.ends_with(".hjson") {
-                fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|content| self.parsePackageMetadata(&content, "").ok())
-                    .map(PackageLoadItem::ToolPackage)
-            } else if lowerPath.ends_with(".toolpkg") {
-                self.loadToolPkgFromExternalFile(&path)
-                    .ok()
-                    .map(PackageLoadItem::ToolPkg)
-            } else {
-                None
-            };
-            if let Some(loadItem) = package {
-                match loadItem {
-                    PackageLoadItem::ToolPackage(package) => {
-                        self.availablePackages.insert(package.name.clone(), package);
-                    }
-                    PackageLoadItem::ToolPkg(loadResult) => {
-                        self.registerToolPkg(loadResult);
-                    }
-                }
-            }
-        }
+        self.applyPackageScanSnapshot(mergedSnapshot);
+        self.notifyToolPkgRuntimeChangeListeners();
     }
 
     #[allow(non_snake_case)]
@@ -729,42 +746,423 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
-    fn loadBuiltInPackageAssets(&mut self) {
-        for asset in crate::plugins::BuiltinPluginAssets::BUILTIN_PLUGIN_ASSETS {
-            let lowerName = asset.name.to_ascii_lowercase();
-            if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
-                let script = String::from_utf8(asset.bytes.to_vec())
-                    .expect("built-in package script must be UTF-8");
-                let package = self
-                    .parseJsPackage(&script)
-                    .expect("built-in JavaScript package metadata must parse");
-                self.availablePackages.insert(
-                    package.name.clone(),
-                    ToolPackage {
+    fn scanBuiltInPackageAssets(&self) -> PackageScanSnapshot {
+        let sourceDir = builtInPackageAssetsDir();
+        let Ok(entries) = fs::read_dir(&sourceDir) else {
+            eprintln!(
+                "Built-in package asset directory is unavailable: {}",
+                sourceDir.display()
+            );
+            return PackageScanSnapshot::default();
+        };
+        let mut files = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+        let results = files
+            .into_iter()
+            .filter_map(|path| {
+                let fileName = path.file_name()?.to_string_lossy().to_string();
+                Some(self.parseBuiltInPackageCandidate(&fileName, &path))
+            })
+            .collect::<Vec<_>>();
+        self.mergePackageScanCandidateResults(results, None)
+    }
+
+    #[allow(non_snake_case)]
+    fn scanExternalPackages(&mut self, baseSnapshot: &PackageScanSnapshot) -> PackageScanSnapshot {
+        let packagesDir = self.storePaths.packages_dir();
+        if let Err(error) = fs::create_dir_all(&packagesDir) {
+            eprintln!(
+                "External package directory creation failed: {}, error={error}",
+                packagesDir.display()
+            );
+            return baseSnapshot.clone();
+        }
+        let Ok(entries) = fs::read_dir(&packagesDir) else {
+            eprintln!(
+                "External package directory is unreadable: {}",
+                packagesDir.display()
+            );
+            return baseSnapshot.clone();
+        };
+        let mut files = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+
+        let previousCache = self.externalPackageScanCache.clone();
+        let mut nextCache = BTreeMap::new();
+        let mut results = Vec::new();
+        for file in files {
+            let cacheKey = file.to_string_lossy().to_string();
+            let signature = self.buildExternalPackageScanSignature(&file);
+            let result = previousCache
+                .get(&cacheKey)
+                .filter(|entry| entry.signature == signature)
+                .map(|entry| entry.result.clone())
+                .unwrap_or_else(|| self.parseExternalPackageCandidate(&file));
+            nextCache.insert(
+                cacheKey,
+                ExternalPackageScanCacheEntry {
+                    signature,
+                    result: result.clone(),
+                },
+            );
+            results.push(result);
+        }
+        self.externalPackageScanCache = nextCache;
+        self.mergePackageScanCandidateResults(results, Some(baseSnapshot))
+    }
+
+    #[allow(non_snake_case)]
+    fn parseBuiltInPackageCandidate(
+        &self,
+        fileName: &str,
+        path: &Path,
+    ) -> PackageScanCandidateResult {
+        let mut result = PackageScanCandidateResult {
+            phase: "asset".to_string(),
+            sourcePath: fileName.to_string(),
+            ..Default::default()
+        };
+        let lowerName = fileName.to_ascii_lowercase();
+        if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
+            match fs::read_to_string(path).and_then(|script| {
+                self.parseJsPackage(&script)
+                    .map(|package| ToolPackage {
                         is_built_in: true,
                         ..package
-                    },
-                );
-            } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
-                let content = String::from_utf8(asset.bytes.to_vec())
-                    .expect("built-in package metadata must be UTF-8");
-                let package = self
-                    .parsePackageMetadata(&content, "")
-                    .expect("built-in package metadata must parse");
-                self.availablePackages.insert(
-                    package.name.clone(),
-                    ToolPackage {
+                    })
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            }) {
+                Ok(package) => result.toolPackage = Some(package),
+                Err(error) => eprintln!(
+                    "Built-in JavaScript package load error [{}]: {error}",
+                    path.display()
+                ),
+            }
+        } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
+            match fs::read_to_string(path).and_then(|content| {
+                self.parsePackageMetadata(&content, "")
+                    .map(|package| ToolPackage {
                         is_built_in: true,
                         ..package
-                    },
-                );
-            } else if lowerName.ends_with(".toolpkg") {
-                let loadResult = self
-                    .loadToolPkgFromBuiltInAsset(asset.name, asset.bytes)
-                    .expect("built-in ToolPkg package must parse");
-                self.registerToolPkg(loadResult);
+                    })
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            }) {
+                Ok(package) => result.toolPackage = Some(package),
+                Err(error) => eprintln!(
+                    "Built-in package metadata load error [{}]: {error}",
+                    path.display()
+                ),
+            }
+        } else if lowerName.ends_with(".toolpkg") {
+            match self.loadToolPkgFromBuiltInAssetFile(fileName, path) {
+                Ok(loadResult) => result.toolPkgLoadResult = Some(loadResult),
+                Err(error) => eprintln!(
+                    "Built-in ToolPkg package load error [{}]: {error}",
+                    path.display()
+                ),
             }
         }
+        result
+    }
+
+    #[allow(non_snake_case)]
+    fn parseExternalPackageCandidate(&self, path: &Path) -> PackageScanCandidateResult {
+        let sourcePath = path.to_string_lossy().to_string();
+        let mut result = PackageScanCandidateResult {
+            phase: "external".to_string(),
+            sourcePath: sourcePath.clone(),
+            ..Default::default()
+        };
+        let lowerPath = sourcePath.to_ascii_lowercase();
+        if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
+            result.toolPackage = self.loadPackageFromJsFile(path);
+        } else if lowerPath.ends_with(".hjson") {
+            match fs::read_to_string(path).and_then(|content| {
+                self.parsePackageMetadata(&content, "")
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            }) {
+                Ok(package) => result.toolPackage = Some(package),
+                Err(error) => {
+                    eprintln!("External package metadata load error [{sourcePath}]: {error}")
+                }
+            }
+        } else if lowerPath.ends_with(".toolpkg") {
+            match self.loadToolPkgFromExternalFile(path) {
+                Ok(loadResult) => result.toolPkgLoadResult = Some(loadResult),
+                Err(error) => {
+                    eprintln!("External ToolPkg package load error [{sourcePath}]: {error}")
+                }
+            }
+        }
+        result
+    }
+
+    #[allow(non_snake_case)]
+    fn mergePackageScanCandidateResults(
+        &self,
+        candidateResults: Vec<PackageScanCandidateResult>,
+        baseSnapshot: Option<&PackageScanSnapshot>,
+    ) -> PackageScanSnapshot {
+        let mut stagedAvailablePackages = baseSnapshot
+            .map(|snapshot| snapshot.availablePackages.clone())
+            .unwrap_or_default();
+        let mut stagedToolPkgContainers = baseSnapshot
+            .map(|snapshot| snapshot.toolPkgContainers.clone())
+            .unwrap_or_default();
+        let mut stagedToolPkgSubpackages = baseSnapshot
+            .map(|snapshot| snapshot.toolPkgSubpackages.clone())
+            .unwrap_or_default();
+
+        for result in candidateResults {
+            if let Some(packageMetadata) = result.toolPackage {
+                if result.phase == "external"
+                    && !Self::prepareExternalStandalonePackageOverride(
+                        &packageMetadata.name,
+                        &mut stagedAvailablePackages,
+                        &mut stagedToolPkgContainers,
+                        &mut stagedToolPkgSubpackages,
+                    )
+                {
+                    eprintln!(
+                        "Duplicate package name: {}, source={}",
+                        packageMetadata.name, result.sourcePath
+                    );
+                    continue;
+                }
+                if stagedAvailablePackages.contains_key(&packageMetadata.name) {
+                    eprintln!(
+                        "Duplicate package name: {}, source={}",
+                        packageMetadata.name, result.sourcePath
+                    );
+                } else {
+                    stagedAvailablePackages.insert(packageMetadata.name.clone(), packageMetadata);
+                }
+            }
+            if let Some(loadResult) = result.toolPkgLoadResult {
+                if result.phase == "external"
+                    && !Self::prepareExternalToolPkgOverride(
+                        &loadResult,
+                        &mut stagedAvailablePackages,
+                        &mut stagedToolPkgContainers,
+                        &mut stagedToolPkgSubpackages,
+                    )
+                {
+                    eprintln!(
+                        "Duplicate ToolPkg package name: {}, source={}",
+                        loadResult.containerPackage.name, result.sourcePath
+                    );
+                    continue;
+                }
+                if !Self::registerToolPkgInto(
+                    loadResult,
+                    &mut stagedAvailablePackages,
+                    &mut stagedToolPkgContainers,
+                    &mut stagedToolPkgSubpackages,
+                ) {
+                    eprintln!(
+                        "ToolPkg package registration failed, source={}",
+                        result.sourcePath
+                    );
+                }
+            }
+        }
+
+        PackageScanSnapshot {
+            availablePackages: stagedAvailablePackages,
+            toolPkgContainers: stagedToolPkgContainers,
+            toolPkgSubpackages: stagedToolPkgSubpackages,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn applyPackageScanSnapshot(&mut self, snapshot: PackageScanSnapshot) {
+        self.availablePackages = snapshot.availablePackages;
+        self.toolPkgManager
+            .replaceRuntimeMaps(snapshot.toolPkgContainers, snapshot.toolPkgSubpackages);
+    }
+
+    #[allow(non_snake_case)]
+    fn registerToolPkgInto(
+        loadResult: ToolPkgLoadResult,
+        availablePackagesTarget: &mut BTreeMap<String, ToolPackage>,
+        toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
+        toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) -> bool {
+        let containerName = loadResult.containerPackage.name.clone();
+        if availablePackagesTarget.contains_key(&containerName) {
+            return false;
+        }
+        if loadResult
+            .subpackagePackages
+            .iter()
+            .any(|subpackage| availablePackagesTarget.contains_key(&subpackage.name))
+        {
+            return false;
+        }
+        availablePackagesTarget.insert(containerName.clone(), loadResult.containerPackage);
+        toolPkgContainersTarget.insert(containerName, loadResult.containerRuntime.clone());
+        for subpackage in loadResult.subpackagePackages {
+            availablePackagesTarget.insert(subpackage.name.clone(), subpackage);
+        }
+        for runtime in loadResult.containerRuntime.subpackages {
+            toolPkgSubpackageByPackageNameTarget.insert(runtime.packageName.clone(), runtime);
+        }
+        true
+    }
+
+    #[allow(non_snake_case)]
+    fn removeToolPkgContainerFromTargets(
+        containerPackageName: &str,
+        availablePackagesTarget: &mut BTreeMap<String, ToolPackage>,
+        toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
+        toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) {
+        let Some(runtime) = toolPkgContainersTarget.remove(containerPackageName) else {
+            return;
+        };
+        availablePackagesTarget.remove(containerPackageName);
+        for subpackage in runtime.subpackages {
+            availablePackagesTarget.remove(&subpackage.packageName);
+            toolPkgSubpackageByPackageNameTarget.remove(&subpackage.packageName);
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn prepareExternalStandalonePackageOverride(
+        packageName: &str,
+        availablePackagesTarget: &mut BTreeMap<String, ToolPackage>,
+        toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
+        toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) -> bool {
+        if let Some(existingContainer) = toolPkgContainersTarget.get(packageName).cloned() {
+            if existingContainer.sourceType != ToolPkgSourceType::ASSET {
+                return false;
+            }
+            Self::removeToolPkgContainerFromTargets(
+                &existingContainer.packageName,
+                availablePackagesTarget,
+                toolPkgContainersTarget,
+                toolPkgSubpackageByPackageNameTarget,
+            );
+            return true;
+        }
+
+        if let Some(existingSubpackage) = toolPkgSubpackageByPackageNameTarget
+            .get(packageName)
+            .cloned()
+        {
+            let Some(ownerContainer) = toolPkgContainersTarget
+                .get(&existingSubpackage.containerPackageName)
+                .cloned()
+            else {
+                return false;
+            };
+            if ownerContainer.sourceType != ToolPkgSourceType::ASSET {
+                return false;
+            }
+            Self::removeToolPkgContainerFromTargets(
+                &ownerContainer.packageName,
+                availablePackagesTarget,
+                toolPkgContainersTarget,
+                toolPkgSubpackageByPackageNameTarget,
+            );
+            return true;
+        }
+
+        let Some(existingPackage) = availablePackagesTarget.get(packageName) else {
+            return true;
+        };
+        if !existingPackage.is_built_in {
+            return false;
+        }
+        availablePackagesTarget.remove(packageName);
+        true
+    }
+
+    #[allow(non_snake_case)]
+    fn prepareExternalToolPkgOverride(
+        loadResult: &ToolPkgLoadResult,
+        availablePackagesTarget: &mut BTreeMap<String, ToolPackage>,
+        toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
+        toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) -> bool {
+        let mut builtInContainersToRemove = BTreeSet::new();
+        let mut builtInStandalonePackagesToRemove = BTreeSet::new();
+        let mut conflictingNames = Vec::new();
+        conflictingNames.push(loadResult.containerPackage.name.clone());
+        conflictingNames.extend(
+            loadResult
+                .subpackagePackages
+                .iter()
+                .map(|subpackage| subpackage.name.clone()),
+        );
+
+        for packageName in conflictingNames {
+            if let Some(existingContainer) = toolPkgContainersTarget.get(&packageName) {
+                if existingContainer.sourceType != ToolPkgSourceType::ASSET {
+                    return false;
+                }
+                builtInContainersToRemove.insert(existingContainer.packageName.clone());
+                continue;
+            }
+
+            if let Some(existingSubpackage) = toolPkgSubpackageByPackageNameTarget.get(&packageName)
+            {
+                let Some(ownerContainer) =
+                    toolPkgContainersTarget.get(&existingSubpackage.containerPackageName)
+                else {
+                    return false;
+                };
+                if ownerContainer.sourceType != ToolPkgSourceType::ASSET {
+                    return false;
+                }
+                builtInContainersToRemove.insert(ownerContainer.packageName.clone());
+                continue;
+            }
+
+            if let Some(existingPackage) = availablePackagesTarget.get(&packageName) {
+                if !existingPackage.is_built_in {
+                    return false;
+                }
+                builtInStandalonePackagesToRemove.insert(packageName);
+            }
+        }
+
+        for containerPackageName in builtInContainersToRemove {
+            Self::removeToolPkgContainerFromTargets(
+                &containerPackageName,
+                availablePackagesTarget,
+                toolPkgContainersTarget,
+                toolPkgSubpackageByPackageNameTarget,
+            );
+        }
+        for packageName in builtInStandalonePackagesToRemove {
+            availablePackagesTarget.remove(&packageName);
+        }
+        true
+    }
+
+    #[allow(non_snake_case)]
+    fn buildExternalPackageScanSignature(&self, file: &Path) -> String {
+        let metadata = fs::metadata(file).ok();
+        format!(
+            "{}|{}|{}",
+            file.to_string_lossy(),
+            metadata.as_ref().map(|value| value.len()).unwrap_or(0),
+            metadata
+                .and_then(|value| value.modified().ok())
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| value.as_millis())
+                .unwrap_or(0)
+        )
     }
 
     #[allow(non_snake_case)]
@@ -934,6 +1332,304 @@ impl PackageManager {
             resourcePath,
             &self.getEnabledPackageNames(),
         )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgComposeDslScript(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+    ) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let runtime = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)?;
+        let enabledPackageNames = self.getEnabledPackageNames();
+        let enabledSet = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
+        if !enabledSet.contains(&runtime.packageName) {
+            return None;
+        }
+        let requested = uiModuleIdOrRouteId
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let screen = requested
+            .and_then(|id| {
+                runtime
+                    .uiRoutes
+                    .iter()
+                    .find(|route| {
+                        route.routeId.eq_ignore_ascii_case(id) || route.id.eq_ignore_ascii_case(id)
+                    })
+                    .map(|route| route.screen.clone())
+                    .or_else(|| {
+                        runtime
+                            .uiModules
+                            .iter()
+                            .find(|module| module.id.eq_ignore_ascii_case(id))
+                            .map(|module| module.screen.clone())
+                    })
+            })
+            .or_else(|| runtime.uiRoutes.first().map(|route| route.screen.clone()))
+            .or_else(|| {
+                runtime
+                    .uiModules
+                    .first()
+                    .map(|module| module.screen.clone())
+            })?;
+        self.toolPkgManager.readToolPkgTextResource(
+            &normalizedContainerPackageName,
+            &screen,
+            &enabledPackageNames,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgComposeDslScreenPath(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+    ) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let runtime = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)?;
+        let requested = uiModuleIdOrRouteId
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        requested
+            .and_then(|id| {
+                runtime
+                    .uiRoutes
+                    .iter()
+                    .find(|route| {
+                        route.routeId.eq_ignore_ascii_case(id) || route.id.eq_ignore_ascii_case(id)
+                    })
+                    .map(|route| route.screen.clone())
+                    .or_else(|| {
+                        runtime
+                            .uiModules
+                            .iter()
+                            .find(|module| module.id.eq_ignore_ascii_case(id))
+                            .map(|module| module.screen.clone())
+                    })
+            })
+            .or_else(|| runtime.uiRoutes.first().map(|route| route.screen.clone()))
+            .or_else(|| {
+                runtime
+                    .uiModules
+                    .first()
+                    .map(|module| module.screen.clone())
+            })
+            .map(|screen| screen.trim().to_string())
+            .filter(|screen| !screen.is_empty())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeToolPkgComposeDslScript(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+        runtimeOptions: serde_json::Value,
+    ) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let script =
+            self.getToolPkgComposeDslScript(&normalizedContainerPackageName, uiModuleIdOrRouteId)?;
+        let params = self.buildToolPkgComposeDslRuntimeOptions(
+            &normalizedContainerPackageName,
+            uiModuleIdOrRouteId,
+            runtimeOptions,
+        );
+        let contextKey = params
+            .get("__operit_compose_execution_context_key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("toolpkg_compose");
+        self.toolPkgManager
+            .getToolPkgExecutionEngine(&self.context, contextKey)
+            .executeComposeDslScript(&script, &params)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn executeToolPkgComposeDslAction(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+        actionId: &str,
+        payload: Option<serde_json::Value>,
+        runtimeOptions: serde_json::Value,
+    ) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let params = self.buildToolPkgComposeDslRuntimeOptions(
+            &normalizedContainerPackageName,
+            uiModuleIdOrRouteId,
+            runtimeOptions,
+        );
+        let contextKey = params
+            .get("__operit_compose_execution_context_key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("toolpkg_compose");
+        self.toolPkgManager
+            .getToolPkgExecutionEngine(&self.context, contextKey)
+            .executeComposeDslAction(actionId, payload, &params, None)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn rerenderToolPkgComposeDslTree(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+        runtimeOptions: serde_json::Value,
+    ) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let params = self.buildToolPkgComposeDslRuntimeOptions(
+            &normalizedContainerPackageName,
+            uiModuleIdOrRouteId,
+            runtimeOptions,
+        );
+        let contextKey = params
+            .get("__operit_compose_execution_context_key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("toolpkg_compose");
+        self.toolPkgManager
+            .getToolPkgExecutionEngine(&self.context, contextKey)
+            .rerenderComposeDslTree(&params)
+    }
+
+    #[allow(non_snake_case)]
+    fn buildToolPkgComposeDslRuntimeOptions(
+        &self,
+        containerPackageName: &str,
+        uiModuleIdOrRouteId: Option<&str>,
+        runtimeOptions: serde_json::Value,
+    ) -> BTreeMap<String, serde_json::Value> {
+        let mut params = match runtimeOptions {
+            serde_json::Value::Object(object) => object.into_iter().collect(),
+            _ => BTreeMap::new(),
+        };
+        let runtime = self
+            .toolPkgManager
+            .getToolPkgContainerRuntime(containerPackageName);
+        let requested = uiModuleIdOrRouteId
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let route = runtime.as_ref().and_then(|runtime| {
+            requested.as_deref().and_then(|id| {
+                runtime
+                    .uiRoutes
+                    .iter()
+                    .find(|route| {
+                        route.routeId.eq_ignore_ascii_case(id) || route.id.eq_ignore_ascii_case(id)
+                    })
+                    .cloned()
+            })
+        });
+        let module = runtime.as_ref().and_then(|runtime| {
+            route
+                .as_ref()
+                .and_then(|route| {
+                    runtime
+                        .uiModules
+                        .iter()
+                        .find(|module| module.id.eq_ignore_ascii_case(&route.id))
+                        .cloned()
+                })
+                .or_else(|| {
+                    requested.as_deref().and_then(|id| {
+                        runtime
+                            .uiModules
+                            .iter()
+                            .find(|module| module.id.eq_ignore_ascii_case(id))
+                            .cloned()
+                    })
+                })
+                .or_else(|| runtime.uiModules.first().cloned())
+        });
+        let uiModuleId = route
+            .as_ref()
+            .map(|route| route.id.clone())
+            .or_else(|| module.as_ref().map(|module| module.id.clone()))
+            .or_else(|| requested.clone())
+            .unwrap_or_default();
+        let routeId = route
+            .as_ref()
+            .map(|route| route.routeId.clone())
+            .unwrap_or_else(|| uiModuleId.clone());
+        let screen = route
+            .as_ref()
+            .map(|route| route.screen.clone())
+            .or_else(|| module.as_ref().map(|module| module.screen.clone()))
+            .unwrap_or_default();
+        let contextKey = format!("toolpkg_compose:{containerPackageName}:{routeId}");
+        params.insert(
+            "packageName".to_string(),
+            serde_json::Value::String(containerPackageName.to_string()),
+        );
+        params.insert(
+            "toolPkgId".to_string(),
+            serde_json::Value::String(containerPackageName.to_string()),
+        );
+        params.insert(
+            "uiModuleId".to_string(),
+            serde_json::Value::String(uiModuleId.clone()),
+        );
+        params.insert(
+            "routeInstanceId".to_string(),
+            serde_json::Value::String(routeId.clone()),
+        );
+        params.insert(
+            "__operit_ui_package_name".to_string(),
+            serde_json::Value::String(containerPackageName.to_string()),
+        );
+        params.insert(
+            "__operit_ui_toolpkg_id".to_string(),
+            serde_json::Value::String(containerPackageName.to_string()),
+        );
+        params.insert(
+            "__operit_ui_module_id".to_string(),
+            serde_json::Value::String(uiModuleId.clone()),
+        );
+        params.insert(
+            "__operit_route_instance_id".to_string(),
+            serde_json::Value::String(routeId.clone()),
+        );
+        params.insert(
+            "__operit_script_screen".to_string(),
+            serde_json::Value::String(screen.clone()),
+        );
+        params.insert(
+            "__operit_compose_execution_context_key".to_string(),
+            serde_json::Value::String(contextKey),
+        );
+        params.insert(
+            "__operit_toolpkg_runtime_kind".to_string(),
+            serde_json::Value::String("ui".to_string()),
+        );
+        let mut moduleSpec = serde_json::Map::new();
+        moduleSpec.insert(
+            "id".to_string(),
+            serde_json::Value::String(uiModuleId.clone()),
+        );
+        moduleSpec.insert("routeId".to_string(), serde_json::Value::String(routeId));
+        moduleSpec.insert(
+            "runtime".to_string(),
+            serde_json::Value::String(
+                route
+                    .as_ref()
+                    .map(|route| route.runtime.clone())
+                    .or_else(|| module.as_ref().map(|module| module.runtime.clone()))
+                    .unwrap_or_else(|| "compose_dsl".to_string()),
+            ),
+        );
+        moduleSpec.insert("screen".to_string(), serde_json::Value::String(screen));
+        moduleSpec.insert(
+            "toolPkgId".to_string(),
+            serde_json::Value::String(containerPackageName.to_string()),
+        );
+        params.insert(
+            "moduleSpec".to_string(),
+            serde_json::Value::Object(moduleSpec),
+        );
+        params
     }
 
     #[allow(non_snake_case)]
@@ -1227,7 +1923,9 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn loadToolPkgFromExternalFile(&self, file: &Path) -> Result<ToolPkgLoadResult, String> {
-        ToolPkgLoader::loadToolPkgFromExternalFile(file, |jsContent| self.parseJsPackage(jsContent))
+        ToolPkgLoader::loadToolPkgFromExternalFile(file, &self.context, |jsContent| {
+            self.parseJsPackage(jsContent)
+        })
     }
 
     #[allow(non_snake_case)]
@@ -1236,9 +1934,23 @@ impl PackageManager {
         assetName: &str,
         bytes: &'static [u8],
     ) -> Result<ToolPkgLoadResult, String> {
-        ToolPkgLoader::loadToolPkgFromBuiltInAsset(assetName, bytes, |jsContent| {
+        ToolPkgLoader::loadToolPkgFromBuiltInAsset(assetName, bytes, &self.context, |jsContent| {
             self.parseJsPackage(jsContent)
         })
+    }
+
+    #[allow(non_snake_case)]
+    fn loadToolPkgFromBuiltInAssetFile(
+        &self,
+        assetName: &str,
+        file: &Path,
+    ) -> Result<ToolPkgLoadResult, String> {
+        ToolPkgLoader::loadToolPkgFromBuiltInAssetFile(
+            assetName,
+            file,
+            &self.context,
+            |jsContent| self.parseJsPackage(jsContent),
+        )
     }
 
     #[allow(non_snake_case)]
@@ -1438,6 +2150,14 @@ fn currentUseTime() -> String {
         .naive_local()
         .format("%Y-%m-%dT%H:%M:%S%.f")
         .to_string()
+}
+
+#[allow(non_snake_case)]
+fn builtInPackageAssetsDir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("plugins")
+        .join("buildin")
 }
 
 #[derive(Clone, Debug, Default)]

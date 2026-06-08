@@ -18,6 +18,10 @@ impl WindowsSystemOperationHost {
 }
 
 impl SystemOperationHost for WindowsSystemOperationHost {
+    fn getSystemLanguageCode(&self) -> HostResult<String> {
+        get_windows_system_language_code()
+    }
+
     fn toast(&self, message: &str) -> HostResult<()> {
         if message.trim().is_empty() {
             return Err(HostError::new("Must provide message parameter"));
@@ -148,6 +152,19 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData> {
         get_windows_device_info()
     }
+}
+
+fn get_windows_system_language_code() -> HostResult<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+
+    let mut buffer = [0u16; 85];
+    let len = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    if len <= 1 {
+        return Err(HostError::new(
+            "GetUserDefaultLocaleName did not return a language code",
+        ));
+    }
+    Ok(String::from_utf16_lossy(&buffer[..(len as usize - 1)]).replace('_', "-"))
 }
 
 fn modify_windows_system_setting(

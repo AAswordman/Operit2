@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -11,6 +12,7 @@ use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgRegisteredFunctionHook, ToolPkgRegisteredNavigationEntry,
     ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule, ToolPkgRegisteredUiRoute,
 };
+use crate::core::tools::ToolPackage::LocalizedText;
 
 pub struct ToolPkgMainRegistrationScriptParser;
 
@@ -20,6 +22,17 @@ impl ToolPkgMainRegistrationScriptParser {
         toolPkgId: &str,
         mainScriptPath: &str,
         jsEngine: &JsEngine,
+    ) -> ToolPkgMainRegistrationParseResult {
+        Self::parseWithTextResources(script, toolPkgId, mainScriptPath, jsEngine, None)
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn parseWithTextResources(
+        script: &str,
+        toolPkgId: &str,
+        mainScriptPath: &str,
+        jsEngine: &JsEngine,
+        textResources: Option<Arc<BTreeMap<String, String>>>,
     ) -> ToolPkgMainRegistrationParseResult {
         let mut params = BTreeMap::new();
         params.insert(
@@ -43,7 +56,12 @@ impl ToolPkgMainRegistrationScriptParser {
         let capturedResult: Result<
             crate::core::tools::javascript::JsToolPkgRegistration::ToolPkgMainRegistrationCapture,
             String,
-        > = jsEngine.executeToolPkgMainRegistrationFunction(script, "registerToolPkg", &params);
+        > = jsEngine.executeToolPkgMainRegistrationFunctionWithTextResources(
+            script,
+            "registerToolPkg",
+            &params,
+            textResources,
+        );
         let captured = match capturedResult {
             std::result::Result::Ok(captured) => captured,
             std::result::Result::Err(ref error) => {
@@ -53,7 +71,7 @@ impl ToolPkgMainRegistrationScriptParser {
             }
         };
 
-        let registration = parseCapturedRegistration(captured);
+        let registration = parseCapturedRegistration(captured, toolPkgId);
         match registration {
             Ok(registration) => ToolPkgMainRegistrationParseResult::Success { registration },
             Err(error) => ToolPkgMainRegistrationParseResult::Failure {
@@ -78,87 +96,118 @@ fn buildDeveloperFacingFailureMessage(mainScriptPath: &str, error: &str) -> Stri
 #[allow(non_snake_case)]
 fn parseCapturedRegistration(
     captured: crate::core::tools::javascript::JsToolPkgRegistration::ToolPkgMainRegistrationCapture,
+    toolPkgId: &str,
 ) -> Result<ToolPkgMainRegistration, String> {
     Ok(ToolPkgMainRegistration {
         toolboxUiModules: parseRegisteredItems(
             &captured.toolboxUiModules,
             TOOLPKG_REGISTRATION_TOOLBOX_UI_MODULE,
+            toolPkgId,
         )?,
-        uiRoutes: parseRegisteredItems(&captured.uiRoutes, TOOLPKG_REGISTRATION_UI_ROUTE)?,
+        uiRoutes: parseRegisteredItems(
+            &captured.uiRoutes,
+            TOOLPKG_REGISTRATION_UI_ROUTE,
+            toolPkgId,
+        )?,
         navigationEntries: parseRegisteredItems(
             &captured.navigationEntries,
             TOOLPKG_REGISTRATION_NAVIGATION_ENTRY,
+            toolPkgId,
         )?,
         desktopWidgets: parseRegisteredItems(
             &captured.desktopWidgets,
             TOOLPKG_REGISTRATION_DESKTOP_WIDGET,
+            toolPkgId,
         )?,
         appLifecycleHooks: parseRegisteredItems(
             &captured.appLifecycleHooks,
             TOOLPKG_REGISTRATION_APP_LIFECYCLE_HOOK,
+            toolPkgId,
         )?,
         messageProcessingPlugins: parseRegisteredItems(
             &captured.messageProcessingPlugins,
             TOOLPKG_REGISTRATION_MESSAGE_PROCESSING_PLUGIN,
+            toolPkgId,
         )?,
         xmlRenderPlugins: parseRegisteredItems(
             &captured.xmlRenderPlugins,
             TOOLPKG_REGISTRATION_XML_RENDER_PLUGIN,
+            toolPkgId,
         )?,
         inputMenuTogglePlugins: parseRegisteredItems(
             &captured.inputMenuTogglePlugins,
             TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN,
+            toolPkgId,
         )?,
         chatInputHooks: parseRegisteredItems(
             &captured.chatInputHooks,
             TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK,
+            toolPkgId,
         )?,
         chatViewHooks: parseRegisteredItems(
             &captured.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
+            toolPkgId,
         )?,
         toolLifecycleHooks: parseRegisteredItems(
             &captured.toolLifecycleHooks,
             TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK,
+            toolPkgId,
         )?,
         promptInputHooks: parseRegisteredItems(
             &captured.promptInputHooks,
             TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK,
+            toolPkgId,
         )?,
         promptHistoryHooks: parseRegisteredItems(
             &captured.promptHistoryHooks,
             TOOLPKG_REGISTRATION_PROMPT_HISTORY_HOOK,
+            toolPkgId,
         )?,
         promptEstimateHistoryHooks: parseRegisteredItems(
             &captured.promptEstimateHistoryHooks,
             TOOLPKG_REGISTRATION_PROMPT_ESTIMATE_HISTORY_HOOK,
+            toolPkgId,
         )?,
         systemPromptComposeHooks: parseRegisteredItems(
             &captured.systemPromptComposeHooks,
             TOOLPKG_REGISTRATION_SYSTEM_PROMPT_COMPOSE_HOOK,
+            toolPkgId,
         )?,
         toolPromptComposeHooks: parseRegisteredItems(
             &captured.toolPromptComposeHooks,
             TOOLPKG_REGISTRATION_TOOL_PROMPT_COMPOSE_HOOK,
+            toolPkgId,
         )?,
         promptFinalizeHooks: parseRegisteredItems(
             &captured.promptFinalizeHooks,
             TOOLPKG_REGISTRATION_PROMPT_FINALIZE_HOOK,
+            toolPkgId,
         )?,
         promptEstimateFinalizeHooks: parseRegisteredItems(
             &captured.promptEstimateFinalizeHooks,
             TOOLPKG_REGISTRATION_PROMPT_ESTIMATE_FINALIZE_HOOK,
+            toolPkgId,
         )?,
         summaryGenerateHooks: parseRegisteredItems(
             &captured.summaryGenerateHooks,
             TOOLPKG_REGISTRATION_SUMMARY_GENERATE_HOOK,
+            toolPkgId,
         )?,
-        aiProviders: parseRegisteredItems(&captured.aiProviders, TOOLPKG_REGISTRATION_AI_PROVIDER)?,
+        aiProviders: parseRegisteredItems(
+            &captured.aiProviders,
+            TOOLPKG_REGISTRATION_AI_PROVIDER,
+            toolPkgId,
+        )?,
     })
 }
 
 #[allow(non_snake_case)]
-fn parseRegisteredItems<T>(registrations: &[String], registryName: &str) -> Result<Vec<T>, String>
+fn parseRegisteredItems<T>(
+    registrations: &[String],
+    registryName: &str,
+    toolPkgId: &str,
+) -> Result<Vec<T>, String>
 where
     T: DeserializeOwned + ValidateToolPkgRegistration,
 {
@@ -166,9 +215,10 @@ where
         .iter()
         .enumerate()
         .map(|(index, raw)| {
-            let item = serde_json::from_str::<T>(raw).map_err(|error| {
+            let mut item = serde_json::from_str::<T>(raw).map_err(|error| {
                 format!("{registryName} payload[{index}] must be a JSON object: {error}")
             })?;
+            item.normalize(registryName, index, toolPkgId);
             item.validate(registryName, index)?;
             Ok(item)
         })
@@ -176,6 +226,7 @@ where
 }
 
 trait ValidateToolPkgRegistration {
+    fn normalize(&mut self, registryName: &str, index: usize, toolPkgId: &str);
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String>;
 }
 
@@ -191,7 +242,26 @@ fn requireNotBlank(
     Ok(())
 }
 
+fn hasLocalizedTextContent(text: &LocalizedText) -> bool {
+    text.values.values().any(|value| !value.trim().is_empty())
+}
+
+fn localizedTextOf(value: &str) -> LocalizedText {
+    LocalizedText {
+        values: HashMap::from([("default".to_string(), value.to_string())]),
+    }
+}
+
 impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
+        if self.runtime.trim().is_empty() {
+            self.runtime = TOOLPKG_RUNTIME_COMPOSE_DSL.to_string();
+        }
+        if !hasLocalizedTextContent(&self.title) {
+            self.title = localizedTextOf(self.id.trim());
+        }
+    }
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.screen, "screen", registryName, index)
@@ -199,6 +269,18 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
+    fn normalize(&mut self, _registryName: &str, _index: usize, toolPkgId: &str) {
+        if self.routeId.trim().is_empty() {
+            self.routeId = buildToolPkgRouteId(toolPkgId, self.id.trim());
+        }
+        if self.runtime.trim().is_empty() {
+            self.runtime = TOOLPKG_RUNTIME_COMPOSE_DSL.to_string();
+        }
+        if !hasLocalizedTextContent(&self.title) {
+            self.title = localizedTextOf(self.id.trim());
+        }
+    }
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.screen, "screen", registryName, index)?;
@@ -207,6 +289,12 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
+        if !hasLocalizedTextContent(&self.title) {
+            self.title = localizedTextOf(self.id.trim());
+        }
+    }
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         if self
@@ -226,6 +314,15 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredDesktopWidget {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
+        if self.renderRouteId.trim().is_empty() {
+            self.renderRouteId = self.routeId.trim().to_string();
+        }
+        if !hasLocalizedTextContent(&self.title) {
+            self.title = localizedTextOf(self.id.trim());
+        }
+    }
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.routeId, "route", registryName, index)?;
@@ -234,6 +331,8 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredDesktopWidget {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredAppLifecycleHook {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.event, "event", registryName, index)?;
@@ -242,6 +341,8 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredAppLifecycleHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.function, "function", registryName, index)
@@ -249,6 +350,8 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredTagFunctionHook {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.tag, "tag", registryName, index)?;
@@ -257,6 +360,12 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredTagFunctionHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredAiProvider {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
+        if self.displayName.trim().is_empty() {
+            self.displayName = self.id.trim().to_string();
+        }
+    }
+
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(
@@ -283,5 +392,78 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredAiProvider {
             registryName,
             index,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::tools::javascript::JsToolPkgRegistration::ToolPkgMainRegistrationCapture;
+
+    #[test]
+    fn parses_kotlin_style_registration_fields() {
+        let captured = ToolPkgMainRegistrationCapture {
+            toolboxUiModules: vec![r#"{"id":"tools","screen":"ui/tools.js"}"#.to_string()],
+            uiRoutes: vec![
+                r#"{"id":"main","route":"main_route","screen":"ui/main.js"}"#.to_string(),
+                r#"{"id":"auto","screen":"ui/auto.js"}"#.to_string(),
+            ],
+            navigationEntries: vec![
+                r#"{"id":"nav","route":"main_route","surface":"toolbox"}"#.to_string()
+            ],
+            desktopWidgets: vec![r#"{"id":"widget","route":"main_route"}"#.to_string()],
+            aiProviders: vec![r#"{
+                    "id":"provider",
+                    "listModels":{"function":"listModels"},
+                    "sendMessage":{"function":"sendMessage"},
+                    "testConnection":{"function":"testConnection"},
+                    "calculateInputTokens":{"function":"calculateInputTokens"}
+                }"#
+            .to_string()],
+            ..Default::default()
+        };
+
+        let registration = parseCapturedRegistration(captured, "demo_toolpkg").unwrap();
+
+        assert_eq!(
+            registration.toolboxUiModules[0].runtime,
+            TOOLPKG_RUNTIME_COMPOSE_DSL
+        );
+        assert_eq!(
+            registration.toolboxUiModules[0].title.resolve(true),
+            "tools"
+        );
+
+        assert_eq!(registration.uiRoutes[0].routeId, "main_route");
+        assert_eq!(
+            registration.uiRoutes[0].runtime,
+            TOOLPKG_RUNTIME_COMPOSE_DSL
+        );
+        assert_eq!(registration.uiRoutes[0].title.resolve(true), "main");
+        assert_eq!(
+            registration.uiRoutes[1].routeId,
+            buildToolPkgRouteId("demo_toolpkg", "auto")
+        );
+
+        assert_eq!(
+            registration.navigationEntries[0].routeId.as_deref(),
+            Some("main_route")
+        );
+        assert_eq!(registration.navigationEntries[0].title.resolve(true), "nav");
+
+        assert_eq!(registration.desktopWidgets[0].renderRouteId, "main_route");
+        assert_eq!(registration.desktopWidgets[0].title.resolve(true), "widget");
+
+        assert_eq!(registration.aiProviders[0].displayName, "provider");
+        assert_eq!(
+            registration.aiProviders[0].listModelsHandler.function,
+            "listModels"
+        );
+        assert_eq!(
+            registration.aiProviders[0]
+                .calculateInputTokensHandler
+                .function,
+            "calculateInputTokens"
+        );
     }
 }

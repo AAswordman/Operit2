@@ -25,6 +25,10 @@ impl WebSystemOperationHost {
 }
 
 impl SystemOperationHost for WebSystemOperationHost {
+    fn getSystemLanguageCode(&self) -> HostResult<String> {
+        read_string_property(&call_system("getSystemLanguageCode", &[])?, "languageCode")
+    }
+
     fn toast(&self, message: &str) -> HostResult<()> {
         call_system("toast", &[JsValue::from_str(message)])?;
         Ok(())

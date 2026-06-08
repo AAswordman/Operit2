@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 
+#[path = "../../common/external_event.rs"]
+pub mod external_event;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::CString;
@@ -25,6 +28,8 @@ use operit_host_api::{
     TerminalSessionListEntry, TerminalTypeInfo, WebVisitHost, WebVisitRequest, WebVisitResult,
 };
 use uuid::Uuid;
+
+pub use external_event::LocalExternalRuntimeEventHost as AndroidExternalRuntimeEventHost;
 
 static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
 type RawFd = i32;
@@ -1591,6 +1596,12 @@ impl AndroidSystemOperationHost {
 }
 
 impl SystemOperationHost for AndroidSystemOperationHost {
+    fn getSystemLanguageCode(&self) -> HostResult<String> {
+        Err(HostError::new(
+            "Android get_system_language_code requires the Android system host bridge",
+        ))
+    }
+
     fn toast(&self, message: &str) -> HostResult<()> {
         Err(HostError::new(format!(
             "Android toast requires the Android UI host bridge: {message}"

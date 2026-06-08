@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 use operit_runtime::util::stream::HotStream::SharedStream;
-use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
+use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
 use super::markdown::render_markdown_lines;
@@ -94,10 +94,37 @@ pub(super) fn render_message_lines(
         } else {
             message.content.clone()
         };
-        let typewriter_frame =
-            typewriter_state.frame(message.timestamp, &full_content, is_streaming_message);
-        let rendered_content = typewriter_frame.content;
-        if rendered_content.is_empty()
+        let split_content = split_thinking_for_tui(&full_content);
+        let display_is_thinking =
+            split_content.visible.trim().is_empty() && split_content.has_thinking;
+        let display_content = if display_is_thinking {
+            if split_content.thinking.trim().is_empty() {
+                String::new()
+            } else {
+                format!("<thinking>{}</thinking>", split_content.thinking.trim())
+            }
+        } else {
+            let typewriter_frame = typewriter_state.frame(
+                message.timestamp,
+                &split_content.visible,
+                is_streaming_message,
+            );
+            let mut rendered_content = typewriter_frame.content;
+            if let Some(pending_char) = typewriter_frame.pending_char {
+                if pending_char == '\n' || !pending_char.is_control() {
+                    rendered_content.push(pending_char);
+                }
+            }
+            rendered_content.trim().to_string()
+        };
+        if display_content.is_empty() && display_is_thinking && message.sender == "ai" {
+            lines.push(style_message_line(
+                thinking_line.clone(),
+                message.sender.as_str(),
+                block_style,
+                message_layout,
+            ));
+        } else if display_content.is_empty()
             && is_loading
             && index + 1 == messages.len()
             && message.sender == "ai"
@@ -109,9 +136,7 @@ pub(super) fn render_message_lines(
                 message_layout,
             ));
         } else {
-            let mut rendered_lines =
-                render_markdown_lines(&rendered_content, message_content_width);
-            append_pending_char(&mut rendered_lines, typewriter_frame.pending_char);
+            let rendered_lines = render_markdown_lines(&display_content, message_content_width);
             lines.extend(
                 wrap_message_lines(rendered_lines, message_content_width)
                     .into_iter()
@@ -124,7 +149,7 @@ pub(super) fn render_message_lines(
                         )
                     }),
             );
-            if rendered_content.is_empty() {
+            if display_content.is_empty() {
                 lines.push(style_message_line(
                     Line::from(""),
                     message.sender.as_str(),
@@ -168,6 +193,87 @@ pub(super) fn render_message_lines(
         ]));
     }
     lines
+}
+
+struct TuiThinkingSplit {
+    visible: String,
+    thinking: String,
+    has_thinking: bool,
+}
+
+fn split_thinking_for_tui(content: &str) -> TuiThinkingSplit {
+    let ranges = ChatMarkupRegex::think_ranges(content);
+    let mut thinking_parts = Vec::new();
+    for &(start, end) in &ranges {
+        let raw = &content[start..end];
+        let tag_name = ChatMarkupRegex::extract_opening_tag_name(raw)
+            .unwrap_or_else(|| "thinking".to_string());
+        let body = tag_body(raw, &tag_name)
+            .or_else(|| raw.split_once('>').map(|(_, body)| body))
+            .unwrap_or("")
+            .trim();
+        if !body.is_empty() {
+            thinking_parts.push(body.to_string());
+        }
+    }
+
+    let mut visible = remove_content_ranges(content, &ranges);
+    let mut has_thinking = !ranges.is_empty();
+    if let Some(open_start) = find_thinking_open_start(&visible) {
+        has_thinking = true;
+        let open = visible[open_start..].to_string();
+        if let Some((_, body)) = open.split_once('>') {
+            let trimmed = body.trim();
+            if !trimmed.is_empty() {
+                thinking_parts.push(trimmed.to_string());
+            }
+        }
+        visible.truncate(open_start);
+    }
+
+    TuiThinkingSplit {
+        visible: visible.trim().to_string(),
+        thinking: thinking_parts.join("\n"),
+        has_thinking,
+    }
+}
+
+fn remove_content_ranges(content: &str, ranges: &[(usize, usize)]) -> String {
+    if ranges.is_empty() {
+        return content.to_string();
+    }
+    let mut result = String::new();
+    let mut cursor = 0;
+    for &(start, end) in ranges {
+        if start >= cursor {
+            result.push_str(&content[cursor..start]);
+            cursor = end;
+        }
+    }
+    result.push_str(&content[cursor..]);
+    result
+}
+
+fn find_thinking_open_start(content: &str) -> Option<usize> {
+    content
+        .match_indices('<')
+        .find_map(|(index, _)| is_thinking_open_at(content, index).then_some(index))
+}
+
+fn is_thinking_open_at(content: &str, start: usize) -> bool {
+    let tail = &content[start..];
+    tag_open_matches(tail, "thinking") || tag_open_matches(tail, "think")
+}
+
+fn tag_open_matches(tail: &str, name: &str) -> bool {
+    let prefix = format!("<{name}");
+    if !tail.starts_with(&prefix) {
+        return false;
+    }
+    matches!(
+        tail.as_bytes().get(prefix.len()).copied(),
+        Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n')
+    )
 }
 
 fn message_header_label(sender: &str, role: &str) -> String {
@@ -606,32 +712,6 @@ fn line_is_blank(line: &Line<'_>) -> bool {
     line.spans.iter().all(|span| span.content.trim().is_empty())
 }
 
-fn append_pending_char(lines: &mut Vec<Line<'static>>, pending_char: Option<char>) {
-    let Some(pending_char) = pending_char else {
-        return;
-    };
-    if pending_char == '\n' {
-        lines.push(Line::from(Span::styled(
-            " ".to_string(),
-            Style::default().fg(theme::TEXT_SUBTLE),
-        )));
-        return;
-    }
-    if pending_char.is_control() {
-        return;
-    }
-    let pending_span = Span::styled(
-        pending_char.to_string(),
-        Style::default()
-            .fg(theme::TEXT_SUBTLE)
-            .add_modifier(Modifier::DIM),
-    );
-    match lines.last_mut() {
-        Some(line) => line.spans.push(pending_span),
-        None => lines.push(Line::from(pending_span)),
-    }
-}
-
 pub(super) fn transcript_max_scroll(lines: &[Line<'_>], area: Rect) -> u16 {
     let content_lines = lines.len() as u16;
     let viewport = area.height.saturating_sub(2);
@@ -831,6 +911,50 @@ mod tests {
         let prompt_index = rendered.find("Prompt").expect("prompt header");
         assert!(attachment_index < prompt_index);
         assert!(!rendered.contains("<workspace_attachment"));
+    }
+
+    #[test]
+    fn ai_thinking_block_is_hidden_from_transcript() {
+        let mut ai = ChatMessage::new_with_timestamp(
+            "ai".to_string(),
+            "<thinking>内部推理</thinking>\n你好！".to_string(),
+            1,
+        );
+        ai.provider = "DEEPSEEK".to_string();
+        ai.modelName = "deepseek-v4-flash".to_string();
+        let mut typewriter_state = TypewriterState::default();
+        let lines = render_message_lines(
+            &[ai],
+            48,
+            false,
+            &InputProcessingState::Idle,
+            &Line::from("thinking"),
+            &mut typewriter_state,
+        );
+        let rendered = dump_logical_lines(&lines);
+
+        assert!(rendered.contains("你好"));
+        assert!(!rendered.contains("内部推理"));
+        assert!(!rendered.contains("<thinking>"));
+    }
+
+    #[test]
+    fn streaming_open_thinking_block_shows_thinking_content() {
+        let ai =
+            ChatMessage::new_with_timestamp("ai".to_string(), "<thinking>内部推理".to_string(), 1);
+        let mut typewriter_state = TypewriterState::default();
+        let lines = render_message_lines(
+            &[ai],
+            48,
+            true,
+            &InputProcessingState::Idle,
+            &Line::from("thinking"),
+            &mut typewriter_state,
+        );
+        let rendered = dump_logical_lines(&lines);
+
+        assert!(rendered.contains("thinking"));
+        assert!(rendered.contains("内部推理"));
     }
 
     #[test]

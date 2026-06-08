@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, ToolPkgChatInputHookRegistration,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgChatInputHookRegistration,
 };
 
 static CHAT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatInputHookRegistration>>> = OnceLock::new();
@@ -49,10 +49,7 @@ impl ToolPkgChatInputHookBridge {
         if INSTALLED.swap(true, Ordering::SeqCst) {
             return;
         }
-        let manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager();
+        let manager = toolPkgPackageManager();
         manager
             .lock()
             .expect("package manager mutex poisoned")
@@ -101,26 +98,23 @@ impl ToolPkgChatInputHookBridge {
 
         let mut current = context;
         for hook in activeHooks {
-            let result = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-                crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-            )
-            .getOrCreatePackageManager()
-            .lock()
-            .expect("package manager mutex poisoned")
-            .runToolPkgMainHook(
-                &hook.containerPackageName,
-                &hook.functionName,
-                TOOLPKG_EVENT_CHAT_INPUT,
-                Some(&current.eventName),
-                Some(&hook.hookId),
-                hook.functionSource.as_deref(),
-                buildChatInputEventPayload(&current),
-                None,
-                None,
-                None,
-            )
-            .ok()
-            .and_then(decodeToolPkgHookResult);
+            let result = toolPkgPackageManager()
+                .lock()
+                .expect("package manager mutex poisoned")
+                .runToolPkgMainHook(
+                    &hook.containerPackageName,
+                    &hook.functionName,
+                    TOOLPKG_EVENT_CHAT_INPUT,
+                    Some(&current.eventName),
+                    Some(&hook.hookId),
+                    hook.functionSource.as_deref(),
+                    buildChatInputEventPayload(&current),
+                    None,
+                    None,
+                    None,
+                )
+                .ok()
+                .and_then(decodeToolPkgHookResult);
 
             let Some(parsed) = parseChatInputHookResult(result.as_ref()) else {
                 continue;

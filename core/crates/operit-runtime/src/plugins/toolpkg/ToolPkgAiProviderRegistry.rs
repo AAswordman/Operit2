@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgAiProviderRegistration;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    toolPkgPackageManager, ToolPkgAiProviderRegistration,
+};
 
 pub struct ToolPkgAiProviderRegistry;
 
@@ -13,10 +15,7 @@ impl ToolPkgAiProviderRegistry {
         if INSTALLED.swap(true, Ordering::SeqCst) {
             return;
         }
-        let manager = crate::core::tools::AIToolHandler::AIToolHandler::getInstance(
-            crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
-        )
-        .getOrCreatePackageManager();
+        let manager = toolPkgPackageManager();
         manager
             .lock()
             .expect("package manager mutex poisoned")

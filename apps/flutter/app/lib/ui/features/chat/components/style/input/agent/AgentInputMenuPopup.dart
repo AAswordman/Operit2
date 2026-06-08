@@ -8,7 +8,6 @@ import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../data/preferences/UserPreferencesManager.dart';
-import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
@@ -303,7 +302,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                         children: <Widget>[
                           for (final toggle in data.pluginToggles)
                             _SwitchRow(
-                              icon: _pluginToggleIcon(toggle),
+                              icon: Icons.hub,
+                              materialIconName: toggle.icon,
                               title: toggle.title ?? toggle.id,
                               value: toggle.isChecked ? '开' : '关',
                               checked: toggle.isChecked,
@@ -371,12 +371,6 @@ class _AgentInputMenuData {
         .length;
     return '$enabledCount/${pluginToggles.length}';
   }
-}
-
-IconData _pluginToggleIcon(
-  core_proxy.InputMenuToggleDefinitionSnapshot toggle,
-) {
-  return MaterialIconNameResolver.resolveOrDefault(toggle.icon, Icons.hub);
 }
 
 enum _ToolPermissionMode {
@@ -472,6 +466,7 @@ class _MenuSection extends StatelessWidget {
 class _SwitchRow extends StatelessWidget {
   const _SwitchRow({
     required this.icon,
+    this.materialIconName,
     required this.title,
     required this.value,
     required this.checked,
@@ -480,6 +475,7 @@ class _SwitchRow extends StatelessWidget {
   });
 
   final IconData icon;
+  final String? materialIconName;
   final String title;
   final String value;
   final bool checked;
@@ -489,6 +485,12 @@ class _SwitchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final iconColor = !enabled
+        ? colorScheme.onSurfaceVariant.withValues(alpha: 0.45)
+        : checked
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
+    final iconName = materialIconName?.trim();
     return InkWell(
       onTap: enabled ? onTap : null,
       child: ConstrainedBox(
@@ -497,15 +499,13 @@ class _SwitchRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: <Widget>[
-              Icon(
-                icon,
-                size: 16,
-                color: !enabled
-                    ? colorScheme.onSurfaceVariant.withValues(alpha: 0.45)
-                    : checked
-                    ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant,
-              ),
+              iconName == null || iconName.isEmpty
+                  ? Icon(icon, size: 16, color: iconColor)
+                  : _MaterialIconLigature(
+                      iconName: iconName,
+                      size: 16,
+                      color: iconColor,
+                    ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -543,6 +543,79 @@ class _SwitchRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MaterialIconLigature extends StatelessWidget {
+  const _MaterialIconLigature({
+    required this.iconName,
+    required this.size,
+    required this.color,
+  });
+
+  final String iconName;
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: size,
+      child: Center(
+        child: Text(
+          _materialIconLigatureName(iconName),
+          overflow: TextOverflow.clip,
+          softWrap: false,
+          style: TextStyle(
+            fontFamily: 'MaterialIcons',
+            fontSize: size,
+            height: 1,
+            color: color,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _materialIconLigatureName(String iconName) {
+  final buffer = StringBuffer();
+  var wroteSeparator = false;
+  var previousWasLowerOrDigit = false;
+
+  for (final codeUnit in iconName.trim().codeUnits) {
+    final isUpper = codeUnit >= 65 && codeUnit <= 90;
+    final isLower = codeUnit >= 97 && codeUnit <= 122;
+    final isDigit = codeUnit >= 48 && codeUnit <= 57;
+
+    if (isUpper || isLower || isDigit) {
+      if (isUpper && previousWasLowerOrDigit && !wroteSeparator) {
+        buffer.write('_');
+      }
+      buffer.writeCharCode(isUpper ? codeUnit + 32 : codeUnit);
+      wroteSeparator = false;
+      previousWasLowerOrDigit = isLower || isDigit;
+      continue;
+    }
+
+    if (!wroteSeparator && buffer.isNotEmpty) {
+      buffer.write('_');
+      wroteSeparator = true;
+      previousWasLowerOrDigit = false;
+    }
+  }
+
+  var result = buffer.toString();
+  while (result.endsWith('_')) {
+    result = result.substring(0, result.length - 1);
+  }
+  return _materialIconNameHasStyle(result) ? result : '${result}_baseline';
+}
+
+bool _materialIconNameHasStyle(String iconName) {
+  return iconName.endsWith('_baseline') ||
+      iconName.endsWith('_outlined') ||
+      iconName.endsWith('_rounded') ||
+      iconName.endsWith('_sharp');
 }
 
 class _MemoryProfileRow extends StatelessWidget {

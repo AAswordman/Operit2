@@ -108,6 +108,7 @@ class _AIChatScreenState extends State<AIChatScreen>
   int _chatSwitchRenderGeneration = 0;
   ChatViewModelSnapshot? _pendingChatSwitchSnapshot;
   late bool _workspaceOpen;
+  bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
 
   @override
@@ -135,7 +136,14 @@ class _AIChatScreenState extends State<AIChatScreen>
     super.didChangeDependencies();
     _topBarController = TopBarScope.of(context);
     _mainLayoutController = MainLayoutScope.of(context);
-    _scheduleTopBarActionsUpdate();
+    _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
+    if (_isCurrentMainScreen) {
+      _scheduleTopBarActionsUpdate();
+    } else {
+      _topBarController?.clearActions(owner: _topBarActionsOwner);
+      _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
+      _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
+    }
   }
 
   @override
@@ -727,7 +735,7 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   void _updateTopBarTitle() {
     final controller = _topBarController;
-    if (controller == null) {
+    if (controller == null || !_isCurrentMainScreen) {
       return;
     }
     final characterCardName = _currentCharacterCardName?.trim();
@@ -753,7 +761,7 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   void _updateTopBarActions() {
     final controller = _topBarController;
-    if (controller == null) {
+    if (controller == null || !_isCurrentMainScreen) {
       return;
     }
     controller.setActions((context) {
@@ -798,9 +806,12 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   @override
   Widget build(BuildContext context) {
+    _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
     final useMainLayoutWorkspace =
         MediaQuery.sizeOf(context).width >= workspaceTabletBreakpoint;
-    _syncWorkspaceMainLayoutAttachment(useMainLayoutWorkspace);
+    _syncWorkspaceMainLayoutAttachment(
+      useMainLayoutWorkspace && _isCurrentMainScreen,
+    );
     final content = _buildChatContent();
     if (useMainLayoutWorkspace) {
       return content;

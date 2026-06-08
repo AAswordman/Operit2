@@ -150,49 +150,66 @@ pub struct ToolPkgSubpackageRuntime {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredUiModule {
     pub id: String,
+    #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
+    #[serde(default)]
     pub keepAlive: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredUiRoute {
     pub id: String,
-    #[serde(rename = "routeId")]
+    #[serde(rename = "routeId", alias = "route", default)]
     pub routeId: String,
+    #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
+    #[serde(default)]
     pub keepAlive: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredNavigationEntry {
     pub id: String,
+    #[serde(default)]
     pub surface: String,
-    #[serde(rename = "routeId")]
+    #[serde(rename = "routeId", alias = "route", default)]
     pub routeId: Option<String>,
+    #[serde(default)]
     pub action: Option<ToolPkgNavigationActionHookRuntime>,
+    #[serde(default)]
     pub title: LocalizedText,
+    #[serde(default)]
     pub subtitle: LocalizedText,
+    #[serde(default)]
     pub icon: Option<String>,
+    #[serde(default)]
     pub order: i32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredDesktopWidget {
     pub id: String,
-    #[serde(rename = "routeId")]
+    #[serde(rename = "routeId", alias = "route", default)]
     pub routeId: String,
-    #[serde(rename = "renderRouteId")]
+    #[serde(rename = "renderRouteId", alias = "render", default)]
     pub renderRouteId: String,
+    #[serde(default)]
     pub title: LocalizedText,
+    #[serde(default)]
     pub subtitle: LocalizedText,
+    #[serde(default)]
     pub description: LocalizedText,
+    #[serde(default)]
     pub icon: Option<String>,
+    #[serde(default)]
     pub order: i32,
 }
 
@@ -224,15 +241,21 @@ pub struct ToolPkgRegisteredAiProviderHandler {
 pub struct ToolPkgRegisteredAiProvider {
     pub id: String,
     #[serde(rename = "displayName")]
+    #[serde(default)]
     pub displayName: String,
+    #[serde(default)]
     pub description: String,
-    #[serde(rename = "listModelsHandler")]
+    #[serde(rename = "listModelsHandler", alias = "listModels", default)]
     pub listModelsHandler: ToolPkgRegisteredAiProviderHandler,
-    #[serde(rename = "sendMessageHandler")]
+    #[serde(rename = "sendMessageHandler", alias = "sendMessage", default)]
     pub sendMessageHandler: ToolPkgRegisteredAiProviderHandler,
-    #[serde(rename = "testConnectionHandler")]
+    #[serde(rename = "testConnectionHandler", alias = "testConnection", default)]
     pub testConnectionHandler: ToolPkgRegisteredAiProviderHandler,
-    #[serde(rename = "calculateInputTokensHandler")]
+    #[serde(
+        rename = "calculateInputTokensHandler",
+        alias = "calculateInputTokens",
+        default
+    )]
     pub calculateInputTokensHandler: ToolPkgRegisteredAiProviderHandler,
 }
 
