@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../components/EmptyState.dart';
-import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
@@ -17,7 +16,6 @@ class PluginTabContent extends StatelessWidget {
     required this.enabledPluginNames,
     required this.isLoading,
     required this.isSearchActive,
-    required this.onOpenMarket,
     required this.onOpenPluginUi,
     required this.onPluginTap,
     required this.onPluginEnabledChanged,
@@ -27,7 +25,6 @@ class PluginTabContent extends StatelessWidget {
   final Set<String> enabledPluginNames;
   final bool isLoading;
   final bool isSearchActive;
-  final VoidCallback onOpenMarket;
   final ValueChanged<core_proxy.ToolPkgContainerRuntime> onOpenPluginUi;
   final ValueChanged<core_proxy.ToolPkgContainerRuntime> onPluginTap;
   final void Function(core_proxy.ToolPkgContainerRuntime plugin, bool enabled)
@@ -44,15 +41,6 @@ class PluginTabContent extends StatelessWidget {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
           children: <Widget>[
-            if (!isSearchActive) ...<Widget>[
-              MarketEntryCard(
-                icon: Icons.store_outlined,
-                title: '打开 Artifact 市场',
-                subtitle: '浏览和下载社区发布的 ToolPkg 与 Artifact。',
-                onTap: onOpenMarket,
-              ),
-              const SizedBox(height: 12),
-            ],
             if (plugins.isEmpty)
               EmptyState(
                 icon: Icons.extension_off_outlined,

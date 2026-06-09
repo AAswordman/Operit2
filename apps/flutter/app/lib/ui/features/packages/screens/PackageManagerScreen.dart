@@ -321,7 +321,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               enabledPluginNames: _snapshot.enabledPluginContainerNames,
               isLoading: _loading || _searchFiltering,
               isSearchActive: _searchQuery.trim().isNotEmpty,
-              onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
               onOpenPluginUi: _openPluginUi,
               onPluginTap: _showPluginDetails,
               onPluginEnabledChanged: _setPluginEnabled,
@@ -331,7 +330,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               enabledPackageNames: _snapshot.enabledPackageNames,
               isLoading: _loading || _searchFiltering,
               isSearchActive: _searchQuery.trim().isNotEmpty,
-              onOpenMarket: () => _openMarket(MarketHomeTab.artifact),
               onQuickPluginCreatorClick: () {
                 _showSnackBar('Quick Plugin Creator');
               },
@@ -342,13 +340,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               clients: widget.clients,
               searchQuery: _searchQuery,
               reloadRevision: _skillReloadRevision,
-              onOpenMarket: () => _openMarket(MarketHomeTab.skill),
             ),
             PackageTab.mcp => MCPConfigScreen(
               clients: widget.clients,
               searchQuery: _searchQuery,
               reloadRevision: _mcpReloadRevision,
-              onOpenMarket: () => _openMarket(MarketHomeTab.mcp),
             ),
           };
         },
@@ -368,6 +364,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   }
 
   Widget _buildFloatingActions(BuildContext context) {
+    final marketTab = switch (_selectedTab) {
+      PackageTab.plugins => MarketHomeTab.artifact,
+      PackageTab.packages => MarketHomeTab.artifact,
+      PackageTab.skills => MarketHomeTab.skill,
+      PackageTab.mcp => MarketHomeTab.mcp,
+    };
+    final marketTooltip = switch (_selectedTab) {
+      PackageTab.plugins => '打开 Artifact 市场',
+      PackageTab.packages => '打开 Artifact 市场',
+      PackageTab.skills => '打开技能市场',
+      PackageTab.mcp => '打开 MCP 市场',
+    };
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -376,6 +384,13 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           onPressed: _loadSnapshot,
           tooltip: '刷新',
           child: const Icon(Icons.refresh),
+        ),
+        const SizedBox(height: 12),
+        FloatingActionButton(
+          heroTag: null,
+          onPressed: () => _openMarket(marketTab),
+          tooltip: marketTooltip,
+          child: const Icon(Icons.store_outlined),
         ),
         const SizedBox(height: 12),
         FloatingActionButton(
@@ -692,15 +707,13 @@ class _PackageTabBarState extends State<_PackageTabBar>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return OperitGlassSurface(
-      color: colorScheme.surface,
+      color: colorScheme.surface.withValues(alpha: 0.72),
       layer: OperitGlassSurfaceLayer.panel,
       transparentAlpha: 0.035,
       clip: false,
       material: true,
       child: TabBar(
         controller: _controller,
-        isScrollable: true,
-        tabAlignment: TabAlignment.start,
         labelPadding: const EdgeInsets.symmetric(horizontal: 4),
         onTap: (index) => widget.onTabSelected(PackageTab.values[index]),
         dividerHeight: 1,

@@ -107,7 +107,7 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
       child: Column(
         children: <Widget>[
           OperitGlassSurface(
-            color: colorScheme.surface,
+            color: colorScheme.surface.withValues(alpha: 0.72),
             layer: OperitGlassSurfaceLayer.panel,
             transparentAlpha: 0.035,
             clip: false,

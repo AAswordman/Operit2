@@ -26,6 +26,8 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
   late final AnimationController _controller;
   late final Animation<double> _curve;
   final Set<int> _builtIndexes = <int>{};
+  final Map<int, SnapshotController> _snapshotControllers =
+      <int, SnapshotController>{};
   int? _previousIndex;
   int _transitionDirection = 1;
 
@@ -44,10 +46,20 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
     super.didUpdateWidget(oldWidget);
     _controller.duration = widget.duration;
     _builtIndexes.removeWhere((index) => index >= widget.itemCount);
+    _snapshotControllers.keys
+        .where((index) => index >= widget.itemCount)
+        .toList(growable: false)
+        .forEach(_disposeSnapshotController);
     _rememberIndex(widget.index);
     if (oldWidget.index != widget.index) {
       _rememberIndex(oldWidget.index);
       _previousIndex = oldWidget.index;
+      final previousSnapshotController = _snapshotControllerFor(
+        oldWidget.index,
+      );
+      previousSnapshotController.allowSnapshotting = true;
+      previousSnapshotController.clear();
+      _snapshotControllerFor(widget.index).allowSnapshotting = false;
       _transitionDirection = widget.index > oldWidget.index ? 1 : -1;
       _controller.forward(from: 0);
     }
@@ -55,6 +67,7 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
 
   void _onAnimationStatusChanged(AnimationStatus status) {
     if (status == AnimationStatus.completed && _previousIndex != null) {
+      _snapshotControllers[_previousIndex]?.allowSnapshotting = false;
       setState(() {
         _previousIndex = null;
       });
@@ -65,6 +78,10 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
   void dispose() {
     _controller.removeStatusListener(_onAnimationStatusChanged);
     _controller.dispose();
+    for (final controller in _snapshotControllers.values) {
+      controller.dispose();
+    }
+    _snapshotControllers.clear();
     super.dispose();
   }
 
@@ -74,14 +91,33 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
     }
   }
 
+  SnapshotController _snapshotControllerFor(int index) {
+    return _snapshotControllers.putIfAbsent(index, SnapshotController.new);
+  }
+
+  void _disposeSnapshotController(int index) {
+    _snapshotControllers.remove(index)?.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final indexes = _builtIndexes.toList()..sort();
+    final visibleIndexes = <int>[
+      if (_previousIndex != null &&
+          _previousIndex != widget.index &&
+          indexes.contains(_previousIndex)) ...<int>[_previousIndex!],
+      if (indexes.contains(widget.index)) ...<int>[widget.index],
+    ];
     return ClipRect(
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          for (final index in indexes) _buildIndexedChild(context, index),
+          // Cached tabs stay mounted; only active and exiting tabs paint.
+          for (final index in indexes)
+            if (!visibleIndexes.contains(index))
+              _buildIndexedChild(context, index),
+          for (final index in visibleIndexes)
+            _buildIndexedChild(context, index),
         ],
       ),
     );
@@ -91,9 +127,15 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
     final isCurrent = index == widget.index;
     final isPrevious = index == _previousIndex;
     final visible = isCurrent || isPrevious;
+    final snapshotController = _snapshotControllerFor(index);
     final child = KeyedSubtree(
       key: ValueKey<int>(index),
-      child: widget.itemBuilder(context, index),
+      child: SnapshotWidget(
+        controller: snapshotController,
+        mode: SnapshotMode.forced,
+        autoresize: true,
+        child: widget.itemBuilder(context, index),
+      ),
     );
 
     if (!visible) {
@@ -111,7 +153,7 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
           child: child,
           builder: (context, child) {
             final value = _previousIndex == null ? 1.0 : _curve.value;
-            final opacity = isCurrent ? value : 1.0 - value;
+            final opacity = isPrevious ? 1.0 - value : 1.0;
             final distance = isCurrent ? 0.035 : 0.022;
             final offsetDirection = isCurrent
                 ? _transitionDirection
@@ -119,13 +161,14 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
             final offset = isCurrent
                 ? (1.0 - value) * distance * offsetDirection
                 : value * distance * offsetDirection;
-            return Opacity(
-              opacity: opacity,
-              child: FractionalTranslation(
-                translation: Offset(offset, 0),
-                child: child,
-              ),
+            final animatedChild = FractionalTranslation(
+              translation: Offset(offset, 0),
+              child: child,
             );
+            if (!isPrevious) {
+              return animatedChild;
+            }
+            return Opacity(opacity: opacity, child: animatedChild);
           },
         ),
       ),

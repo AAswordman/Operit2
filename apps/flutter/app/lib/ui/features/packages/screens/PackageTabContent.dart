@@ -6,7 +6,6 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
-import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
@@ -18,7 +17,6 @@ class PackageTabContent extends StatelessWidget {
     required this.enabledPackageNames,
     required this.isLoading,
     required this.isSearchActive,
-    required this.onOpenMarket,
     required this.onQuickPluginCreatorClick,
     required this.onPackageTap,
     required this.onPackageEnabledChanged,
@@ -28,7 +26,6 @@ class PackageTabContent extends StatelessWidget {
   final Set<String> enabledPackageNames;
   final bool isLoading;
   final bool isSearchActive;
-  final VoidCallback onOpenMarket;
   final VoidCallback onQuickPluginCreatorClick;
   final ValueChanged<core_proxy.ToolPackage> onPackageTap;
   final void Function(core_proxy.ToolPackage package, bool enabled)
@@ -60,13 +57,6 @@ class PackageTabContent extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
           children: <Widget>[
             if (!isSearchActive) ...<Widget>[
-              MarketEntryCard(
-                icon: Icons.storefront_outlined,
-                title: '打开 Artifact 市场',
-                subtitle: '查找可安装的工具包、工作流和运行时资源。',
-                onTap: onOpenMarket,
-              ),
-              const SizedBox(height: 12),
               _QuickPluginCreatorEntry(onTap: onQuickPluginCreatorClick),
               const SizedBox(height: 12),
             ],

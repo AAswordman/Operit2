@@ -187,14 +187,17 @@ class _AppContentState extends State<AppContent> {
         ? _transitionFromKey
         : null;
 
-    final renderKeys = <String>{
+    final renderKeys = <String>[
       for (final entry in _screenKeepAliveCache.entries)
-        if (entry.value && entry.key != currentScreenKey) entry.key,
+        if (entry.value &&
+            entry.key != currentScreenKey &&
+            entry.key != effectivePreviousKey)
+          entry.key,
+      currentScreenKey,
       if (effectivePreviousKey != null &&
           effectivePreviousKey != currentScreenKey)
         effectivePreviousKey,
-      currentScreenKey,
-    }.toList(growable: false);
+    ];
 
     return AnimatedBuilder(
       animation: mainLayoutController,
@@ -270,12 +273,19 @@ class _AppContentState extends State<AppContent> {
               child: ColoredBox(
                 color: contentColor,
                 child: Stack(
+                  fit: StackFit.expand,
                   children: <Widget>[
                     for (final screenKey in renderKeys)
                       _AnimatedScreenSlot(
                         key: ValueKey<String>(screenKey),
                         screenKey: screenKey,
+                        isActiveInStack:
+                            screenKey == currentScreenKey ||
+                            screenKey == effectivePreviousKey,
                         isCurrentScreen: screenKey == currentScreenKey,
+                        snapshotDuringExit:
+                            screenKey == effectivePreviousKey &&
+                            screenKey != currentScreenKey,
                         isNavigatingBack: widget.isNavigatingBack,
                         enableNavigationAnimation:
                             widget.enableNavigationAnimation,
@@ -309,7 +319,9 @@ class _AnimatedScreenSlot extends StatefulWidget {
   const _AnimatedScreenSlot({
     super.key,
     required this.screenKey,
+    required this.isActiveInStack,
     required this.isCurrentScreen,
+    required this.snapshotDuringExit,
     required this.isNavigatingBack,
     required this.enableNavigationAnimation,
     required this.isDrawerRelayTransition,
@@ -321,7 +333,9 @@ class _AnimatedScreenSlot extends StatefulWidget {
   });
 
   final String screenKey;
+  final bool isActiveInStack;
   final bool isCurrentScreen;
+  final bool snapshotDuringExit;
   final bool isNavigatingBack;
   final bool enableNavigationAnimation;
   final bool isDrawerRelayTransition;
@@ -336,12 +350,16 @@ class _AnimatedScreenSlot extends StatefulWidget {
 }
 
 class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
+  late final SnapshotController _snapshotController;
   bool _visible = false;
   int _showRequestId = 0;
 
   @override
   void initState() {
     super.initState();
+    _snapshotController = SnapshotController(
+      allowSnapshotting: widget.snapshotDuringExit,
+    );
     if (widget.isCurrentScreen) {
       _scheduleShow();
     }
@@ -350,6 +368,12 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
   @override
   void didUpdateWidget(covariant _AnimatedScreenSlot oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.snapshotDuringExit != widget.snapshotDuringExit) {
+      _snapshotController.allowSnapshotting = widget.snapshotDuringExit;
+      if (widget.snapshotDuringExit) {
+        _snapshotController.clear();
+      }
+    }
     if (oldWidget.isCurrentScreen == widget.isCurrentScreen) {
       return;
     }
@@ -375,49 +399,65 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
   }
 
   @override
+  void dispose() {
+    _snapshotController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final targetOpacity = _targetOpacity;
+    if (!widget.isActiveInStack) {
+      // Keep cached screens alive without painting them during page motion.
+      return Positioned.fill(
+        child: Offstage(
+          offstage: true,
+          child: TickerMode(enabled: false, child: widget.child),
+        ),
+      );
+    }
+
+    final targetOpacity = widget.snapshotDuringExit ? _targetOpacity : 1.0;
     final targetScale = _targetScale;
     final targetTranslationX = _targetTranslationX;
+    final screenChild = SnapshotWidget(
+      controller: _snapshotController,
+      mode: SnapshotMode.forced,
+      autoresize: true,
+      child: widget.child,
+    );
 
-    return Positioned.fill(
-      child: IgnorePointer(
-        ignoring: !widget.isCurrentScreen,
-        child: AnimatedOpacity(
-          opacity: targetOpacity,
+    final animatedScreen = IgnorePointer(
+      ignoring: !widget.isCurrentScreen,
+      child: AnimatedOpacity(
+        opacity: targetOpacity,
+        duration: widget.duration,
+        curve: widget.snapshotDuringExit
+            ? Curves.easeInToLinear
+            : Curves.fastOutSlowIn,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: targetTranslationX),
           duration: widget.duration,
-          curve: widget.isDrawerRelayTransition
-              ? _alphaCurve
-              : widget.enableNavigationAnimation
-              ? _alphaCurve
-              : Curves.fastOutSlowIn,
+          curve: Curves.fastOutSlowIn,
+          builder: (context, translationX, child) {
+            return Transform.translate(
+              offset: Offset(translationX, 0),
+              child: child,
+            );
+          },
           child: TweenAnimationBuilder<double>(
-            tween: Tween<double>(end: targetTranslationX),
+            tween: Tween<double>(end: targetScale),
             duration: widget.duration,
             curve: Curves.fastOutSlowIn,
-            builder: (context, translationX, child) {
-              return Transform.translate(
-                offset: Offset(translationX, 0),
-                child: child,
-              );
+            builder: (context, scale, child) {
+              return Transform.scale(scale: scale, child: child);
             },
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(end: targetScale),
-              duration: widget.duration,
-              curve: Curves.fastOutSlowIn,
-              builder: (context, scale, child) {
-                return Transform.scale(scale: scale, child: child);
-              },
-              child: widget.child,
-            ),
+            child: screenChild,
           ),
         ),
       ),
     );
-  }
 
-  Curve get _alphaCurve {
-    return _visible ? Curves.linearToEaseOut : Curves.easeInToLinear;
+    return Positioned.fill(child: animatedScreen);
   }
 
   double get _targetOpacity {

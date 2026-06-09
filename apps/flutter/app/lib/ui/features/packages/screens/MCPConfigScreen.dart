@@ -7,7 +7,6 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
-import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 import '../dialogs/MCPDetailsDialog.dart';
@@ -18,13 +17,11 @@ class MCPConfigScreen extends StatefulWidget {
     required this.clients,
     required this.searchQuery,
     required this.reloadRevision,
-    required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
   final int reloadRevision;
-  final VoidCallback onOpenMarket;
 
   @override
   State<MCPConfigScreen> createState() => _MCPConfigScreenState();
@@ -197,15 +194,6 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
             children: <Widget>[
               _MCPHeaderCard(directory: _configDirectory, onRefresh: _loadMcp),
               const SizedBox(height: 12),
-              if (widget.searchQuery.trim().isEmpty) ...<Widget>[
-                MarketEntryCard(
-                  icon: Icons.store_outlined,
-                  title: '打开 MCP 市场',
-                  subtitle: '查找、安装和管理社区发布的 MCP 服务。',
-                  onTap: widget.onOpenMarket,
-                ),
-                const SizedBox(height: 12),
-              ],
               if (ids.isEmpty)
                 EmptyState(
                   icon: Icons.extension_outlined,

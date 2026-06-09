@@ -8,7 +8,6 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
-import '../components/MarketEntryCard.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 
@@ -18,13 +17,11 @@ class SkillConfigScreen extends StatefulWidget {
     required this.clients,
     required this.searchQuery,
     required this.reloadRevision,
-    required this.onOpenMarket,
   });
 
   final GeneratedCoreProxyClients clients;
   final String searchQuery;
   final int reloadRevision;
-  final VoidCallback onOpenMarket;
 
   @override
   State<SkillConfigScreen> createState() => _SkillConfigScreenState();
@@ -233,15 +230,6 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                     : () => _showLoadErrors(_loadErrors),
               ),
               const SizedBox(height: 12),
-              if (widget.searchQuery.trim().isEmpty) ...<Widget>[
-                MarketEntryCard(
-                  icon: Icons.store_outlined,
-                  title: '打开技能市场',
-                  subtitle: '浏览、下载和管理社区发布的技能。',
-                  onTap: widget.onOpenMarket,
-                ),
-                const SizedBox(height: 12),
-              ],
               if (displayedSkills.isEmpty)
                 EmptyState(
                   icon: Icons.build_outlined,
