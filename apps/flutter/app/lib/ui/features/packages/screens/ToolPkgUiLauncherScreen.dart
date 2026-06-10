@@ -5,7 +5,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_all/webview_all.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -13,6 +12,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../utils/PackageDisplayUtils.dart';
+import 'ToolPkgComposeDslWebView.dart';
 
 class ToolPkgUiLauncherScreen extends StatefulWidget {
   const ToolPkgUiLauncherScreen({
@@ -20,11 +20,13 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     required this.clients,
     required this.plugin,
     this.initialRouteId,
+    this.showLauncherChrome = true,
   });
 
   final GeneratedCoreProxyClients clients;
   final core_proxy.ToolPkgContainerRuntime plugin;
   final String? initialRouteId;
+  final bool showLauncherChrome;
 
   @override
   State<ToolPkgUiLauncherScreen> createState() =>
@@ -34,8 +36,10 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
 class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   late String _selectedRouteId = _initialRouteId();
   _ComposeDslRenderResult? _renderResult;
+  String? _scriptScreenPath;
   bool _loading = true;
   bool _loadedInitialRoute = false;
+  int _routeLoadGeneration = 0;
   String _currentLanguageTag = 'en';
   String? _error;
 
@@ -45,6 +49,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   @override
   void initState() {
     super.initState();
+    ComposeDslWebViewHostRegistry.ensureRuntimeHostBridgeRegistered();
   }
 
   @override
@@ -87,22 +92,65 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }
 
   Future<void> _loadRoute() async {
+    if (!mounted) {
+      return;
+    }
+    final routeLoadGeneration = ++_routeLoadGeneration;
+    final uiModuleId = _selectedUiModuleId();
+    final routeInstanceId = _selectedRouteInstanceId();
+    final executionContextKey = _executionContextKey(
+      uiModuleId: uiModuleId,
+      routeInstanceId: routeInstanceId,
+    );
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final raw = await _packageManager.executeToolPkgComposeDslScript(
+      final script = await _packageManager.getToolPkgComposeDslScript(
         containerPackageName: widget.plugin.packageName,
-        uiModuleIdOrRouteId: _selectedRouteId,
-        runtimeOptions: _runtimeOptions(),
+        uiModuleId: uiModuleId,
       );
+      final screenPath = await _packageManager.getToolPkgComposeDslScreenPath(
+        containerPackageName: widget.plugin.packageName,
+        uiModuleId: uiModuleId,
+      );
+      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+        return;
+      }
+      if (script == null || script.trim().isEmpty) {
+        throw StateError(
+          'compose_dsl script not found: package=${widget.plugin.packageName}, module=$uiModuleId',
+        );
+      }
+      _scriptScreenPath = screenPath;
+      final jsEngine = _packageManager.getToolPkgExecutionEngine(
+        contextKey: executionContextKey,
+      );
+      final raw = await jsEngine.executeComposeDslScript(
+        script: script,
+        runtimeOptions: _runtimeOptions(
+          uiModuleId: uiModuleId,
+          routeInstanceId: routeInstanceId,
+          executionContextKey: executionContextKey,
+        ),
+        envOverrides: const <String, String>{},
+      );
+      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+        return;
+      }
       final result = _ComposeDslRenderResult.parse(raw);
+      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+        return;
+      }
       setState(() {
         _renderResult = result;
         _loading = false;
       });
     } catch (error, stackTrace) {
+      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+        return;
+      }
       _printComposeError('render', error, stackTrace);
       setState(() {
         _error = error.toString();
@@ -111,37 +159,174 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     }
   }
 
-  Future<void> _dispatchAction(String actionId, [Object? payload]) async {
+  bool _isCurrentRouteLoad(int routeLoadGeneration) {
+    return mounted && routeLoadGeneration == _routeLoadGeneration;
+  }
+
+  Future<Object?> _dispatchAction(String actionId, [Object? payload]) {
+    return _dispatchActionCore(
+      actionId,
+      payload,
+      reportAndSuppressErrors: true,
+    );
+  }
+
+  Future<Object?> _dispatchWebViewAction(String actionId, [Object? payload]) {
+    return _dispatchActionCore(
+      actionId,
+      payload,
+      reportAndSuppressErrors: false,
+    );
+  }
+
+  Future<Object?> _dispatchActionCore(
+    String actionId,
+    Object? payload, {
+    required bool reportAndSuppressErrors,
+  }) async {
+    final uiModuleId = _selectedUiModuleId();
+    final routeInstanceId = _selectedRouteInstanceId();
+    final executionContextKey = _executionContextKey(
+      uiModuleId: uiModuleId,
+      routeInstanceId: routeInstanceId,
+    );
+    Object? latestActionResult;
     try {
-      final raw = await _packageManager.executeToolPkgComposeDslAction(
-        containerPackageName: widget.plugin.packageName,
-        uiModuleIdOrRouteId: _selectedRouteId,
+      final jsEngine = _packageManager.getToolPkgExecutionEngine(
+        contextKey: executionContextKey,
+      );
+      await for (final event in jsEngine.dispatchComposeDslActionAsyncChanges(
         actionId: actionId,
         payload: payload,
-        runtimeOptions: _runtimeOptions(),
-      );
-      final result = _ComposeDslRenderResult.parse(raw);
-      setState(() {
-        _renderResult = result;
-        _error = null;
-      });
+        runtimeOptions: _runtimeOptions(
+          uiModuleId: uiModuleId,
+          routeInstanceId: routeInstanceId,
+          executionContextKey: executionContextKey,
+        ),
+        envOverrides: const <String, String>{},
+      )) {
+        if (!mounted) {
+          return latestActionResult;
+        }
+        if (event == null) {
+          continue;
+        }
+        if (event is! String) {
+          throw StateError('compose_dsl action event must be a string');
+        }
+        final decoded = jsonDecode(event) as Map<String, Object?>;
+        final phase = decoded['phase']?.toString().trim();
+        if (phase == 'intermediate' || phase == 'final') {
+          final raw = decoded['result'];
+          if (raw is! String) {
+            throw StateError('compose_dsl action result event missing result');
+          }
+          latestActionResult = _ComposeDslRenderResult.actionResultOf(raw);
+          final result = _ComposeDslRenderResult.tryParse(raw);
+          if (result == null) {
+            continue;
+          }
+          if (!mounted) {
+            return latestActionResult;
+          }
+          setState(() {
+            _renderResult = result;
+            _error = null;
+          });
+        } else if (phase == 'error') {
+          final errorText = decoded['error']?.toString();
+          if (errorText == null) {
+            throw StateError('compose_dsl action error event missing error');
+          }
+          if (!mounted) {
+            return latestActionResult;
+          }
+          setState(() {
+            _error = errorText;
+          });
+          throw StateError(errorText);
+        } else if (phase == 'complete') {
+          break;
+        }
+      }
+      return latestActionResult;
     } catch (error, stackTrace) {
+      if (!mounted) {
+        return latestActionResult;
+      }
       _printComposeError('action:$actionId', error, stackTrace);
       setState(() {
         _error = error.toString();
       });
+      if (!reportAndSuppressErrors) {
+        rethrow;
+      }
+      return null;
     }
   }
 
-  Map<String, Object?> _runtimeOptions() {
+  Map<String, Object?> _runtimeOptions({
+    required String uiModuleId,
+    required String routeInstanceId,
+    required String executionContextKey,
+  }) {
     return <String, Object?>{
+      'packageName': widget.plugin.packageName,
+      'containerPackageName': widget.plugin.packageName,
+      'toolPkgId': widget.plugin.packageName,
+      '__operit_ui_package_name': widget.plugin.packageName,
+      '__operit_ui_toolpkg_id': widget.plugin.packageName,
+      'uiModuleId': uiModuleId,
+      '__operit_ui_module_id': uiModuleId,
+      '__operit_toolpkg_runtime_kind': 'ui',
       'state': _renderResult?.state ?? const <String, Object?>{},
       'memo': _renderResult?.memo ?? const <String, Object?>{},
-      'routeInstanceId': _selectedRouteId,
-      '__operit_route_instance_id': _selectedRouteId,
+      'routeInstanceId': routeInstanceId,
+      '__operit_route_instance_id': routeInstanceId,
+      'executionContextKey': executionContextKey,
+      '__operit_compose_execution_context_key': executionContextKey,
       '__operit_package_lang': _currentLanguage(),
-      'moduleSpec': _moduleSpec(_selectedRouteId),
+      '__operit_script_screen': _scriptScreenPath ?? '',
+      'moduleSpec': _moduleSpec(uiModuleId),
     };
+  }
+
+  String _selectedUiModuleId() {
+    for (final route in widget.plugin.uiRoutes) {
+      if (route.routeId == _selectedRouteId || route.id == _selectedRouteId) {
+        return route.id;
+      }
+    }
+    for (final module in widget.plugin.uiModules) {
+      if (module.id == _selectedRouteId) {
+        return module.id;
+      }
+    }
+    return _selectedRouteId;
+  }
+
+  String _selectedRouteInstanceId() {
+    final uiModuleId = _selectedUiModuleId();
+    for (final route in widget.plugin.uiRoutes) {
+      if (route.routeId == _selectedRouteId || route.id == _selectedRouteId) {
+        return 'screen:${widget.plugin.packageName}:$uiModuleId';
+      }
+    }
+    return 'legacy:${widget.plugin.packageName}:$uiModuleId';
+  }
+
+  String _executionContextKey({
+    required String uiModuleId,
+    required String routeInstanceId,
+  }) {
+    final container = widget.plugin.packageName.trim().isEmpty
+        ? 'default'
+        : widget.plugin.packageName.trim();
+    final module = uiModuleId.trim().isEmpty ? 'default' : uiModuleId.trim();
+    final route = routeInstanceId.trim().isEmpty
+        ? 'default'
+        : routeInstanceId.trim();
+    return 'toolpkg_compose_dsl:$container:$module:$route';
   }
 
   String _currentLanguage() {
@@ -199,6 +384,35 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   @override
   Widget build(BuildContext context) {
     final hasSelectedUi = _hasSelectedUi();
+    final uiModuleId = _selectedUiModuleId();
+    final routeInstanceId = _selectedRouteInstanceId();
+    final executionContextKey = _executionContextKey(
+      uiModuleId: uiModuleId,
+      routeInstanceId: routeInstanceId,
+    );
+    final webViewHostContext = ComposeDslWebViewHostContext(
+      routeInstanceId: routeInstanceId,
+      executionContextKey: executionContextKey,
+      dispatchAction: _dispatchWebViewAction,
+      runtimeOptionsProvider: () => _runtimeOptions(
+        uiModuleId: uiModuleId,
+        routeInstanceId: routeInstanceId,
+        executionContextKey: executionContextKey,
+      ),
+    );
+    final content = hasSelectedUi
+        ? _ComposeHost(
+            key: ValueKey(_selectedRouteId),
+            loading: _loading,
+            error: _error,
+            renderResult: _renderResult,
+            onAction: _dispatchAction,
+            webViewHostContext: webViewHostContext,
+          )
+        : const _NoUiView();
+    if (!widget.showLauncherChrome) {
+      return SizedBox.expand(child: content);
+    }
     return Scaffold(
       appBar: AppBar(
         title: Text(toolPkgContainerDisplayName(widget.plugin)),
@@ -219,17 +433,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         child: Row(
           children: <Widget>[
             SizedBox(width: 300, child: _navigationPane()),
-            Expanded(
-              child: hasSelectedUi
-                  ? _ComposeHost(
-                      key: ValueKey(_selectedRouteId),
-                      loading: _loading,
-                      error: _error,
-                      renderResult: _renderResult,
-                      onAction: _dispatchAction,
-                    )
-                  : const _NoUiView(),
-            ),
+            Expanded(child: content),
           ],
         ),
       ),
@@ -351,12 +555,14 @@ class _ComposeHost extends StatefulWidget {
     required this.error,
     required this.renderResult,
     required this.onAction,
+    required this.webViewHostContext,
   });
 
   final bool loading;
   final String? error;
   final _ComposeDslRenderResult? renderResult;
-  final Future<void> Function(String actionId, [Object? payload]) onAction;
+  final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+  final ComposeDslWebViewHostContext webViewHostContext;
 
   @override
   State<_ComposeHost> createState() => _ComposeHostState();
@@ -400,7 +606,11 @@ class _ComposeHostState extends State<_ComposeHost> {
     if (tree == null) {
       return const _NoUiView();
     }
-    return _ComposeDslRenderer(node: tree, onAction: widget.onAction);
+    return _ComposeDslRenderer(
+      node: tree,
+      onAction: widget.onAction,
+      webViewHostContext: widget.webViewHostContext,
+    );
   }
 
   void _dispatchRootOnLoad() {
@@ -439,12 +649,16 @@ class _ComposeDslRenderer extends StatelessWidget {
   const _ComposeDslRenderer({
     required this.node,
     required this.onAction,
+    required this.webViewHostContext,
     this.nodePath = 'root',
+    this.modifierScope = _ComposeDslModifierScope.normal,
   });
 
   final _ComposeDslNode node;
-  final Future<void> Function(String actionId, [Object? payload]) onAction;
+  final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+  final ComposeDslWebViewHostContext webViewHostContext;
   final String nodePath;
+  final _ComposeDslModifierScope modifierScope;
 
   @override
   Widget build(BuildContext context) {
@@ -454,6 +668,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       node.props,
       onAction,
       nodeType: node.type,
+      modifierScope: modifierScope,
     );
   }
 
@@ -461,28 +676,60 @@ class _ComposeDslRenderer extends StatelessWidget {
     final type = node.type;
     switch (type) {
       case 'Column':
+        return Column(
+          crossAxisAlignment: _crossAxis(node.props['horizontalAlignment']),
+          mainAxisAlignment: _mainAxis(node.props['verticalArrangement']),
+          children: _slotChildren(
+            'content',
+            useChildren: true,
+            modifierScope: _ComposeDslModifierScope.column,
+          ),
+        );
       case 'LazyColumn':
         return SingleChildScrollView(
           child: Column(
             crossAxisAlignment: _crossAxis(node.props['horizontalAlignment']),
             mainAxisAlignment: _mainAxis(node.props['verticalArrangement']),
-            children: _children(),
+            children: _slotChildren(
+              'content',
+              useChildren: true,
+              modifierScope: _ComposeDslModifierScope.column,
+            ),
           ),
         );
       case 'Row':
+        final contentNodes = _slotNodes('content', useChildren: true);
+        final children = _buildNodeWidgets(
+          contentNodes,
+          pathPrefix: '$nodePath:content',
+          modifierScope: _ComposeDslModifierScope.row,
+        );
+        return Row(
+          mainAxisSize: _nodesRequireRowFlex(contentNodes)
+              ? MainAxisSize.max
+              : MainAxisSize.min,
+          crossAxisAlignment: _crossAxis(node.props['verticalAlignment']),
+          mainAxisAlignment: _mainAxis(node.props['horizontalArrangement']),
+          children: children,
+        );
       case 'LazyRow':
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: _crossAxis(node.props['verticalAlignment']),
             mainAxisAlignment: _mainAxis(node.props['horizontalArrangement']),
-            children: _children(),
+            children: _slotChildren('content', useChildren: true),
           ),
         );
       case 'Box':
         return Stack(
           alignment: _alignment(node.props['contentAlignment']),
-          children: _children(),
+          children: _slotChildren(
+            'content',
+            useChildren: true,
+            modifierScope: _ComposeDslModifierScope.box,
+          ),
         );
       case 'Spacer':
         return SizedBox(
@@ -630,7 +877,11 @@ class _ComposeDslRenderer extends StatelessWidget {
         return LayoutBuilder(
           builder: (context, constraints) => Stack(
             alignment: _alignment(node.props['contentAlignment']),
-            children: _slotChildren('content', useChildren: true),
+            children: _slotChildren(
+              'content',
+              useChildren: true,
+              modifierScope: _ComposeDslModifierScope.box,
+            ),
           ),
         );
       case 'SelectionContainer':
@@ -655,7 +906,16 @@ class _ComposeDslRenderer extends StatelessWidget {
       case 'Canvas':
         return _canvas(context);
       case 'WebView':
-        return _ComposeDslWebView(props: node.props, onAction: onAction);
+        return ComposeDslWebView(
+          key: _webViewKey(
+            props: node.props,
+            nodePath: nodePath,
+            webViewHostContext: webViewHostContext,
+          ),
+          props: node.props,
+          onAction: onAction,
+          hostContext: webViewHostContext,
+        );
       case 'Image':
       case 'AsyncImage':
         return _image(context);
@@ -665,7 +925,11 @@ class _ComposeDslRenderer extends StatelessWidget {
   }
 
   Widget _button(BuildContext context, String type) {
-    final contentChildren = _slotChildren('content', useChildren: true);
+    final contentChildren = _slotChildren(
+      'content',
+      useChildren: true,
+      modifierScope: _ComposeDslModifierScope.row,
+    );
     final child = contentChildren.isNotEmpty
         ? Row(mainAxisSize: MainAxisSize.min, children: contentChildren)
         : Text(
@@ -735,7 +999,7 @@ class _ComposeDslRenderer extends StatelessWidget {
             borderRadius: radius ?? BorderRadius.zero,
             side: borderSide ?? BorderSide.none,
           );
-    final child = _containerContent(
+    final child = _surfaceContent(
       context,
       contentColor: _color(context, node.props['contentColor']),
       contentPadding: node.props['contentPadding'] ?? node.props['padding'],
@@ -774,6 +1038,27 @@ class _ComposeDslRenderer extends StatelessWidget {
     required Object? contentPadding,
   }) {
     Widget child = _slotOrChildren('content');
+    if (contentPadding != null) {
+      child = Padding(
+        padding: _edgeInsetsFromValue(contentPadding),
+        child: child,
+      );
+    }
+    return _withSlotColor(context, child, contentColor);
+  }
+
+  Widget _surfaceContent(
+    BuildContext context, {
+    required Color? contentColor,
+    required Object? contentPadding,
+  }) {
+    Widget child = Stack(
+      children: _slotChildren(
+        'content',
+        useChildren: true,
+        modifierScope: _ComposeDslModifierScope.normal,
+      ),
+    );
     if (contentPadding != null) {
       child = Padding(
         padding: _edgeInsetsFromValue(contentPadding),
@@ -981,6 +1266,7 @@ class _ComposeDslRenderer extends StatelessWidget {
     return _ComposeDslRenderer(
       node: child,
       onAction: onAction,
+      webViewHostContext: webViewHostContext,
       nodePath: childPath,
     );
   }
@@ -1892,27 +2178,27 @@ class _ComposeDslRenderer extends StatelessWidget {
 
   bool _enabled() => node.props['enabled'] != false;
 
-  List<Widget> _children() => node.children
-      .asMap()
-      .entries
-      .map(
-        (entry) => _ComposeDslRenderer(
-          node: entry.value,
-          onAction: onAction,
-          nodePath: '$nodePath/${entry.key}',
-        ),
-      )
-      .toList(growable: false);
+  List<Widget> _children({
+    _ComposeDslModifierScope modifierScope = _ComposeDslModifierScope.normal,
+  }) => _buildNodeWidgets(
+    node.children,
+    pathPrefix: nodePath,
+    modifierScope: modifierScope,
+  );
 
   Widget _childrenColumn() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     mainAxisSize: MainAxisSize.min,
-    children: _children(),
+    children: _children(modifierScope: _ComposeDslModifierScope.column),
   );
 
   Widget _slotRow(String name, {bool useChildren = false}) => Row(
     mainAxisSize: MainAxisSize.min,
-    children: _slotChildren(name, useChildren: useChildren),
+    children: _slotChildren(
+      name,
+      useChildren: useChildren,
+      modifierScope: _ComposeDslModifierScope.row,
+    ),
   );
 
   Widget _slotOrText(String name) {
@@ -1921,6 +2207,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       return _ComposeDslRenderer(
         node: slot.first,
         onAction: onAction,
+        webViewHostContext: webViewHostContext,
         nodePath: '$nodePath:$name/0',
       );
     }
@@ -1929,7 +2216,10 @@ class _ComposeDslRenderer extends StatelessWidget {
   }
 
   Widget _slotOrChildren(String name) {
-    final slotChildren = _slotChildren(name);
+    final slotChildren = _slotChildren(
+      name,
+      modifierScope: _ComposeDslModifierScope.column,
+    );
     if (slotChildren.isNotEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1940,11 +2230,28 @@ class _ComposeDslRenderer extends StatelessWidget {
     return _childrenColumn();
   }
 
-  List<Widget> _slotChildren(String name, {bool useChildren = false}) {
+  List<Widget> _slotChildren(
+    String name, {
+    bool useChildren = false,
+    _ComposeDslModifierScope modifierScope = _ComposeDslModifierScope.normal,
+  }) => _buildNodeWidgets(
+    _slotNodes(name, useChildren: useChildren),
+    pathPrefix: '$nodePath:$name',
+    modifierScope: modifierScope,
+  );
+
+  List<_ComposeDslNode> _slotNodes(String name, {bool useChildren = false}) {
     final slot = node.slots[name];
-    final nodes = slot != null && slot.isNotEmpty
+    return slot != null && slot.isNotEmpty
         ? slot
         : (useChildren ? node.children : const <_ComposeDslNode>[]);
+  }
+
+  List<Widget> _buildNodeWidgets(
+    List<_ComposeDslNode> nodes, {
+    required String pathPrefix,
+    _ComposeDslModifierScope modifierScope = _ComposeDslModifierScope.normal,
+  }) {
     return nodes
         .asMap()
         .entries
@@ -1952,26 +2259,40 @@ class _ComposeDslRenderer extends StatelessWidget {
           (entry) => _ComposeDslRenderer(
             node: entry.value,
             onAction: onAction,
-            nodePath: '$nodePath:$name/${entry.key}',
+            webViewHostContext: webViewHostContext,
+            nodePath: '$pathPrefix/${entry.key}',
+            modifierScope: modifierScope,
           ),
         )
         .toList(growable: false);
   }
 
+  bool _nodesRequireRowFlex(List<_ComposeDslNode> nodes) {
+    return nodes.any((child) => _rowFlexSpec(child.props) != null);
+  }
+
   Widget _slotColumn(String name) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     mainAxisSize: MainAxisSize.min,
-    children: _slotChildren(name),
+    children: _slotChildren(
+      name,
+      modifierScope: _ComposeDslModifierScope.column,
+    ),
   );
 
   Widget _slotCompactColumn(String name) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
-    children: _slotChildren(name),
+    children: _slotChildren(
+      name,
+      modifierScope: _ComposeDslModifierScope.column,
+    ),
   );
 
-  Widget _slotInline(String name) =>
-      Row(mainAxisSize: MainAxisSize.min, children: _slotChildren(name));
+  Widget _slotInline(String name) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: _slotChildren(name, modifierScope: _ComposeDslModifierScope.row),
+  );
 
   Widget _tintedSlotInline(
     BuildContext context,
@@ -1983,7 +2304,11 @@ class _ComposeDslRenderer extends StatelessWidget {
       context,
       Row(
         mainAxisSize: MainAxisSize.min,
-        children: _slotChildren(name, useChildren: useChildren),
+        children: _slotChildren(
+          name,
+          useChildren: useChildren,
+          modifierScope: _ComposeDslModifierScope.row,
+        ),
       ),
       color,
     );
@@ -2000,7 +2325,11 @@ class _ComposeDslRenderer extends StatelessWidget {
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
-        children: _slotChildren(name, useChildren: useChildren),
+        children: _slotChildren(
+          name,
+          useChildren: useChildren,
+          modifierScope: _ComposeDslModifierScope.column,
+        ),
       ),
       color,
     );
@@ -2032,6 +2361,7 @@ class _ComposeDslRenderer extends StatelessWidget {
     return _ComposeDslRenderer(
       node: slot.first,
       onAction: onAction,
+      webViewHostContext: webViewHostContext,
       nodePath: '$nodePath:$name/0',
     );
   }
@@ -2266,189 +2596,6 @@ class _ComposeTextFieldState extends State<_ComposeTextField> {
       },
     );
   }
-}
-
-class _ComposeDslWebView extends StatefulWidget {
-  const _ComposeDslWebView({required this.props, required this.onAction});
-
-  final Map<String, Object?> props;
-  final Future<void> Function(String actionId, [Object? payload]) onAction;
-
-  @override
-  State<_ComposeDslWebView> createState() => _ComposeDslWebViewState();
-}
-
-class _ComposeDslWebViewState extends State<_ComposeDslWebView> {
-  late final WebViewController _controller;
-  Future<void>? _loadFuture;
-  String? _loadKey;
-  int _progress = 0;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(
-        _bool(widget.props['javaScriptEnabled'])
-            ? JavaScriptMode.unrestricted
-            : JavaScriptMode.disabled,
-      )
-      ..setBackgroundColor(Colors.transparent)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (url) {
-            _emit('onPageStarted', <String, Object?>{'url': url});
-            _updateProgress(0);
-          },
-          onPageFinished: (url) {
-            _emit('onPageFinished', <String, Object?>{'url': url});
-            _updateProgress(100);
-          },
-          onProgress: (progress) {
-            _emit('onProgressChanged', <String, Object?>{'progress': progress});
-            _updateProgress(progress);
-          },
-          onUrlChange: (change) {
-            final url = change.url;
-            if (url != null) {
-              _emit('onUrlChanged', <String, Object?>{'url': url});
-            }
-          },
-          onWebResourceError: (error) {
-            final payload = <String, Object?>{
-              'errorCode': error.errorCode,
-              'description': error.description,
-              'url': error.url,
-            };
-            _emit('onReceivedError', payload);
-            if (mounted) {
-              setState(() {
-                _error = error.description;
-              });
-            }
-          },
-        ),
-      );
-    _scheduleLoad();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ComposeDslWebView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final nextKey = _contentKey(widget.props);
-    if (nextKey != _loadKey) {
-      _scheduleLoad();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_hasWebContent(widget.props)) {
-      return const SizedBox.shrink();
-    }
-    return FutureBuilder<void>(
-      future: _loadFuture,
-      builder: (context, snapshot) {
-        final errorText = _error ?? snapshot.error?.toString();
-        return Stack(
-          children: <Widget>[
-            WebViewWidget(controller: _controller),
-            if (_progress > 0 && _progress < 100)
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: LinearProgressIndicator(),
-              ),
-            if (errorText != null && errorText.trim().isNotEmpty)
-              Positioned(
-                left: 12,
-                right: 12,
-                bottom: 12,
-                child: Material(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Text(
-                      errorText,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _scheduleLoad() {
-    _loadKey = _contentKey(widget.props);
-    if (!_hasWebContent(widget.props)) {
-      _loadFuture = null;
-      return;
-    }
-    _loadFuture = _load();
-  }
-
-  Future<void> _load() async {
-    if (mounted) {
-      setState(() {
-        _error = null;
-        _progress = 0;
-      });
-    }
-    final html = _string(widget.props['html']);
-    final baseUrl = _string(widget.props['baseUrl']).trim();
-    if (html.trim().isNotEmpty) {
-      await _controller.loadHtmlString(
-        html,
-        baseUrl: baseUrl.isEmpty ? null : baseUrl,
-      );
-      return;
-    }
-    final url = _string(widget.props['url']).trim();
-    if (url.isNotEmpty) {
-      await _controller.loadRequest(
-        Uri.parse(url),
-        headers: _webHeaders(widget.props['headers']),
-      );
-    }
-  }
-
-  void _updateProgress(int progress) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _progress = progress;
-    });
-  }
-
-  void _emit(String propName, Object? payload) {
-    final actionId = _actionId(widget.props[propName]);
-    if (actionId == null) {
-      return;
-    }
-    widget.onAction(actionId, payload);
-  }
-
-  bool _hasWebContent(Map<String, Object?> props) =>
-      _string(props['html']).trim().isNotEmpty ||
-      _string(props['url']).trim().isNotEmpty;
-
-  String _contentKey(Map<String, Object?> props) =>
-      jsonEncode(<String, Object?>{
-        'url': props['url'],
-        'html': props['html'],
-        'baseUrl': props['baseUrl'],
-        'headers': props['headers'],
-        'javaScriptEnabled': props['javaScriptEnabled'],
-      });
 }
 
 class _ComposeCanvasPainter extends CustomPainter {
@@ -2760,13 +2907,58 @@ class _ComposeDslRenderResult {
     required this.tree,
     required this.state,
     required this.memo,
+    required this.actionResult,
   });
 
-  final _ComposeDslNode? tree;
+  final _ComposeDslNode tree;
   final Map<String, Object?> state;
   final Map<String, Object?> memo;
+  final Object? actionResult;
 
   static _ComposeDslRenderResult parse(String? raw) {
+    final result = tryParse(raw);
+    if (result != null) {
+      return result;
+    }
+    throw FormatException(
+      'compose_dsl result is invalid: ${_rawResultSummary(raw)}',
+    );
+  }
+
+  static _ComposeDslRenderResult? tryParse(String? raw) {
+    final value = _rootObject(raw);
+    if (value == null) {
+      return null;
+    }
+    final success = value['success'];
+    if (success == false) {
+      throw Exception((value['message'] ?? 'compose_dsl failed').toString());
+    }
+    final tree = _ComposeDslNode.parse(value['tree']);
+    if (tree == null) {
+      return null;
+    }
+    return _ComposeDslRenderResult(
+      tree: tree,
+      state: _stringMap(value['state']),
+      memo: _stringMap(value['memo']),
+      actionResult: _plainJsonValue(value['actionResult']),
+    );
+  }
+
+  static Object? actionResultOf(String? raw) {
+    final value = _rootObject(raw);
+    if (value == null) {
+      return null;
+    }
+    final success = value['success'];
+    if (success == false) {
+      throw Exception((value['message'] ?? 'compose_dsl failed').toString());
+    }
+    return _plainJsonValue(value['actionResult']);
+  }
+
+  static Map<Object?, Object?>? _rootObject(String? raw) {
     Object? value = raw;
     for (var i = 0; i < 3; i += 1) {
       if (value is String) {
@@ -2778,19 +2970,9 @@ class _ComposeDslRenderResult {
       }
     }
     if (value is Map<Object?, Object?>) {
-      final success = value['success'];
-      if (success == false) {
-        throw Exception((value['message'] ?? 'compose_dsl failed').toString());
-      }
-      return _ComposeDslRenderResult(
-        tree: _ComposeDslNode.parse(value['tree']),
-        state: _stringMap(value['state']),
-        memo: _stringMap(value['memo']),
-      );
+      return value;
     }
-    throw FormatException(
-      'compose_dsl result is invalid: ${_rawResultSummary(raw)}',
-    );
+    return null;
   }
 
   static String _rawResultSummary(Object? raw) {
@@ -2803,6 +2985,21 @@ class _ComposeDslRenderResult {
       return text;
     }
     return '${text.substring(0, maxLength)}...';
+  }
+}
+
+Object? _plainJsonValue(Object? raw) {
+  if (raw is! String) {
+    return raw;
+  }
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+  try {
+    return jsonDecode(trimmed);
+  } catch (_) {
+    return raw;
   }
 }
 
@@ -2944,12 +3141,76 @@ class _NoUiView extends StatelessWidget {
   }
 }
 
+enum _ComposeDslModifierScope { normal, row, column, box }
+
+class _RowFlexSpec {
+  const _RowFlexSpec({required this.weight, required this.fill});
+
+  final double weight;
+  final bool fill;
+}
+
+_RowFlexSpec? _rowFlexSpec(Map<String, Object?> props) {
+  final explicitWeight = _number(props['weight']);
+  if (explicitWeight != null && explicitWeight > 0) {
+    return _RowFlexSpec(
+      weight: explicitWeight,
+      fill: _boolOrDefault(props['weightFill'], true),
+    );
+  }
+
+  final weightOp = _modifierOpByToken(props['modifier'], 'weight');
+  if (weightOp != null) {
+    final args = weightOp['args'] is List<Object?>
+        ? weightOp['args'] as List<Object?>
+        : const <Object?>[];
+    final weight = _number(args.firstOrNull);
+    if (weight != null && weight > 0) {
+      return _RowFlexSpec(
+        weight: weight,
+        fill: _boolOrDefault(args.elementAtOrNull(1), true),
+      );
+    }
+  }
+
+  if (_bool(props['fillMaxWidth']) ||
+      _bool(props['fillMaxSize']) ||
+      _hasModifierOp(props['modifier'], 'fillmaxwidth') ||
+      _hasModifierOp(props['modifier'], 'fillmaxsize')) {
+    return const _RowFlexSpec(weight: 1, fill: true);
+  }
+
+  return null;
+}
+
+bool _boolOrDefault(Object? raw, bool defaultValue) =>
+    raw == null ? defaultValue : _bool(raw);
+
+Map<String, Object?>? _modifierOpByToken(Object? rawModifier, String token) {
+  final normalizedToken = _normalizeToken(token);
+  for (final op in _modifierOps(rawModifier)) {
+    if (_normalizeToken((op['name'] ?? '').toString()) == normalizedToken) {
+      return op;
+    }
+  }
+  return null;
+}
+
+bool _hasModifierOp(Object? rawModifier, String token) =>
+    _modifierOpByToken(rawModifier, token) != null;
+
+int _flexForWeight(double weight) {
+  final scaled = (weight * 1000).round();
+  return scaled < 1 ? 1 : scaled;
+}
+
 Widget _withModifier(
   BuildContext context,
   Widget child,
   Map<String, Object?> props,
-  Future<void> Function(String actionId, [Object? payload]) onAction, {
+  Future<Object?> Function(String actionId, [Object? payload]) onAction, {
   required String nodeType,
+  required _ComposeDslModifierScope modifierScope,
 }) {
   final ops = _modifierOps(props['modifier']);
   Widget current = child;
@@ -2958,6 +3219,7 @@ Widget _withModifier(
     current,
     props,
     nodeType: nodeType,
+    modifierScope: modifierScope,
   );
   for (final op in ops.reversed) {
     final name = _normalizeToken((op['name'] ?? '').toString());
@@ -2970,7 +3232,9 @@ Widget _withModifier(
         break;
       case 'fillMaxWidth':
       case 'fillmaxwidth':
-        current = SizedBox(width: double.infinity, child: current);
+        if (modifierScope != _ComposeDslModifierScope.row) {
+          current = SizedBox(width: double.infinity, child: current);
+        }
         break;
       case 'fillMaxHeight':
       case 'fillmaxheight':
@@ -2978,7 +3242,11 @@ Widget _withModifier(
         break;
       case 'fillMaxSize':
       case 'fillmaxsize':
-        current = SizedBox.expand(child: current);
+        if (modifierScope == _ComposeDslModifierScope.row) {
+          current = SizedBox(height: double.infinity, child: current);
+        } else {
+          current = SizedBox.expand(child: current);
+        }
         break;
       case 'width':
       case 'requiredWidth':
@@ -3102,6 +3370,16 @@ Widget _withModifier(
         break;
     }
   }
+  if (modifierScope == _ComposeDslModifierScope.row) {
+    final rowFlexSpec = _rowFlexSpec(props);
+    if (rowFlexSpec != null) {
+      current = Flexible(
+        flex: _flexForWeight(rowFlexSpec.weight),
+        fit: rowFlexSpec.fill ? FlexFit.tight : FlexFit.loose,
+        child: current,
+      );
+    }
+  }
   return current;
 }
 
@@ -3110,6 +3388,7 @@ Widget _withDirectModifierProps(
   Widget child,
   Map<String, Object?> props, {
   required String nodeType,
+  required _ComposeDslModifierScope modifierScope,
 }) {
   Widget current = child;
   final width = _number(props['width']);
@@ -3118,9 +3397,15 @@ Widget _withDirectModifierProps(
     current = SizedBox(width: width, height: height, child: current);
   }
   if (_bool(props['fillMaxSize'])) {
-    current = SizedBox.expand(child: current);
+    if (modifierScope == _ComposeDslModifierScope.row) {
+      current = SizedBox(height: double.infinity, child: current);
+    } else {
+      current = SizedBox.expand(child: current);
+    }
   } else if (_bool(props['fillMaxWidth'])) {
-    current = SizedBox(width: double.infinity, child: current);
+    if (modifierScope != _ComposeDslModifierScope.row) {
+      current = SizedBox(width: double.infinity, child: current);
+    }
   } else if (_bool(props['fillMaxHeight'])) {
     current = SizedBox(height: double.infinity, child: current);
   }
@@ -3155,6 +3440,26 @@ bool _nodeOwnsDirectAlpha(String nodeType) {
     'AsyncImage' => true,
     _ => false,
   };
+}
+
+Key _webViewKey({
+  required Map<String, Object?> props,
+  required String nodePath,
+  required ComposeDslWebViewHostContext webViewHostContext,
+}) {
+  final explicitKey = _string(props['key']).trim();
+  final controller = props['controller'];
+  final controllerKey = controller is Map<Object?, Object?>
+      ? _string(controller['key']).trim()
+      : '';
+  final identity = explicitKey.isNotEmpty
+      ? explicitKey
+      : controllerKey.isNotEmpty
+      ? controllerKey
+      : nodePath;
+  return ValueKey<String>(
+    'compose_webview:${webViewHostContext.executionContextKey}:$identity',
+  );
 }
 
 EdgeInsets _edgeInsets(List<Object?> args) {
@@ -3577,15 +3882,6 @@ Map<String, Object?> _stringMap(Object? raw) {
     return raw.map((key, value) => MapEntry(key.toString(), value));
   }
   return <String, Object?>{};
-}
-
-Map<String, String> _webHeaders(Object? raw) {
-  if (raw is! Map<Object?, Object?>) {
-    return const <String, String>{};
-  }
-  return raw.map(
-    (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-  );
 }
 
 List<Map<String, Object?>> _canvasCommands(Object? raw) {

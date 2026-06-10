@@ -1,5 +1,6 @@
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::core::tools::packTool::PackageManager::BundledExternalPackageCandidate;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use std::collections::BTreeSet;
 
@@ -14,7 +15,12 @@ pub fn run_plugin_command(
     }
 
     match args[0].as_str() {
+        "help" | "-h" | "--help" => {
+            print_plugin_usage(output);
+            Ok(())
+        }
         "list" => list_plugins(context, output),
+        "more" => list_more_plugins(context, output),
         "show" => {
             let name = args
                 .get(1)
@@ -32,6 +38,18 @@ pub fn run_plugin_command(
             output.push_stdout_line(guard.addPackageFileFromExternalStorage(path));
             Ok(())
         }
+        "load" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 plugin load <name>".to_string())?;
+            load_more_plugin(context, name, output)
+        }
+        "delete" | "remove" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 plugin delete <name>".to_string())?;
+            delete_plugin(context, name, output)
+        }
         "enable" => set_plugin_enabled(context, args.get(1), true, output),
         "disable" => set_plugin_enabled(context, args.get(1), false, output),
         _ => {
@@ -46,7 +64,7 @@ fn list_plugins(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let package_manager = package_manager(&context);
-    let guard = package_manager
+    let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
     let enabled = enabled_plugin_names_from_manager(&guard);
@@ -58,6 +76,20 @@ fn list_plugins(
             plugin.description.resolve(false),
             plugin.subpackages.len()
         ));
+    }
+    Ok(())
+}
+
+fn list_more_plugins(
+    context: OperitApplicationContext,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    for candidate in guard.getBundledExternalPackageCandidates() {
+        output.push_stdout_line(format_bundled_external_candidate(&candidate));
     }
     Ok(())
 }
@@ -154,6 +186,46 @@ fn show_plugin(
     Ok(())
 }
 
+fn load_more_plugin(
+    context: OperitApplicationContext,
+    name: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    output.push_stdout_line(guard.importBundledExternalPackage(name));
+    Ok(())
+}
+
+fn delete_plugin(
+    context: OperitApplicationContext,
+    name: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    if !guard.deletePackage(name) {
+        return Err(format!("Failed to delete plugin: {name}"));
+    }
+    output.push_stdout_line(format!("deleted={name}"));
+    Ok(())
+}
+
+fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate) -> String {
+    format!(
+        "{}\ttype={}\tloaded=false\t{}\ttools={}\tsubpackages={}",
+        candidate.packageName,
+        candidate.packageKind,
+        candidate.description.resolve(false),
+        candidate.toolCount,
+        candidate.subpackageCount
+    )
+}
+
 fn set_plugin_enabled(
     context: OperitApplicationContext,
     name: Option<&String>,
@@ -199,9 +271,24 @@ fn package_manager(
 }
 
 fn print_plugin_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 plugin list");
-    output.push_stdout_line("operit2 plugin show <name>");
-    output.push_stdout_line("operit2 plugin import <toolpkg-path>");
-    output.push_stdout_line("operit2 plugin enable <name>");
-    output.push_stdout_line("operit2 plugin disable <name>");
+    output.push_stdout_line("operit2 plugin help");
+    output.push_stdout_line(
+        "operit2 plugin list                         List loaded ToolPkg plugins.",
+    );
+    output.push_stdout_line("operit2 plugin more                         List app-bundled official extras not loaded yet; type=toolpkg/script.");
+    output.push_stdout_line("operit2 plugin load <name>                  Load one item from 'plugin more' into the user package directory.");
+    output.push_stdout_line(
+        "operit2 plugin show <name>                  Show a loaded ToolPkg plugin.",
+    );
+    output.push_stdout_line("operit2 plugin import <toolpkg-path>        Import a ToolPkg file.");
+    output.push_stdout_line(
+        "operit2 plugin delete <name>                Delete an external ToolPkg plugin.",
+    );
+    output.push_stdout_line(
+        "operit2 plugin enable <name>                Enable a loaded ToolPkg plugin.",
+    );
+    output.push_stdout_line(
+        "operit2 plugin disable <name>               Disable a loaded ToolPkg plugin.",
+    );
+    output.push_stdout_line("note: ordinary script packages shown by type=script can also be managed with 'operit2 package more/load'.");
 }

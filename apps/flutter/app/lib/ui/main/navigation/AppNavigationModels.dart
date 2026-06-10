@@ -3,15 +3,32 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-enum RouteRuntime { native }
+enum RouteRuntime { native, toolPkgComposeDsl }
 
-enum NavigationSurface { mainSidebarAi }
+enum NavigationSurface {
+  mainSidebarAi,
+  mainSidebarTools,
+  mainSidebarPlugins,
+  mainSidebarSystem,
+  toolbox,
+}
 
-enum NavigationEntryKind { host }
+enum NavigationEntryKind { host, plugin }
 
 enum RouteEntrySource { defaultSource, drawer, script }
 
 enum NavigationTransitionSource { defaultSource, drawer }
+
+@immutable
+class NavigationEntryActionSpec {
+  const NavigationEntryActionSpec({
+    required this.functionName,
+    this.functionSource,
+  });
+
+  final String functionName;
+  final String? functionSource;
+}
 
 @immutable
 class RouteSpec {
@@ -19,6 +36,9 @@ class RouteSpec {
     required this.routeId,
     required this.runtime,
     this.title,
+    this.icon,
+    this.ownerPackageName,
+    this.toolPkgUiModuleId,
     this.keepAlive = false,
     this.reuseOnTop = true,
   });
@@ -26,6 +46,9 @@ class RouteSpec {
   final String routeId;
   final RouteRuntime runtime;
   final String? title;
+  final IconData? icon;
+  final String? ownerPackageName;
+  final String? toolPkgUiModuleId;
   final bool keepAlive;
   final bool reuseOnTop;
 }
@@ -60,7 +83,9 @@ class NavigationEntrySpec {
     this.description,
     this.order = 0,
     this.routeArgs = const <String, Object?>{},
+    this.action,
     this.kind = NavigationEntryKind.host,
+    this.ownerPackageName,
   });
 
   final String entryId;
@@ -71,7 +96,9 @@ class NavigationEntrySpec {
   final String? description;
   final int order;
   final Map<String, Object?> routeArgs;
+  final NavigationEntryActionSpec? action;
   final NavigationEntryKind kind;
+  final String? ownerPackageName;
 }
 
 @immutable

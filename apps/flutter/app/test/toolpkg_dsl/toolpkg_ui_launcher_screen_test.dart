@@ -29,13 +29,24 @@ void main() {
     expect(find.byType(CustomPaint), findsAtLeastNWidgets(1));
 
     final scriptCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslScript',
+      (request) => request.methodName == 'getToolPkgComposeDslScript',
     );
     expect(scriptCall.targetPath.key, 'permissions.packTool.packageManager');
     expect(scriptCall.args, isA<Map<String, Object?>>());
     final args = scriptCall.args as Map<String, Object?>;
     expect(args['containerPackageName'], 'demo_toolpkg');
-    expect(args['uiModuleIdOrRouteId'], 'main');
+    expect(args['uiModuleId'], 'main');
+
+    final renderCall = bridge.calls.singleWhere(
+      (request) => request.methodName == 'executeComposeDslScript',
+    );
+    expect(renderCall.targetPath.segments, <String>[
+      'permissions',
+      'packTool',
+      'packageManager',
+      'getToolPkgExecutionEngine',
+      'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main',
+    ]);
   });
 
   testWidgets('opens compose dsl module when plugin has no routes', (
@@ -51,14 +62,25 @@ void main() {
     expect(find.text('Toolbox module'), findsOneWidget);
 
     final scriptCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslScript',
+      (request) => request.methodName == 'getToolPkgComposeDslScript',
     );
-    final args = scriptCall.args as Map<String, Object?>;
-    expect(args['containerPackageName'], 'module_only_toolpkg');
-    expect(args['uiModuleIdOrRouteId'], 'toolbox');
+    final scriptArgs = scriptCall.args as Map<String, Object?>;
+    expect(scriptArgs['containerPackageName'], 'module_only_toolpkg');
+    expect(scriptArgs['uiModuleId'], 'toolbox');
 
-    final runtimeOptions = args['runtimeOptions'] as Map<String, Object?>;
-    expect(runtimeOptions['routeInstanceId'], 'toolbox');
+    final renderCall = bridge.calls.singleWhere(
+      (request) => request.methodName == 'executeComposeDslScript',
+    );
+    final renderArgs = renderCall.args as Map<String, Object?>;
+    final runtimeOptions = renderArgs['runtimeOptions'] as Map<String, Object?>;
+    expect(
+      runtimeOptions['routeInstanceId'],
+      'legacy:module_only_toolpkg:toolbox',
+    );
+    expect(
+      runtimeOptions['executionContextKey'],
+      'toolpkg_compose_dsl:module_only_toolpkg:toolbox:legacy:module_only_toolpkg:toolbox',
+    );
     final moduleSpec = runtimeOptions['moduleSpec'] as Map<String, Object?>;
     expect(moduleSpec['id'], 'toolbox');
     expect(moduleSpec['routeId'], 'toolbox');
@@ -79,19 +101,51 @@ void main() {
     expect(find.text('Counter: 1'), findsOneWidget);
 
     final actionCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'increment');
     expect(args['payload'], isNull);
+    expect(actionCall.targetPath.segments, <String>[
+      'permissions',
+      'packTool',
+      'packageManager',
+      'getToolPkgExecutionEngine',
+      'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main',
+    ]);
 
     final runtimeOptions = args['runtimeOptions'] as Map<String, Object?>;
-    expect(runtimeOptions['routeInstanceId'], 'main');
+    expect(runtimeOptions['routeInstanceId'], 'screen:demo_toolpkg:main');
     expect(runtimeOptions['state'], <String, Object?>{'count': 0});
     expect(
       runtimeOptions['moduleSpec'],
       containsPair('toolPkgId', 'demo_toolpkg'),
     );
+  });
+
+  testWidgets('renders row fillMaxWidth child with finite text constraints', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge(
+      renderResult: _rowFillMaxWidthRenderResult,
+    );
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Wide row text'), findsOneWidget);
+    expect(find.text('Tail'), findsOneWidget);
+  });
+
+  testWidgets('renders row surface text with finite constraints', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge(renderResult: _rowSurfaceRenderResult);
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('开始/暂停'), findsOneWidget);
   });
 
   testWidgets('renders text field slots and preserves focused input state', (
@@ -112,7 +166,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'alias_change');
@@ -147,7 +201,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final actionCall = bridge.calls.lastWhere(
-        (request) => request.methodName == 'executeToolPkgComposeDslAction',
+        (request) => request.methodName == 'dispatchComposeDslActionAsync',
       );
       final args = actionCall.args as Map<String, Object?>;
       expect(args['actionId'], 'email_change');
@@ -179,7 +233,7 @@ void main() {
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
     var actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     var args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'switch_change');
@@ -188,7 +242,7 @@ void main() {
     await tester.tap(find.byType(Checkbox).first);
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'checkbox_change');
@@ -202,7 +256,7 @@ void main() {
     await tester.tap(find.byWidgetPredicate((widget) => widget is Radio<bool>));
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'radio_select');
@@ -276,7 +330,7 @@ void main() {
     await tester.tap(find.text('Undo'));
     await tester.pumpAndSettle();
     var actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     var args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'snackbar_undo');
@@ -285,7 +339,7 @@ void main() {
     await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
     actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'snackbar_dismiss');
@@ -307,7 +361,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.singleWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'select_mode');
@@ -346,7 +400,7 @@ void main() {
     );
 
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'canvas_size');
@@ -396,7 +450,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'dismiss_time_picker');
@@ -483,7 +537,7 @@ void main() {
     await tester.tap(find.text('Surface content'));
     await tester.pumpAndSettle();
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'surface_click');
@@ -537,7 +591,7 @@ void main() {
     await tester.tap(find.text('Slot Button'));
     await tester.pumpAndSettle();
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'slot_button');
@@ -593,7 +647,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'toggle_icon');
@@ -619,7 +673,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final barActionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final barArgs = barActionCall.args as Map<String, Object?>;
     expect(barArgs['actionId'], 'bar_inactive');
@@ -629,7 +683,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final drawerActionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final drawerArgs = drawerActionCall.args as Map<String, Object?>;
     expect(drawerArgs['actionId'], 'drawer_item');
@@ -658,7 +712,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final actionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'details_tab');
@@ -694,7 +748,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final filterActionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final filterArgs = filterActionCall.args as Map<String, Object?>;
     expect(filterArgs['actionId'], 'filter_chip');
@@ -709,7 +763,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final dismissActionCall = bridge.calls.lastWhere(
-      (request) => request.methodName == 'executeToolPkgComposeDslAction',
+      (request) => request.methodName == 'dispatchComposeDslActionAsync',
     );
     final dismissArgs = dismissActionCall.args as Map<String, Object?>;
     expect(dismissArgs['actionId'], 'dismiss_input_chip');
@@ -854,14 +908,13 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   Future<Object?> call(CoreCallRequest request) async {
     calls.add(request);
     switch (request.methodName) {
-      case 'executeToolPkgComposeDslScript':
-        _count = 0;
-        return _renderResult(_count);
-      case 'executeToolPkgComposeDslAction':
+      case 'getToolPkgComposeDslScript':
+        return 'export default function render() {}';
+      case 'getToolPkgComposeDslScreenPath':
         final args = request.args as Map<String, Object?>;
-        if (args['actionId'] == 'increment') {
-          _count += 1;
-        }
+        return args['uiModuleId'] == 'toolbox' ? 'ui/toolbox.js' : 'ui/main.js';
+      case 'executeComposeDslScript':
+        _count = 0;
         return _renderResult(_count);
     }
     throw StateError('unexpected core call: ${request.methodName}');
@@ -901,7 +954,40 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
-    return const Stream<CoreEvent>.empty();
+    if (request.propertyName != 'dispatchComposeDslActionAsync') {
+      throw StateError('unexpected core watch: ${request.propertyName}');
+    }
+    final args = request.args as Map<String, Object?>;
+    calls.add(
+      CoreCallRequest(
+        requestId: request.requestId,
+        targetPath: request.targetPath,
+        methodName: request.propertyName,
+        args: request.args,
+      ),
+    );
+    if (args['actionId'] == 'increment') {
+      _count += 1;
+    }
+    return Stream<CoreEvent>.fromIterable(<CoreEvent>[
+      CoreEvent(
+        requestId: request.requestId,
+        targetPath: request.targetPath,
+        propertyName: request.propertyName,
+        kind: 'Changed',
+        value: jsonEncode(<String, Object?>{
+          'phase': 'final',
+          'result': _renderResult(_count),
+        }),
+      ),
+      CoreEvent(
+        requestId: request.requestId,
+        targetPath: request.targetPath,
+        propertyName: request.propertyName,
+        kind: 'Completed',
+        value: jsonEncode(<String, Object?>{'phase': 'complete'}),
+      ),
+    ]);
   }
 }
 
@@ -940,6 +1026,58 @@ String _counterRenderResult(int count) {
               },
             ],
           },
+        ),
+      ],
+    ),
+    'state': <String, Object?>{'count': count},
+    'memo': <String, Object?>{'route': 'main'},
+  });
+}
+
+String _rowFillMaxWidthRenderResult(int count) {
+  return jsonEncode(<String, Object?>{
+    'success': true,
+    'tree': _node(
+      'Row',
+      children: <Map<String, Object?>>[
+        _node(
+          'Box',
+          props: <String, Object?>{
+            'fillMaxWidth': true,
+            'padding': <String, Object?>{'horizontal': 12, 'vertical': 8},
+          },
+          children: <Map<String, Object?>>[
+            _node('Text', props: <String, Object?>{'text': 'Wide row text'}),
+          ],
+        ),
+        _node('Text', props: <String, Object?>{'text': 'Tail'}),
+      ],
+    ),
+    'state': <String, Object?>{'count': count},
+    'memo': <String, Object?>{'route': 'main'},
+  });
+}
+
+String _rowSurfaceRenderResult(int count) {
+  return jsonEncode(<String, Object?>{
+    'success': true,
+    'tree': _node(
+      'Row',
+      children: <Map<String, Object?>>[
+        _node(
+          'Surface',
+          props: <String, Object?>{
+            'containerColor': '#5F6368EE',
+            'contentColor': '#F7F7F7',
+            'shape': <String, Object?>{'type': 'pill'},
+            'padding': <String, Object?>{'horizontal': 22, 'vertical': 14},
+          },
+          children: <Map<String, Object?>>[
+            _node(
+              'Text',
+              props: <String, Object?>{'text': '开始/暂停', 'style': 'labelLarge'},
+            ),
+          ],
         ),
       ],
     ),

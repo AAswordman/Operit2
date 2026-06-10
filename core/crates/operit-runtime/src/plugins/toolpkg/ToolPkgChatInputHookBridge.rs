@@ -50,12 +50,9 @@ impl ToolPkgChatInputHookBridge {
             return;
         }
         let manager = toolPkgPackageManager();
-        manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-                ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
-            }));
+        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
+            ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
+        }));
     }
 
     #[allow(non_snake_case)]
@@ -97,10 +94,9 @@ impl ToolPkgChatInputHookBridge {
         }
 
         let mut current = context;
+        let manager = toolPkgPackageManager();
         for hook in activeHooks {
-            let result = toolPkgPackageManager()
-                .lock()
-                .expect("package manager mutex poisoned")
+            let result = manager
                 .runToolPkgMainHook(
                     &hook.containerPackageName,
                     &hook.functionName,

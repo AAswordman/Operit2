@@ -308,6 +308,10 @@ pub trait BrowserAutomationHost: Send + Sync {
     ) -> HostResult<BrowserAutomationResponse>;
 }
 
+pub trait ComposeDslWebViewHost: Send + Sync {
+    fn handleControllerCommand(&self, payloadJson: &str) -> HostResult<String>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpFilePart {
     pub fieldName: String,

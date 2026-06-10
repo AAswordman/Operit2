@@ -141,8 +141,16 @@ fn execute_promise_script_repeatedly_on_same_engine() {
             "text".to_string(),
             Value::String(format!("same-engine-{index}")),
         );
-        let output =
-            state.executeScriptFunctionOnCurrentThread(script, "async_echo", &params, None);
+        let output = state.executeScriptFunctionOnCurrentThread(
+            script,
+            "async_echo",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            60,
+            None,
+        );
         assert_eq!(
             output.as_deref(),
             Some(format!("\"ASYNC_ECHO:same-engine-{index}\"").as_str())
@@ -161,8 +169,16 @@ fn execute_complete_finishes_call_before_return_value() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "complete_first", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "complete_first",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"first\""));
 }
@@ -182,8 +198,16 @@ fn execute_function_with_active_module_context() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "inspect_context", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "inspect_context",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"true:true:root-marker\""));
 }
@@ -216,8 +240,16 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "inspect_bootstrap_api", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "inspect_bootstrap_api",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(
         output.as_deref(),
@@ -242,7 +274,16 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(script, "local_ipc", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "local_ipc",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(
         output.as_deref(),
@@ -266,8 +307,16 @@ fn runtime_context_with_context_runs_local_main_runner() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "context_runner", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "context_runner",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("{\"value\":42}"));
 }
@@ -291,8 +340,16 @@ fn execute_inline_hook_function_source() {
         ),
     );
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "__operit_inline_test", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "__operit_inline_test",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"inline-root\""));
 }
@@ -322,7 +379,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
         Value::String("compose_route".to_string()),
     );
     let raw = engine
-        .executeComposeDslScript(script, &params)
+        .executeComposeDslScript(script, &params, &BTreeMap::new())
         .expect("compose render result");
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
     let actionId = parsed["tree"]["props"]["onClick"]["__actionId"]
@@ -330,7 +387,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
         .expect("action id");
 
     let actionRaw = engine
-        .executeComposeDslAction(actionId, None, &params, None)
+        .executeComposeDslAction(actionId, None, &params, &BTreeMap::new(), None)
         .expect("compose action result");
     let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
     assert_eq!(actionParsed["actionResult"], 1);
@@ -360,7 +417,7 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
         Value::String("compose_route".to_string()),
     );
     let raw = engine
-        .executeComposeDslScript(script, &params)
+        .executeComposeDslScript(script, &params, &BTreeMap::new())
         .expect("compose render result");
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
     let actionId = parsed["tree"]["props"]["onCheckedChange"]["__actionId"]
@@ -371,12 +428,59 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
     params.insert("memo".to_string(), parsed["memo"].clone());
 
     let actionRaw = engine
-        .executeComposeDslAction(&actionId, Some(Value::Bool(true)), &params, None)
+        .executeComposeDslAction(
+            &actionId,
+            Some(Value::Bool(true)),
+            &params,
+            &BTreeMap::new(),
+            None,
+        )
         .expect("compose action result");
     let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
 
     assert_eq!(actionParsed["state"]["enabled"], true);
     assert_eq!(actionParsed["tree"]["props"]["checked"], true);
+}
+
+#[test]
+fn compose_dsl_action_can_access_bootstrap_globals() {
+    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let script = r#"
+        exports.default = function(ctx) {
+            return ctx.h('Box', {
+                onLoad: function() {
+                    return {
+                        readResource: typeof ToolPkg.readResource,
+                        icon: Icons.SportsEsports
+                    };
+                }
+            }, []);
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("compose_test".to_string()),
+    );
+    params.insert(
+        "routeInstanceId".to_string(),
+        Value::String("compose_route".to_string()),
+    );
+    let raw = engine
+        .executeComposeDslScript(script, &params, &BTreeMap::new())
+        .expect("compose render result");
+    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let actionId = parsed["tree"]["props"]["onLoad"]["__actionId"]
+        .as_str()
+        .expect("action id");
+
+    let actionRaw = engine
+        .executeComposeDslAction(actionId, None, &params, &BTreeMap::new(), None)
+        .expect("compose action result");
+    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+
+    assert_eq!(actionParsed["actionResult"]["readResource"], "function");
+    assert_eq!(actionParsed["actionResult"]["icon"], "SportsEsports");
 }
 
 #[test]
@@ -392,7 +496,16 @@ fn execute_function_from_module_exports() {
     let mut params = testParams();
     params.insert("text".to_string(), Value::String("exports".to_string()));
 
-    let output = state.executeScriptFunctionOnCurrentThread(script, "module_only", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "module_only",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"module:exports\""));
 }
@@ -431,9 +544,9 @@ fn register_message_insert_toolpkg_main() {
         .ancestors()
         .nth(3)
         .expect("repo root");
-    let scriptPath = repoRoot.join("plugins/buildin/message_insert/dist/main.js");
+    let scriptPath = repoRoot.join("plugins/external/message_insert/dist/main.js");
     let script = std::fs::read_to_string(&scriptPath).expect("message_insert main.js");
-    let distRoot = repoRoot.join("plugins/buildin/message_insert/dist");
+    let distRoot = repoRoot.join("plugins/external/message_insert/dist");
     let mut textResources = BTreeMap::new();
     for entry in std::fs::read_dir(&distRoot).expect("message_insert dist") {
         let entry = entry.expect("message_insert dist entry");
@@ -490,8 +603,16 @@ fn execute_script_can_require_axios_and_uuid() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "inspect_require", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "inspect_require",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"function:function:36\""));
 }
@@ -538,7 +659,16 @@ fn native_interface_reads_env_for_call() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(script, "read_env", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "read_env",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert_eq!(output.as_deref(), Some("\"enabled\""));
     EnvPreferences::getInstance()
@@ -558,7 +688,16 @@ fn native_interface_resolves_plugin_config_dir() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(script, "config_dir", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "config_dir",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
     let path = serde_json::from_str::<String>(&output.expect("config dir"))
         .expect("serialized config dir");
 
@@ -588,8 +727,16 @@ fn probe_async_function_declaration_inside_iife() {
     "#;
     let params = testParams();
 
-    let output =
-        state.executeScriptFunctionOnCurrentThread(script, "get_device_info", &params, None);
+    let output = state.executeScriptFunctionOnCurrentThread(
+        script,
+        "get_device_info",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
 
     assert!(output.is_some());
 }

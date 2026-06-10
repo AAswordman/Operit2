@@ -136,12 +136,9 @@ impl ToolPkgInputMenuToggleBridge {
         }
         InputMenuTogglePluginRegistry::register(Arc::new(BridgePlugin));
         let manager = toolPkgPackageManager();
-        manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .addToolPkgRuntimeChangeListener(Arc::new(|activeContainers| {
-                ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers);
-            }));
+        manager.addToolPkgRuntimeChangeListener(Arc::new(|activeContainers| {
+            ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers);
+        }));
     }
 
     #[allow(non_snake_case)]
@@ -420,8 +417,8 @@ fn loadSpecs(params: &InputMenuToggleHookParams) -> Vec<InputMenuSpec> {
         .expect("toolpkg input menu hook mutex poisoned")
         .clone();
     let mut resolved = Vec::new();
+    let manager = packageManager(params);
     for hook in registeredHooks {
-        let manager = packageManager(params);
         let result = manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,
@@ -595,12 +592,7 @@ fn launchToggle(spec: InputMenuSpec, params: InputMenuToggleHookParams) {
 
 #[allow(non_snake_case)]
 fn packageManager(_params: &InputMenuToggleHookParams) -> PackageManager {
-    let packageManager = toolPkgPackageManager();
-    let manager = packageManager
-        .lock()
-        .expect("package manager mutex poisoned")
-        .clone();
-    manager
+    toolPkgPackageManager()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,0 +1,36 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f7f7;
+  --line: #535353;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: #202124;
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+body {
+  display: grid;
+  place-items: stretch;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.runner-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  touch-action: none;
+}

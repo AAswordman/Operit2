@@ -25,53 +25,23 @@ class WorkspaceWebVisitHost extends StatefulWidget {
 class _WorkspaceWebVisitHostState extends State<WorkspaceWebVisitHost> {
   final WorkspaceWebVisitSessionRegistry _registry =
       WorkspaceWebVisitSessionRegistry.instance;
-  Timer? _pollTimer;
-  bool _polling = false;
+  void Function()? _disposeBridgeHandler;
 
   @override
   void initState() {
     super.initState();
-    _pollTimer = Timer.periodic(
-      const Duration(milliseconds: 120),
-      (_) => _pollRequest(),
-    );
-    _pollRequest();
+    _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _disposeBridgeHandler?.call();
     super.dispose();
   }
 
-  Future<void> _pollRequest() async {
-    if (_polling) {
-      return;
-    }
-    _polling = true;
+  Future<WebVisitResponse> _handleRequest(WebVisitRequest request) async {
     try {
-      final request = await widget.bridge.nextRequest();
-      if (request != null) {
-        await _handleRequest(request);
-      }
-    } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'workspace web visit host',
-          context: ErrorDescription('polling web visit request'),
-        ),
-      );
-    } finally {
-      _polling = false;
-    }
-  }
-
-  Future<void> _handleRequest(WebVisitRequest request) async {
-    try {
-      final response = await _registry.visitWeb(request);
-      await widget.bridge.handleResult(response);
+      return await _registry.visitWeb(request);
     } catch (error, stackTrace) {
       FlutterError.reportError(
         FlutterErrorDetails(
@@ -81,12 +51,10 @@ class _WorkspaceWebVisitHostState extends State<WorkspaceWebVisitHost> {
           context: ErrorDescription('executing visit_web'),
         ),
       );
-      await widget.bridge.handleResult(
-        WebVisitResponse(
-          requestId: request.requestId,
-          success: false,
-          error: error.toString(),
-        ),
+      return WebVisitResponse(
+        requestId: request.requestId,
+        success: false,
+        error: error.toString(),
       );
     }
   }

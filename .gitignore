@@ -117,6 +117,8 @@ node_modules/
 **/dist/
 !plugins/buildin/**/dist/
 !plugins/buildin/**/dist/**
+!plugins/external/**/dist/
+!plugins/external/**/dist/**
 **/.turbo/
 **/.vite/
 **/.rollup.cache/

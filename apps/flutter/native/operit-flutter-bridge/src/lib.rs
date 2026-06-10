@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
 
 use std::cell::UnsafeCell;
-use std::collections::{HashMap, VecDeque};
-use std::ffi::{c_char, CStr, CString};
+use std::collections::HashMap;
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -71,8 +71,6 @@ pub struct OperitFlutterBridge {
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
     approvalBridge: FlutterApprovalBridge,
-    browserAutomationBridge: FlutterBrowserAutomationBridge,
-    webVisitBridge: FlutterWebVisitBridge,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     terminalHost: Arc<NativeTerminalHost>,
 }
@@ -97,8 +95,84 @@ impl ConcurrentLocalCoreProxy {
 }
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
-const BROWSER_AUTOMATION_REQUEST_TIMEOUT_MS: u64 = 180_000;
-const WEB_VISIT_REQUEST_TIMEOUT_MS: u64 = 180_000;
+
+trait RuntimeHostRequestBridge: Send + Sync {
+    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String>;
+}
+
+#[derive(Clone)]
+struct FlutterRuntimeHostBridge {
+    inner: Arc<dyn RuntimeHostRequestBridge>,
+}
+
+impl FlutterRuntimeHostBridge {
+    fn new(inner: Arc<dyn RuntimeHostRequestBridge>) -> Self {
+        Self { inner }
+    }
+
+    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
+        self.inner.handleRequest(methodName, payloadJson)
+    }
+}
+
+type RuntimeHostRequestCallback =
+    unsafe extern "C" fn(*const c_char, *const u8, usize, *mut c_void) -> *mut c_char;
+type RuntimeHostRequestFree = unsafe extern "C" fn(*mut c_char, *mut c_void);
+
+struct CallbackRuntimeHostBridge {
+    callback: RuntimeHostRequestCallback,
+    free: RuntimeHostRequestFree,
+    userData: usize,
+}
+
+unsafe impl Send for CallbackRuntimeHostBridge {}
+unsafe impl Sync for CallbackRuntimeHostBridge {}
+
+impl RuntimeHostRequestBridge for CallbackRuntimeHostBridge {
+    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
+        let methodName = CString::new(methodName)
+            .map_err(|error| format!("runtime host method is invalid: {error}"))?;
+        let raw = unsafe {
+            (self.callback)(
+                methodName.as_ptr(),
+                payloadJson.as_ptr(),
+                payloadJson.len(),
+                self.userData as *mut c_void,
+            )
+        };
+        if raw.is_null() {
+            return Err("runtime host bridge returned null".to_string());
+        }
+        let bytes = unsafe { CStr::from_ptr(raw).to_bytes().to_vec() };
+        unsafe {
+            (self.free)(raw, self.userData as *mut c_void);
+        }
+        let envelope = String::from_utf8(bytes)
+            .map_err(|error| format!("runtime host bridge returned non UTF-8: {error}"))?;
+        let value = serde_json::from_str::<serde_json::Value>(&envelope)
+            .map_err(|error| format!("runtime host bridge response is invalid JSON: {error}"))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| "runtime host bridge response must be a JSON object".to_string())?;
+        let ok = object
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| "runtime host bridge response is missing ok".to_string())?;
+        if ok {
+            return object
+                .get("value")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| "runtime host bridge response is missing value".to_string());
+        }
+        let error = object
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "runtime host bridge response is missing error".to_string())?;
+        Err(error)
+    }
+}
 
 #[derive(Clone)]
 struct FlutterApprovalBridge {
@@ -211,18 +285,7 @@ impl FlutterApprovalBridge {
 
 #[derive(Clone)]
 struct FlutterBrowserAutomationBridge {
-    inner: Arc<BrowserAutomationInner>,
-}
-
-struct BrowserAutomationInner {
-    state: Mutex<BrowserAutomationState>,
-    changed: Condvar,
-}
-
-#[derive(Debug)]
-struct BrowserAutomationState {
-    queue: VecDeque<PendingBrowserAutomationRequest>,
-    responses: HashMap<String, BrowserAutomationToolResponse>,
+    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -241,36 +304,8 @@ struct BrowserAutomationToolResponse {
 }
 
 impl FlutterBrowserAutomationBridge {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(BrowserAutomationInner {
-                state: Mutex::new(BrowserAutomationState {
-                    queue: VecDeque::new(),
-                    responses: HashMap::new(),
-                }),
-                changed: Condvar::new(),
-            }),
-        }
-    }
-
-    fn nextRequest(&self) -> Option<PendingBrowserAutomationRequest> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("browser automation state mutex poisoned");
-        state.queue.pop_front()
-    }
-
-    fn respond(&self, requestId: String, response: BrowserAutomationToolResponse) -> bool {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("browser automation state mutex poisoned");
-        state.responses.insert(requestId, response);
-        self.inner.changed.notify_all();
-        true
+    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
+        Self { runtimeHostBridge }
     }
 }
 
@@ -286,67 +321,38 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
             parametersJson: request.parametersJson,
             requestedAtMillis: current_time_millis_u64(),
         };
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("browser automation state mutex poisoned");
-        state.queue.push_back(pending);
-        self.inner.changed.notify_all();
-
-        let timeout = Duration::from_millis(BROWSER_AUTOMATION_REQUEST_TIMEOUT_MS);
-        let startedAt = Instant::now();
-        loop {
-            if let Some(response) = state.responses.remove(&requestId) {
-                if response.success {
-                    return Ok(operit_host_api::BrowserAutomationResponse {
-                        output: response.result,
-                    });
-                }
-                return Err(operit_host_api::HostError::new(
-                    response
-                        .error
-                        .unwrap_or_else(|| "Browser automation failed".to_string()),
-                ));
-            }
-            let elapsed = startedAt.elapsed();
-            if elapsed >= timeout {
-                state.queue.retain(|item| item.requestId != requestId);
-                return Err(operit_host_api::HostError::new(format!(
-                    "Browser automation request timed out: {requestId}"
-                )));
-            }
-            let wait = timeout.saturating_sub(elapsed);
-            let (nextState, result) = self
-                .inner
-                .changed
-                .wait_timeout(state, wait)
-                .expect("browser automation state mutex poisoned");
-            state = nextState;
-            if result.timed_out() {
-                state.queue.retain(|item| item.requestId != requestId);
-                return Err(operit_host_api::HostError::new(format!(
-                    "Browser automation request timed out: {requestId}"
-                )));
-            }
+        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
+            operit_host_api::HostError::new("runtime host bridge is not installed")
+        })?;
+        let payloadJson = serde_json::to_string(&pending)
+            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let resultJson = runtimeHostBridge
+            .handleRequest("browserAutomationRequest", &payloadJson)
+            .map_err(operit_host_api::HostError::new)?;
+        let (responseRequestId, response) = parse_browser_automation_result(&resultJson)
+            .map_err(operit_host_api::HostError::new)?;
+        if responseRequestId != requestId {
+            return Err(operit_host_api::HostError::new(format!(
+                "browser automation response requestId mismatch: {responseRequestId} != {requestId}"
+            )));
         }
+        if response.success {
+            return Ok(operit_host_api::BrowserAutomationResponse {
+                output: response.result,
+            });
+        }
+        let Some(error) = response.error else {
+            return Err(operit_host_api::HostError::new(
+                "browser automation error is missing",
+            ));
+        };
+        Err(operit_host_api::HostError::new(error))
     }
 }
 
 #[derive(Clone)]
 struct FlutterWebVisitBridge {
-    inner: Arc<WebVisitInner>,
-}
-
-struct WebVisitInner {
-    state: Mutex<WebVisitState>,
-    changed: Condvar,
-}
-
-#[derive(Debug)]
-struct WebVisitState {
-    queue: VecDeque<PendingWebVisitRequest>,
-    responses: HashMap<String, WebVisitToolResponse>,
+    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -373,36 +379,8 @@ struct WebVisitToolResponse {
 }
 
 impl FlutterWebVisitBridge {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(WebVisitInner {
-                state: Mutex::new(WebVisitState {
-                    queue: VecDeque::new(),
-                    responses: HashMap::new(),
-                }),
-                changed: Condvar::new(),
-            }),
-        }
-    }
-
-    fn nextRequest(&self) -> Option<PendingWebVisitRequest> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("web visit state mutex poisoned");
-        state.queue.pop_front()
-    }
-
-    fn respond(&self, requestId: String, response: WebVisitToolResponse) -> bool {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("web visit state mutex poisoned");
-        state.responses.insert(requestId, response);
-        self.inner.changed.notify_all();
-        true
+    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
+        Self { runtimeHostBridge }
     }
 }
 
@@ -429,54 +407,57 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
             includeImageLinks: request.includeImageLinks,
             requestedAtMillis: current_time_millis_u64(),
         };
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("web visit state mutex poisoned");
-        state.queue.push_back(pending);
-        self.inner.changed.notify_all();
-
-        let timeout = Duration::from_millis(WEB_VISIT_REQUEST_TIMEOUT_MS);
-        let startedAt = Instant::now();
-        loop {
-            if let Some(response) = state.responses.remove(&requestId) {
-                if response.success {
-                    let Some(result) = response.result else {
-                        return Err(operit_host_api::HostError::new(
-                            "web visit result is missing",
-                        ));
-                    };
-                    return Ok(result);
-                }
-                let Some(error) = response.error else {
-                    return Err(operit_host_api::HostError::new(
-                        "web visit error is missing",
-                    ));
-                };
-                return Err(operit_host_api::HostError::new(error));
-            }
-            let elapsed = startedAt.elapsed();
-            if elapsed >= timeout {
-                state.queue.retain(|item| item.requestId != requestId);
-                return Err(operit_host_api::HostError::new(format!(
-                    "Web visit request timed out: {requestId}"
-                )));
-            }
-            let wait = timeout.saturating_sub(elapsed);
-            let (nextState, result) = self
-                .inner
-                .changed
-                .wait_timeout(state, wait)
-                .expect("web visit state mutex poisoned");
-            state = nextState;
-            if result.timed_out() {
-                state.queue.retain(|item| item.requestId != requestId);
-                return Err(operit_host_api::HostError::new(format!(
-                    "Web visit request timed out: {requestId}"
-                )));
-            }
+        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
+            operit_host_api::HostError::new("runtime host bridge is not installed")
+        })?;
+        let payloadJson = serde_json::to_string(&pending)
+            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let resultJson = runtimeHostBridge
+            .handleRequest("webVisitRequest", &payloadJson)
+            .map_err(operit_host_api::HostError::new)?;
+        let (responseRequestId, response) =
+            parse_web_visit_result(&resultJson).map_err(operit_host_api::HostError::new)?;
+        if responseRequestId != requestId {
+            return Err(operit_host_api::HostError::new(format!(
+                "web visit response requestId mismatch: {responseRequestId} != {requestId}"
+            )));
         }
+        if response.success {
+            let Some(result) = response.result else {
+                return Err(operit_host_api::HostError::new(
+                    "web visit result is missing",
+                ));
+            };
+            return Ok(result);
+        }
+        let Some(error) = response.error else {
+            return Err(operit_host_api::HostError::new(
+                "web visit error is missing",
+            ));
+        };
+        Err(operit_host_api::HostError::new(error))
+    }
+}
+
+#[derive(Clone)]
+struct FlutterComposeDslWebViewBridge {
+    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
+}
+
+impl FlutterComposeDslWebViewBridge {
+    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
+        Self { runtimeHostBridge }
+    }
+}
+
+impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
+    fn handleControllerCommand(&self, payloadJson: &str) -> operit_host_api::HostResult<String> {
+        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
+            operit_host_api::HostError::new("runtime host bridge is not installed")
+        })?;
+        runtimeHostBridge
+            .handleRequest("composeWebViewControllerCommand", payloadJson)
+            .map_err(operit_host_api::HostError::new)
     }
 }
 
@@ -486,6 +467,13 @@ impl OperitFlutterBridge {
     }
 
     fn new_with_storage_root(storage_root: Option<PathBuf>) -> Result<Self, String> {
+        Self::new_with_storage_root_and_runtime_host_bridge(storage_root, None)
+    }
+
+    fn new_with_storage_root_and_runtime_host_bridge(
+        storage_root: Option<PathBuf>,
+        runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
+    ) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = {
             let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
@@ -495,14 +483,17 @@ impl OperitFlutterBridge {
                 .map_err(|error| error.to_string())?
         };
         let approvalBridge = FlutterApprovalBridge::new();
-        let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
-        let webVisitBridge = FlutterWebVisitBridge::new();
+        let browserAutomationBridge =
+            FlutterBrowserAutomationBridge::new(runtimeHostBridge.clone());
+        let webVisitBridge = FlutterWebVisitBridge::new(runtimeHostBridge.clone());
+        let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new(runtimeHostBridge);
         #[cfg(any(windows, target_os = "linux", target_os = "android"))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
             storage_root,
-            Arc::new(webVisitBridge.clone()),
-            Some(Arc::new(browserAutomationBridge.clone())),
+            Arc::new(webVisitBridge),
+            Some(Arc::new(browserAutomationBridge)),
+            Some(Arc::new(composeDslWebViewBridge)),
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost.clone(),
         )?;
@@ -528,8 +519,6 @@ impl OperitFlutterBridge {
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
             approvalBridge,
-            browserAutomationBridge,
-            webVisitBridge,
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost,
         })
@@ -652,42 +641,6 @@ impl OperitFlutterBridge {
             }
         };
         serde_json::json!({ "ok": self.approvalBridge.respond(response) }).to_string()
-    }
-
-    fn nextBrowserAutomationRequest(&self) -> String {
-        json_string(&self.browserAutomationBridge.nextRequest())
-    }
-
-    fn handleBrowserAutomationResult(&self, resultJson: &str) -> String {
-        match parse_browser_automation_result(resultJson) {
-            Ok((requestId, response)) => serde_json::json!({
-                "ok": self.browserAutomationBridge.respond(requestId, response)
-            })
-            .to_string(),
-            Err(error) => serde_json::json!({
-                "ok": false,
-                "error": error
-            })
-            .to_string(),
-        }
-    }
-
-    fn nextWebVisitRequest(&self) -> String {
-        json_string(&self.webVisitBridge.nextRequest())
-    }
-
-    fn handleWebVisitResult(&self, resultJson: &str) -> String {
-        match parse_web_visit_result(resultJson) {
-            Ok((requestId, response)) => serde_json::json!({
-                "ok": self.webVisitBridge.respond(requestId, response)
-            })
-            .to_string(),
-            Err(error) => serde_json::json!({
-                "ok": false,
-                "error": error
-            })
-            .to_string(),
-        }
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
@@ -889,6 +842,7 @@ fn create_local_core(
     storage_root: Option<PathBuf>,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
     let root_dir = match storage_root {
@@ -910,10 +864,11 @@ fn create_local_core(
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
+    if let Some(host) = composeDslWebViewHost {
+        context = context.withComposeDslWebViewHost(host);
+    }
     context = context.withTerminalHost(terminalHost);
-    context = context.withExternalRuntimeEventHost(Arc::new(
-        NativeExternalRuntimeEventHost::new(),
-    ));
+    context = context.withExternalRuntimeEventHost(Arc::new(NativeExternalRuntimeEventHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -933,6 +888,7 @@ fn create_local_core(
     _storage_root: Option<PathBuf>,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
@@ -949,6 +905,9 @@ fn create_local_core(
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
+    if let Some(host) = composeDslWebViewHost {
+        context = context.withComposeDslWebViewHost(host);
+    }
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -963,6 +922,7 @@ fn create_local_core(
     _storage_root: Option<PathBuf>,
     _webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    _composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))] _terminalHost: Arc<
         NativeTerminalHost,
     >,
@@ -973,6 +933,35 @@ fn create_local_core(
 #[no_mangle]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
     match OperitFlutterBridge::new() {
+        Ok(bridge) => Box::into_raw(Box::new(bridge)),
+        Err(error) => {
+            set_last_create_error(error);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_create_with_runtime_host_bridge(
+    callback: Option<RuntimeHostRequestCallback>,
+    free: Option<RuntimeHostRequestFree>,
+    user_data: *mut c_void,
+) -> *mut OperitFlutterBridge {
+    let (Some(callback), Some(free)) = (callback, free) else {
+        set_last_create_error("runtime host bridge callback is required".to_string());
+        return std::ptr::null_mut();
+    };
+    let runtimeHostBridge = Some(FlutterRuntimeHostBridge::new(Arc::new(
+        CallbackRuntimeHostBridge {
+            callback,
+            free,
+            userData: user_data as usize,
+        },
+    )));
+    match OperitFlutterBridge::new_with_storage_root_and_runtime_host_bridge(
+        None,
+        runtimeHostBridge,
+    ) {
         Ok(bridge) => Box::into_raw(Box::new(bridge)),
         Err(error) => {
             set_last_create_error(error);
@@ -1260,78 +1249,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
         Err(_) => return string_to_ptr(serde_json::json!({"ok": false}).to_string()),
     };
     string_to_ptr((*handle).handlePermissionResult(result))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_next_browser_automation_request(
-    handle: *mut OperitFlutterBridge,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr("null");
-    }
-    string_to_ptr((*handle).nextBrowserAutomationRequest())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_handle_browser_automation_result(
-    handle: *mut OperitFlutterBridge,
-    result_ptr: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
-    }
-    if result_ptr.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
-    }
-    let resultJson = match CStr::from_ptr(result_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return string_to_ptr(
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("browser automation result is not valid UTF-8: {error}")
-                })
-                .to_string(),
-            );
-        }
-    };
-    string_to_ptr((*handle).handleBrowserAutomationResult(resultJson))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_next_web_visit_request(
-    handle: *mut OperitFlutterBridge,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr("null");
-    }
-    string_to_ptr((*handle).nextWebVisitRequest())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_handle_web_visit_result(
-    handle: *mut OperitFlutterBridge,
-    result_ptr: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
-    }
-    if result_ptr.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
-    }
-    let resultJson = match CStr::from_ptr(result_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return string_to_ptr(
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("web visit result is not valid UTF-8: {error}")
-                })
-                .to_string(),
-            );
-        }
-    };
-    string_to_ptr((*handle).handleWebVisitResult(resultJson))
 }
 
 #[no_mangle]
@@ -1793,26 +1710,6 @@ impl OperitFlutterBridgeWasm {
     pub fn handlePermissionResult(&self, result: &str) -> String {
         self.inner.handlePermissionResult(result)
     }
-
-    #[allow(non_snake_case)]
-    pub fn nextBrowserAutomationRequest(&self) -> String {
-        self.inner.nextBrowserAutomationRequest()
-    }
-
-    #[allow(non_snake_case)]
-    pub fn handleBrowserAutomationResult(&self, resultJson: &str) -> String {
-        self.inner.handleBrowserAutomationResult(resultJson)
-    }
-
-    #[allow(non_snake_case)]
-    pub fn nextWebVisitRequest(&self) -> String {
-        self.inner.nextWebVisitRequest()
-    }
-
-    #[allow(non_snake_case)]
-    pub fn handleWebVisitResult(&self, resultJson: &str) -> String {
-        self.inner.handleWebVisitResult(resultJson)
-    }
 }
 
 fn error_response(requestId: impl Into<String>, message: impl Into<String>) -> *mut c_char {
@@ -1991,15 +1888,55 @@ fn set_last_create_error(value: String) {
 #[cfg(target_os = "android")]
 mod android_jni {
     use super::*;
-    use jni::objects::{JByteArray, JClass, JString};
+    use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
     use jni::sys::{jlong, jstring};
-    use jni::JNIEnv;
+    use jni::{JNIEnv, JavaVM};
+
+    struct AndroidRuntimeHostBridge {
+        javaVm: JavaVM,
+        host: GlobalRef,
+    }
+
+    impl RuntimeHostRequestBridge for AndroidRuntimeHostBridge {
+        fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
+            let mut env = self
+                .javaVm
+                .attach_current_thread()
+                .map_err(|error| error.to_string())?;
+            let methodName = env
+                .new_string(methodName)
+                .map_err(|error| error.to_string())?;
+            let payloadJson = env
+                .new_string(payloadJson)
+                .map_err(|error| error.to_string())?;
+            let methodNameObject = JObject::from(methodName);
+            let payloadJsonObject = JObject::from(payloadJson);
+            let result = env
+                .call_method(
+                    self.host.as_obj(),
+                    "handleRuntimeHostRequest",
+                    "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                    &[
+                        JValue::Object(&methodNameObject),
+                        JValue::Object(&payloadJsonObject),
+                    ],
+                )
+                .map_err(|error| error.to_string())?
+                .l()
+                .map_err(|error| error.to_string())?;
+            let result = JString::from(result);
+            env.get_string(&result)
+                .map(String::from)
+                .map_err(|error| error.to_string())
+        }
+    }
 
     #[no_mangle]
     pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_create(
         mut env: JNIEnv,
         _class: JClass,
         storage_root: JString,
+        host: JObject,
     ) -> jlong {
         let storage_root = match env.get_string(&storage_root) {
             Ok(value) => PathBuf::from(String::from(value)),
@@ -2008,7 +1945,26 @@ mod android_jni {
                 return 0;
             }
         };
-        match OperitFlutterBridge::new_with_storage_root(Some(storage_root)) {
+        let javaVm = match env.get_java_vm() {
+            Ok(value) => value,
+            Err(error) => {
+                set_last_create_error(format!("runtime host JavaVM is unavailable: {error}"));
+                return 0;
+            }
+        };
+        let host = match env.new_global_ref(host) {
+            Ok(value) => value,
+            Err(error) => {
+                set_last_create_error(format!("runtime host reference is unavailable: {error}"));
+                return 0;
+            }
+        };
+        let runtimeHostBridge =
+            FlutterRuntimeHostBridge::new(Arc::new(AndroidRuntimeHostBridge { javaVm, host }));
+        match OperitFlutterBridge::new_with_storage_root_and_runtime_host_bridge(
+            Some(storage_root),
+            Some(runtimeHostBridge),
+        ) {
             Ok(bridge) => Box::into_raw(Box::new(bridge)) as jlong,
             Err(error) => {
                 set_last_create_error(error);
@@ -2221,82 +2177,6 @@ mod android_jni {
             }
         };
         new_java_string(env, &bridge.handlePermissionResult(&permissionResult))
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_nextBrowserAutomationRequest(
-        env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, "null");
-        };
-        new_java_string(env, &bridge.nextBrowserAutomationRequest())
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_handleBrowserAutomationResult(
-        mut env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-        resultJson: JString,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
-        };
-        let resultJson = match env.get_string(&resultJson) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::json!({
-                        "ok": false,
-                        "error": format!("invalid JNI browser automation result: {error}")
-                    })
-                    .to_string(),
-                );
-            }
-        };
-        new_java_string(env, &bridge.handleBrowserAutomationResult(&resultJson))
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_nextWebVisitRequest(
-        env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, "null");
-        };
-        new_java_string(env, &bridge.nextWebVisitRequest())
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_handleWebVisitResult(
-        mut env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-        resultJson: JString,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
-        };
-        let resultJson = match env.get_string(&resultJson) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::json!({
-                        "ok": false,
-                        "error": format!("invalid JNI web visit result: {error}")
-                    })
-                    .to_string(),
-                );
-            }
-        };
-        new_java_string(env, &bridge.handleWebVisitResult(&resultJson))
     }
 
     #[no_mangle]

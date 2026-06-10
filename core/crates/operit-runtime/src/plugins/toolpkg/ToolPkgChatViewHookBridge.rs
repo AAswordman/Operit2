@@ -51,12 +51,9 @@ impl ToolPkgChatViewHookBridge {
             return;
         }
         let manager = toolPkgPackageManager();
-        manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-                ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(activeContainers);
-            }));
+        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
+            ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(activeContainers);
+        }));
     }
 
     #[allow(non_snake_case)]
@@ -168,21 +165,19 @@ fn replayOpenViews(
 
 #[allow(non_snake_case)]
 fn runChatViewHook(hook: &ToolPkgChatViewHookRegistration, eventName: &str, eventPayload: Value) {
-    let _ = toolPkgPackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .runToolPkgMainHook(
-            &hook.containerPackageName,
-            &hook.functionName,
-            TOOLPKG_EVENT_CHAT_VIEW,
-            Some(eventName),
-            Some(&hook.hookId),
-            hook.functionSource.as_deref(),
-            eventPayload,
-            None,
-            None,
-            None,
-        );
+    let manager = toolPkgPackageManager();
+    let _ = manager.runToolPkgMainHook(
+        &hook.containerPackageName,
+        &hook.functionName,
+        TOOLPKG_EVENT_CHAT_VIEW,
+        Some(eventName),
+        Some(&hook.hookId),
+        hook.functionSource.as_deref(),
+        eventPayload,
+        None,
+        None,
+        None,
+    );
 }
 
 #[allow(non_snake_case)]

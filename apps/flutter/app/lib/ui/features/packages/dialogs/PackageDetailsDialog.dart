@@ -13,12 +13,14 @@ class PluginDetailsDialog extends StatelessWidget {
     required this.enabled,
     required this.onEnabledChanged,
     required this.onOpenUi,
+    required this.onDeletePackage,
   });
 
   final core_proxy.ToolPkgContainerRuntime plugin;
   final bool enabled;
   final ValueChanged<bool> onEnabledChanged;
   final ValueChanged<String?> onOpenUi;
+  final VoidCallback? onDeletePackage;
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +131,15 @@ class PluginDetailsDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.close),
         ),
+        if (onDeletePackage != null)
+          OutlinedButton.icon(
+            onPressed: onDeletePackage,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('删除'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+          ),
         if (toolPkgHasUi(plugin))
           OutlinedButton.icon(
             onPressed: enabled ? () => onOpenUi(null) : null,

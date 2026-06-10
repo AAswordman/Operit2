@@ -15,6 +15,7 @@ class PhoneLayout extends StatefulWidget {
     super.key,
     required this.content,
     required this.navigationEntries,
+    required this.pluginSidebarEntries,
     required this.selectedRouteId,
     required this.drawerWidth,
     required this.drawerOpen,
@@ -27,6 +28,7 @@ class PhoneLayout extends StatefulWidget {
 
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
+  final List<NavigationEntrySpec> pluginSidebarEntries;
   final String selectedRouteId;
   final double drawerWidth;
   final bool drawerOpen;
@@ -127,6 +129,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
       drawerContent: RepaintBoundary(
         child: DrawerContent(
           navigationEntries: widget.navigationEntries,
+          pluginEntries: widget.pluginSidebarEntries,
           selectedRouteId: widget.selectedRouteId,
           appearance: appearance,
           onNavigationEntrySelected: widget.onNavigationEntrySelected,

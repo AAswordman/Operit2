@@ -24,6 +24,9 @@ pub mod ToolResultDataClasses;
 
 pub mod climode;
 
+#[path = "condition/mod.rs"]
+pub mod condition;
+
 #[path = "defaultTool/mod.rs"]
 pub mod defaultTool;
 

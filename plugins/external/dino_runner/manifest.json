@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.dino_runner",
+  "version": "0.1.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "小恐龙快跑",
+    "en": "Dino Runner",
+    "default": "Dino Runner"
+  },
+  "description": {
+    "zh": "一个以 Chrome 小恐龙为主题的 WebView 示例：页面本体是全屏小游戏，宿主只保留最少的 DSL 控件，并用 bridge 同步分数。",
+    "en": "A Dino Runner WebView sample with a fullscreen mini-game, minimal host DSL controls, and score sync through the page-host bridge.",
+    "default": "A Dino Runner WebView sample with a fullscreen mini-game and score sync through the page-host bridge."
+  },
+  "enabled_by_default": false,
+  "subpackages": [],
+  "resources": [
+    {
+      "key": "arcade_web_app_html",
+      "path": "resources/webview/arcade_app.html",
+      "mime": "text/html"
+    },
+    {
+      "key": "arcade_web_theme_css",
+      "path": "resources/webview/arcade_theme.css",
+      "mime": "text/css"
+    },
+    {
+      "key": "arcade_web_console_js",
+      "path": "resources/webview/arcade_console.js",
+      "mime": "application/javascript"
+    },
+    {
+      "key": "arcade_web_sprite_png",
+      "path": "resources/webview/chrome_dino_sprite.png",
+      "mime": "image/png"
+    }
+  ],
+  "workflow_templates": [],
+  "workspace_templates": []
+}

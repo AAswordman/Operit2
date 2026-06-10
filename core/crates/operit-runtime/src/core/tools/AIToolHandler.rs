@@ -68,16 +68,6 @@ impl AIToolHandler {
                 }))
             })
             .clone();
-        let packageManager = {
-            let mut guard = inner.lock().expect("AIToolHandler mutex poisoned");
-            guard.context = context.clone();
-            guard.packageManager.clone()
-        };
-        if let Some(packageManager) = packageManager {
-            if let Ok(mut packageManager) = packageManager.lock() {
-                packageManager.updateContext(context);
-            }
-        }
         Self { inner }
     }
 

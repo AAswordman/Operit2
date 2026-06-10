@@ -16,12 +16,9 @@ impl ToolPkgAiProviderRegistry {
             return;
         }
         let manager = toolPkgPackageManager();
-        manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-                ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers);
-            }));
+        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
+            ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers);
+        }));
     }
 
     pub fn get(providerId: &str) -> Option<ToolPkgAiProviderRegistration> {

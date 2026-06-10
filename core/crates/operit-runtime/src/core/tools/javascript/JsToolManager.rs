@@ -362,7 +362,16 @@ impl JsToolManager {
         let runtimeParams = self.buildRuntimeParams(&packageName, params);
         self.withExecutionEngineForPackage(&packageName, |engine| {
             engine
-                .executeScriptFunction(&script, &functionName, &runtimeParams, None)
+                .executeScriptFunction(
+                    &script,
+                    &functionName,
+                    &runtimeParams,
+                    &BTreeMap::new(),
+                    None,
+                    true,
+                    60,
+                    None,
+                )
                 .unwrap_or_else(|| "null".to_string())
         })
     }
@@ -382,7 +391,16 @@ impl JsToolManager {
         };
 
         let result = self.withExecutionEngineForPackage(&packageName, |engine| {
-            engine.executeScriptFunction(script, &functionName, &runtimeParams, None)
+            engine.executeScriptFunction(
+                script,
+                &functionName,
+                &runtimeParams,
+                &BTreeMap::new(),
+                None,
+                true,
+                60,
+                None,
+            )
         });
         if let Some(failure) = extractJsExecutionFailure(result.as_deref()) {
             vec![Self::failureFromJs(&tool.name, failure)]
@@ -612,7 +630,16 @@ mod tests {
                 return "ok";
             };
         "#;
-        let seedOutput = engine.executeScriptFunction(seedScript, "seed", &BTreeMap::new(), None);
+        let seedOutput = engine.executeScriptFunction(
+            seedScript,
+            "seed",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            true,
+            60,
+            None,
+        );
 
         assert_eq!(seedOutput.as_deref(), Some("\"ok\""));
         assert_eq!(

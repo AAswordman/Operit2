@@ -97,6 +97,22 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 return parsed;
             }
 
+            function invokeNative(methodName, args) {
+                try {
+                    if (
+                        typeof NativeInterface === 'undefined' ||
+                        !NativeInterface ||
+                        typeof NativeInterface[methodName] !== 'function'
+                    ) {
+                        return undefined;
+                    }
+                    return NativeInterface[methodName].apply(NativeInterface, args || []);
+                } catch (e) {
+                    console.error('Native bridge call failed for ' + methodName + ':', e);
+                    return undefined;
+                }
+            }
+
             function normalizeSerializableValue(value, runtime, seen) {
                 if (value == null) {
                     return value;
@@ -338,6 +354,171 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     colorScheme[colorSchemeNames[c]] = makeColorToken(colorSchemeNames[c]);
                 }
 
+                function createWebViewController(key) {
+                    var controllerKey = String(key || '').trim();
+                    if (!controllerKey) {
+                        throw new Error('webview controller key is required');
+                    }
+                    var descriptor = {
+                        __composeWebViewController: true,
+                        key: controllerKey,
+                        routeInstanceId: runtime.routeInstanceId || '',
+                        executionContextKey: runtime.executionContextKey || ''
+                    };
+                    function invokeControllerCommand(command, payload) {
+                        return unwrapNativeResult(
+                            invokeNative('composeWebViewControllerCommand', [
+                                JSON.stringify({
+                                    command: String(command || ''),
+                                    key: controllerKey,
+                                    routeInstanceId: runtime.routeInstanceId || '',
+                                    executionContextKey: runtime.executionContextKey || '',
+                                    payload: normalizeSerializableValue(
+                                        payload && typeof payload === 'object'
+                                            ? payload
+                                            : {},
+                                        runtime,
+                                        []
+                                    )
+                                })
+                            ])
+                        );
+                    }
+                    function nextWebViewControllerCallbackId() {
+                        return '__operit_compose_webview_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+                    }
+                    function invokeControllerCommandSuspend(command, payload) {
+                        if (typeof Promise !== 'function') {
+                            throw new Error('Promise is required for suspend webview controller command');
+                        }
+                        return new Promise(function(resolve, reject) {
+                            if (
+                                typeof NativeInterface === 'undefined' ||
+                                !NativeInterface ||
+                                typeof NativeInterface.composeWebViewControllerCommandSuspend !== 'function'
+                            ) {
+                                reject(createUserFacingError('NativeInterface.composeWebViewControllerCommandSuspend is unavailable'));
+                                return;
+                            }
+                            var root = typeof globalThis !== 'undefined'
+                                ? globalThis
+                                : (typeof window !== 'undefined' ? window : this);
+                            var callbackTarget = typeof window !== 'undefined' ? window : root;
+                            var callbackId = nextWebViewControllerCallbackId();
+                            callbackTarget[callbackId] = function(result, isError) {
+                                delete callbackTarget[callbackId];
+                                try {
+                                    if (isError) {
+                                        reject(createUserFacingError(result.message, result));
+                                        return;
+                                    }
+                                    resolve(unwrapNativeResult(result));
+                                } catch (callbackError) {
+                                    reject(callbackError);
+                                }
+                            };
+                            try {
+                                NativeInterface.composeWebViewControllerCommandSuspend(
+                                    JSON.stringify({
+                                        command: String(command || ''),
+                                        key: controllerKey,
+                                        routeInstanceId: runtime.routeInstanceId || '',
+                                        executionContextKey: runtime.executionContextKey || '',
+                                        payload: normalizeSerializableValue(
+                                            payload && typeof payload === 'object'
+                                                ? payload
+                                                : {},
+                                            runtime,
+                                            []
+                                        )
+                                    }),
+                                    callbackId
+                                );
+                            } catch (invokeError) {
+                                delete callbackTarget[callbackId];
+                                reject(invokeError);
+                            }
+                        });
+                    }
+                    function defineMethod(target, name, handler) {
+                        Object.defineProperty(target, name, {
+                            configurable: false,
+                            enumerable: false,
+                            writable: false,
+                            value: handler
+                        });
+                    }
+
+                    var controller = cloneObject(descriptor);
+                    defineMethod(controller, 'toJSON', function() {
+                        return cloneObject(descriptor);
+                    });
+                    defineMethod(controller, 'loadUrl', function(url, headers) {
+                        var finalUrl = String(url || '').trim();
+                        if (!finalUrl) {
+                            throw new Error('webview controller loadUrl requires a non-empty url');
+                        }
+                        invokeControllerCommand('loadUrl', {
+                            url: finalUrl,
+                            headers: headers && typeof headers === 'object' ? headers : {}
+                        });
+                    });
+                    defineMethod(controller, 'loadHtml', function(html, options) {
+                        invokeControllerCommand('loadHtml', {
+                            html: html == null ? '' : String(html),
+                            options: options && typeof options === 'object' ? options : {}
+                        });
+                    });
+                    defineMethod(controller, 'reload', function() {
+                        invokeControllerCommand('reload', {});
+                    });
+                    defineMethod(controller, 'stopLoading', function() {
+                        invokeControllerCommand('stopLoading', {});
+                    });
+                    defineMethod(controller, 'goBack', function() {
+                        invokeControllerCommand('goBack', {});
+                    });
+                    defineMethod(controller, 'goForward', function() {
+                        invokeControllerCommand('goForward', {});
+                    });
+                    defineMethod(controller, 'clearHistory', function() {
+                        invokeControllerCommand('clearHistory', {});
+                    });
+                    defineMethod(controller, 'evaluateJavascript', function(script) {
+                        return Promise.resolve(
+                            invokeControllerCommandSuspend('evaluateJavascript', {
+                                script: script == null ? '' : String(script)
+                            })
+                        );
+                    });
+                    defineMethod(controller, 'getState', function() {
+                        return invokeControllerCommand('getState', {});
+                    });
+                    defineMethod(controller, 'addJavascriptInterface', function(name, object) {
+                        var interfaceName = String(name || '').trim();
+                        if (!interfaceName) {
+                            throw new Error('webview controller addJavascriptInterface requires a non-empty name');
+                        }
+                        if (!object || typeof object !== 'object' || Array.isArray(object)) {
+                            throw new Error('webview controller addJavascriptInterface requires an object');
+                        }
+                        invokeControllerCommand('addJavascriptInterface', {
+                            name: interfaceName,
+                            object: object
+                        });
+                    });
+                    defineMethod(controller, 'removeJavascriptInterface', function(name) {
+                        var interfaceName = String(name || '').trim();
+                        if (!interfaceName) {
+                            throw new Error('webview controller removeJavascriptInterface requires a non-empty name');
+                        }
+                        invokeControllerCommand('removeJavascriptInterface', {
+                            name: interfaceName
+                        });
+                    });
+                    return controller;
+                }
+
                 var ctx = {
                     MaterialTheme: { colorScheme: colorScheme },
                     useState: function(key, initialValue) {
@@ -419,6 +600,9 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     },
                     reportError: function(error) {
                         console.error(error);
+                    },
+                    createWebViewController: function(key) {
+                        return createWebViewController(key);
                     },
                     getModuleSpec: function() {
                         return runtime.moduleSpec;

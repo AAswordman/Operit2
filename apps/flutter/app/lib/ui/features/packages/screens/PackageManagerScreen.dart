@@ -93,6 +93,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         _packageManager.getEnabledPackageNames(),
         _packageManager.getToolPkgContainerRuntimes(),
         _packageManager.getEnabledToolPkgContainerRuntimes(),
+        _packageManager.getBundledExternalPackageCandidates(),
       ]);
       final availablePackages =
           results[0] as Map<String, core_proxy.ToolPackage>;
@@ -101,6 +102,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           results[2] as List<core_proxy.ToolPkgContainerRuntime>;
       final enabledPluginContainers =
           results[3] as List<core_proxy.ToolPkgContainerRuntime>;
+      final bundledExternalPackageCandidates =
+          results[4] as List<core_proxy.BundledExternalPackageCandidate>;
       if (!mounted) {
         return;
       }
@@ -112,6 +115,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           enabledPluginContainerNames: enabledPluginContainers
               .map((item) => item.packageName)
               .toSet(),
+          bundledExternalPackageCandidates: bundledExternalPackageCandidates,
         );
         _loading = false;
       });
@@ -214,9 +218,59 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       if (!mounted) {
         return;
       }
-      _showSnackBar(deleted ? '已删除 ${package.name}' : '删除失败：${package.name}');
+      if (!deleted) {
+        _showSnackBar('删除失败：${package.name}');
+      }
     } catch (error, stackTrace) {
       debugPrint('Failed to delete package: $error\n$stackTrace');
+      await _loadSnapshot();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(error.toString());
+    }
+  }
+
+  Future<void> _deletePlugin(core_proxy.ToolPkgContainerRuntime plugin) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除插件'),
+          content: Text('确定删除 ${toolPkgContainerDisplayName(plugin)}？此操作不可撤销。'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      final deleted = await _packageManager.deletePackage(
+        packageName: plugin.packageName,
+      );
+      await _loadSnapshot();
+      if (!mounted) {
+        return;
+      }
+      if (!deleted) {
+        _showSnackBar('删除失败：${plugin.packageName}');
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to delete plugin: $error\n$stackTrace');
       await _loadSnapshot();
       if (!mounted) {
         return;
@@ -318,11 +372,13 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           return switch (PackageTab.values[index]) {
             PackageTab.plugins => PluginTabContent(
               plugins: _filteredPlugins,
+              morePlugins: _filteredMorePlugins,
               enabledPluginNames: _snapshot.enabledPluginContainerNames,
               isLoading: _loading || _searchFiltering,
               isSearchActive: _searchQuery.trim().isNotEmpty,
               onOpenPluginUi: _openPluginUi,
               onPluginTap: _showPluginDetails,
+              onLoadMorePlugin: _loadBundledExternalPlugin,
               onPluginEnabledChanged: _setPluginEnabled,
             ),
             PackageTab.packages => PackageTabContent(
@@ -460,6 +516,28 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         .toList(growable: false);
   }
 
+  List<core_proxy.BundledExternalPackageCandidate> get _filteredMorePlugins {
+    final query = _searchQuery.trim().toLowerCase();
+    final items = _snapshot.bundledExternalPackageCandidates.toList()
+      ..sort(
+        (left, right) => bundledExternalPackageDisplayName(
+          left,
+        ).compareTo(bundledExternalPackageDisplayName(right)),
+      );
+    if (query.isEmpty) {
+      return items;
+    }
+    return items
+        .where((item) {
+          return bundledExternalPackageDisplayName(
+                item,
+              ).toLowerCase().contains(query) ||
+              item.packageName.toLowerCase().contains(query) ||
+              localizedText(item.description).toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+  }
+
   List<core_proxy.ToolPackage> get _filteredPackages {
     final query = _searchQuery.trim().toLowerCase();
     final pluginNames = <String>{
@@ -505,8 +583,28 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             Navigator.of(context).pop();
             _openPluginUi(plugin, initialRouteId: initialRouteId);
           },
+          onDeletePackage: _isExternalPlugin(plugin)
+              ? () {
+                  Navigator.of(context).pop();
+                  _deletePlugin(plugin);
+                }
+              : null,
         );
       },
+    );
+  }
+
+  bool _isExternalPlugin(core_proxy.ToolPkgContainerRuntime plugin) {
+    return plugin.sourceType?.toString() == 'EXTERNAL';
+  }
+
+  Future<void> _loadBundledExternalPlugin(
+    core_proxy.BundledExternalPackageCandidate plugin,
+  ) async {
+    await _runAddAction(
+      () => _packageManager.importBundledExternalPackage(
+        packageName: plugin.packageName,
+      ),
     );
   }
 
@@ -621,7 +719,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     if (result == null || !mounted) {
       return;
     }
-    _showSnackBar(result.message);
     setState(() {
       _mcpReloadRevision += 1;
     });
@@ -637,7 +734,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     if (result == null || !mounted) {
       return;
     }
-    _showSnackBar(result.message);
     setState(() {
       _skillReloadRevision += 1;
     });
@@ -645,11 +741,10 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
 
   Future<void> _runAddAction(Future<String> Function() action) async {
     try {
-      final message = await action();
+      await action();
       if (!mounted) {
         return;
       }
-      _showSnackBar(message);
       await _loadSnapshot();
     } catch (error, stackTrace) {
       debugPrint('Failed to run package add action: $error\n$stackTrace');

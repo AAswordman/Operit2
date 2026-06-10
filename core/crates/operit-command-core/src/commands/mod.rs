@@ -80,8 +80,10 @@ pub fn run_core_command(
 fn print_core_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|update>");
     output.push_stdout_line("operit2 tool <list|show|exec>");
-    output.push_stdout_line("operit2 package <dir|list|show|import|enable|disable|use|exec>");
-    output.push_stdout_line("operit2 plugin <list|show|import|enable|disable>");
+    output.push_stdout_line(
+        "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
+    );
+    output.push_stdout_line("operit2 plugin <help|list|more|load|show|import|enable|disable>");
     output
         .push_stdout_line("operit2 skill <dir|list|show|create|import-zip|delete|visible|errors>");
     output

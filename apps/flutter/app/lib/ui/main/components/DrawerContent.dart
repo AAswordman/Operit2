@@ -22,6 +22,7 @@ class DrawerContent extends StatefulWidget {
   const DrawerContent({
     super.key,
     required this.navigationEntries,
+    required this.pluginEntries,
     required this.selectedRouteId,
     required this.appearance,
     required this.onNavigationEntrySelected,
@@ -30,6 +31,7 @@ class DrawerContent extends StatefulWidget {
   });
 
   final List<NavigationEntrySpec> navigationEntries;
+  final List<NavigationEntrySpec> pluginEntries;
   final String selectedRouteId;
   final NavigationDrawerAppearance appearance;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
@@ -1063,6 +1065,41 @@ class _DrawerContentState extends State<DrawerContent> {
                         onClick: _collapseHistories,
                       ),
                     ),
+                  if (widget.pluginEntries.isNotEmpty) ...<Widget>[
+                    const SliverToBoxAdapter(child: SizedBox(height: 10)),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsetsDirectional.only(
+                          start: 28,
+                          end: _contentEndPadding,
+                          bottom: 2,
+                        ),
+                        child: Text(
+                          '插件',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(
+                                color: widget.appearance.titleColor.withValues(
+                                  alpha: 0.82,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 6)),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final entry = widget.pluginEntries[index];
+                        return PluginNavigationDrawerItem(
+                          entry: entry,
+                          selected: widget.selectedRouteId == entry.routeId,
+                          appearance: widget.appearance,
+                          onClick: () =>
+                              widget.onNavigationEntrySelected(entry),
+                        );
+                      }, childCount: widget.pluginEntries.length),
+                    ),
+                  ],
                   const SliverToBoxAdapter(child: SizedBox(height: 16)),
                 ],
               ),

@@ -15,6 +15,7 @@ class CollapsedDrawerContent extends StatelessWidget {
   const CollapsedDrawerContent({
     super.key,
     required this.navigationEntries,
+    required this.pluginEntries,
     required this.selectedRouteId,
     required this.appearance,
     required this.onNavigationEntrySelected,
@@ -23,6 +24,7 @@ class CollapsedDrawerContent extends StatelessWidget {
   });
 
   final List<NavigationEntrySpec> navigationEntries;
+  final List<NavigationEntrySpec> pluginEntries;
   final String selectedRouteId;
   final NavigationDrawerAppearance appearance;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
@@ -103,6 +105,22 @@ class CollapsedDrawerContent extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
+        if (pluginEntries.isNotEmpty) ...<Widget>[
+          Divider(indent: 14, endIndent: 14, color: appearance.dividerColor),
+          const SizedBox(height: 8),
+          for (final entry in pluginEntries) ...<Widget>[
+            Center(
+              child: _RoundDrawerButton(
+                selected: selectedRouteId == entry.routeId,
+                appearance: appearance,
+                icon: entry.icon,
+                onClick: () => onNavigationEntrySelected(entry),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 8),
+        ],
         Center(
           child: _RoundDrawerButton(
             selected: selectedRouteId == _packageManagerRouteId,
@@ -511,6 +529,81 @@ class ConversationDrawerItem extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class PluginNavigationDrawerItem extends StatelessWidget {
+  const PluginNavigationDrawerItem({
+    super.key,
+    required this.entry,
+    required this.selected,
+    required this.appearance,
+    required this.onClick,
+  });
+
+  final NavigationEntrySpec entry;
+  final bool selected;
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onClick;
+
+  static const double _endPadding = 12;
+
+  @override
+  Widget build(BuildContext context) {
+    final shape = BorderRadius.circular(12);
+    final contentColor = selected
+        ? appearance.selectedContentColor
+        : appearance.itemColor;
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(
+        start: 12,
+        end: _endPadding,
+        bottom: 3,
+      ),
+      child: Material(
+        color: selected
+            ? appearance.selectedContainerColor
+            : Colors.transparent,
+        borderRadius: shape,
+        child: InkWell(
+          borderRadius: shape,
+          onTap: onClick,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(
+              children: <Widget>[
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected
+                        ? appearance.selectedContentColor.withValues(
+                            alpha: 0.14,
+                          )
+                        : appearance.buttonContainerColor,
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(entry.icon, size: 17, color: contentColor),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    entry.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: contentColor,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

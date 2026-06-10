@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use serde_json::Value;
 
 use crate::core::application::OperitApplication::OperitApplication;
@@ -89,9 +87,13 @@ pub struct ToolPkgAiProviderRegistration {
 }
 
 #[allow(non_snake_case)]
-pub fn toolPkgPackageManager() -> Arc<Mutex<PackageManager>> {
+pub fn toolPkgPackageManager() -> PackageManager {
     let application = OperitApplication::applicationContext();
-    AIToolHandler::getInstance(application).getOrCreatePackageManager()
+    AIToolHandler::getInstance(application)
+        .getOrCreatePackageManager()
+        .lock()
+        .expect("package manager mutex poisoned")
+        .clone()
 }
 
 #[allow(non_snake_case)]

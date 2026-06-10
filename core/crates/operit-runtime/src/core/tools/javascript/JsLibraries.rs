@@ -220,14 +220,55 @@ pub fn buildRuntimeBootstrapScript() -> String {
             logInfoForCall: function() {{}},
             logErrorForCall: function() {{}},
             reportErrorForCall: function() {{}},
-            sendCallIntermediateResult: function(_callId, result) {{
-                __operitSendIntermediateResult(String(result == null ? '' : result));
+            sendCallIntermediateResult: function(callId, result) {{
+                __operitSendIntermediateResult(
+                    String(callId || ''),
+                    String(result == null ? '' : result)
+                );
             }},
             readToolPkgTextResource: function(packageNameOrSubpackageId, resourcePath) {{
                 return __operitNativeReadToolPkgTextResource(
                     String(packageNameOrSubpackageId || ''),
                     String(resourcePath || '')
                 );
+            }},
+            readToolPkgResource: function(packageNameOrSubpackageId, resourceKey, outputFileName, internal) {{
+                return __operitNativeReadToolPkgResource(
+                    String(packageNameOrSubpackageId || ''),
+                    String(resourceKey || ''),
+                    outputFileName == null ? '' : String(outputFileName),
+                    String(internal || '')
+                );
+            }},
+            composeWebViewControllerCommand: function(payloadJson) {{
+                return __operitNativeComposeWebViewControllerCommand(String(payloadJson || '{{}}'));
+            }},
+            composeWebViewControllerCommandSuspend: function(payloadJson, callbackId) {{
+                var normalizedCallbackId = String(callbackId || '').trim();
+                if (!normalizedCallbackId) {{
+                    return;
+                }}
+                try {{
+                    var result = __operitNativeComposeWebViewControllerCommand(
+                        String(payloadJson || '{{}}')
+                    );
+                    var parsed;
+                    try {{
+                        parsed = JSON.parse(result);
+                    }} catch (_parseError) {{
+                        parsed = result;
+                    }}
+                    if (typeof window[normalizedCallbackId] === 'function') {{
+                        window[normalizedCallbackId](parsed, false);
+                    }}
+                }} catch (error) {{
+                    if (typeof window[normalizedCallbackId] === 'function') {{
+                        window[normalizedCallbackId]({{
+                            success: false,
+                            message: String(error && error.message ? error.message : error)
+                        }}, true);
+                    }}
+                }}
             }},
             getEnvForCall: function(callId, key) {{
                 return __operitNativeGetEnvForCall(String(callId || ''), String(key || ''));
@@ -1436,12 +1477,16 @@ pub fn buildRuntimeBootstrapScript() -> String {
         {}
         {}
         {}
+        {}
+        {}
         "#,
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
         executionPreludeJson,
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),
+        buildToolPkgRegistrationBridgeScript(),
         getJsToolsDefinition(),
+        getJsThirdPartyLibraries(),
         loadPluginConfigJs(),
         loadRuntimeContextJs(),
         loadCryptoJs(),

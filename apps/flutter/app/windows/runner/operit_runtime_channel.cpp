@@ -5,18 +5,28 @@
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
 
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <cstdint>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
 namespace {
 
 using BridgeHandle = void*;
-using BridgeCreate = BridgeHandle (*)();
+using BridgeRuntimeHostRequestCallback =
+    char* (*)(const char*, const unsigned char*, size_t, void*);
+using BridgeRuntimeHostRequestFree = void (*)(char*, void*);
+using BridgeCreateWithRuntimeHostBridge = BridgeHandle (*)(
+    BridgeRuntimeHostRequestCallback, BridgeRuntimeHostRequestFree, void*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
@@ -27,10 +37,6 @@ using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
 using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
 using BridgeHandlePermissionResult = char* (*)(BridgeHandle, const char*);
-using BridgeNextBrowserAutomationRequest = char* (*)(BridgeHandle);
-using BridgeHandleBrowserAutomationResult = char* (*)(BridgeHandle, const char*);
-using BridgeNextWebVisitRequest = char* (*)(BridgeHandle);
-using BridgeHandleWebVisitResult = char* (*)(BridgeHandle, const char*);
 using BridgeStartTerminalPty = char* (*)(
     BridgeHandle, const char*, const char*, uint16_t, uint16_t);
 using BridgeReadTerminalPty = char* (*)(BridgeHandle, const char*);
@@ -42,6 +48,218 @@ using BridgeListTerminalSessions = char* (*)(BridgeHandle);
 using BridgeGetTerminalSessionScreen = char* (*)(BridgeHandle, const char*);
 using BridgeInputTerminalSession = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeFreeString = void (*)(char*);
+
+std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+    g_operit_runtime_channel;
+HWND g_operit_runtime_window = nullptr;
+DWORD g_operit_runtime_platform_thread_id = 0;
+
+constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
+
+class OperitRuntimePlatformTask {
+ public:
+  virtual ~OperitRuntimePlatformTask() = default;
+  virtual void Run() = 0;
+};
+
+template <typename Callback>
+class OperitRuntimePlatformTaskImpl final : public OperitRuntimePlatformTask {
+ public:
+  explicit OperitRuntimePlatformTaskImpl(Callback callback)
+      : callback_(std::move(callback)) {}
+
+  void Run() override { callback_(); }
+
+ private:
+  Callback callback_;
+};
+
+template <typename Callback>
+bool PostOperitRuntimePlatformTask(Callback&& callback) {
+  if (g_operit_runtime_window == nullptr) {
+    return false;
+  }
+  auto task = std::make_unique<
+      OperitRuntimePlatformTaskImpl<std::decay_t<Callback>>>(
+      std::forward<Callback>(callback));
+  auto raw_task = task.release();
+  if (::PostMessage(g_operit_runtime_window, kOperitRuntimePlatformTaskMessage,
+                    reinterpret_cast<WPARAM>(raw_task), 0) == 0) {
+    delete raw_task;
+    return false;
+  }
+  return true;
+}
+
+std::string JsonString(const std::string& value) {
+  std::string output = "\"";
+  for (char ch : value) {
+    switch (ch) {
+      case '\\':
+        output += "\\\\";
+        break;
+      case '"':
+        output += "\\\"";
+        break;
+      case '\b':
+        output += "\\b";
+        break;
+      case '\f':
+        output += "\\f";
+        break;
+      case '\n':
+        output += "\\n";
+        break;
+      case '\r':
+        output += "\\r";
+        break;
+      case '\t':
+        output += "\\t";
+        break;
+      default:
+        if (static_cast<unsigned char>(ch) < 0x20) {
+          char buffer[7];
+          std::snprintf(buffer, sizeof(buffer), "\\u%04x",
+                        static_cast<unsigned char>(ch));
+          output += buffer;
+        } else {
+          output += ch;
+        }
+        break;
+    }
+  }
+  output += "\"";
+  return output;
+}
+
+char* CopyRuntimeHostBridgeResponse(const std::string& value) {
+  char* copy = static_cast<char*>(std::malloc(value.size() + 1));
+  if (copy == nullptr) {
+    return nullptr;
+  }
+  std::memcpy(copy, value.c_str(), value.size() + 1);
+  return copy;
+}
+
+void FreeRuntimeHostBridgeResponse(char* value, void* user_data) {
+  (void)user_data;
+  std::free(value);
+}
+
+std::string RuntimeHostBridgeSuccess(const std::string& value) {
+  return std::string("{\"ok\":true,\"value\":") + JsonString(value) + "}";
+}
+
+std::string RuntimeHostBridgeError(const std::string& error) {
+  return std::string("{\"ok\":false,\"error\":") + JsonString(error) + "}";
+}
+
+struct BlockingMethodResultState {
+  std::mutex mutex;
+  std::condition_variable changed;
+  bool completed = false;
+  bool ok = false;
+  std::string value;
+  std::string error;
+};
+
+class BlockingStringMethodResult
+    : public flutter::MethodResult<flutter::EncodableValue> {
+ public:
+  explicit BlockingStringMethodResult(
+      std::shared_ptr<BlockingMethodResultState> state)
+      : state_(std::move(state)) {}
+
+ protected:
+  void SuccessInternal(const flutter::EncodableValue* result) override {
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    if (result != nullptr) {
+      if (const std::string* value = std::get_if<std::string>(result)) {
+        state_->value = *value;
+        state_->ok = true;
+      } else {
+        state_->error = "runtime host handler returned a non-string value";
+      }
+    } else {
+      state_->value = "";
+      state_->ok = true;
+    }
+    state_->completed = true;
+    state_->changed.notify_all();
+  }
+
+  void ErrorInternal(const std::string& error_code,
+                     const std::string& error_message,
+                     const flutter::EncodableValue* error_details) override {
+    (void)error_details;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->error = error_code + ": " + error_message;
+    state_->completed = true;
+    state_->changed.notify_all();
+  }
+
+  void NotImplementedInternal() override {
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->error = "runtime host method is not implemented";
+    state_->completed = true;
+    state_->changed.notify_all();
+  }
+
+ private:
+  std::shared_ptr<BlockingMethodResultState> state_;
+};
+
+void InvokeRuntimeHostMethodOnPlatformThread(
+    std::string method_name,
+    std::string payload,
+    std::shared_ptr<BlockingMethodResultState> state) {
+  g_operit_runtime_channel->InvokeMethod(
+      method_name,
+      std::make_unique<flutter::EncodableValue>(std::move(payload)),
+      std::make_unique<BlockingStringMethodResult>(std::move(state)));
+}
+
+char* HandleRuntimeHostRequest(const char* method_name,
+                               const unsigned char* payload,
+                               size_t payload_length,
+                               void* user_data) {
+  (void)user_data;
+  if (method_name == nullptr) {
+    return CopyRuntimeHostBridgeResponse(
+        RuntimeHostBridgeError("runtime host method pointer is null"));
+  }
+  if (payload == nullptr) {
+    return CopyRuntimeHostBridgeResponse(
+        RuntimeHostBridgeError("runtime host payload pointer is null"));
+  }
+  if (!g_operit_runtime_channel) {
+    return CopyRuntimeHostBridgeResponse(
+        RuntimeHostBridgeError("operit/runtime channel is not initialized"));
+  }
+  auto state = std::make_shared<BlockingMethodResultState>();
+  if (::GetCurrentThreadId() == g_operit_runtime_platform_thread_id) {
+    return CopyRuntimeHostBridgeResponse(RuntimeHostBridgeError(
+        "runtime host request cannot block the platform thread"));
+  }
+  std::string method_name_string(method_name);
+  std::string payload_string(reinterpret_cast<const char*>(payload),
+                             payload_length);
+  if (!PostOperitRuntimePlatformTask(
+          [method_name_string = std::move(method_name_string),
+           payload_string = std::move(payload_string), state]() mutable {
+            InvokeRuntimeHostMethodOnPlatformThread(
+                std::move(method_name_string), std::move(payload_string),
+                std::move(state));
+          })) {
+    return CopyRuntimeHostBridgeResponse(RuntimeHostBridgeError(
+        "operit/runtime platform task could not be posted"));
+  }
+  std::unique_lock<std::mutex> lock(state->mutex);
+  state->changed.wait(lock, [&state]() { return state->completed; });
+  return CopyRuntimeHostBridgeResponse(
+      state->ok ? RuntimeHostBridgeSuccess(state->value)
+                : RuntimeHostBridgeError(state->error));
+}
 
 class OperitRuntimeLibrary {
  public:
@@ -67,8 +285,9 @@ class OperitRuntimeLibrary {
         AssignError(error, "operit_flutter_bridge.dll was not found");
         return false;
       }
-      create_ = reinterpret_cast<BridgeCreate>(
-          GetProcAddress(library_, "operit_flutter_bridge_create"));
+      create_with_runtime_host_bridge_ =
+          reinterpret_cast<BridgeCreateWithRuntimeHostBridge>(GetProcAddress(
+              library_, "operit_flutter_bridge_create_with_runtime_host_bridge"));
       create_error_ = reinterpret_cast<BridgeCreateError>(
           GetProcAddress(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
@@ -89,14 +308,6 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_current_permission_request"));
       handle_permission_result_ = reinterpret_cast<BridgeHandlePermissionResult>(
           GetProcAddress(library_, "operit_flutter_bridge_handle_permission_result"));
-      next_browser_automation_request_ = reinterpret_cast<BridgeNextBrowserAutomationRequest>(
-          GetProcAddress(library_, "operit_flutter_bridge_next_browser_automation_request"));
-      handle_browser_automation_result_ = reinterpret_cast<BridgeHandleBrowserAutomationResult>(
-          GetProcAddress(library_, "operit_flutter_bridge_handle_browser_automation_result"));
-      next_web_visit_request_ = reinterpret_cast<BridgeNextWebVisitRequest>(
-          GetProcAddress(library_, "operit_flutter_bridge_next_web_visit_request"));
-      handle_web_visit_result_ = reinterpret_cast<BridgeHandleWebVisitResult>(
-          GetProcAddress(library_, "operit_flutter_bridge_handle_web_visit_result"));
       start_terminal_pty_ = reinterpret_cast<BridgeStartTerminalPty>(
           GetProcAddress(library_, "operit_flutter_bridge_start_terminal_pty"));
       read_terminal_pty_ = reinterpret_cast<BridgeReadTerminalPty>(
@@ -117,15 +328,12 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_input_terminal_session"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
-      if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
+      if (create_with_runtime_host_bridge_ == nullptr ||
+          destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           poll_watch_stream_ == nullptr || close_watch_stream_ == nullptr ||
           host_descriptor_ == nullptr || current_permission_request_ == nullptr ||
           handle_permission_result_ == nullptr ||
-          next_browser_automation_request_ == nullptr ||
-          handle_browser_automation_result_ == nullptr ||
-          next_web_visit_request_ == nullptr ||
-          handle_web_visit_result_ == nullptr ||
           start_terminal_pty_ == nullptr || read_terminal_pty_ == nullptr ||
           write_terminal_pty_ == nullptr || resize_terminal_pty_ == nullptr ||
           poll_terminal_pty_exit_ == nullptr || close_terminal_pty_ == nullptr ||
@@ -137,7 +345,8 @@ class OperitRuntimeLibrary {
         return false;
       }
     }
-    handle_ = create_();
+    handle_ = create_with_runtime_host_bridge_(
+        HandleRuntimeHostRequest, FreeRuntimeHostBridgeResponse, nullptr);
     if (handle_ == nullptr) {
       AssignError(error, ReadCreateError());
       return false;
@@ -218,44 +427,6 @@ class OperitRuntimeLibrary {
       return false;
     }
     char* raw_response = handle_permission_result_(handle_, permission_result.c_str());
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool NextBrowserAutomationRequest(std::string* response, std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response = next_browser_automation_request_(handle_);
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool HandleBrowserAutomationResult(const std::string& browser_result,
-                                     std::string* response,
-                                     std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response =
-        handle_browser_automation_result_(handle_, browser_result.c_str());
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool NextWebVisitRequest(std::string* response, std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response = next_web_visit_request_(handle_);
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool HandleWebVisitResult(const std::string& web_visit_result,
-                            std::string* response,
-                            std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response =
-        handle_web_visit_result_(handle_, web_visit_result.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -390,7 +561,7 @@ class OperitRuntimeLibrary {
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
   std::mutex mutex_;
-  BridgeCreate create_ = nullptr;
+  BridgeCreateWithRuntimeHostBridge create_with_runtime_host_bridge_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
@@ -401,10 +572,6 @@ class OperitRuntimeLibrary {
   BridgeHostDescriptor host_descriptor_ = nullptr;
   BridgeCurrentPermissionRequest current_permission_request_ = nullptr;
   BridgeHandlePermissionResult handle_permission_result_ = nullptr;
-  BridgeNextBrowserAutomationRequest next_browser_automation_request_ = nullptr;
-  BridgeHandleBrowserAutomationResult handle_browser_automation_result_ = nullptr;
-  BridgeNextWebVisitRequest next_web_visit_request_ = nullptr;
-  BridgeHandleWebVisitResult handle_web_visit_result_ = nullptr;
   BridgeStartTerminalPty start_terminal_pty_ = nullptr;
   BridgeReadTerminalPty read_terminal_pty_ = nullptr;
   BridgeWriteTerminalPty write_terminal_pty_ = nullptr;
@@ -417,8 +584,6 @@ class OperitRuntimeLibrary {
   BridgeFreeString free_string_ = nullptr;
 };
 
-std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
-    g_operit_runtime_channel;
 std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
 
 const std::string* StringArgument(
@@ -490,17 +655,43 @@ void RespondRuntimeCallAsync(
                result = std::move(result)]() mutable {
     std::string response;
     std::string error;
-    if (library->Call(request, &response, &error)) {
-      result->Success(flutter::EncodableValue(response));
-    } else {
-      result->Error("RUNTIME_BRIDGE_ERROR", error);
-    }
+    const bool ok = library->Call(request, &response, &error);
+    PostOperitRuntimePlatformTask(
+        [result = std::move(result), ok, response = std::move(response),
+         error = std::move(error)]() mutable {
+          if (ok) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+        });
   }).detach();
 }
 
 }  // namespace
 
-void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
+bool HandleOperitRuntimeChannelWindowMessage(UINT message,
+                                             WPARAM wparam,
+                                             LPARAM lparam,
+                                             LRESULT* result) {
+  (void)lparam;
+  if (message != kOperitRuntimePlatformTaskMessage) {
+    return false;
+  }
+  std::unique_ptr<OperitRuntimePlatformTask> task(
+      reinterpret_cast<OperitRuntimePlatformTask*>(wparam));
+  if (task) {
+    task->Run();
+  }
+  if (result != nullptr) {
+    *result = 0;
+  }
+  return true;
+}
+
+void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
+  g_operit_runtime_window = window;
+  g_operit_runtime_platform_thread_id = ::GetCurrentThreadId();
   g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
   g_operit_runtime_channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -604,54 +795,6 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine) {
           }
           if (g_operit_runtime_library->HandlePermissionResult(
                   *permission_result, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("nextBrowserAutomationRequest") == 0) {
-          if (g_operit_runtime_library->NextBrowserAutomationRequest(
-                  &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("handleBrowserAutomationResult") == 0) {
-          const std::string* browser_result = StringArgument(method_call);
-          if (browser_result == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "handleBrowserAutomationResult expects a JSON string");
-            return;
-          }
-          if (g_operit_runtime_library->HandleBrowserAutomationResult(
-                  *browser_result, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("nextWebVisitRequest") == 0) {
-          if (g_operit_runtime_library->NextWebVisitRequest(
-                  &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("handleWebVisitResult") == 0) {
-          const std::string* web_visit_result = StringArgument(method_call);
-          if (web_visit_result == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "handleWebVisitResult expects a JSON string");
-            return;
-          }
-          if (g_operit_runtime_library->HandleWebVisitResult(
-                  *web_visit_result, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);

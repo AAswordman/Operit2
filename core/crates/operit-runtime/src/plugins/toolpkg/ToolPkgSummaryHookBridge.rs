@@ -59,10 +59,9 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
             .clone();
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
+        let manager = toolPkgPackageManager();
         for hook in snapshot {
-            let result = toolPkgPackageManager()
-                .lock()
-                .expect("package manager mutex poisoned")
+            let result = manager
                 .runToolPkgMainHook(
                     &hook.containerPackageName,
                     &hook.functionName,

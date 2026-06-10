@@ -44,9 +44,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
     }
-    context = context.withExternalRuntimeEventHost(Arc::new(
-        NativeExternalRuntimeEventHost::new(),
-    ));
+    context = context.withExternalRuntimeEventHost(Arc::new(NativeExternalRuntimeEventHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
         let output =

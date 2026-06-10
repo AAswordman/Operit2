@@ -1,9 +1,9 @@
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    BrowserAutomationHost, ExternalRuntimeEventHost, FileSystemHost, HostEnvironmentDescriptor,
-    HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost,
-    TerminalHost, WebVisitHost,
+    BrowserAutomationHost, ComposeDslWebViewHost, ExternalRuntimeEventHost, FileSystemHost,
+    HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
+    SystemOperationHost, TerminalHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -28,6 +28,7 @@ pub struct OperitApplicationContext {
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
+    pub composeDslWebViewHost: Option<Arc<dyn ComposeDslWebViewHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
@@ -45,6 +46,7 @@ impl OperitApplicationContext {
             fileSystemHost: None,
             webVisitHost: None,
             browserAutomationHost: None,
+            composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -64,6 +66,7 @@ impl OperitApplicationContext {
             fileSystemHost: Some(host),
             webVisitHost: None,
             browserAutomationHost: None,
+            composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -86,6 +89,7 @@ impl OperitApplicationContext {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
             managedRuntimeHost: None,
@@ -109,6 +113,7 @@ impl OperitApplicationContext {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: None,
@@ -136,6 +141,7 @@ impl OperitApplicationContext {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
             managedRuntimeHost: Some(managedRuntimeHost),
@@ -166,6 +172,15 @@ impl OperitApplicationContext {
         browserAutomationHost: Arc<dyn BrowserAutomationHost>,
     ) -> Self {
         self.browserAutomationHost = Some(browserAutomationHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withComposeDslWebViewHost(
+        mut self,
+        composeDslWebViewHost: Arc<dyn ComposeDslWebViewHost>,
+    ) -> Self {
+        self.composeDslWebViewHost = Some(composeDslWebViewHost);
         self
     }
 

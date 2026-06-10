@@ -1243,31 +1243,25 @@ Future<void> _validateContinuationAuthorDeclaration({
       .map((nodeId) => nodeId.trim())
       .where((nodeId) => nodeId.isNotEmpty)
       .toList(growable: false);
-  if (parentNodeIds.isEmpty || !source.hasDeclaredAuthorField) {
+  if (parentNodeIds.isEmpty) {
+    return;
+  }
+  final authorDeclaration = await clients.apiArtifactAuthorValidation
+      .inspectLocalArtifactAuthorDeclaration(source: source);
+  if (!authorDeclaration.hasAuthorField) {
     return;
   }
   final project = await clients.apiMarketStatsApiService.getArtifactProject(
     projectId: publishContext.projectId,
   );
-  final nodeById = <String, core_proxy.ArtifactProjectNodeResponse>{
-    for (final node in project.nodes) node.nodeId: node,
-  };
-  final publisherLogins = <String>{};
-  for (final nodeId in parentNodeIds) {
-    final node = nodeById[nodeId];
-    if (node == null) {
-      throw StateError('找不到前驱节点 `$nodeId`，无法校验作者数量。');
-    }
-    final publisherLogin = node.publisherLogin.trim().isNotEmpty
-        ? node.publisherLogin.trim()
-        : node.issue.user.login.trim();
-    if (publisherLogin.isNotEmpty) {
-      publisherLogins.add(publisherLogin);
-    }
-  }
+  final publisherLogins = await clients.apiArtifactAuthorValidation
+      .collectArtifactPredecessorPublisherLogins(
+        project: project,
+        parentNodeIds: parentNodeIds,
+      );
   final predecessorPublisherCount = publisherLogins.length;
   if (predecessorPublisherCount > 0 &&
-      source.declaredAuthorSlotCount < predecessorPublisherCount) {
+      authorDeclaration.declaredAuthorSlotCount < predecessorPublisherCount) {
     throw StateError(
       '当前作品已声明 author，但数量不足。当前直接前驱节点的 GitHub 发布者共有 '
       '$predecessorPublisherCount 个；author 要么不写，要么至少提供 '

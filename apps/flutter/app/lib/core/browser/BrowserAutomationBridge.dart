@@ -1,4 +1,11 @@
 // ignore_for_file: file_names
 
-export 'BrowserAutomationBridgeNative.dart'
-    if (dart.library.html) 'BrowserAutomationBridgeWeb.dart';
+import '../bridge/RuntimeHostBridge.dart';
+
+class BrowserAutomationBridge {
+  const BrowserAutomationBridge();
+
+  void Function() registerHandler(BrowserAutomationRequestHandler handler) {
+    return RuntimeHostBridge.registerBrowserAutomationHandler(handler);
+  }
+}

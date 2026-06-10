@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/AppContent.dart';
 import '../layout/NavigationLayoutMetrics.dart';
 import '../layout/PhoneLayout.dart';
@@ -23,14 +26,20 @@ class OperitMainScreen extends StatefulWidget {
 
 class _OperitMainScreenState extends State<OperitMainScreen> {
   static const int _backPressedIntervalMs = 2000;
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  );
 
   late AppNavigationModel _navigationModel;
   late final AppRouterState _routerState;
   late final TopBarController _topBarController;
   late final MainLayoutController _mainLayoutController;
+  List<core_proxy.ToolPkgContainerRuntime> _toolPkgContainers =
+      const <core_proxy.ToolPkgContainerRuntime>[];
   bool _drawerOpen = false;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
+  bool _requestedInitialToolPkgNavigationRefresh = false;
   int _backPressedTime = 0;
   NavigationTransitionSource _navigationTransitionSource =
       NavigationTransitionSource.defaultSource;
@@ -47,8 +56,15 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _navigationModel = AppRouteCatalog.build(context);
+    _navigationModel = AppRouteCatalog.build(
+      context,
+      toolPkgContainers: _toolPkgContainers,
+    );
     AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
+    if (!_requestedInitialToolPkgNavigationRefresh) {
+      _requestedInitialToolPkgNavigationRefresh = true;
+      _refreshToolPkgNavigationModel();
+    }
   }
 
   @override
@@ -123,7 +139,28 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     return currentScreen.preserveTopBarTitleWhenReplacingWith(nextScreen);
   }
 
+  Future<void> _refreshToolPkgNavigationModel() async {
+    final containers = await _clients.permissionsPackToolPackageManager
+        .getEnabledToolPkgContainerRuntimes();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _toolPkgContainers = containers;
+      _navigationModel = AppRouteCatalog.build(
+        context,
+        toolPkgContainers: _toolPkgContainers,
+      );
+      AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
+    });
+  }
+
   void _navigateToNavigationEntry(NavigationEntrySpec entry) {
+    if (entry.action != null) {
+      throw StateError(
+        'ToolPkg navigation action is not wired: ${entry.entryId}',
+      );
+    }
     final currentRouteEntry = _routerState.currentEntry;
     if (currentRouteEntry.routeId == entry.routeId &&
         mapEquals(currentRouteEntry.args, entry.routeArgs)) {
@@ -226,6 +263,11 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           _navigationModel,
           currentRouteEntry,
         );
+        final pluginSidebarEntries = _navigationModel.navigationEntries
+            .where(
+              (entry) => entry.surface == NavigationSurface.mainSidebarPlugins,
+            )
+            .toList(growable: false);
         final currentRouteTitle =
             _navigationModel.routesById[currentRouteEntry.routeId]!.title ??
             currentScreen.title ??
@@ -246,6 +288,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           topBarController: _topBarController,
           onGoBack: _goBack,
           onNavigationButtonPressed: () {
+            _refreshToolPkgNavigationModel();
             if (useTabletLayout) {
               setState(() {
                 _isTabletSidebarExpanded = !_isTabletSidebarExpanded;
@@ -278,6 +321,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                     ? TabletLayout(
                         content: content,
                         navigationEntries: _navigationModel.navigationEntries,
+                        pluginSidebarEntries: pluginSidebarEntries,
                         selectedRouteId: currentRouteEntry.routeId,
                         isTabletSidebarExpanded: _isTabletSidebarExpanded,
                         tabletSidebarWidth: 280,
@@ -288,11 +332,13 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                     : PhoneLayout(
                         content: content,
                         navigationEntries: _navigationModel.navigationEntries,
+                        pluginSidebarEntries: pluginSidebarEntries,
                         selectedRouteId: currentRouteEntry.routeId,
                         drawerWidth: mediaQuery.size.width * 0.75,
                         drawerOpen: _drawerOpen,
                         enableNavigationAnimation: true,
                         onOpenDrawer: () {
+                          _refreshToolPkgNavigationModel();
                           setState(() {
                             _drawerOpen = true;
                           });

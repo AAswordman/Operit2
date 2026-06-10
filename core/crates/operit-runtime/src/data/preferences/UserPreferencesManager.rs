@@ -65,10 +65,7 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn saveAppLanguage(
-        &self,
-        languageCode: String,
-    ) -> Result<(), PreferencesDataStoreError> {
+    pub fn saveAppLanguage(&self, languageCode: String) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("app_language"), languageCode.clone());
         })
@@ -323,10 +320,7 @@ impl PreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn saveAppLanguage(
-        &self,
-        languageCode: String,
-    ) -> Result<(), PreferencesDataStoreError> {
+    pub fn saveAppLanguage(&self, languageCode: String) -> Result<(), PreferencesDataStoreError> {
         self.inner.saveAppLanguage(languageCode)
     }
 

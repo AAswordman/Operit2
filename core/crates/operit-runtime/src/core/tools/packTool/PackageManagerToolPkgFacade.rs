@@ -1,19 +1,166 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::packTool::ToolPkgManager::ToolPkgManager;
+use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_RUNTIME_COMPOSE_DSL;
+use crate::core::tools::packTool::ToolPkgParser::{ToolPkgArchiveParser, ToolPkgSubpackageRuntime};
 
-pub struct PackageManagerToolPkgFacade;
+pub struct PackageManagerToolPkgFacade<'a> {
+    packageManager: &'a PackageManager,
+}
 
-impl PackageManagerToolPkgFacade {
+impl<'a> PackageManagerToolPkgFacade<'a> {
+    #[allow(non_snake_case)]
+    pub fn new(packageManager: &'a PackageManager) -> Self {
+        Self { packageManager }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgComposeDslScriptBySubpackageId(
+        &self,
+        subpackageId: &str,
+        uiModuleId: Option<&str>,
+        preferEnabledContainer: bool,
+    ) -> Option<String> {
+        self.packageManager.ensureInitialized();
+        if subpackageId.trim().is_empty() {
+            return None;
+        }
+
+        let directSubpackage = self
+            .packageManager
+            .resolveToolPkgSubpackageRuntimeInternal(subpackageId);
+        let subpackages = if let Some(directSubpackage) = directSubpackage {
+            vec![directSubpackage]
+        } else {
+            self.packageManager
+                .toolPkgSubpackageByPackageNameInternal()
+                .values()
+                .filter(|subpackage| subpackage.subpackageId.eq_ignore_ascii_case(subpackageId))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if subpackages.is_empty() {
+            return None;
+        }
+
+        let candidateContainers = if preferEnabledContainer {
+            let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+            distinctContainerNames(
+                subpackages
+                    .iter()
+                    .filter(|subpackage| enabledSet.contains(&subpackage.containerPackageName)),
+            )
+        } else {
+            distinctContainerNames(subpackages.iter())
+        };
+
+        for containerName in candidateContainers {
+            let script = self.getToolPkgComposeDslScript(&containerName, uiModuleId);
+            if let Some(script) = script.filter(|script| !script.trim().is_empty()) {
+                return Some(script);
+            }
+        }
+
+        None
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgComposeDslScript(
+        &self,
+        containerPackageName: &str,
+        uiModuleId: Option<&str>,
+    ) -> Option<String> {
+        self.packageManager.ensureInitialized();
+        let normalizedContainerPackageName = self
+            .packageManager
+            .normalizePackageName(containerPackageName);
+        let runtime = self
+            .packageManager
+            .toolPkgContainersInternal()
+            .get(&normalizedContainerPackageName)
+            .cloned()?;
+        let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+        if !enabledSet.contains(&runtime.packageName) {
+            return None;
+        }
+
+        let uiModule =
+            if let Some(uiModuleId) = uiModuleId.map(str::trim).filter(|value| !value.is_empty()) {
+                runtime.uiModules.iter().find(|module| {
+                    module.id.eq_ignore_ascii_case(uiModuleId)
+                        && module
+                            .runtime
+                            .eq_ignore_ascii_case(TOOLPKG_RUNTIME_COMPOSE_DSL)
+                })
+            } else {
+                runtime.uiModules.iter().find(|module| {
+                    module
+                        .runtime
+                        .eq_ignore_ascii_case(TOOLPKG_RUNTIME_COMPOSE_DSL)
+                })
+            }?;
+
+        if uiModule.screen.trim().is_empty() {
+            return None;
+        }
+
+        let bytes = self
+            .packageManager
+            .readToolPkgResourceBytes(&runtime, &uiModule.screen)?;
+        String::from_utf8(bytes).ok()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgComposeDslScreenPath(
+        &self,
+        containerPackageName: &str,
+        uiModuleId: Option<&str>,
+    ) -> Option<String> {
+        self.packageManager.ensureInitialized();
+        let normalizedContainerPackageName = self
+            .packageManager
+            .normalizePackageName(containerPackageName);
+        let runtime = self
+            .packageManager
+            .toolPkgContainersInternal()
+            .get(&normalizedContainerPackageName)
+            .cloned()?;
+        let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+        if !enabledSet.contains(&runtime.packageName) {
+            return None;
+        }
+
+        let uiModule =
+            if let Some(uiModuleId) = uiModuleId.map(str::trim).filter(|value| !value.is_empty()) {
+                runtime.uiModules.iter().find(|module| {
+                    module.id.eq_ignore_ascii_case(uiModuleId)
+                        && module
+                            .runtime
+                            .eq_ignore_ascii_case(TOOLPKG_RUNTIME_COMPOSE_DSL)
+                })
+            } else {
+                runtime.uiModules.iter().find(|module| {
+                    module
+                        .runtime
+                        .eq_ignore_ascii_case(TOOLPKG_RUNTIME_COMPOSE_DSL)
+                })
+            }?;
+
+        let screen = uiModule.screen.trim().to_string();
+        if screen.is_empty() {
+            return None;
+        }
+        Some(screen)
+    }
+
     #[allow(non_snake_case)]
     pub fn runToolPkgMainHook(
-        toolPkgManager: &ToolPkgManager,
-        context: &OperitApplicationContext,
-        enabledPackageNames: &[String],
+        &self,
         containerPackageName: &str,
         functionName: &str,
         event: &str,
@@ -25,16 +172,25 @@ impl PackageManagerToolPkgFacade {
         runtimeKind: Option<&str>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<Option<String>, String> {
-        let normalizedContainerPackageName = containerPackageName.trim().to_string();
-        let runtime = toolPkgManager
-            .getToolPkgContainerRuntime(&normalizedContainerPackageName)
+        let normalizedContainerPackageName = self
+            .packageManager
+            .normalizePackageName(containerPackageName);
+        let runtime = self
+            .packageManager
+            .toolPkgContainersInternal()
+            .get(&normalizedContainerPackageName)
+            .cloned()
             .ok_or_else(|| {
                 format!("ToolPkg container not found: {normalizedContainerPackageName}")
             })?;
-        let script = toolPkgManager
-            .getToolPkgMainScriptInternal(&normalizedContainerPackageName, enabledPackageNames)
+        let script = self
+            .packageManager
+            .getToolPkgMainScriptInternal(&runtime.packageName)
             .ok_or_else(|| {
-                format!("ToolPkg main script is unavailable: {normalizedContainerPackageName}")
+                format!(
+                    "ToolPkg main script is unavailable: {}",
+                    runtime.packageName
+                )
             })?;
 
         let resolvedEventName = eventName
@@ -63,15 +219,15 @@ impl PackageManagerToolPkgFacade {
         );
         params.insert(
             "toolPkgId".to_string(),
-            Value::String(normalizedContainerPackageName.clone()),
+            Value::String(runtime.packageName.clone()),
         );
         params.insert(
             "containerPackageName".to_string(),
-            Value::String(normalizedContainerPackageName.clone()),
+            Value::String(runtime.packageName.clone()),
         );
         params.insert(
             "__operit_ui_package_name".to_string(),
-            Value::String(normalizedContainerPackageName.clone()),
+            Value::String(runtime.packageName.clone()),
         );
         params.insert(
             "__operit_script_screen".to_string(),
@@ -120,13 +276,299 @@ impl PackageManagerToolPkgFacade {
             );
         }
 
-        let resolvedContextKey =
-            resolveToolPkgExecutionContextKey(&normalizedContainerPackageName, &params);
-        let engine = toolPkgManager.getToolPkgExecutionEngine(context, &resolvedContextKey);
-        let output =
-            engine.executeScriptFunction(&script, functionName, &params, onIntermediateResult);
+        let resolvedContextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
+        let engine = self
+            .packageManager
+            .getToolPkgExecutionEngine(&resolvedContextKey);
+        let output = engine.executeScriptFunction(
+            &script,
+            functionName,
+            &params,
+            &BTreeMap::new(),
+            onIntermediateResult,
+            true,
+            60,
+            None,
+        );
         Ok(output)
     }
+
+    #[allow(non_snake_case)]
+    pub fn copyToolPkgResourceToFileBySubpackageId(
+        &self,
+        subpackageId: &str,
+        resourceKey: &str,
+        destinationFile: &Path,
+        preferEnabledContainer: bool,
+    ) -> bool {
+        self.packageManager.ensureInitialized();
+        if subpackageId.trim().is_empty() || resourceKey.trim().is_empty() {
+            return false;
+        }
+
+        let directSubpackage = self
+            .packageManager
+            .resolveToolPkgSubpackageRuntimeInternal(subpackageId);
+        let subpackages = if let Some(directSubpackage) = directSubpackage {
+            vec![directSubpackage]
+        } else {
+            self.packageManager
+                .toolPkgSubpackageByPackageNameInternal()
+                .values()
+                .filter(|subpackage| subpackage.subpackageId.eq_ignore_ascii_case(subpackageId))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if subpackages.is_empty() {
+            return false;
+        }
+
+        let candidateContainers = if preferEnabledContainer {
+            let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+            let enabledContainers = distinctContainerNames(
+                subpackages
+                    .iter()
+                    .filter(|subpackage| enabledSet.contains(&subpackage.containerPackageName)),
+            );
+            if !enabledContainers.is_empty() {
+                enabledContainers
+            } else {
+                distinctContainerNames(subpackages.iter())
+            }
+        } else {
+            distinctContainerNames(subpackages.iter())
+        };
+
+        for containerName in candidateContainers {
+            if self.copyToolPkgResourceToFile(&containerName, resourceKey, destinationFile) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    #[allow(non_snake_case)]
+    pub fn copyToolPkgResourceToFile(
+        &self,
+        containerPackageName: &str,
+        resourceKey: &str,
+        destinationFile: &Path,
+    ) -> bool {
+        self.packageManager.ensureInitialized();
+        let normalizedContainerPackageName = self
+            .packageManager
+            .normalizePackageName(containerPackageName);
+        let toolPkgContainers = self.packageManager.toolPkgContainersInternal();
+        let Some(runtime) = toolPkgContainers.get(&normalizedContainerPackageName) else {
+            return false;
+        };
+        let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+        if !enabledSet.contains(&runtime.packageName) {
+            return false;
+        }
+        let Some(resource) = runtime
+            .resources
+            .iter()
+            .find(|resource| resource.key.eq_ignore_ascii_case(resourceKey))
+        else {
+            return false;
+        };
+
+        self.packageManager
+            .exportToolPkgResource(runtime, resource, destinationFile)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getToolPkgResourceOutputFileName(
+        &self,
+        packageNameOrSubpackageId: &str,
+        resourceKey: &str,
+        preferEnabledContainer: bool,
+    ) -> Option<String> {
+        self.packageManager.ensureInitialized();
+        let target = packageNameOrSubpackageId.trim();
+        let key = resourceKey.trim();
+        if target.is_empty() || key.is_empty() {
+            return None;
+        }
+
+        let toolPkgContainers = self.packageManager.toolPkgContainersInternal();
+        let resolveFromContainer = |containerName: &str| -> Option<String> {
+            let normalizedContainerName = self.packageManager.normalizePackageName(containerName);
+            let runtime = toolPkgContainers.get(&normalizedContainerName)?;
+            let resource = runtime
+                .resources
+                .iter()
+                .find(|resource| resource.key.eq_ignore_ascii_case(key))?;
+            let baseName = resource
+                .path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or_default()
+                .trim();
+            if baseName.is_empty() {
+                return None;
+            }
+            if ToolPkgArchiveParser::isDirectoryResourceMime(Some(&resource.mime)) {
+                if baseName.to_ascii_lowercase().ends_with(".zip") {
+                    Some(baseName.to_string())
+                } else {
+                    Some(format!("{baseName}.zip"))
+                }
+            } else {
+                Some(baseName.to_string())
+            }
+        };
+
+        if let Some(outputFileName) = resolveFromContainer(target) {
+            return Some(outputFileName);
+        }
+
+        let directSubpackage = self
+            .packageManager
+            .resolveToolPkgSubpackageRuntimeInternal(target);
+        if let Some(directSubpackage) = directSubpackage {
+            if let Some(outputFileName) =
+                resolveFromContainer(&directSubpackage.containerPackageName)
+            {
+                return Some(outputFileName);
+            }
+        }
+
+        let subpackages = self
+            .packageManager
+            .toolPkgSubpackageByPackageNameInternal()
+            .values()
+            .filter(|subpackage| subpackage.subpackageId.eq_ignore_ascii_case(target))
+            .cloned()
+            .collect::<Vec<_>>();
+        if subpackages.is_empty() {
+            return None;
+        }
+
+        let candidateContainers = if preferEnabledContainer {
+            let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+            let enabledContainers = distinctContainerNames(
+                subpackages
+                    .iter()
+                    .filter(|subpackage| enabledSet.contains(&subpackage.containerPackageName)),
+            );
+            if !enabledContainers.is_empty() {
+                enabledContainers
+            } else {
+                distinctContainerNames(subpackages.iter())
+            }
+        } else {
+            distinctContainerNames(subpackages.iter())
+        };
+
+        for containerName in candidateContainers {
+            if let Some(outputFileName) = resolveFromContainer(&containerName) {
+                return Some(outputFileName);
+            }
+        }
+
+        None
+    }
+
+    #[allow(non_snake_case)]
+    pub fn readToolPkgTextResource(
+        &self,
+        packageNameOrSubpackageId: &str,
+        resourcePath: &str,
+    ) -> Option<String> {
+        self.packageManager.ensureInitialized();
+        let target = packageNameOrSubpackageId.trim();
+        let normalizedPath = resourcePath
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+
+        if target.is_empty() || normalizedPath.is_empty() {
+            return None;
+        }
+
+        let toolPkgContainers = self.packageManager.toolPkgContainersInternal();
+        if let Some(containerRuntime) = toolPkgContainers.get(target).cloned() {
+            let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+            if !enabledSet.contains(&containerRuntime.packageName) {
+                return None;
+            }
+            return self
+                .packageManager
+                .readToolPkgResourceBytes(&containerRuntime, &normalizedPath)
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+        }
+
+        let directSubpackageRuntime = self
+            .packageManager
+            .resolveToolPkgSubpackageRuntimeInternal(target);
+        if let Some(directSubpackageRuntime) = directSubpackageRuntime {
+            if let Some(directContainer) = toolPkgContainers
+                .get(&directSubpackageRuntime.containerPackageName)
+                .cloned()
+            {
+                let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+                if !enabledSet.contains(&directContainer.packageName) {
+                    return None;
+                }
+                return self
+                    .packageManager
+                    .readToolPkgResourceBytes(&directContainer, &normalizedPath)
+                    .and_then(|bytes| String::from_utf8(bytes).ok());
+            }
+        }
+
+        let subpackages = self
+            .packageManager
+            .toolPkgSubpackageByPackageNameInternal()
+            .values()
+            .filter(|subpackage| subpackage.subpackageId.eq_ignore_ascii_case(target))
+            .cloned()
+            .collect::<Vec<_>>();
+        if subpackages.is_empty() {
+            return None;
+        }
+
+        let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+        let candidateContainers = distinctContainerNames(
+            subpackages
+                .iter()
+                .filter(|subpackage| enabledSet.contains(&subpackage.containerPackageName)),
+        );
+
+        for containerName in candidateContainers {
+            let Some(runtime) = toolPkgContainers.get(&containerName) else {
+                continue;
+            };
+            let text = self
+                .packageManager
+                .readToolPkgResourceBytes(runtime, &normalizedPath)
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                return Some(text);
+            }
+        }
+
+        None
+    }
+}
+
+#[allow(non_snake_case)]
+fn distinctContainerNames<'a, I>(subpackages: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a ToolPkgSubpackageRuntime>,
+{
+    let mut names = Vec::<String>::new();
+    for subpackage in subpackages {
+        if !names.contains(&subpackage.containerPackageName) {
+            names.push(subpackage.containerPackageName.clone());
+        }
+    }
+    names
 }
 
 #[allow(non_snake_case)]
@@ -146,8 +588,7 @@ fn resolveToolPkgExecutionContextKey(
 #[cfg(test)]
 mod tests {
     use super::PackageManagerToolPkgFacade;
-    use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-    use crate::core::tools::packTool::ToolPkgManager::ToolPkgManager;
+    use crate::core::tools::packTool::PackageManager::PackageManager;
     use crate::core::tools::packTool::ToolPkgParser::{
         ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType,
     };
@@ -155,8 +596,8 @@ mod tests {
     use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
     use operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot;
+    use operit_store::RuntimeStorePaths::RuntimeStorePaths;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::path::{Component, Path, PathBuf};
     use std::sync::Arc;
 
@@ -286,7 +727,7 @@ mod tests {
             "#,
         )
         .expect("toolpkg main script");
-        let mut toolPkgManager = ToolPkgManager::new();
+        let mut packageManager = PackageManager::new(RuntimeStorePaths::new(root.clone()));
         let loadResult = ToolPkgLoadResult {
             containerPackage: ToolPackage {
                 name: "inline_hook_pkg".to_string(),
@@ -301,20 +742,20 @@ mod tests {
                 ..ToolPkgContainerRuntime::default()
             },
         };
-        assert!(toolPkgManager.canRegisterToolPkg(&loadResult, &BTreeMap::new()));
-        toolPkgManager.registerToolPkg(loadResult);
+        assert!(packageManager.registerToolPkg(loadResult));
+        packageManager
+            .setEnabledPackageNames(&["inline_hook_pkg".to_string()])
+            .expect("enabled package names");
 
-        let output = PackageManagerToolPkgFacade::runToolPkgMainHook(
-            &toolPkgManager,
-            &OperitApplicationContext::new(),
-            &["inline_hook_pkg".to_string()],
-            "inline_hook_pkg",
-            "inlinePromptHook",
-            "system_prompt_compose",
-            Some("system_prompt_compose"),
-            Some("hook-id"),
-            Some(
-                r#"function(params) {
+        let output = PackageManagerToolPkgFacade::new(&packageManager)
+            .runToolPkgMainHook(
+                "inline_hook_pkg",
+                "inlinePromptHook",
+                "system_prompt_compose",
+                Some("system_prompt_compose"),
+                Some("hook-id"),
+                Some(
+                    r#"function(params) {
                     return {
                         systemPrompt: [
                             params.eventName,
@@ -325,14 +766,14 @@ mod tests {
                         ].join('|')
                     };
                 }"#,
-            ),
-            json!({ "chatId": "chat-1" }),
-            None,
-            Some("sandbox"),
-            None,
-        )
-        .expect("toolpkg main hook")
-        .expect("hook result");
+                ),
+                json!({ "chatId": "chat-1" }),
+                None,
+                Some("sandbox"),
+                None,
+            )
+            .expect("toolpkg main hook")
+            .expect("hook result");
 
         assert_eq!(
             output,

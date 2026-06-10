@@ -1,3 +1,11 @@
 // ignore_for_file: file_names
 
-export 'WebVisitBridgeNative.dart' if (dart.library.html) 'WebVisitBridgeWeb.dart';
+import '../bridge/RuntimeHostBridge.dart';
+
+class WebVisitBridge {
+  const WebVisitBridge();
+
+  void Function() registerHandler(WebVisitRequestHandler handler) {
+    return RuntimeHostBridge.registerWebVisitHandler(handler);
+  }
+}

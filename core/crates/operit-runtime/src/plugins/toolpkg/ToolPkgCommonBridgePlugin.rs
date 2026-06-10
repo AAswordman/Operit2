@@ -25,12 +25,9 @@ impl OperitPlugin for ToolPkgCommonBridgePlugin {
         crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::register();
         crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::register();
         let manager = toolPkgPackageManager();
-        manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .addToolPkgRuntimeChangeListener(Arc::new(|activeContainers| {
-                syncToolPkgRegistrations(activeContainers);
-            }));
+        manager.addToolPkgRuntimeChangeListener(Arc::new(|activeContainers| {
+            syncToolPkgRegistrations(activeContainers);
+        }));
     }
 }
 

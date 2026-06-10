@@ -494,13 +494,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sync Operit2 plugin package sources.")
     parser.add_argument(
         "--source",
-        choices=("buildin", "examples", "all"),
+        choices=("buildin", "external", "examples", "all"),
         default="all",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--buildin-output",
         default=str(repo_root / "core" / "crates" / "operit-runtime" / "assets" / "plugins" / "buildin"),
+    )
+    parser.add_argument(
+        "--external-output",
+        default=str(repo_root / "core" / "crates" / "operit-runtime" / "assets" / "plugins" / "external"),
     )
     parser.add_argument(
         "--examples-output",
@@ -516,6 +520,8 @@ def main() -> int:
     jobs: list[tuple[Path, Path]] = []
     if args.source in {"buildin", "all"}:
         jobs.append((plugins_root / "buildin", Path(args.buildin_output)))
+    if args.source in {"external", "all"}:
+        jobs.append((plugins_root / "external", Path(args.external_output)))
     if args.source in {"examples", "all"}:
         jobs.append((plugins_root / "examples", Path(args.examples_output)))
 

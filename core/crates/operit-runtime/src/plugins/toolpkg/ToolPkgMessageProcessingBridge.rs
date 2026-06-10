@@ -8,6 +8,7 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingController, MessageProcessingExecution, MessageProcessingHookParams,
     MessageProcessingPlugin, MessageProcessingPluginRegistry,
 };
+use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
@@ -71,8 +72,10 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             .expect("toolpkg message processing hook mutex poisoned")
             .clone();
         let probeEventPayload = buildMessageEventPayload(params, true);
+        let manager = toolPkgPackageManager();
         for hook in hooks {
-            let probeDecoded = runMessageProcessingHook(&hook, probeEventPayload.clone(), None);
+            let probeDecoded =
+                runMessageProcessingHook(&manager, &hook, probeEventPayload.clone(), None);
             let probeResult = parseMessageProcessingResult(probeDecoded.as_ref());
             let Some(probeResult) = probeResult else {
                 continue;
@@ -98,10 +101,12 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             let stream_for_intermediate = stream.clone();
             let stream_for_final = stream.clone();
             let hook_for_worker = hook.clone();
+            let manager_for_worker = manager.clone();
             thread::spawn(move || {
                 let emittedAny = Arc::new(AtomicBool::new(false));
                 let emittedAnyForIntermediate = emittedAny.clone();
                 let decoded = runMessageProcessingHook(
+                    &manager_for_worker,
                     &hook_for_worker,
                     eventPayload,
                     Some(Arc::new(move |raw| {
@@ -162,13 +167,12 @@ fn buildMessageEventPayload(params: &MessageProcessingHookParams, probeOnly: boo
 
 #[allow(non_snake_case)]
 fn runMessageProcessingHook(
+    manager: &PackageManager,
     hook: &ToolPkgMessageProcessingHookRegistration,
     eventPayload: Value,
     onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
 ) -> Option<Value> {
-    toolPkgPackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
+    manager
         .runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,

@@ -20,6 +20,16 @@ String toolPkgContainerDisplayName(core_proxy.ToolPkgContainerRuntime plugin) {
   return plugin.packageName;
 }
 
+String bundledExternalPackageDisplayName(
+  core_proxy.BundledExternalPackageCandidate package,
+) {
+  final displayName = localizedText(package.displayName).trim();
+  if (displayName.isNotEmpty) {
+    return displayName;
+  }
+  return package.packageName;
+}
+
 String toolPkgSubpackageDisplayName(
   core_proxy.ToolPkgSubpackageRuntime subpackage,
 ) {

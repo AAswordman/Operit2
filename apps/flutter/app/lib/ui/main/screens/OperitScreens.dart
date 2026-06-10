@@ -1,10 +1,14 @@
 // ignore_for_file: file_names
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
+import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../features/chat/screens/AIChatScreen.dart';
 import '../../features/packages/components/PackageTab.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
+import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../../features/settings/screens/SettingsScreen.dart';
@@ -122,5 +126,103 @@ class SettingsScreenRoute extends OperitScreen {
   @override
   Widget build(BuildContext context) {
     return SettingsScreen(initialCategory: category);
+  }
+}
+
+class ToolPkgComposeDslScreenRoute extends OperitScreen {
+  const ToolPkgComposeDslScreenRoute({
+    required this.containerPackageName,
+    required this.uiModuleId,
+    super.title,
+    super.keepAlive = false,
+  }) : super(routeTypeName: 'ToolPkgComposeDsl');
+
+  final String containerPackageName;
+  final String uiModuleId;
+
+  @override
+  String? stableScreenKey() {
+    return 'ToolPkgComposeDsl:$containerPackageName:$uiModuleId';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolPkgComposeDslRouteHost(
+      containerPackageName: containerPackageName,
+      uiModuleId: uiModuleId,
+    );
+  }
+}
+
+class _ToolPkgComposeDslRouteHost extends StatefulWidget {
+  const _ToolPkgComposeDslRouteHost({
+    required this.containerPackageName,
+    required this.uiModuleId,
+  });
+
+  final String containerPackageName;
+  final String uiModuleId;
+
+  @override
+  State<_ToolPkgComposeDslRouteHost> createState() =>
+      _ToolPkgComposeDslRouteHostState();
+}
+
+class _ToolPkgComposeDslRouteHostState
+    extends State<_ToolPkgComposeDslRouteHost> {
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  );
+
+  late Future<core_proxy.ToolPkgContainerRuntime> _pluginFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _pluginFuture = _loadPlugin();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ToolPkgComposeDslRouteHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.containerPackageName != widget.containerPackageName ||
+        oldWidget.uiModuleId != widget.uiModuleId) {
+      _pluginFuture = _loadPlugin();
+    }
+  }
+
+  Future<core_proxy.ToolPkgContainerRuntime> _loadPlugin() async {
+    final plugin = await _clients.permissionsPackToolPackageManager
+        .getToolPkgContainerRuntime(
+          containerPackageName: widget.containerPackageName,
+        );
+    if (plugin == null) {
+      throw StateError(
+        'ToolPkg container not found: ${widget.containerPackageName}',
+      );
+    }
+    return plugin;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<core_proxy.ToolPkgContainerRuntime>(
+      future: _pluginFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text(snapshot.error.toString()));
+        }
+        final plugin = snapshot.data;
+        if (plugin == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ToolPkgUiLauncherScreen(
+          clients: _clients,
+          plugin: plugin,
+          initialRouteId: widget.uiModuleId,
+          showLauncherChrome: false,
+        );
+      },
+    );
   }
 }

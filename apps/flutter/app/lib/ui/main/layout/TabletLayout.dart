@@ -15,6 +15,7 @@ class TabletLayout extends StatefulWidget {
     super.key,
     required this.content,
     required this.navigationEntries,
+    required this.pluginSidebarEntries,
     required this.selectedRouteId,
     required this.isTabletSidebarExpanded,
     required this.tabletSidebarWidth,
@@ -25,6 +26,7 @@ class TabletLayout extends StatefulWidget {
 
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
+  final List<NavigationEntrySpec> pluginSidebarEntries;
   final String selectedRouteId;
   final bool isTabletSidebarExpanded;
   final double tabletSidebarWidth;
@@ -131,6 +133,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                   ? DrawerContent(
                       key: const ValueKey<String>('expandedSidebarContent'),
                       navigationEntries: widget.navigationEntries,
+                      pluginEntries: widget.pluginSidebarEntries,
                       selectedRouteId: widget.selectedRouteId,
                       appearance: appearance,
                       onNavigationEntrySelected:
@@ -140,6 +143,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                   : CollapsedDrawerContent(
                       key: const ValueKey<String>('collapsedSidebarContent'),
                       navigationEntries: widget.navigationEntries,
+                      pluginEntries: widget.pluginSidebarEntries,
                       selectedRouteId: widget.selectedRouteId,
                       appearance: appearance,
                       onNavigationEntrySelected:

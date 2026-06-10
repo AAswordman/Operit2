@@ -73,9 +73,8 @@ impl ToolPkgJsAiProviderService {
                 Value::String(self.executionChatId.clone()),
             );
         }
-        toolPkgPackageManager()
-            .lock()
-            .expect("package manager mutex poisoned")
+        let manager = toolPkgPackageManager();
+        manager
             .runToolPkgMainHook(
                 &self.provider.containerPackageName,
                 functionName,

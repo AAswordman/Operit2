@@ -12,8 +12,9 @@ class PackageListItem extends StatelessWidget {
     required this.subtitle,
     required this.metadata,
     required this.enabled,
-    required this.onTap,
     required this.onEnabledChanged,
+    this.onTap,
+    this.showEnabledSwitch = true,
     this.trailingActions = const <Widget>[],
   });
 
@@ -22,8 +23,9 @@ class PackageListItem extends StatelessWidget {
   final String subtitle;
   final List<String> metadata;
   final bool enabled;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final ValueChanged<bool> onEnabledChanged;
+  final bool showEnabledSwitch;
   final List<Widget> trailingActions;
 
   @override
@@ -111,8 +113,10 @@ class PackageListItem extends StatelessWidget {
                       children: trailingActions,
                     ),
                   ],
-                  const SizedBox(width: 8),
-                  Switch(value: enabled, onChanged: onEnabledChanged),
+                  if (showEnabledSwitch) ...<Widget>[
+                    const SizedBox(width: 8),
+                    Switch(value: enabled, onChanged: onEnabledChanged),
+                  ],
                 ],
               ),
             ),

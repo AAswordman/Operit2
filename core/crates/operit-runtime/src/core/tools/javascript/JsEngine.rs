@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use operit_store::RuntimeStorePaths::default_data_dir;
 #[cfg(target_arch = "wasm32")]
@@ -38,15 +39,27 @@ use crate::core::tools::javascript::JsToolPkgRegistration::{
 };
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::EnvPreferences::EnvPreferences;
+use crate::util::stream::Stream::Stream;
 use crate::util::AppLogger::AppLogger;
 use crate::util::LocaleUtils::LocaleUtils;
 
 const TAG: &str = "OperitQuickJsEngine";
+const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;
 type ToolPkgTextResources = BTreeMap<String, String>;
+
+#[allow(non_snake_case)]
+pub trait JsExecutionListener {
+    fn onIntermediateResult(&self, callId: &str, result: &str);
+    fn onFailed(&self, callId: &str, reason: &str);
+}
+
+type JsExecutionListenerRef = Arc<dyn JsExecutionListener + Send + Sync>;
 
 thread_local! {
     static CURRENT_TOOL_HANDLER: RefCell<Option<AIToolHandler>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
+    static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
+    static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_TOOLPKG_TEXT_RESOURCES: RefCell<Option<Arc<ToolPkgTextResources>>> = RefCell::new(None);
     #[cfg(target_arch = "wasm32")]
@@ -59,6 +72,16 @@ static NEXT_WASM_JS_ENGINE_STATE_ID: AtomicUsize = AtomicUsize::new(1);
 #[derive(Clone)]
 pub struct JsEngine {
     worker: JsEngineWorker,
+}
+
+#[derive(Clone)]
+#[allow(non_snake_case)]
+pub struct JsComposeDslActionEventStream {
+    engine: JsEngine,
+    actionId: String,
+    payload: Option<Value>,
+    runtimeOptions: BTreeMap<String, Value>,
+    envOverrides: BTreeMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -79,7 +102,11 @@ enum JsEngineRequest {
         script: String,
         functionName: String,
         params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        executionListener: Option<JsExecutionListenerRef>,
+        timeoutSec: u64,
         response: mpsc::Sender<Option<String>>,
     },
     ExecuteToolPkgMainRegistration {
@@ -129,15 +156,24 @@ impl JsEngine {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
     ) -> Option<String> {
+        let safeTimeoutSec = timeoutSec.max(1);
         #[cfg(target_arch = "wasm32")]
         {
             return self.worker.executeScriptFunction(
                 script,
                 functionName,
                 params,
+                envOverrides,
                 onIntermediateResult,
+                dispatchIntermediateOnMain,
+                safeTimeoutSec,
+                executionListener,
             );
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -147,7 +183,11 @@ impl JsEngine {
                 script: script.to_string(),
                 functionName: functionName.to_string(),
                 params: params.clone(),
+                envOverrides: envOverrides.clone(),
                 onIntermediateResult,
+                dispatchIntermediateOnMain,
+                executionListener: executionListener.clone(),
+                timeoutSec: safeTimeoutSec,
                 response,
             };
             if let Err(error) = self.worker.sender.send(request) {
@@ -161,22 +201,37 @@ impl JsEngine {
                         error
                     ),
                 );
+                if let Some(listener) = executionListener.as_ref() {
+                    listener.onFailed("", &error.to_string());
+                }
                 return Some(buildJsExecutionErrorPayload(&error.to_string()));
             }
-            match receiver.recv() {
+            match receiver.recv_timeout(Duration::from_secs(safeTimeoutSec)) {
                 Ok(value) => value,
-                Err(error) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let reason =
+                        format!("Script execution timed out after {safeTimeoutSec} seconds");
+                    if let Some(listener) = executionListener.as_ref() {
+                        listener.onFailed("", &reason);
+                    }
+                    Some(buildJsExecutionErrorPayload(&reason))
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     AppLogger::e(
                         TAG,
                         &format!(
-                            "response-recv-error function={} scriptLen={} params={} error={}",
+                            "response-recv-error function={} scriptLen={} params={} error=disconnected",
                             functionName,
                             script.len(),
                             summarizeParams(params),
-                            error
                         ),
                     );
-                    Some(buildJsExecutionErrorPayload(&error.to_string()))
+                    if let Some(listener) = executionListener.as_ref() {
+                        listener.onFailed("", "JS execution worker disconnected");
+                    }
+                    Some(buildJsExecutionErrorPayload(
+                        "JS execution worker disconnected",
+                    ))
                 }
             }
         }
@@ -261,11 +316,16 @@ impl JsEngine {
         &self,
         script: &str,
         runtimeOptions: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
     ) -> Option<String> {
         self.executeScriptFunction(
             &buildComposeDslRuntimeWrappedScript(script),
             "__operit_render_compose_dsl",
             runtimeOptions,
+            envOverrides,
+            None,
+            true,
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
             None,
         )
     }
@@ -276,6 +336,7 @@ impl JsEngine {
         actionId: &str,
         payload: Option<Value>,
         runtimeOptions: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Option<String> {
         let normalizedActionId = actionId.trim();
@@ -296,7 +357,11 @@ impl JsEngine {
             "",
             "__operit_dispatch_compose_dsl_action",
             &params,
+            envOverrides,
             onIntermediateResult,
+            true,
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+            None,
         )
     }
 
@@ -304,9 +369,162 @@ impl JsEngine {
     pub fn rerenderComposeDslTree(
         &self,
         runtimeOptions: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
     ) -> Option<String> {
-        self.executeScriptFunction("", "__operit_rerender_compose_dsl", runtimeOptions, None)
+        self.executeScriptFunction(
+            "",
+            "__operit_rerender_compose_dsl",
+            runtimeOptions,
+            envOverrides,
+            None,
+            true,
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+            None,
+        )
     }
+
+    #[allow(non_snake_case)]
+    pub fn dispatchComposeDslActionAsync(
+        &self,
+        actionId: &str,
+        payload: Option<Value>,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+    ) -> JsComposeDslActionEventStream {
+        JsComposeDslActionEventStream {
+            engine: self.clone(),
+            actionId: actionId.to_string(),
+            payload,
+            runtimeOptions,
+            envOverrides,
+        }
+    }
+}
+
+impl Stream for JsComposeDslActionEventStream {
+    type Item = String;
+
+    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let engine = self.engine.clone();
+            let actionId = self.actionId.clone();
+            let payload = self.payload.clone();
+            let runtimeOptions = self.runtimeOptions.clone();
+            let envOverrides = self.envOverrides.clone();
+            let (sender, receiver) = mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                let intermediateSender = sender.clone();
+                runComposeDslActionDispatch(
+                    engine,
+                    actionId,
+                    payload,
+                    runtimeOptions,
+                    envOverrides,
+                    Arc::new(move |event| {
+                        let _ = intermediateSender.send(event);
+                    }),
+                    move |event| {
+                        let _ = sender.send(event);
+                    },
+                );
+            });
+            for event in receiver {
+                collector(event);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let engine = self.engine.clone();
+            let actionId = self.actionId.clone();
+            let payload = self.payload.clone();
+            let runtimeOptions = self.runtimeOptions.clone();
+            let envOverrides = self.envOverrides.clone();
+            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let intermediateEventsForCallback = intermediateEvents.clone();
+            let flushedIntermediateEvents = Arc::new(std::sync::Mutex::new(false));
+            let flushedIntermediateEventsForEmit = flushedIntermediateEvents.clone();
+            runComposeDslActionDispatch(
+                engine,
+                actionId,
+                payload,
+                runtimeOptions,
+                envOverrides,
+                Arc::new(move |event| {
+                    if let Ok(mut values) = intermediateEventsForCallback.lock() {
+                        values.push(event);
+                    }
+                }),
+                |event| {
+                    if let Ok(mut flushed) = flushedIntermediateEventsForEmit.lock() {
+                        if !*flushed {
+                            if let Ok(values) = intermediateEvents.lock() {
+                                for intermediate in values.iter() {
+                                    collector(intermediate.clone());
+                                }
+                            }
+                            *flushed = true;
+                        }
+                    }
+                    collector(event);
+                },
+            );
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn runComposeDslActionDispatch(
+    engine: JsEngine,
+    actionId: String,
+    payload: Option<Value>,
+    runtimeOptions: BTreeMap<String, Value>,
+    envOverrides: BTreeMap<String, String>,
+    emitIntermediate: Arc<dyn Fn(String) + Send + Sync>,
+    mut emit: impl FnMut(String),
+) {
+    let normalizedActionId = actionId.trim().to_string();
+    if normalizedActionId.is_empty() {
+        emit(composeDslActionEvent(
+            "error",
+            Some("compose action id is required"),
+            None,
+        ));
+        emit(composeDslActionEvent("complete", None, None));
+        return;
+    }
+    let result = engine.executeComposeDslAction(
+        &normalizedActionId,
+        payload,
+        &runtimeOptions,
+        &envOverrides,
+        Some(Arc::new(move |intermediate| {
+            emitIntermediate(composeDslActionEvent(
+                "intermediate",
+                None,
+                Some(&intermediate),
+            ));
+        })),
+    );
+    if let Some(error) = extractJsExecutionErrorMessage(result.as_deref()) {
+        emit(composeDslActionEvent("error", Some(&error), None));
+    } else if let Some(result) = result {
+        emit(composeDslActionEvent("final", None, Some(&result)));
+    }
+    emit(composeDslActionEvent("complete", None, None));
+}
+
+#[allow(non_snake_case)]
+fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>) -> String {
+    let mut object = serde_json::Map::new();
+    object.insert("phase".to_string(), Value::String(phase.to_string()));
+    if let Some(error) = error {
+        object.insert("error".to_string(), Value::String(error.to_string()));
+    }
+    if let Some(result) = result {
+        object.insert("result".to_string(), Value::String(result.to_string()));
+    }
+    Value::Object(object).to_string()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -324,14 +542,22 @@ impl JsEngineWorker {
                             script,
                             functionName,
                             params,
+                            envOverrides,
                             onIntermediateResult,
+                            dispatchIntermediateOnMain,
+                            executionListener,
+                            timeoutSec,
                             response,
                         } => {
                             let output = state.executeScriptFunctionOnCurrentThread(
                                 &script,
                                 &functionName,
                                 &params,
+                                &envOverrides,
                                 onIntermediateResult,
+                                dispatchIntermediateOnMain,
+                                timeoutSec,
+                                executionListener,
                             );
                             if let Err(error) = response.send(output) {
                                 AppLogger::e(
@@ -393,7 +619,11 @@ impl JsEngineWorker {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
     ) -> Option<String> {
         WASM_JS_ENGINE_STATES.with(|states| {
             states
@@ -404,7 +634,11 @@ impl JsEngineWorker {
                     script,
                     functionName,
                     params,
+                    envOverrides,
                     onIntermediateResult,
+                    dispatchIntermediateOnMain,
+                    timeoutSec,
+                    executionListener,
                 )
         })
     }
@@ -471,7 +705,11 @@ impl JsEngineState {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        _dispatchIntermediateOnMain: bool,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
     ) -> Option<String> {
         if let Err(error) = self.initJavaScriptEnvironment() {
             return Some(buildJsExecutionErrorPayload(&error));
@@ -481,6 +719,12 @@ impl JsEngineState {
         });
         CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
             *callback.borrow_mut() = onIntermediateResult;
+        });
+        CURRENT_EXECUTION_LISTENER.with(|listener| {
+            *listener.borrow_mut() = executionListener;
+        });
+        CURRENT_ENV_OVERRIDES.with(|overrides| {
+            *overrides.borrow_mut() = envOverrides.clone();
         });
 
         let mut effectiveParams = params.clone();
@@ -498,10 +742,7 @@ impl JsEngineState {
                     return Some(buildJsExecutionErrorPayload(&error));
                 }
             };
-            effectiveParams.insert(
-                "__operit_package_lang".to_string(),
-                Value::String(language),
-            );
+            effectiveParams.insert("__operit_package_lang".to_string(), Value::String(language));
         }
 
         let paramsJson = match serde_json::to_string(&effectiveParams) {
@@ -520,10 +761,11 @@ impl JsEngineState {
         );
         let callIdJson =
             serde_json::to_string(&callId).unwrap_or_else(|_| "\"operit_call\"".to_string());
+        let safeTimeoutSec = timeoutSec.max(1);
 
         clearNativeExecutionSession(&callId);
         let executionScript = format!(
-            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
+            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {safeTimeoutSec}, 10000);"
         );
         let output = match self.evalJavaScriptVoid(&executionScript) {
             Ok(_) => {
@@ -571,10 +813,7 @@ impl JsEngineState {
             .to_string();
         if explicitLanguage.is_empty() {
             let language = self.resolveCurrentPackageLanguage()?;
-            registrationParams.insert(
-                "__operit_package_lang".to_string(),
-                Value::String(language),
-            );
+            registrationParams.insert("__operit_package_lang".to_string(), Value::String(language));
         }
         let paramsJson =
             serde_json::to_string(&registrationParams).map_err(|error| error.to_string())?;
@@ -700,10 +939,11 @@ impl JsEngineState {
                     .set("__operitNativeCallTool", nativeCallTool)
                     .map_err(|error| error.to_string())?;
 
-                let sendIntermediateResult = QuickJsFunction::new(ctx.clone(), |result: String| {
-                    nativeSendIntermediateResultString(result)
-                })
-                .map_err(|error| error.to_string())?;
+                let sendIntermediateResult =
+                    QuickJsFunction::new(ctx.clone(), |callId: String, result: String| {
+                        nativeSendIntermediateResultString(callId, result)
+                    })
+                    .map_err(|error| error.to_string())?;
                 globals
                     .set("__operitSendIntermediateResult", sendIntermediateResult)
                     .map_err(|error| error.to_string())?;
@@ -722,6 +962,37 @@ impl JsEngineState {
                     .set(
                         "__operitNativeReadToolPkgTextResource",
                         readToolPkgTextResource,
+                    )
+                    .map_err(|error| error.to_string())?;
+
+                let readToolPkgResource = QuickJsFunction::new(
+                    ctx.clone(),
+                    |packageNameOrSubpackageId: String,
+                     resourceKey: String,
+                     outputFileName: String,
+                     internal: String| {
+                        nativeReadToolPkgResourceStrings(
+                            packageNameOrSubpackageId,
+                            resourceKey,
+                            outputFileName,
+                            internal,
+                        )
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeReadToolPkgResource", readToolPkgResource)
+                    .map_err(|error| error.to_string())?;
+
+                let composeWebViewControllerCommand =
+                    QuickJsFunction::new(ctx.clone(), |payloadJson: String| {
+                        nativeComposeWebViewControllerCommandString(payloadJson)
+                    })
+                    .map_err(|error| error.to_string())?;
+                globals
+                    .set(
+                        "__operitNativeComposeWebViewControllerCommand",
+                        composeWebViewControllerCommand,
                     )
                     .map_err(|error| error.to_string())?;
 
@@ -899,7 +1170,10 @@ impl JsEngineState {
             let sendIntermediateResult = self
                 .context
                 .wrap_callback(|_, _, args| {
-                    nativeSendIntermediateResultString(wasmQuickJsArgString(args, 0));
+                    nativeSendIntermediateResultString(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                    );
                     Ok(WasmQuickJsValue::Undefined)
                 })
                 .map_err(|error| error.to_string())?;
@@ -924,6 +1198,40 @@ impl JsEngineState {
                 .set_property(
                     "__operitNativeReadToolPkgTextResource",
                     readToolPkgTextResource,
+                )
+                .map_err(|error| error.to_string())?;
+
+            let readToolPkgResource = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    let packageNameOrSubpackageId = wasmQuickJsArgString(args, 0);
+                    let resourceKey = wasmQuickJsArgString(args, 1);
+                    let outputFileName = wasmQuickJsArgString(args, 2);
+                    let internal = wasmQuickJsArgString(args, 3);
+                    Ok(WasmQuickJsValue::String(nativeReadToolPkgResourceStrings(
+                        packageNameOrSubpackageId,
+                        resourceKey,
+                        outputFileName,
+                        internal,
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeReadToolPkgResource", readToolPkgResource)
+                .map_err(|error| error.to_string())?;
+
+            let composeWebViewControllerCommand = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(
+                        nativeComposeWebViewControllerCommandString(wasmQuickJsArgString(args, 0)),
+                    ))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property(
+                    "__operitNativeComposeWebViewControllerCommand",
+                    composeWebViewControllerCommand,
                 )
                 .map_err(|error| error.to_string())?;
 
@@ -1321,7 +1629,16 @@ fn nativeInvokeToolPkgIpcStrings(
         Value::String(callerContextKey.trim().to_string()),
     );
 
-    let result = engine.executeScriptFunction(&script, dispatchFunctionName, &params, None);
+    let result = engine.executeScriptFunction(
+        &script,
+        dispatchFunctionName,
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+        None,
+    );
     if let Some(errorMessage) = extractJsExecutionErrorMessage(result.as_deref()) {
         return buildToolPkgIpcFailure(&errorMessage);
     }
@@ -1339,6 +1656,12 @@ fn clearThreadLocalCallState() {
     });
     CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
         *callback.borrow_mut() = None;
+    });
+    CURRENT_EXECUTION_LISTENER.with(|listener| {
+        *listener.borrow_mut() = None;
+    });
+    CURRENT_ENV_OVERRIDES.with(|overrides| {
+        overrides.borrow_mut().clear();
     });
 }
 
@@ -1466,7 +1789,12 @@ fn nativeCallToolStrings(toolType: String, toolName: String, paramsJson: String)
 }
 
 #[allow(non_snake_case)]
-fn nativeSendIntermediateResultString(result: String) {
+fn nativeSendIntermediateResultString(callId: String, result: String) {
+    CURRENT_EXECUTION_LISTENER.with(|listener| {
+        if let Some(listener) = listener.borrow().as_ref() {
+            listener.onIntermediateResult(&callId, &result);
+        }
+    });
     CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
         if let Some(callback) = callback.borrow().as_ref() {
             callback(result);
@@ -1480,13 +1808,10 @@ fn nativeReadToolPkgTextResourceStrings(
     resourcePath: String,
 ) -> String {
     let resourceKey = normalizeToolPkgTextResourcePath(&resourcePath);
-    if let Some(text) = CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-        resources
-            .borrow()
-            .as_ref()
-            .and_then(|map| map.get(&resourceKey).cloned())
-    }) {
-        return text;
+    if let Some(textResources) =
+        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| resources.borrow().clone())
+    {
+        return textResources.get(&resourceKey).cloned().unwrap_or_default();
     }
     CURRENT_TOOL_HANDLER.with(|handler| {
         let borrowed = handler.borrow();
@@ -1500,6 +1825,67 @@ fn nativeReadToolPkgTextResourceStrings(
         guard
             .readToolPkgTextResource(&packageNameOrSubpackageId, &resourcePath)
             .unwrap_or_default()
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeReadToolPkgResourceStrings(
+    packageNameOrSubpackageId: String,
+    resourceKey: String,
+    outputFileName: String,
+    internal: String,
+) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return String::new();
+        };
+        let target = packageNameOrSubpackageId.trim().to_string();
+        let key = resourceKey.trim().to_string();
+        if target.is_empty() || key.is_empty() {
+            return String::new();
+        }
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        let trimmedOutputFileName = outputFileName.trim();
+        let fileName = if trimmedOutputFileName.is_empty() {
+            guard
+                .getToolPkgResourceOutputFileName(&target, &key, true)
+                .unwrap_or_else(|| format!("{key}.bin"))
+        } else {
+            trimmedOutputFileName.to_string()
+        };
+        let safeName = toolPkgResourceOutputFileName(&key, &fileName);
+        let outputDir = toolPkgResourceOutputDir(parseBooleanFlag(&internal));
+        if std::fs::create_dir_all(&outputDir).is_err() {
+            return String::new();
+        }
+        let outputFile = outputDir.join(safeName);
+        let copied = guard.copyToolPkgResourceToFile(&target, &key, &outputFile)
+            || guard.copyToolPkgResourceToFileBySubpackageId(&target, &key, &outputFile, true);
+        if copied {
+            outputFile.to_string_lossy().to_string()
+        } else {
+            String::new()
+        }
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeComposeWebViewControllerCommandString(payloadJson: String) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return buildJsExecutionErrorPayload("NativeInterface tool handler is unavailable");
+        };
+        let context = toolHandler.getContext();
+        let Some(host) = context.composeDslWebViewHost.as_ref() else {
+            return buildJsExecutionErrorPayload("ComposeDslWebViewHost is not registered");
+        };
+        host.handleControllerCommand(&payloadJson)
+            .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error.to_string()))
     })
 }
 
@@ -1520,6 +1906,11 @@ fn nativeSetCallResultStrings(callId: String, result: String) {
 
 #[allow(non_snake_case)]
 fn nativeSetCallErrorStrings(callId: String, error: String) {
+    CURRENT_EXECUTION_LISTENER.with(|listener| {
+        if let Some(listener) = listener.borrow().as_ref() {
+            listener.onFailed(&callId, &error);
+        }
+    });
     CURRENT_CALL_RESULTS.with(|results| {
         results.borrow_mut().insert(callId, error);
     });
@@ -1527,6 +1918,15 @@ fn nativeSetCallErrorStrings(callId: String, error: String) {
 
 #[allow(non_snake_case)]
 fn nativeGetEnvForCallStrings(key: String) -> String {
+    if let Some(value) = CURRENT_ENV_OVERRIDES.with(|overrides| {
+        overrides
+            .borrow()
+            .get(key.trim())
+            .filter(|value| !value.is_empty())
+            .cloned()
+    }) {
+        return value;
+    }
     let value = EnvPreferences::getInstance()
         .getEnv(&key)
         .ok()
@@ -1574,6 +1974,38 @@ fn nativeImageProcessingStrings(
             "error": error
         })
         .to_string(),
+    }
+}
+
+#[allow(non_snake_case)]
+fn parseBooleanFlag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "y" | "on"
+    )
+}
+
+#[allow(non_snake_case)]
+fn toolPkgResourceOutputFileName(resourceKey: &str, outputFileName: &str) -> String {
+    let safeName = outputFileName
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if safeName.is_empty() {
+        format!("{resourceKey}.bin")
+    } else {
+        safeName.to_string()
+    }
+}
+
+#[allow(non_snake_case)]
+fn toolPkgResourceOutputDir(internal: bool) -> std::path::PathBuf {
+    let root = default_data_dir().join("toolpkg_resource_exports");
+    if internal {
+        root.join("internal")
+    } else {
+        root
     }
 }
 

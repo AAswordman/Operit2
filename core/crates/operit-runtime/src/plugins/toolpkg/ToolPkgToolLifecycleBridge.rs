@@ -118,21 +118,19 @@ fn deliver(eventName: &str, eventPayload: Value) {
         .lock()
         .expect("toolpkg tool lifecycle hook mutex poisoned")
         .clone();
+    let manager = toolPkgPackageManager();
     for hook in snapshot {
-        let _ = toolPkgPackageManager()
-            .lock()
-            .expect("package manager mutex poisoned")
-            .runToolPkgMainHook(
-                &hook.containerPackageName,
-                &hook.functionName,
-                TOOLPKG_EVENT_TOOL_LIFECYCLE,
-                Some(eventName),
-                Some(&hook.hookId),
-                hook.functionSource.as_deref(),
-                eventPayload.clone(),
-                None,
-                None,
-                None,
-            );
+        let _ = manager.runToolPkgMainHook(
+            &hook.containerPackageName,
+            &hook.functionName,
+            TOOLPKG_EVENT_TOOL_LIFECYCLE,
+            Some(eventName),
+            Some(&hook.hookId),
+            hook.functionSource.as_deref(),
+            eventPayload.clone(),
+            None,
+            None,
+            None,
+        );
     }
 }

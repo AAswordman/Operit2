@@ -3,7 +3,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::javascript::JsEngine::JsEngine;
 use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
@@ -15,7 +15,7 @@ impl ToolPkgLoader {
     #[allow(non_snake_case)]
     pub fn loadToolPkgFromExternalFile<FParseJsPackage>(
         file: &Path,
-        context: &OperitApplicationContext,
+        jsEngine: &JsEngine,
         parseJsPackage: FParseJsPackage,
     ) -> Result<ToolPkgLoadResult, String>
     where
@@ -43,7 +43,7 @@ impl ToolPkgLoader {
                     mainScriptText,
                     toolPkgId,
                     mainScriptPath,
-                    context,
+                    jsEngine,
                     textResources.clone(),
                 )
             },
@@ -57,7 +57,7 @@ impl ToolPkgLoader {
     pub fn loadToolPkgFromBuiltInAsset<FParseJsPackage>(
         assetName: &str,
         bytes: &'static [u8],
-        context: &OperitApplicationContext,
+        jsEngine: &JsEngine,
         parseJsPackage: FParseJsPackage,
     ) -> Result<ToolPkgLoadResult, String>
     where
@@ -85,7 +85,7 @@ impl ToolPkgLoader {
                     mainScriptText,
                     toolPkgId,
                     mainScriptPath,
-                    context,
+                    jsEngine,
                     textResources.clone(),
                 )
             },
@@ -99,7 +99,7 @@ impl ToolPkgLoader {
     pub fn loadToolPkgFromBuiltInAssetFile<FParseJsPackage>(
         assetName: &str,
         file: &Path,
-        context: &OperitApplicationContext,
+        jsEngine: &JsEngine,
         parseJsPackage: FParseJsPackage,
     ) -> Result<ToolPkgLoadResult, String>
     where
@@ -127,7 +127,7 @@ impl ToolPkgLoader {
                     mainScriptText,
                     toolPkgId,
                     mainScriptPath,
-                    context,
+                    jsEngine,
                     textResources.clone(),
                 )
             },
@@ -143,18 +143,14 @@ fn parseMainRegistration(
     mainScriptText: &str,
     toolPkgId: &str,
     mainScriptPath: &str,
-    context: &OperitApplicationContext,
+    jsEngine: &JsEngine,
     textResources: Arc<std::collections::BTreeMap<String, String>>,
 ) -> ToolPkgMainRegistrationParseResult {
-    let jsEngine =
-        crate::core::tools::javascript::JsEngine::JsEngine::newToolPkgRegistrationEngineWithContext(
-            context.clone(),
-        );
     crate::core::tools::packTool::ToolPkgMainRegistrationScriptParser::ToolPkgMainRegistrationScriptParser::parseWithTextResources(
         mainScriptText,
         toolPkgId,
         mainScriptPath,
-        &jsEngine,
+        jsEngine,
         Some(textResources),
     )
 }

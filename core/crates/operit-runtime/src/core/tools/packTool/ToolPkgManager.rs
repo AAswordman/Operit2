@@ -15,6 +15,7 @@ pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>)
 
 #[derive(Clone)]
 pub struct ToolPkgManager {
+    context: OperitApplicationContext,
     containers: BTreeMap<String, ToolPkgContainerRuntime>,
     subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
@@ -23,13 +24,14 @@ pub struct ToolPkgManager {
 
 impl Default for ToolPkgManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(OperitApplicationContext::new())
     }
 }
 
 impl ToolPkgManager {
-    pub fn new() -> Self {
+    pub fn new(context: OperitApplicationContext) -> Self {
         Self {
+            context,
             containers: BTreeMap::new(),
             subpackageByPackageName: BTreeMap::new(),
             runtimeChangeListeners: Arc::new(Mutex::new(Vec::new())),
@@ -53,6 +55,20 @@ impl ToolPkgManager {
         let mut runtimes = self.containers.values().cloned().collect::<Vec<_>>();
         runtimes.sort_by(|left, right| left.packageName.cmp(&right.packageName));
         runtimes
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn getToolPkgContainerRuntimeMap(
+        &self,
+    ) -> BTreeMap<String, ToolPkgContainerRuntime> {
+        self.containers.clone()
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn getToolPkgSubpackageRuntimeMap(
+        &self,
+    ) -> BTreeMap<String, ToolPkgSubpackageRuntime> {
+        self.subpackageByPackageName.clone()
     }
 
     #[allow(non_snake_case)]
@@ -234,12 +250,11 @@ impl ToolPkgManager {
     }
 
     #[allow(non_snake_case)]
-    pub(crate) fn getToolPkgExecutionEngine(
-        &self,
-        context: &OperitApplicationContext,
-        contextKey: &str,
-    ) -> JsEngine {
-        let normalizedKey = contextKey.trim();
+    pub(crate) fn getToolPkgExecutionEngine(&self, contextKey: &str) -> JsEngine {
+        let normalizedKey = match contextKey.trim() {
+            "" => "toolpkg_main:default",
+            value => value,
+        };
         let mut engines = self
             .toolPkgExecutionEngines
             .lock()
@@ -248,7 +263,7 @@ impl ToolPkgManager {
             return engine.clone();
         }
         let toolHandler =
-            crate::core::tools::AIToolHandler::AIToolHandler::getInstance(context.clone());
+            crate::core::tools::AIToolHandler::AIToolHandler::getInstance(self.context.clone());
         let engine = JsEngine::new(toolHandler);
         engines.insert(normalizedKey.to_string(), engine.clone());
         engine
@@ -289,10 +304,8 @@ impl ToolPkgManager {
         if normalizedPackageName.is_empty() {
             return;
         }
+        self.releaseToolPkgExecutionEngine(&format!("toolpkg_main:{normalizedPackageName}"));
         let providerPrefix = format!("toolpkg_provider:{normalizedPackageName}:");
-        let composePrefix = format!("toolpkg_compose:{normalizedPackageName}:");
-        let composeDslPrefix = format!("toolpkg_compose_dsl:{normalizedPackageName}:");
-        let xmlRenderPrefix = format!("toolpkg_xml_render:{normalizedPackageName}:");
         let keys = {
             let engines = self
                 .toolPkgExecutionEngines
@@ -300,13 +313,7 @@ impl ToolPkgManager {
                 .expect("toolpkg execution engine mutex poisoned");
             engines
                 .keys()
-                .filter(|key| {
-                    *key == &format!("toolpkg_main:{normalizedPackageName}")
-                        || key.starts_with(&providerPrefix)
-                        || key.starts_with(&composePrefix)
-                        || key.starts_with(&composeDslPrefix)
-                        || key.starts_with(&xmlRenderPrefix)
-                })
+                .filter(|key| key.starts_with(&providerPrefix))
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -340,13 +347,22 @@ impl ToolPkgManager {
         runtime: &ToolPkgContainerRuntime,
         resourcePath: &str,
     ) -> Option<String> {
+        let bytes = self.readToolPkgResourceBytes(runtime, resourcePath)?;
+        String::from_utf8(bytes).ok()
+    }
+
+    #[allow(non_snake_case)]
+    pub(crate) fn readToolPkgResourceBytes(
+        &self,
+        runtime: &ToolPkgContainerRuntime,
+        resourcePath: &str,
+    ) -> Option<Vec<u8>> {
         let normalizedResourcePath = normalizeToolPkgEntryPath(resourcePath)?;
         match runtime.sourceType {
             ToolPkgSourceType::EXTERNAL => {
                 let sourcePath = PathBuf::from(&runtime.sourcePath);
                 if sourcePath.is_dir() {
-                    let bytes = fs::read(sourcePath.join(&normalizedResourcePath)).ok()?;
-                    return String::from_utf8(bytes).ok();
+                    return fs::read(sourcePath.join(&normalizedResourcePath)).ok();
                 }
                 if sourcePath.is_file()
                     && sourcePath
@@ -357,9 +373,9 @@ impl ToolPkgManager {
                     let file = fs::File::open(sourcePath).ok()?;
                     let mut archive = zip::ZipArchive::new(file).ok()?;
                     let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
-                    let mut text = String::new();
-                    entry.read_to_string(&mut text).ok()?;
-                    return Some(text);
+                    let mut bytes = Vec::new();
+                    entry.read_to_end(&mut bytes).ok()?;
+                    return Some(bytes);
                 }
                 None
             }
@@ -368,9 +384,9 @@ impl ToolPkgManager {
                 let file = fs::File::open(sourcePath).ok()?;
                 let mut archive = zip::ZipArchive::new(file).ok()?;
                 let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
-                let mut text = String::new();
-                entry.read_to_string(&mut text).ok()?;
-                Some(text)
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).ok()?;
+                Some(bytes)
             }
         }
     }

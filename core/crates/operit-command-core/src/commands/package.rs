@@ -1,6 +1,7 @@
 use crate::commands::tool;
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::core::tools::packTool::PackageManager::BundledExternalPackageCandidate;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 
 pub fn run_package_command(
@@ -14,6 +15,10 @@ pub fn run_package_command(
     }
 
     match args[0].as_str() {
+        "help" | "-h" | "--help" => {
+            print_package_usage(output);
+            Ok(())
+        }
         "dir" => {
             let package_manager = package_manager(&context);
             let guard = package_manager
@@ -23,6 +28,7 @@ pub fn run_package_command(
             Ok(())
         }
         "list" => list_packages(context, output),
+        "more" => list_more_packages(context, output),
         "show" => {
             let name = args
                 .get(1)
@@ -39,6 +45,18 @@ pub fn run_package_command(
                 .expect("package manager mutex poisoned");
             output.push_stdout_line(guard.addPackageFileFromExternalStorage(path));
             Ok(())
+        }
+        "load" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package load <name>".to_string())?;
+            load_more_package(context, name, output)
+        }
+        "delete" | "remove" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 package delete <name>".to_string())?;
+            delete_package(context, name, output)
         }
         "enable" => set_package_enabled(context, args.get(1), true, output),
         "disable" => set_package_enabled(context, args.get(1), false, output),
@@ -85,7 +103,7 @@ fn list_packages(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let package_manager = package_manager(&context);
-    let guard = package_manager
+    let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
     let enabled = guard.getEnabledPackageNames();
@@ -98,6 +116,20 @@ fn list_packages(
             package.description.resolve(false),
             package.tools.len()
         ));
+    }
+    Ok(())
+}
+
+fn list_more_packages(
+    context: OperitApplicationContext,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    for candidate in guard.getBundledExternalPackageCandidates() {
+        output.push_stdout_line(format_bundled_external_candidate(&candidate));
     }
     Ok(())
 }
@@ -147,6 +179,35 @@ fn show_package(
     Ok(())
 }
 
+fn load_more_package(
+    context: OperitApplicationContext,
+    name: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    output.push_stdout_line(guard.importBundledExternalPackage(name));
+    Ok(())
+}
+
+fn delete_package(
+    context: OperitApplicationContext,
+    name: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&context);
+    let mut guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    if !guard.deletePackage(name) {
+        return Err(format!("Failed to delete package: {name}"));
+    }
+    output.push_stdout_line(format!("deleted={name}"));
+    Ok(())
+}
+
 fn set_package_enabled(
     context: OperitApplicationContext,
     name: Option<&String>,
@@ -181,13 +242,44 @@ fn package_manager(
     AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
 }
 
+fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate) -> String {
+    format!(
+        "{}\ttype={}\tloaded=false\t{}\ttools={}\tsubpackages={}",
+        candidate.packageName,
+        candidate.packageKind,
+        candidate.description.resolve(false),
+        candidate.toolCount,
+        candidate.subpackageCount
+    )
+}
+
 fn print_package_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 package dir");
-    output.push_stdout_line("operit2 package list");
-    output.push_stdout_line("operit2 package show <name>");
-    output.push_stdout_line("operit2 package import <js-ts-hjson-toolpkg-path>");
-    output.push_stdout_line("operit2 package enable <name>");
-    output.push_stdout_line("operit2 package disable <name>");
-    output.push_stdout_line("operit2 package use <name>");
-    output.push_stdout_line("operit2 package exec <package:tool> <params-json>");
+    output.push_stdout_line("operit2 package help");
+    output.push_stdout_line(
+        "operit2 package dir                                  Show user package directory.",
+    );
+    output.push_stdout_line("operit2 package list                                 List loaded script packages and ToolPkg subpackages.");
+    output.push_stdout_line("operit2 package more                                 List app-bundled official extras not loaded yet; type=script/toolpkg.");
+    output.push_stdout_line("operit2 package load <name>                          Load one item from 'package more' into the user package directory.");
+    output.push_stdout_line(
+        "operit2 package show <name>                          Show a loaded package.",
+    );
+    output.push_stdout_line(
+        "operit2 package import <js-ts-hjson-toolpkg-path>    Import a package file.",
+    );
+    output.push_stdout_line(
+        "operit2 package delete <name>                        Delete an external package.",
+    );
+    output.push_stdout_line(
+        "operit2 package enable <name>                        Enable a loaded package.",
+    );
+    output.push_stdout_line(
+        "operit2 package disable <name>                       Disable a loaded package.",
+    );
+    output.push_stdout_line(
+        "operit2 package use <name>                           Enable a package for execution.",
+    );
+    output.push_stdout_line(
+        "operit2 package exec <package:tool> <params-json>    Execute one package tool.",
+    );
 }

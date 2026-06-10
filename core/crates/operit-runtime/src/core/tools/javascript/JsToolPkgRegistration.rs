@@ -305,6 +305,83 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             };
         }
 
+        function resolveCurrentToolPkgTarget() {
+            var callId = String(root.__operitCurrentCallId || '').trim();
+            var callState =
+                callId && typeof root.__operitGetCallState === 'function'
+                    ? root.__operitGetCallState(callId)
+                    : null;
+            var params =
+                callState && callState.params && typeof callState.params === 'object'
+                    ? callState.params
+                    : null;
+            if (!params) {
+                return '';
+            }
+            var candidates = [
+                params.__operit_ui_package_name,
+                params.toolPkgId,
+                params.containerPackageName,
+                params.__operit_toolpkg_subpackage_id,
+                params.__operit_package_name
+            ];
+            for (var i = 0; i < candidates.length; i += 1) {
+                var value = String(candidates[i] || '').trim();
+                if (value) {
+                    return value;
+                }
+            }
+            return '';
+        }
+
+        function readToolPkgResource(key, outputFileName, internal) {
+            var resourceKey = String(key || '').trim();
+            if (!resourceKey) {
+                return Promise.reject(new Error('resource key is required'));
+            }
+            var target = resolveCurrentToolPkgTarget();
+            if (!target) {
+                return Promise.reject(new Error('package/toolpkg runtime target is empty'));
+            }
+            if (
+                typeof NativeInterface === 'undefined' ||
+                !NativeInterface ||
+                typeof NativeInterface.readToolPkgResource !== 'function'
+            ) {
+                return Promise.reject(new Error('NativeInterface.readToolPkgResource is unavailable'));
+            }
+            var path = NativeInterface.readToolPkgResource(
+                target,
+                resourceKey,
+                outputFileName == null ? '' : String(outputFileName).trim(),
+                internal === true ? 'true' : ''
+            );
+            if (typeof path === 'string' && path.trim()) {
+                return Promise.resolve(path);
+            }
+            return Promise.reject(new Error('resource not found: ' + resourceKey));
+        }
+
+        function getToolPkgConfigDir(pluginId) {
+            var explicitId = String(pluginId || '').trim();
+            var target = explicitId || resolveCurrentToolPkgTarget();
+            if (!target) {
+                throw new Error('package/toolpkg runtime target is empty');
+            }
+            if (
+                typeof NativeInterface === 'undefined' ||
+                !NativeInterface ||
+                typeof NativeInterface.getPluginConfigDir !== 'function'
+            ) {
+                throw new Error('NativeInterface.getPluginConfigDir is unavailable');
+            }
+            var path = NativeInterface.getPluginConfigDir(target);
+            if (typeof path === 'string' && path.trim()) {
+                return path;
+            }
+            throw new Error('plugin config dir is unavailable for ' + target);
+        }
+
         var api = {
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
@@ -330,6 +407,8 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             registerPromptFinalizeHook: registerFunction('promptFinalizeHooks', 'registerPromptFinalizeHook'),
             registerPromptEstimateFinalizeHook: registerFunction('promptEstimateFinalizeHooks', 'registerPromptEstimateFinalizeHook'),
             registerSummaryGenerateHook: registerFunction('summaryGenerateHooks', 'registerSummaryGenerateHook'),
+            readResource: readToolPkgResource,
+            getConfigDir: getToolPkgConfigDir,
             registerAiProvider: function(definition) {
                 capture.aiProviders.push(normalizeSpec(normalizeAiProviderDefinition(definition, 'registerAiProvider')));
             }

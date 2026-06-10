@@ -1119,6 +1119,63 @@ impl ToolPkgArchiveParser {
         let relativePath = entryIndex.resolveEntryName(rawPath)?;
         std::fs::read_to_string(rootDir.join(relativePath)).ok()
     }
+
+    #[allow(non_snake_case)]
+    pub fn extractZipEntriesFromExternal(
+        zipFilePath: &str,
+        destinationDir: &std::path::Path,
+    ) -> bool {
+        let zipFile = std::path::Path::new(zipFilePath);
+        if !zipFile.exists() {
+            return false;
+        }
+        Self::extractZipEntriesFromFile(zipFile, destinationDir)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn extractZipEntriesFromAsset(
+        assetPath: &std::path::Path,
+        destinationDir: &std::path::Path,
+    ) -> bool {
+        Self::extractZipEntriesFromFile(assetPath, destinationDir)
+    }
+
+    #[allow(non_snake_case)]
+    fn extractZipEntriesFromFile(
+        zipFile: &std::path::Path,
+        destinationDir: &std::path::Path,
+    ) -> bool {
+        let Ok(file) = std::fs::File::open(zipFile) else {
+            return false;
+        };
+        let Ok(mut archive) = zip::ZipArchive::new(file) else {
+            return false;
+        };
+        for index in 0..archive.len() {
+            let Ok(mut entry) = archive.by_index(index) else {
+                return false;
+            };
+            if entry.is_dir() {
+                continue;
+            }
+            let Some(normalizedEntry) = Self::normalizeZipEntryPath(entry.name()) else {
+                continue;
+            };
+            let outputFile = destinationDir.join(normalizedEntry);
+            if let Some(parent) = outputFile.parent() {
+                if std::fs::create_dir_all(parent).is_err() {
+                    return false;
+                }
+            }
+            let Ok(mut output) = std::fs::File::create(outputFile) else {
+                return false;
+            };
+            if std::io::copy(&mut entry, &mut output).is_err() {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 #[allow(non_snake_case)]

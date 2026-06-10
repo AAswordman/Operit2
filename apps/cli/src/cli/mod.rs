@@ -289,8 +289,8 @@ fn print_cli_usage() {
     );
     println!("operit2 cli update [check|target]");
     println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
-    println!("operit2 cli package <dir|list|show|import|enable|disable|use|exec>");
-    println!("operit2 cli plugin <list|show|import|enable|disable>");
+    println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
+    println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
         "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
@@ -529,8 +529,11 @@ fn print_skill_usage() {
 }
 
 fn print_package_usage() {
+    println!("operit2 cli package help");
     println!("operit2 cli package dir");
     println!("operit2 cli package list");
+    println!("operit2 cli package more");
+    println!("operit2 cli package load <name>");
     println!("operit2 cli package show <name>");
     println!("operit2 cli package import <js-ts-hjson-toolpkg-path>");
     println!("operit2 cli package enable <name>");
@@ -540,7 +543,10 @@ fn print_package_usage() {
 }
 
 fn print_plugin_usage() {
+    println!("operit2 cli plugin help");
     println!("operit2 cli plugin list");
+    println!("operit2 cli plugin more");
+    println!("operit2 cli plugin load <name>");
     println!("operit2 cli plugin show <name>");
     println!("operit2 cli plugin import <toolpkg-path>");
     println!("operit2 cli plugin enable <name>");

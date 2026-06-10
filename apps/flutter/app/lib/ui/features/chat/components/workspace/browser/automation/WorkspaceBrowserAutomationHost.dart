@@ -29,58 +29,29 @@ class _WorkspaceBrowserAutomationHostState
     extends State<WorkspaceBrowserAutomationHost> {
   final WorkspaceBrowserSessionRegistry _registry =
       WorkspaceBrowserSessionRegistry.instance;
-  Timer? _pollTimer;
-  bool _polling = false;
+  void Function()? _disposeBridgeHandler;
 
   @override
   void initState() {
     super.initState();
-    _pollTimer = Timer.periodic(
-      const Duration(milliseconds: 120),
-      (_) => _pollRequest(),
-    );
-    _pollRequest();
+    _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _disposeBridgeHandler?.call();
     super.dispose();
   }
 
-  Future<void> _pollRequest() async {
-    if (_polling) {
-      return;
-    }
-    _polling = true;
-    try {
-      final request = await widget.bridge.nextRequest();
-      if (request != null) {
-        await _handleRequest(request);
-      }
-    } catch (error, stackTrace) {
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'workspace browser automation host',
-          context: ErrorDescription('polling browser automation request'),
-        ),
-      );
-    } finally {
-      _polling = false;
-    }
-  }
-
-  Future<void> _handleRequest(BrowserAutomationRequest request) async {
+  Future<BrowserAutomationResponse> _handleRequest(
+    BrowserAutomationRequest request,
+  ) async {
     try {
       final result = await _execute(request);
-      await widget.bridge.handleResult(
-        BrowserAutomationResponse(
-          requestId: request.requestId,
-          success: true,
-          result: result,
-        ),
+      return BrowserAutomationResponse(
+        requestId: request.requestId,
+        success: true,
+        result: result,
       );
     } catch (error, stackTrace) {
       FlutterError.reportError(
@@ -91,13 +62,11 @@ class _WorkspaceBrowserAutomationHostState
           context: ErrorDescription('executing ${request.toolName}'),
         ),
       );
-      await widget.bridge.handleResult(
-        BrowserAutomationResponse(
-          requestId: request.requestId,
-          success: false,
-          result: '',
-          error: error.toString(),
-        ),
+      return BrowserAutomationResponse(
+        requestId: request.requestId,
+        success: false,
+        result: '',
+        error: error.toString(),
       );
     }
   }
@@ -110,14 +79,10 @@ class _WorkspaceBrowserAutomationHostState
         if (_registry.activeController == null) {
           _registry.openBrowserTab(url: url);
           await _registry.waitForSession(timeout: const Duration(seconds: 30));
-          return jsonEncode(<String, Object?>{
-            'url': url,
-          });
+          return jsonEncode(<String, Object?>{'url': url});
         }
         _registry.navigate(url);
-        return jsonEncode(<String, Object?>{
-          'url': url,
-        });
+        return jsonEncode(<String, Object?>{'url': url});
       case 'browser_navigate_back':
         _registry.navigateBack();
         return 'OK';

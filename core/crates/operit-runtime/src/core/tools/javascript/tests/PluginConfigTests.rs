@@ -53,6 +53,10 @@ fn plugin_config_proxy_persists_and_reads_values() {
         script,
         "plugin_config_roundtrip",
         &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
         None,
     );
 

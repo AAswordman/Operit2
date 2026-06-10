@@ -223,14 +223,8 @@ fn dispatch_prompt_hooks(
     let mut current = context.clone();
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;
+    let package_manager = toolPkgPackageManager();
     for hook in snapshot {
-        let package_manager = {
-            let cloned_package_manager = toolPkgPackageManager()
-                .lock()
-                .expect("package manager mutex poisoned")
-                .clone();
-            cloned_package_manager
-        };
         let result = match package_manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,

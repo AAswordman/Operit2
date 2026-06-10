@@ -64,11 +64,15 @@ fn render_dart_clients(
     output.push_str("class GeneratedCoreProxyClients {\n");
     output.push_str("  const GeneratedCoreProxyClients(this.bridge);\n\n");
     output.push_str("  final OperitRuntimeBridge bridge;\n\n");
-    for object in objects {
+    for object in objects
+        .iter()
+        .filter(|object| !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
+    {
         let getter_name = dart_schema_getter_name(&object.schema_key);
         let class_name = dart_proxy_class_name(&object.schema_key);
         output.push_str(&format!(
-            "  {class_name} get {getter_name} => {class_name}(bridge);\n"
+            "  {class_name} get {getter_name} => {class_name}(bridge, CoreObjectPath.parse('{}'));\n",
+            object.schema_key
         ));
     }
     output.push_str("}\n\n");
@@ -86,9 +90,19 @@ fn render_dart_client_class(
     let class_name = dart_proxy_class_name(&object.schema_key);
     let mut output = String::new();
     output.push_str(&format!("class {class_name} {{\n"));
-    output.push_str(&format!("  const {class_name}(this.bridge);\n\n"));
+    output.push_str(&format!(
+        "  const {class_name}(this.bridge, this.targetPath);\n\n"
+    ));
     output.push_str("  final OperitRuntimeBridge bridge;\n\n");
+    output.push_str("  final CoreObjectPath targetPath;\n\n");
     for method in &object.methods {
+        if method.factory_protocol().is_some() {
+            output.push_str(&render_dart_factory_method(
+                object,
+                method,
+                serializable_types,
+            ));
+        }
         if method.call_protocol().is_some() {
             output.push_str(&render_dart_call_method(object, method, serializable_types));
         }
@@ -105,7 +119,7 @@ fn render_dart_client_class(
 }
 
 fn render_dart_call_method(
-    object: &SourceObject,
+    _object: &SourceObject,
     method: &SourceMethod,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -129,10 +143,7 @@ fn render_dart_call_method(
     }
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str(&format!(
-        "        targetPath: CoreObjectPath.parse('{}'),\n",
-        object.schema_key
-    ));
+    output.push_str("        targetPath: targetPath,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
     output.push_str(&format!("        args: {args},\n"));
     output.push_str("      ),\n");
@@ -147,8 +158,46 @@ fn render_dart_call_method(
     output
 }
 
+fn render_dart_factory_method(
+    _object: &SourceObject,
+    method: &SourceMethod,
+    _serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let factory = method.factory_protocol().expect("factory protocol");
+    let class_name = dart_proxy_class_name(&factory.target_schema_key);
+    let params = method
+        .args
+        .iter()
+        .map(|arg| format!("required String {}", dart_identifier(&arg.name)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let params = if params.is_empty() {
+        String::new()
+    } else {
+        format!("{{{params}}}")
+    };
+    let extra_segments = method
+        .args
+        .iter()
+        .map(|arg| dart_identifier(&arg.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let factory_method_name = dart_identifier(&method.name);
+    let segments_expr = if extra_segments.is_empty() {
+        format!("<String>[...targetPath.segments, '{}']", method.name)
+    } else {
+        format!(
+            "<String>[...targetPath.segments, '{}', {extra_segments}]",
+            method.name
+        )
+    };
+    format!(
+        "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}(bridge, CoreObjectPath({segments_expr}));\n  }}\n\n"
+    )
+}
+
 fn render_dart_watch_method(
-    object: &SourceObject,
+    _object: &SourceObject,
     method: &SourceMethod,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -165,10 +214,13 @@ fn render_dart_watch_method(
     output.push_str(&format!(
         "  Future<{value_type}> {method_name}Snapshot({params}) async {{\n"
     ));
-    output.push_str("    final event = await bridge.watch(\n");
-    output.push_str(&format!("      '{}',\n", object.schema_key));
-    output.push_str(&format!("      '{}',\n", method.name));
-    output.push_str(&format!("      args: {args},\n"));
+    output.push_str("    final event = await bridge.watchSnapshot(\n");
+    output.push_str("      CoreWatchRequest(\n");
+    output.push_str("        requestId: _coreProxyRequestId(),\n");
+    output.push_str("        targetPath: targetPath,\n");
+    output.push_str(&format!("        propertyName: '{}',\n", method.name));
+    output.push_str(&format!("        args: {args},\n"));
+    output.push_str("      ),\n");
     output.push_str("    );\n");
     output.push_str(&format!(
         "    return {};\n",
@@ -180,8 +232,8 @@ fn render_dart_watch_method(
     ));
     output.push_str("    return bridge\n");
     output.push_str(&format!(
-        "        .watchChanges('{}', '{}', args: {args})\n",
-        object.schema_key, method.name
+        "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetPath: targetPath, propertyName: '{}', args: {args}))\n",
+        method.name
     ));
     output.push_str(&format!(
         "        .map((event) => {});\n",

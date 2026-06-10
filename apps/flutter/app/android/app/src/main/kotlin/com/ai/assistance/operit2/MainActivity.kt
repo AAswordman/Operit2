@@ -12,6 +12,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -19,6 +20,7 @@ class MainActivity : FlutterActivity() {
     private val runtimeLock = Any()
     private val runtimeExecutor: ExecutorService = Executors.newCachedThreadPool()
     private var runtimeHandle: Long = 0
+    private lateinit var runtimeChannel: MethodChannel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +36,8 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "operit/runtime")
+        runtimeChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "operit/runtime")
+        runtimeChannel
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "call" -> callRuntime(call, result, OperitRuntimeNative::call)
@@ -49,14 +52,6 @@ class MainActivity : FlutterActivity() {
                         OperitRuntimeNative.currentPermissionRequest(ensureRuntimeHandle())
                     }
                     "handlePermissionResult" -> handlePermissionResult(call, result)
-                    "nextBrowserAutomationRequest" -> runRuntime(result) {
-                        OperitRuntimeNative.nextBrowserAutomationRequest(ensureRuntimeHandle())
-                    }
-                    "handleBrowserAutomationResult" -> handleBrowserAutomationResult(call, result)
-                    "nextWebVisitRequest" -> runRuntime(result) {
-                        OperitRuntimeNative.nextWebVisitRequest(ensureRuntimeHandle())
-                    }
-                    "handleWebVisitResult" -> handleWebVisitResult(call, result)
                     "androidRuntimePaths" -> androidRuntimePaths(result)
                     "listTerminalSessions" -> runRuntime(result) {
                         OperitRuntimeNative.listTerminalSessions(ensureRuntimeHandle())
@@ -147,40 +142,53 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun handleBrowserAutomationResult(call: MethodCall, result: MethodChannel.Result) {
-        val browserResult = call.arguments as? String
-        if (browserResult == null) {
-            result.error("INVALID_ARGS", "handleBrowserAutomationResult expects a JSON string", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.handleBrowserAutomationResult(ensureRuntimeHandle(), browserResult)
-        }
-    }
-
-    private fun handleWebVisitResult(call: MethodCall, result: MethodChannel.Result) {
-        val webVisitResult = call.arguments as? String
-        if (webVisitResult == null) {
-            result.error("INVALID_ARGS", "handleWebVisitResult expects a JSON string", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.handleWebVisitResult(ensureRuntimeHandle(), webVisitResult)
-        }
-    }
-
     private fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
                 return runtimeHandle
             }
             val root = prepareAndroidRuntimePaths().storageRoot
-            runtimeHandle = OperitRuntimeNative.create(root.absolutePath)
+            runtimeHandle = OperitRuntimeNative.create(root.absolutePath, this)
             if (runtimeHandle == 0L) {
                 throw IllegalStateException(OperitRuntimeNative.createError())
             }
             return runtimeHandle
         }
+    }
+
+    fun handleRuntimeHostRequest(methodName: String, payloadJson: String): String {
+        val latch = CountDownLatch(1)
+        var response: String? = null
+        var error: Throwable? = null
+        runOnUiThread {
+            runtimeChannel.invokeMethod(
+                methodName,
+                payloadJson,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        if (result is String) {
+                            response = result
+                        } else {
+                            error = IllegalStateException("runtime host handler returned a non-string value")
+                        }
+                        latch.countDown()
+                    }
+
+                    override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                        error = IllegalStateException("$errorCode: ${errorMessage.orEmpty()}")
+                        latch.countDown()
+                    }
+
+                    override fun notImplemented() {
+                        error = IllegalStateException("runtime host method is not implemented: $methodName")
+                        latch.countDown()
+                    }
+                },
+            )
+        }
+        latch.await()
+        error?.let { throw it }
+        return response ?: throw IllegalStateException("runtime host handler returned empty response")
     }
 
     private fun androidRuntimePaths(result: MethodChannel.Result) {
@@ -370,7 +378,7 @@ object OperitRuntimeNative {
         System.loadLibrary("operit_flutter_bridge")
     }
 
-    @JvmStatic external fun create(storageRoot: String): Long
+    @JvmStatic external fun create(storageRoot: String, host: MainActivity): Long
     @JvmStatic external fun createError(): String
     @JvmStatic external fun destroy(handle: Long)
     @JvmStatic external fun call(handle: Long, request: ByteArray): String
@@ -381,10 +389,6 @@ object OperitRuntimeNative {
     @JvmStatic external fun hostDescriptor(handle: Long): String
     @JvmStatic external fun currentPermissionRequest(handle: Long): String
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
-    @JvmStatic external fun nextBrowserAutomationRequest(handle: Long): String
-    @JvmStatic external fun handleBrowserAutomationResult(handle: Long, resultJson: String): String
-    @JvmStatic external fun nextWebVisitRequest(handle: Long): String
-    @JvmStatic external fun handleWebVisitResult(handle: Long, resultJson: String): String
     @JvmStatic external fun startTerminalPty(handle: Long, sessionName: String, workingDirectory: String, rows: Int, columns: Int): String
     @JvmStatic external fun listTerminalSessions(handle: Long): String
     @JvmStatic external fun readTerminalPty(handle: Long, sessionId: String): String
