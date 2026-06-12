@@ -24,9 +24,7 @@ use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::FunctionType::FunctionType;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::model::ModelConfigData::{
-    getModelByIndex, getModelList, getValidModelIndex,
-};
+use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_runtime::util::AppLogger::AppLogger;
@@ -96,12 +94,17 @@ pub(super) struct ChatListItem {
 
 #[derive(Clone, Debug)]
 pub(super) struct ModelChoiceItem {
-    pub(super) config_id: String,
-    pub(super) config_name: String,
-    pub(super) model_index: i32,
-    pub(super) provider_name: &'static str,
-    pub(super) model_name: String,
+    pub(super) provider_id: String,
+    pub(super) model_id: String,
+    pub(super) provider_name: String,
+    pub(super) provider_type_id: String,
     pub(super) selected: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ModelRef {
+    pub(super) provider_id: String,
+    pub(super) model_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -793,10 +796,10 @@ impl OperitTui {
             .initializeIfNeeded()
             .await
             .map_err(|error| error.to_string())?;
-        let chat_mapping = self
+        let chat_binding = self
             .core
             .preferences_functional_config_manager()
-            .getConfigMappingForFunction(FunctionType::CHAT)
+            .getModelBindingForFunction(FunctionType::CHAT)
             .await
             .map_err(|error| error.to_string())?;
         if let Some(chat_id) = send_args.chatId.as_ref() {
@@ -831,8 +834,8 @@ impl OperitTui {
                 None,
                 None,
                 None,
-                Some(chat_mapping.configId),
-                Some(chat_mapping.modelIndex),
+                Some(chat_binding.providerId),
+                Some(chat_binding.modelId),
                 attachments,
                 reply_to_message,
                 ChatTurnOptions::default(),
@@ -1019,7 +1022,7 @@ impl OperitTui {
             Some("use") => self.use_chat_model(&args[1..]).await,
             Some("help") => {
                 self.status_message =
-                    "usage: /model current | /model list | /model choose | /model use <config-id> [model-index]"
+                    "usage: /model current | /model list | /model choose | /model use <model-id>"
                         .to_string();
                 Ok(())
             }
@@ -1031,11 +1034,11 @@ impl OperitTui {
     }
 
     async fn show_current_chat_model(&mut self) -> Result<(), String> {
-        let (config_id, actual_index, provider_name, selected_model_name) =
+        let (provider_id, model_id, provider_name) =
             self.current_chat_model_status_parts().await?;
         self.status_message = format!(
-            "CHAT -> {}[{}] {} / {}",
-            config_id, actual_index, provider_name, selected_model_name
+            "CHAT -> {} {} / {}",
+            provider_id, provider_name, model_id
         );
         self.refresh_context_usage_label().await;
         Ok(())
@@ -1043,7 +1046,7 @@ impl OperitTui {
 
     async fn current_chat_model_status_parts(
         &mut self,
-    ) -> Result<(String, i32, &'static str, String), String> {
+    ) -> Result<(String, String, String), String> {
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -1055,31 +1058,78 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = self
+        let binding = self
             .core
             .preferences_functional_config_manager()
-            .getConfigMappingForFunction(FunctionType::CHAT)
+            .getModelBindingForFunction(FunctionType::CHAT)
             .await
             .map_err(|error| error.to_string())?;
         let config = self
             .core
             .preferences_model_config_manager()
-            .getModelConfig(&mapping.configId)
+            .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .await
             .map_err(|error| error.to_string())?;
-        let actual_index = getValidModelIndex(&config.modelName, mapping.modelIndex);
-        let selected_model_name = getModelByIndex(&config.modelName, actual_index);
         Ok((
-            mapping.configId,
-            actual_index,
-            config.apiProviderType.name(),
-            selected_model_name,
+            binding.providerId,
+            binding.modelId,
+            config.providerName,
         ))
     }
 
     async fn current_chat_model_status_label(&mut self) -> Result<String, String> {
-        let (_, _, _, selected_model_name) = self.current_chat_model_status_parts().await?;
-        Ok(selected_model_name)
+        let (_, model_id, provider_name) = self.current_chat_model_status_parts().await?;
+        Ok(format!("{provider_name} / {model_id}"))
+    }
+
+    async fn current_chat_model_ref(&mut self) -> Result<ModelRef, String> {
+        self.core
+            .preferences_functional_config_manager()
+            .initializeIfNeeded()
+            .await
+            .map_err(|error| error.to_string())?;
+        let binding = self
+            .core
+            .preferences_functional_config_manager()
+            .getModelBindingForFunction(FunctionType::CHAT)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(ModelRef {
+            provider_id: binding.providerId,
+            model_id: binding.modelId,
+        })
+    }
+
+    async fn editable_chat_model_ref(&mut self) -> Result<ModelRef, String> {
+        if let ActivePrompt::CharacterCard { id } = self
+            .core
+            .preferences_active_prompt_manager()
+            .getActivePrompt()
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            let card = self
+                .core
+                .preferences_character_card_manager()
+                .getCharacterCard(&id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let binding_mode = CharacterCardChatModelBindingMode::normalize(Some(
+                card.chatModelBindingMode.as_str(),
+            ));
+            if binding_mode == CharacterCardChatModelBindingMode::FIXED_MODEL {
+                let model_id = card
+                    .chatModelId
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| format!("character card fixed model is empty: {id}"))?;
+                return Ok(ModelRef {
+                    provider_id: ModelConfigManager::DEFAULT_PROVIDER_ID.to_string(),
+                    model_id,
+                });
+            }
+        }
+        self.current_chat_model_ref().await
     }
 
     async fn list_chat_models(&mut self) -> Result<(), String> {
@@ -1088,31 +1138,20 @@ impl OperitTui {
             .initializeIfNeeded()
             .await
             .map_err(|error| error.to_string())?;
-        let mut entries = Vec::new();
-        for config_id in self
+        let entries = self
             .core
             .preferences_model_config_manager()
-            .getConfigIds()
+            .getAllModelSummaries()
             .await
             .map_err(|error| error.to_string())?
-        {
-            let config = self
-                .core
-                .preferences_model_config_manager()
-                .getModelConfig(&config_id)
-                .await
-                .map_err(|error| error.to_string())?;
-            let model_names = getModelList(&config.modelName);
-            for (index, model_name) in model_names.into_iter().enumerate() {
-                entries.push(format!(
-                    "{}[{}]={}/{}",
-                    config.id,
-                    index,
-                    config.apiProviderType.name(),
-                    model_name
-                ));
-            }
-        }
+            .into_iter()
+            .map(|summary| {
+                format!(
+                    "{}:{}={}/{}",
+                    summary.providerId, summary.modelId, summary.providerName, summary.modelId
+                )
+            })
+            .collect::<Vec<_>>();
         self.status_message = format!("models: {}", entries.join(" | "));
         Ok(())
     }
@@ -1152,43 +1191,27 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
 
-        let mapping = self
+        let binding = self
             .core
             .preferences_functional_config_manager()
-            .getConfigMappingForFunction(FunctionType::CHAT)
+            .getModelBindingForFunction(FunctionType::CHAT)
             .await
             .map_err(|error| error.to_string())?;
-        let mut choices = Vec::new();
-        for config_id in self
+        let choices = self
             .core
             .preferences_model_config_manager()
-            .getConfigIds()
+            .getAllModelSummaries()
             .await
             .map_err(|error| error.to_string())?
-        {
-            let config = self
-                .core
-                .preferences_model_config_manager()
-                .getModelConfig(&config_id)
-                .await
-                .map_err(|error| error.to_string())?;
-            let active_model_index = if mapping.configId == config.id {
-                getValidModelIndex(&config.modelName, mapping.modelIndex)
-            } else {
-                -1
-            };
-            for (index, model_name) in getModelList(&config.modelName).into_iter().enumerate() {
-                let model_index = index as i32;
-                choices.push(ModelChoiceItem {
-                    config_id: config.id.clone(),
-                    config_name: config.name.clone(),
-                    model_index,
-                    provider_name: config.apiProviderType.name(),
-                    model_name,
-                    selected: mapping.configId == config.id && active_model_index == model_index,
-                });
-            }
-        }
+            .into_iter()
+            .map(|summary| ModelChoiceItem {
+                selected: binding.providerId == summary.providerId && binding.modelId == summary.modelId,
+                provider_id: summary.providerId,
+                model_id: summary.modelId,
+                provider_name: summary.providerName,
+                provider_type_id: summary.providerTypeId,
+            })
+            .collect::<Vec<_>>();
         Ok(choices)
     }
 
@@ -1205,15 +1228,20 @@ impl OperitTui {
     }
 
     async fn use_chat_model(&mut self, args: &[String]) -> Result<(), String> {
-        let config_id = match args.first() {
+        let provider_id = match args.first() {
             Some(value) if !value.trim().is_empty() => value.trim().to_string(),
             _ => {
-                self.status_message = "usage: /model use <config-id> [model-index]".to_string();
+                self.status_message = "usage: /model use <provider-id> <model-id>".to_string();
                 return Ok(());
             }
         };
-        let requested_model_index = parse_optional_model_index(args.get(1))?;
-
+        let model_id = match args.get(1) {
+            Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+            _ => {
+                self.status_message = "usage: /model use <provider-id> <model-id>".to_string();
+                return Ok(());
+            }
+        };
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -1227,29 +1255,14 @@ impl OperitTui {
         let config = self
             .core
             .preferences_model_config_manager()
-            .getModelConfig(&config_id)
+            .getResolvedModelConfig(&provider_id, &model_id)
             .await
             .map_err(|error| error.to_string())?;
-        let model_names = getModelList(&config.modelName);
-        if model_names.is_empty() {
-            self.status_message = format!("model config has no modelName: {config_id}");
-            return Ok(());
-        }
-        if requested_model_index < 0 || requested_model_index as usize >= model_names.len() {
-            self.status_message = format!(
-                "model index out of range: {} (available 0..{})",
-                requested_model_index,
-                model_names.len().saturating_sub(1)
-            );
-            return Ok(());
-        }
-
         let choice = ModelChoiceItem {
-            config_id,
-            config_name: config.name,
-            model_index: requested_model_index,
-            provider_name: config.apiProviderType.name(),
-            model_name: model_names[requested_model_index as usize].clone(),
+            provider_id,
+            model_id,
+            provider_name: config.providerName,
+            provider_type_id: config.apiProviderTypeId,
             selected: true,
         };
         self.apply_chat_model_choice(&choice).await?;
@@ -1264,23 +1277,23 @@ impl OperitTui {
             .map_err(|error| error.to_string())?;
         self.core
             .preferences_functional_config_manager()
-            .setConfigForFunctionWithIndex(
+            .setModelForFunction(
                 FunctionType::CHAT,
-                choice.config_id.clone(),
-                choice.model_index,
+                choice.provider_id.clone(),
+                choice.model_id.clone(),
             )
             .await
             .map_err(|error| error.to_string())?;
         self.status_message = format!(
-            "CHAT -> {}[{}] {} / {}",
-            choice.config_id, choice.model_index, choice.provider_name, choice.model_name
+            "CHAT -> {} {} / {}",
+            choice.provider_id, choice.provider_name, choice.model_id
         );
         self.refresh_context_usage_label().await;
         Ok(())
     }
 
     async fn toggle_max_context_mode(&mut self) -> Result<(), String> {
-        let config_id = self.resolve_editable_chat_config_id().await?;
+        let model_ref = self.editable_chat_model_ref().await?;
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -1289,73 +1302,32 @@ impl OperitTui {
         let current = self
             .core
             .preferences_model_config_manager()
-            .getModelConfig(&config_id)
+            .getResolvedModelConfig(&model_ref.provider_id, &model_ref.model_id)
             .await
             .map_err(|error| error.to_string())?;
-        let new_value = !current.enableMaxContextMode;
+        let mut context = current.context;
+        context.enableMaxContextMode = !context.enableMaxContextMode;
         let updated = self
             .core
             .preferences_model_config_manager()
-            .updateContextSettings(
-                &config_id,
-                current.contextLength,
-                current.maxContextLength,
-                new_value,
-            )
+            .updateContextForModel(&model_ref.provider_id, &model_ref.model_id, context.clone())
             .await
             .map_err(|error| error.to_string())?;
-        let effective_context_length = if updated.enableMaxContextMode {
-            updated.maxContextLength
+        let updated_context = updated
+            .contextOverride
+            .ok_or_else(|| format!("model context not saved: {}", model_ref.model_id))?;
+        let effective_context_length = if updated_context.enableMaxContextMode {
+            updated_context.maxContextLength
         } else {
-            updated.contextLength
+            updated_context.contextLength
         };
         self.status_message = format!(
-            "context config={} | context={}K",
-            config_id,
+            "context model={} | context={}K",
+            model_ref.model_id,
             format_context_length(effective_context_length)
         );
         self.refresh_context_usage_label().await;
         Ok(())
-    }
-
-    async fn resolve_editable_chat_config_id(&mut self) -> Result<String, String> {
-        if let ActivePrompt::CharacterCard { id } = self
-            .core
-            .preferences_active_prompt_manager()
-            .getActivePrompt()
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            let card = self
-                .core
-                .preferences_character_card_manager()
-                .getCharacterCard(&id)
-                .await
-                .map_err(|error| error.to_string())?;
-            let binding_mode = CharacterCardChatModelBindingMode::normalize(Some(
-                card.chatModelBindingMode.as_str(),
-            ));
-            if binding_mode == CharacterCardChatModelBindingMode::FIXED_CONFIG {
-                if let Some(config_id) = card
-                    .chatModelConfigId
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    return Ok(config_id);
-                }
-            }
-        }
-
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
-            .getConfigIdForFunction(FunctionType::CHAT)
-            .await
-            .map_err(|error| error.to_string())
     }
 
     async fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
@@ -1858,7 +1830,7 @@ impl OperitTui {
     }
 
     async fn current_context_usage_label(&mut self) -> Result<String, String> {
-        let config_id = self.resolve_editable_chat_config_id().await?;
+        let model_ref = self.editable_chat_model_ref().await?;
         self.core
             .preferences_model_config_manager()
             .initializeIfNeeded()
@@ -1867,13 +1839,13 @@ impl OperitTui {
         let config = self
             .core
             .preferences_model_config_manager()
-            .getModelConfig(&config_id)
+            .getResolvedModelConfig(&model_ref.provider_id, &model_ref.model_id)
             .await
             .map_err(|error| error.to_string())?;
-        let effective_context_length = if config.enableMaxContextMode {
-            config.maxContextLength
+        let effective_context_length = if config.context.enableMaxContextMode {
+            config.context.maxContextLength
         } else {
-            config.contextLength
+            config.context.contextLength
         };
         let max_tokens = (effective_context_length * 1024.0) as i32;
         let current_window_size = self.current_window_size_cache;
@@ -2005,12 +1977,5 @@ fn format_context_length(value: f32) -> String {
         format!("{}", value as i32)
     } else {
         format!("{value:.1}")
-    }
-}
-
-fn parse_optional_model_index(value: Option<&String>) -> Result<i32, String> {
-    match value {
-        Some(value) => value.parse::<i32>().map_err(|error| error.to_string()),
-        None => Ok(0),
     }
 }

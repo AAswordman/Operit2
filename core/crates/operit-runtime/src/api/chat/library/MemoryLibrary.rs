@@ -15,6 +15,7 @@ use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSetti
 use crate::data::preferences::UserPreferencesManager::PreferencesManager;
 use crate::data::repository::MemoryRepository::MemoryRepository;
 use crate::util::stream::Stream::Stream;
+use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{tag_ranges, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
 
@@ -102,7 +103,7 @@ impl MemoryLibrary {
                 profileIdOverride,
             ));
             if let Err(error) = result {
-                eprintln!("{TAG}: 保存记忆失败: {error}");
+                AppLogger::e(TAG, &format!("保存记忆失败: {error}"));
             }
         });
     }

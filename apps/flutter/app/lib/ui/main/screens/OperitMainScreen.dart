@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -34,8 +36,10 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   late final AppRouterState _routerState;
   late final TopBarController _topBarController;
   late final MainLayoutController _mainLayoutController;
-  List<core_proxy.ToolPkgContainerRuntime> _toolPkgContainers =
-      const <core_proxy.ToolPkgContainerRuntime>[];
+  List<core_proxy.ToolPkgUiRoute> _toolPkgUiRoutes =
+      const <core_proxy.ToolPkgUiRoute>[];
+  List<core_proxy.ToolPkgNavigationEntry> _toolPkgNavigationEntries =
+      const <core_proxy.ToolPkgNavigationEntry>[];
   bool _drawerOpen = false;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
@@ -58,7 +62,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     super.didChangeDependencies();
     _navigationModel = AppRouteCatalog.build(
       context,
-      toolPkgContainers: _toolPkgContainers,
+      toolPkgUiRoutes: _toolPkgUiRoutes,
+      toolPkgNavigationEntries: _toolPkgNavigationEntries,
     );
     AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
     if (!_requestedInitialToolPkgNavigationRefresh) {
@@ -140,26 +145,46 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   }
 
   Future<void> _refreshToolPkgNavigationModel() async {
-    final containers = await _clients.permissionsPackToolPackageManager
-        .getEnabledToolPkgContainerRuntimes();
+    final useEnglish = _useEnglishForToolPkgText(context);
+    final packageManager = _clients.permissionsPackToolPackageManager;
+    final results = await Future.wait<Object>(<Future<Object>>[
+      packageManager.getToolPkgUiRoutes(
+        runtime: 'compose_dsl',
+        useEnglish: useEnglish,
+      ),
+      packageManager.getToolPkgNavigationEntries(useEnglish: useEnglish),
+    ]);
     if (!mounted) {
       return;
     }
     setState(() {
-      _toolPkgContainers = containers;
+      _toolPkgUiRoutes = results[0] as List<core_proxy.ToolPkgUiRoute>;
+      _toolPkgNavigationEntries =
+          results[1] as List<core_proxy.ToolPkgNavigationEntry>;
       _navigationModel = AppRouteCatalog.build(
         context,
-        toolPkgContainers: _toolPkgContainers,
+        toolPkgUiRoutes: _toolPkgUiRoutes,
+        toolPkgNavigationEntries: _toolPkgNavigationEntries,
       );
       AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
     });
   }
 
   void _navigateToNavigationEntry(NavigationEntrySpec entry) {
-    if (entry.action != null) {
-      throw StateError(
-        'ToolPkg navigation action is not wired: ${entry.entryId}',
+    final action = entry.action;
+    if (action != null) {
+      final ownerPackageName = entry.ownerPackageName;
+      if (ownerPackageName == null) {
+        return;
+      }
+      unawaited(
+        _runToolPkgNavigationEntryAction(
+          entry: entry,
+          action: action,
+          ownerPackageName: ownerPackageName,
+        ),
       );
+      return;
     }
     final currentRouteEntry = _routerState.currentEntry;
     if (currentRouteEntry.routeId == entry.routeId &&
@@ -172,6 +197,34 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       _navigationTransitionSource = NavigationTransitionSource.drawer;
     });
     _resetToRoute(entry.routeId, entry.routeArgs, RouteEntrySource.drawer);
+  }
+
+  Future<void> _runToolPkgNavigationEntryAction({
+    required NavigationEntrySpec entry,
+    required NavigationEntryActionSpec action,
+    required String ownerPackageName,
+  }) async {
+    try {
+      await _clients.permissionsPackToolPackageManager
+          .runToolPkgNavigationEntryAction(
+            containerPackageName: ownerPackageName,
+            entryId: entry.entryId,
+            functionName: action.functionName,
+            inlineFunctionSource: action.functionSource,
+            eventPayload: <String, Object?>{
+              'entryId': entry.entryId,
+              'routeId': entry.routeId,
+              'surface': _toolPkgNavigationSurfaceName(entry.surface),
+              'title': entry.title,
+              'description': entry.description,
+            },
+          );
+    } catch (error, stackTrace) {
+      debugPrint(
+        'ToolPkg navigation action failed: entryId=${entry.entryId}, '
+        'package=$ownerPackageName, error=$error\n$stackTrace',
+      );
+    }
   }
 
   void _activateConversationRoute() {
@@ -358,4 +411,18 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       },
     );
   }
+}
+
+bool _useEnglishForToolPkgText(BuildContext context) {
+  return Localizations.localeOf(context).languageCode.toLowerCase() != 'zh';
+}
+
+String _toolPkgNavigationSurfaceName(NavigationSurface surface) {
+  return switch (surface) {
+    NavigationSurface.mainSidebarAi => 'main_sidebar_ai',
+    NavigationSurface.mainSidebarTools => 'main_sidebar_tools',
+    NavigationSurface.mainSidebarPlugins => 'main_sidebar_plugins',
+    NavigationSurface.mainSidebarSystem => 'main_sidebar_system',
+    NavigationSurface.toolbox => 'toolbox',
+  };
 }

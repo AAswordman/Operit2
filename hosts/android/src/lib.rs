@@ -448,7 +448,7 @@ fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<C
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
     let proot = requiredAndroidRuntimePath("OPERIT_ANDROID_PROOT")?;
     let loader = requiredAndroidRuntimePath("OPERIT_ANDROID_LOADER")?;
-    let nativeLibraryDir = requiredAndroidRuntimePath("OPERIT_ANDROID_NATIVE_LIBRARY_DIR")?;
+    let _ = cwd;
 
     if !proot.is_file() {
         return Err(HostError::new(format!(
@@ -471,27 +471,17 @@ fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<C
 
     ensureRootfsAbsolutePath(&rootfsDir, &internalRoot)?;
     ensureRootfsAbsolutePath(&rootfsDir, &storageRoot)?;
+    ensureRootfsAbsolutePath(&rootfsDir, Path::new("/data/local/tmp"))?;
+    std::fs::create_dir_all(rootfsDir.join("dev/pts"))?;
     std::fs::create_dir_all(&tmpDir)?;
-
-    let workDir = match cwd.map(str::trim) {
-        Some(value) if !value.is_empty() => value.to_string(),
-        _ => "/home/operit".to_string(),
-    };
 
     let mut command = Command::new(&proot);
     command.current_dir(&runtimeDir);
     command.env("PROOT_TMP_DIR", tmpDir);
     command.env("PROOT_LOADER", loader);
     command.env("PROOT_NO_SECCOMP", "1");
-    command.env(
-        "LD_LIBRARY_PATH",
-        format!(
-            "{}:{}",
-            nativeLibraryDir.to_string_lossy(),
-            runtimeDir.to_string_lossy()
-        ),
-    );
-    command.env("HOME", "/home/operit");
+    command.env("LD_LIBRARY_PATH", "");
+    command.env("HOME", "/root");
     command.env("LANG", "C.UTF-8");
     command.env(
         "PATH",
@@ -502,10 +492,13 @@ fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<C
     command.arg("-b").arg("/proc");
     command.arg("-b").arg("/dev");
     command.arg("-b").arg("/sys");
+    command.arg("-b").arg("/dev/pts");
     command.arg("-b").arg("/sdcard");
     command.arg("-b").arg("/storage");
+    command.arg("-b").arg("/data/local/tmp:/data/local/tmp");
     command.arg("-b").arg(bindSamePath(&internalRoot));
-    command.arg("-w").arg(workDir);
+    command.arg("-b").arg(bindSamePath(&storageRoot));
+    command.arg("-w").arg("/root");
     command.arg(executable);
     Ok(command)
 }
@@ -911,9 +904,12 @@ impl TerminalHost for AndroidTerminalHost {
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let mut state = self.lockState()?;
-        let session = state.sessions.get_mut(&normalizedSessionId).ok_or_else(|| {
-            HostError::new(format!("Terminal session does not exist: {sessionId}"))
-        })?;
+        let session = state
+            .sessions
+            .get_mut(&normalizedSessionId)
+            .ok_or_else(|| {
+                HostError::new(format!("Terminal session does not exist: {sessionId}"))
+            })?;
         drainLiveAndroidShellOutputToScreen(session)?;
         let content = session
             .screenLines
@@ -1277,7 +1273,7 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
 
     std::fs::create_dir_all(&tmpDir)?;
 
-    let workDir = nonBlank(workingDir, "working_directory")?;
+    let _ = nonBlank(workingDir, "working_directory")?;
     let ldLibraryPath = format!(
         "{}:{}",
         nativeLibraryDir.to_string_lossy(),
@@ -1301,12 +1297,10 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
         cstring(&format!("TERMUX_PREFIX={}", runtimeDir.to_string_lossy()))?,
         cstring(&format!("LD_LIBRARY_PATH={ldLibraryPath}"))?,
         cstring(&format!("PROOT_LOADER={}", loader.to_string_lossy()))?,
-        cstring("PROOT_NO_SECCOMP=1")?,
         cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
         cstring(&format!("PROOT_TMP_DIR={}", tmpDir.to_string_lossy()))?,
-        cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,
         cstring("TERM=xterm-256color")?,
-        cstring("LANG=C.UTF-8")?,
+        cstring("LANG=en_US.UTF-8")?,
     ];
     Ok(AndroidPtyCommand {
         executable: cstringPath(&bash)?,

@@ -50,9 +50,7 @@ _ParsedCodeBlock _parseCodeBlock(String text) {
   final language = firstLine.startsWith('```')
       ? firstLine.substring(3).trim()
       : '';
-  final codeLines = lines
-      .skipWhile((line) => line.startsWith('```'))
-      .toList();
+  final codeLines = lines.skipWhile((line) => line.startsWith('```')).toList();
   while (codeLines.isNotEmpty && codeLines.last.trimRight().endsWith('```')) {
     codeLines.removeLast();
   }
@@ -207,6 +205,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     _RevealSegment directReveal() {
       return revealSegmentFor(_typewriterLineLength(widget.text));
     }
+
     switch (widget.nodeType) {
       case MarkdownNodeType.codeBlock:
         final parsed = _parseCodeBlock(widget.text);
@@ -215,7 +214,10 @@ class _MarkdownTextState extends State<_MarkdownText>
         );
       case MarkdownNodeType.table:
         return wrapNode(
-          EnhancedTableBlock(tableText: widget.text, textColor: widget.textColor),
+          EnhancedTableBlock(
+            tableText: widget.text,
+            textColor: widget.textColor,
+          ),
         );
       case MarkdownNodeType.blockQuote:
         return wrapNode(
@@ -965,7 +967,7 @@ class _RevealTextPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RevealTextPainter oldDelegate) {
-      return oldDelegate.span != span ||
+    return oldDelegate.span != span ||
         oldDelegate.textDirection != textDirection ||
         oldDelegate.textScaler != textScaler ||
         oldDelegate.maxWidth != maxWidth ||

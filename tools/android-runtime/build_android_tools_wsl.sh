@@ -12,11 +12,13 @@ jni_libs_dir="$repo_dir/apps/flutter/app/android/app/src/main/jniLibs"
 ndk_dir="${ANDROID_NDK_HOME:?ANDROID_NDK_HOME must point to android-ndk-r29-beta4 in Fedora WSL}"
 toolchain_dir="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
 api_level=23
+proot_api_level=24
 bash_api_level=24
 
 busybox_src="$source_dir/busybox-1.38.0"
-proot_src="$source_dir/proot-5.4.0"
-proot_patch="$runtime_dir/patches/proot-5.4.0-operit-android.patch"
+proot_src="$source_dir/proot-5.1.107.78"
+proot_operit_src="$source_dir/termux-proot-operit"
+proot_patch="$runtime_dir/patches/termux-proot-operit-android.patch"
 talloc_src="$source_dir/talloc-2.4.3"
 bash_src="$source_dir/bash-5.2.37"
 
@@ -205,11 +207,58 @@ has_component() {
     return 1
 }
 
+sync_proot_operit_source() {
+    local new_patch="$proot_patch.new"
+    local diff_status
+    local sed_status
+    local pipeline_status
+
+    require_path "$proot_src"
+
+    if [ ! -d "$proot_operit_src" ]; then
+        cp -a "$proot_src" "$proot_operit_src"
+        if [ -f "$proot_patch" ] && [ -s "$proot_patch" ]; then
+            patch -d "$proot_operit_src" -p1 --batch < "$proot_patch"
+        fi
+    fi
+
+    set +e
+    (
+        cd "$source_dir"
+        diff -ruN --exclude=.git --exclude='*.orig' --exclude='*.rej' proot-5.1.107.78 termux-proot-operit
+    ) | sed -E \
+        -e '/^diff -ruN /d' \
+        -e 's#^--- proot-5\.1\.107\.78/([^[:space:]]+).*#--- a/\1#' \
+        -e 's#^\+\+\+ termux-proot-operit/([^[:space:]]+).*#+++ b/\1#' \
+        > "$new_patch"
+    pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+
+    diff_status="${pipeline_status[0]}"
+    sed_status="${pipeline_status[1]}"
+    if [ "$diff_status" -gt 1 ] || [ "$sed_status" -ne 0 ]; then
+        rm -f "$new_patch"
+        echo "Failed to generate PRoot patch from $proot_operit_src" >&2
+        exit 1
+    fi
+
+    mv "$new_patch" "$proot_patch"
+}
+
 compiler_for_abi() {
     case "$1" in
         arm64-v8a) echo "$toolchain_dir/aarch64-linux-android${api_level}-clang" ;;
         armeabi-v7a) echo "$toolchain_dir/armv7a-linux-androideabi${api_level}-clang" ;;
         x86_64) echo "$toolchain_dir/x86_64-linux-android${api_level}-clang" ;;
+        *) echo "Unsupported ABI: $1" >&2; exit 1 ;;
+    esac
+}
+
+proot_compiler_for_abi() {
+    case "$1" in
+        arm64-v8a) echo "$toolchain_dir/aarch64-linux-android${proot_api_level}-clang" ;;
+        armeabi-v7a) echo "$toolchain_dir/armv7a-linux-androideabi${proot_api_level}-clang" ;;
+        x86_64) echo "$toolchain_dir/x86_64-linux-android${proot_api_level}-clang" ;;
         *) echo "Unsupported ABI: $1" >&2; exit 1 ;;
     esac
 }
@@ -394,12 +443,12 @@ build_proot() {
     local out_dir="$build_dir/proot/$abi"
     local work_src="$build_dir/proot-source/$abi"
     local talloc_install="$build_dir/talloc/$abi/install"
+    local proot_cflags="-Wall -Wextra -O2 -I$talloc_install/include"
+    local proot_ldflags="-L$talloc_install/lib -ltalloc -ldl -Wl,-z,noexecstack"
 
     rm -rf "$out_dir" "$work_src"
     mkdir -p "$out_dir" "$work_src"
-    cp -a "$proot_src/." "$work_src"
-    require_path "$proot_patch"
-    patch -d "$work_src" -p1 --batch < "$proot_patch"
+    cp -a "$proot_operit_src/." "$work_src"
     awk '
         /^LOADER_LDFLAGS\$1 \+= -static -nostdlib / {
             sub(/-Ttext=\$\(LOADER_ADDRESS\$1\)/, "--image-base=$(LOADER_ADDRESS$1)")
@@ -428,8 +477,10 @@ build_proot() {
             STRIP="$toolchain_dir/llvm-strip" \
             OBJCOPY="$toolchain_dir/llvm-objcopy" \
             OBJDUMP="$toolchain_dir/llvm-objdump" \
+            CFLAGS="$proot_cflags" \
+            LDFLAGS="$proot_ldflags" \
             V=1 \
-            build.h loader.elf
+            build.h loader/loader
 
         PKG_CONFIG_PATH="$talloc_install/lib/pkgconfig" \
         make -C "$work_src/src" \
@@ -438,13 +489,15 @@ build_proot() {
             STRIP="$toolchain_dir/llvm-strip" \
             OBJCOPY="$toolchain_dir/llvm-objcopy" \
             OBJDUMP="$toolchain_dir/llvm-objdump" \
+            CFLAGS="$proot_cflags" \
+            LDFLAGS="$proot_ldflags" \
             V=1 \
             proot
     )
 
     mkdir -p "$jni_libs_dir/$abi"
     cp "$work_src/src/proot" "$out_dir/proot"
-    cp "$work_src/src/loader.elf" "$out_dir/loader"
+    cp "$work_src/src/loader/loader" "$out_dir/loader"
     cp "$out_dir/proot" "$jni_libs_dir/$abi/liboperit_proot.so"
     cp "$out_dir/loader" "$jni_libs_dir/$abi/liboperit_loader.so"
     "$toolchain_dir/llvm-strip" "$jni_libs_dir/$abi/liboperit_proot.so"
@@ -528,6 +581,13 @@ require_path "$bash_src"
 
 mkdir -p "$asset_dir" "$jni_libs_dir"
 
+if has_component proot; then
+    sync_proot_operit_source
+    if [ "${OPERIT_ANDROID_RUNTIME_SYNC_ONLY:-}" = "1" ]; then
+        exit 0
+    fi
+fi
+
 for abi in "${abis[@]}"; do
     cc="$(compiler_for_abi "$abi")"
     require_path "$cc"
@@ -538,7 +598,9 @@ for abi in "${abis[@]}"; do
         build_talloc "$abi" "$cc"
     fi
     if has_component proot; then
-        build_proot "$abi" "$cc"
+        proot_cc="$(proot_compiler_for_abi "$abi")"
+        require_path "$proot_cc"
+        build_proot "$abi" "$proot_cc"
     fi
     if has_component bash; then
         bash_cc="$(bash_compiler_for_abi "$abi")"

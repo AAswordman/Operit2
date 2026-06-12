@@ -138,7 +138,6 @@ class CodeContentWithLineNumbers extends StatelessWidget {
                         context,
                       ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                       fontFamily: 'monospace',
-                      fontSize: 10,
                     ),
                   ),
                 ),
@@ -150,7 +149,6 @@ class CodeContentWithLineNumbers extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: textColor.withValues(alpha: 0.8),
                     fontFamily: 'monospace',
-                    fontSize: 11,
                   ),
                 ),
               ),

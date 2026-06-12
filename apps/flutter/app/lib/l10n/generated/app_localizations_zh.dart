@@ -133,7 +133,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get createGroupTitle => '新建分组';
 
   @override
-  String get groupNameLabel => '分组名称';
+  String get groupNameLabel => '群组名称';
 
   @override
   String get renameConversationTitle => '编辑标题';
@@ -728,7 +728,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsCategoryCharactersDescription =>
-      '管理角色卡、角色组、当前激活角色和角色级模型/记忆/工具绑定。';
+      '管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。';
 
   @override
   String get settingsCategoryToolsTitle => '工具与扩展';
@@ -788,6 +788,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelCurrentChatModel => '聊天使用';
 
   @override
+  String get settingsModelCurrentActive => '当前激活';
+
+  @override
+  String get settingsModelSetCurrentActive => '设为当前';
+
+  @override
   String get settingsChatThinkingMode => '思考模式';
 
   @override
@@ -827,6 +833,32 @@ class AppLocalizationsZh extends AppLocalizations {
   ) {
     return '$configName · $modelName';
   }
+
+  @override
+  String settingsModelFunctionMappingsMissing(
+    String providerId,
+    String modelId,
+  ) {
+    return '绑定的模型不存在：$providerId · $modelId';
+  }
+
+  @override
+  String settingsModelDeleteBlocked(String functions) {
+    return '该模型正在被这些功能使用，请先更改功能模型分配：$functions';
+  }
+
+  @override
+  String settingsModelDeleteProviderBlocked(String functions) {
+    return '该供应商下的模型正在被这些功能使用，请先更改功能模型分配：$functions';
+  }
+
+  @override
+  String settingsModelDeleteProviderConfirm(String name, int count) {
+    return '确定删除供应商“$name”吗？这会同时删除其中的 $count 个模型。';
+  }
+
+  @override
+  String get settingsModelDeleteProviderConfirmAction => '删除供应商';
 
   @override
   String get settingsModelChatAutoGlmWarning =>
@@ -874,7 +906,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelFunctionRoleResponsePlannerDescription =>
-      '角色组对话中规划发言角色和顺序使用的模型。';
+      '群组对话中规划发言角色和顺序使用的模型。';
 
   @override
   String get settingsModelFunctionImageRecognition => '图片识别';
@@ -955,6 +987,141 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderId => '供应商 ID';
 
   @override
+  String get settingsModelProvidersSection => '供应商';
+
+  @override
+  String get settingsModelProviderType => '供应商类型';
+
+  @override
+  String settingsModelProviderTypeOption(String name, String original) {
+    return '$name（$original）';
+  }
+
+  @override
+  String get settingsModelProviderTypeOpenai => 'OpenAI';
+
+  @override
+  String get settingsModelProviderTypeOpenaiResponses => 'OpenAI Responses';
+
+  @override
+  String get settingsModelProviderTypeOpenaiResponsesGeneric =>
+      'OpenAI Responses 兼容';
+
+  @override
+  String get settingsModelProviderTypeOpenaiGeneric => 'OpenAI 兼容';
+
+  @override
+  String get settingsModelProviderTypeAnthropic => 'Anthropic';
+
+  @override
+  String get settingsModelProviderTypeAnthropicGeneric => 'Anthropic 兼容';
+
+  @override
+  String get settingsModelProviderTypeGoogle => 'Google Gemini';
+
+  @override
+  String get settingsModelProviderTypeGeminiGeneric => 'Gemini 兼容';
+
+  @override
+  String get settingsModelProviderTypeBaidu => '百度';
+
+  @override
+  String get settingsModelProviderTypeAliyun => '阿里云';
+
+  @override
+  String get settingsModelProviderTypeXunfei => '讯飞';
+
+  @override
+  String get settingsModelProviderTypeZhipu => '智谱';
+
+  @override
+  String get settingsModelProviderTypeBaichuan => '百川';
+
+  @override
+  String get settingsModelProviderTypeMoonshot => '月之暗面';
+
+  @override
+  String get settingsModelProviderTypeMimo => '小米 MiMo';
+
+  @override
+  String get settingsModelProviderTypeDeepseek => 'DeepSeek';
+
+  @override
+  String get settingsModelProviderTypeMistral => 'Mistral';
+
+  @override
+  String get settingsModelProviderTypeSiliconflow => '硅基流动';
+
+  @override
+  String get settingsModelProviderTypeIflow => '心流';
+
+  @override
+  String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
+
+  @override
+  String get settingsModelProviderTypeFourRouter => '4Router';
+
+  @override
+  String get settingsModelProviderTypeNousPortal => 'Nous Portal';
+
+  @override
+  String get settingsModelProviderTypeInfiniai => '无问芯穹';
+
+  @override
+  String get settingsModelProviderTypeAlipayBailing => '支付宝百灵';
+
+  @override
+  String get settingsModelProviderTypeDoubao => '豆包';
+
+  @override
+  String get settingsModelProviderTypeNvidia => 'NVIDIA';
+
+  @override
+  String get settingsModelProviderTypeLmstudio => 'LM Studio';
+
+  @override
+  String get settingsModelProviderTypeOllama => 'Ollama';
+
+  @override
+  String get settingsModelProviderTypeOpenaiLocal => 'OpenAI 本地';
+
+  @override
+  String get settingsModelProviderTypeMnn => 'MNN';
+
+  @override
+  String get settingsModelProviderTypeLlamaCpp => 'llama.cpp';
+
+  @override
+  String get settingsModelProviderTypePpinfra => 'PPInfra';
+
+  @override
+  String get settingsModelProviderTypeNovita => 'Novita AI';
+
+  @override
+  String get settingsModelProviderTypeOther => '其他';
+
+  @override
+  String get settingsModelEditModelSettings => '模型设置';
+
+  @override
+  String get settingsModelCreateProvider => '创建供应商';
+
+  @override
+  String get settingsModelEditProvider => '编辑供应商';
+
+  @override
+  String get settingsModelAddModel => '添加模型';
+
+  @override
+  String get settingsModelAddModelShort => '添加';
+
+  @override
+  String get settingsModelCustomModel => '自定义模型';
+
+  @override
+  String get settingsModelModelId => '模型 ID';
+
+  @override
   String get settingsModelMaxTokens => 'Max tokens';
 
   @override
@@ -1007,6 +1174,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelMaxContextLength => '最大上下文长度';
+
+  @override
+  String get settingsModelMaxContextLengthInvalid => '请输入大于 0 的最大上下文长度';
 
   @override
   String get settingsModelMaxContextMode => '最大上下文模式';
@@ -1066,10 +1236,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelMediaHistory => '媒体历史';
 
   @override
+  String get settingsModelCapabilities => '能力';
+
+  @override
+  String get settingsModelBuiltinTools => '内置工具';
+
+  @override
+  String get settingsModelBuiltinToolExclusive => '开启后会关闭外部工具调用';
+
+  @override
   String get settingsModelConnectionTestSection => '连接测试';
 
   @override
   String get settingsModelRunConnectionTest => '测试当前模型';
+
+  @override
+  String get settingsModelTestModel => '测试模型';
 
   @override
   String get settingsModelTestingConnection => '正在测试当前模型连接…';
@@ -1122,13 +1304,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersCardName => '角色名称';
 
   @override
-  String get settingsCharactersCreateGroup => '新建角色组';
+  String get settingsCharactersCreateGroup => '新建群组';
 
   @override
-  String get settingsCharactersEditGroup => '编辑角色组';
+  String get settingsCharactersEditGroup => '编辑群组';
 
   @override
-  String get settingsCharactersGroupName => '角色组名称';
+  String get settingsCharactersGroupName => '群组名称';
 
   @override
   String get settingsCharactersDescription => '描述';
@@ -1156,6 +1338,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsCharactersNoTags => '当前没有可选标签。可在提示词/标签管理中创建后绑定到角色卡。';
+
+  @override
+  String get settingsCharactersImport => '导入';
+
+  @override
+  String get settingsCharactersExport => '导出';
 
   @override
   String get settingsCharactersImportJson => '导入 JSON';
@@ -1195,10 +1383,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersImportTavernJsonDone => '已导入 Tavern 角色卡。';
 
   @override
-  String get settingsCharactersImportGroupJson => '导入角色组 JSON';
+  String get settingsCharactersImportGroupJson => '导入群组 JSON';
 
   @override
-  String get settingsCharactersImportGroupJsonDone => '已导入角色组。';
+  String get settingsCharactersImportGroupJsonDone => '已导入群组。';
 
   @override
   String settingsCharactersImportJsonError(String error) {
@@ -1257,7 +1445,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersMemoryProfileId => '记忆配置 ID';
 
   @override
-  String get settingsCharactersToolAccess => '启用角色工具白名单';
+  String get settingsCharactersToolAccess => '工具权限模式';
 
   @override
   String get settingsCharactersChatModelFollowGlobal => '跟随全局模型';
@@ -1279,6 +1467,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsCharactersToolAccessFollowGlobal => '跟随全局工具权限';
+
+  @override
+  String get settingsCharactersToolAccessCustom => '自定义角色工具权限';
 
   @override
   String get settingsCharactersToolAccessEmpty => '已启用，但未选择任何工具';
@@ -1382,7 +1573,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersCardsSection => '角色卡';
 
   @override
-  String get settingsCharactersGroupsSection => '角色组';
+  String get settingsCharactersGroupsSection => '群组';
 
   @override
   String settingsCharactersGroupMembers(int count) {
@@ -1906,11 +2097,11 @@ class AppLocalizationsZh extends AppLocalizations {
       '复制全部角色卡和已引用标签为 JSON；导入时会按原 ID 更新或新增。';
 
   @override
-  String get settingsDataCharacterGroupsBackup => '角色组备份';
+  String get settingsDataCharacterGroupsBackup => '群组备份';
 
   @override
   String get settingsDataCharacterGroupsBackupDescription =>
-      '复制全部角色组为 JSON；导入时会保留组内角色引用和顺序。';
+      '复制全部群组为 JSON；导入时会保留组内角色引用和顺序。';
 
   @override
   String get settingsDataModelConfigsBackup => '模型配置备份';

@@ -5,6 +5,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use serde::{Deserialize, Serialize};
+use std::sync::Once;
+
 pub const VERBOSE: i32 = 2;
 pub const DEBUG: i32 = 3;
 pub const INFO: i32 = 4;
@@ -14,7 +17,7 @@ pub const ASSERT: i32 = 7;
 
 const TOOLPKG_LOG_TAG: &str = "ToolPkg";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub priority: i32,
     pub tag: String,
@@ -33,8 +36,10 @@ struct LoggerState {
 }
 
 static STATE: OnceLock<Mutex<LoggerState>> = OnceLock::new();
+static HOST_LOG_SINK_INIT: Once = Once::new();
 
 fn state() -> &'static Mutex<LoggerState> {
+    install_host_log_sink_once();
     STATE.get_or_init(|| {
         Mutex::new(LoggerState {
             enable_file_logging: true,
@@ -44,6 +49,14 @@ fn state() -> &'static Mutex<LoggerState> {
             entries: Vec::new(),
         })
     })
+}
+
+fn install_host_log_sink_once() {
+    HOST_LOG_SINK_INIT.call_once(|| {
+        operit_host_api::setHostLogSink(std::sync::Arc::new(|tag, message| {
+            AppLogger::e(tag, message);
+        }));
+    });
 }
 
 pub struct AppLogger;
@@ -83,12 +96,42 @@ impl AppLogger {
         guard.package_log_file = Some(path.into());
     }
 
+    pub fn configure_log_files(root: impl AsRef<Path>) {
+        let logs_dir = root.as_ref().join("logs");
+        let log_file = logs_dir.join("operit.log");
+        let package_log_file = logs_dir.join("toolpkg.log");
+        ensure_log_file(&log_file);
+        ensure_log_file(&package_log_file);
+        Self::bind_log_file(log_file);
+        Self::bind_package_log_file(package_log_file);
+    }
+
     pub fn get_log_file() -> Option<PathBuf> {
         state()
             .lock()
             .expect("AppLogger mutex poisoned")
             .log_file
             .clone()
+    }
+
+    pub fn get_package_log_file() -> Option<PathBuf> {
+        state()
+            .lock()
+            .expect("AppLogger mutex poisoned")
+            .package_log_file
+            .clone()
+    }
+
+    pub fn get_log_file_path() -> Result<String, String> {
+        Self::get_log_file()
+            .map(|path| path.to_string_lossy().to_string())
+            .ok_or_else(|| "AppLogger log file is not bound".to_string())
+    }
+
+    pub fn get_package_log_file_path() -> Result<String, String> {
+        Self::get_package_log_file()
+            .map(|path| path.to_string_lossy().to_string())
+            .ok_or_else(|| "AppLogger package log file is not bound".to_string())
     }
 
     pub fn reset_log_file() {
@@ -99,6 +142,12 @@ impl AppLogger {
         if let Some(path) = &guard.package_log_file {
             let _ = fs::remove_file(path);
         }
+        if let Some(path) = &guard.log_file {
+            ensure_log_file(path);
+        }
+        if let Some(path) = &guard.package_log_file {
+            ensure_log_file(path);
+        }
         guard.entries.clear();
     }
 
@@ -108,6 +157,22 @@ impl AppLogger {
             .expect("AppLogger mutex poisoned")
             .entries
             .clone()
+    }
+
+    pub fn entries_json() -> serde_json::Value {
+        serde_json::to_value(Self::entries()).expect("LogEntry serialization must succeed")
+    }
+
+    pub fn text() -> Result<String, String> {
+        let path =
+            Self::get_log_file().ok_or_else(|| "AppLogger log file is not bound".to_string())?;
+        fs::read_to_string(path).map_err(|error| error.to_string())
+    }
+
+    pub fn package_text() -> Result<String, String> {
+        let path = Self::get_package_log_file()
+            .ok_or_else(|| "AppLogger package log file is not bound".to_string())?;
+        fs::read_to_string(path).map_err(|error| error.to_string())
     }
 
     pub fn v(tag: &str, msg: &str) -> i32 {
@@ -206,6 +271,17 @@ fn append_line(path: &Path, line: &str) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = file.write_all(line.as_bytes());
     }
+}
+
+fn ensure_log_file(path: &Path) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("AppLogger log directory must be created");
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .expect("AppLogger log file must be opened");
 }
 
 fn format_log_line(entry: &LogEntry, tag: &str) -> String {

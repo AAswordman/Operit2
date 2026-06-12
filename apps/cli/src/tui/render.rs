@@ -310,18 +310,23 @@ impl OperitTui {
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(
-                            format!("{}[{}]", choice.config_name, choice.model_index),
+                            &choice.model_id,
                             Style::default().add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(" "),
-                        Span::styled(choice.provider_name, Style::default().fg(theme::ACCENT)),
+                        Span::styled(&choice.provider_name, Style::default().fg(theme::ACCENT)),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("({})", choice.provider_type_id),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        ),
                         Span::raw(" "),
                         Span::styled(marker, Style::default().fg(theme::ACCENT_STRONG)),
                     ]),
                     Line::from(vec![
-                        Span::styled(&choice.model_name, Style::default()),
+                        Span::styled(&choice.provider_id, Style::default()),
                         Span::styled(
-                            format!("  {}", choice.config_id),
+                            format!("  {}", choice.provider_type_id),
                             Style::default().fg(theme::TEXT_SUBTLE),
                         ),
                     ]),
@@ -382,7 +387,7 @@ impl OperitTui {
             Line::from("/resume"),
             Line::from("/max"),
             Line::from("/model current | /model list | /model choose"),
-            Line::from("/model use <config-id> [model-index]"),
+            Line::from("/model use <model-id>"),
             Line::from("/approval | /approval list|allow|ask|forbid"),
             Line::from("/approval tool <tool> <allow|ask|forbid|clear>"),
             Line::from("/attach <path>"),

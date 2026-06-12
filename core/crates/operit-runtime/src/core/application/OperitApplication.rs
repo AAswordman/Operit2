@@ -29,6 +29,8 @@ use operit_store::SyncOperationStore::{
 };
 use std::sync::{Mutex, OnceLock};
 
+use crate::util::AppLogger::AppLogger;
+
 static APPLICATION_CONTEXT: OnceLock<Mutex<Option<OperitApplicationContext>>> = OnceLock::new();
 
 pub struct OperitApplication {
@@ -47,6 +49,7 @@ impl OperitApplication {
     pub fn newWithContext(applicationContext: OperitApplicationContext) -> Self {
         if let Some(runtimeStorageHost) = applicationContext.runtimeStorageHost.clone() {
             if let Some(rootDir) = runtimeStorageHost.rootDir() {
+                AppLogger::configure_log_files(&rootDir);
                 setDefaultRuntimeStoreRoot(rootDir);
             }
             setDefaultRuntimeStorageHost(runtimeStorageHost);
@@ -138,6 +141,36 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn coreVersion(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn logEntries(&self) -> serde_json::Value {
+        AppLogger::entries_json()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn logText(&self) -> Result<String, String> {
+        AppLogger::text()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn packageLogText(&self) -> Result<String, String> {
+        AppLogger::package_text()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn logFilePath(&self) -> Result<String, String> {
+        AppLogger::get_log_file_path()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn packageLogFilePath(&self) -> Result<String, String> {
+        AppLogger::get_package_log_file_path()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn resetLogs(&self) {
+        AppLogger::reset_log_file();
     }
 
     #[allow(non_snake_case)]

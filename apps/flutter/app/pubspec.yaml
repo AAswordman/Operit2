@@ -45,6 +45,7 @@ dependencies:
   audioplayers: ^6.7.0
   video_player: ^2.11.1
   path_provider: ^2.1.5
+  path: ^1.9.1
   archive: ^4.0.9
   xml: ^6.6.1
   webview_all: ^1.0.3

@@ -20,7 +20,7 @@ class SettingsCategoryList extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
       children: <Widget>[
         for (final category in SettingsCategory.values)
           SettingsCategoryTile(
@@ -56,11 +56,11 @@ class SettingsCategoryTile extends StatelessWidget {
         ? colorScheme.onPrimaryContainer
         : colorScheme.onSurface;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: OperitGlassSurface(
         color: background,
         layer: OperitGlassSurfaceLayer.control,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: selected
               ? colorScheme.primary.withValues(alpha: 0.24)
@@ -68,20 +68,20 @@ class SettingsCategoryTile extends StatelessWidget {
         ),
         material: true,
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             child: Row(
               children: <Widget>[
                 CircleAvatar(
-                  radius: 18,
+                  radius: 16,
                   backgroundColor: selected
                       ? colorScheme.primary.withValues(alpha: 0.16)
                       : colorScheme.surface,
-                  child: Icon(spec.icon, size: 20, color: foreground),
+                  child: Icon(spec.icon, size: 18, color: foreground),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

@@ -12,8 +12,9 @@ use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgMessageProcessingHookRegistration,
+    ToolPkgMessageProcessingHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
 };
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 use crate::util::stream::HotStream::MutableSharedStreamImpl;
 
 static MESSAGE_PROCESSING_HOOKS: OnceLock<Mutex<Vec<ToolPkgMessageProcessingHookRegistration>>> =
@@ -46,10 +47,16 @@ impl ToolPkgMessageProcessingBridge {
                 .cmp(&right.containerPackageName)
                 .then(left.pluginId.cmp(&right.pluginId))
         });
+        let hookCount = hooks.len();
         *MESSAGE_PROCESSING_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
             .expect("toolpkg message processing hook mutex poisoned") = hooks;
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.message_processing.sync",
+            &[("hookCount", hookCount.to_string())],
+        );
     }
 }
 
@@ -71,9 +78,30 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             .lock()
             .expect("toolpkg message processing hook mutex poisoned")
             .clone();
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.message_processing.probe.scan",
+            &[
+                ("hookCount", hooks.len().to_string()),
+                (
+                    "messageChars",
+                    ChainLogger::lenField(&params.message_content),
+                ),
+                ("historyCount", params.chat_history.len().to_string()),
+            ],
+        );
         let probeEventPayload = buildMessageEventPayload(params, true);
         let manager = toolPkgPackageManager();
         for hook in hooks {
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.message_processing.probe.start",
+                &[
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.pluginId.clone()),
+                    ("function", hook.functionName.clone()),
+                ],
+            );
             let probeDecoded =
                 runMessageProcessingHook(&manager, &hook, probeEventPayload.clone(), None);
             let probeResult = parseMessageProcessingResult(probeDecoded.as_ref());
@@ -83,6 +111,14 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             if !probeResult.matched {
                 continue;
             }
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.message_processing.probe.matched",
+                &[
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.pluginId.clone()),
+                ],
+            );
 
             let executionId = format!(
                 "toolpkg-msg:{}:{}:{}",
@@ -102,7 +138,17 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             let stream_for_final = stream.clone();
             let hook_for_worker = hook.clone();
             let manager_for_worker = manager.clone();
+            let executionIdForWorker = executionId.clone();
             thread::spawn(move || {
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.message_processing.run.start",
+                    &[
+                        ("package", hook_for_worker.containerPackageName.clone()),
+                        ("hookId", hook_for_worker.pluginId.clone()),
+                        ("executionId", executionIdForWorker.clone()),
+                    ],
+                );
                 let emittedAny = Arc::new(AtomicBool::new(false));
                 let emittedAnyForIntermediate = emittedAny.clone();
                 let decoded = runMessageProcessingHook(
@@ -120,15 +166,27 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                     })),
                 );
                 let parsed = parseMessageProcessingResult(decoded.as_ref());
+                let mut emittedChunkCount = 0usize;
                 if let Some(parsed) = parsed {
                     if parsed.matched && !emittedAny.load(Ordering::Relaxed) {
                         for chunk in parsed.chunks {
                             if !chunk.is_empty() {
+                                emittedChunkCount += 1;
                                 stream_for_final.emit(chunk);
                             }
                         }
                     }
                 }
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.message_processing.run.done",
+                    &[
+                        ("package", hook_for_worker.containerPackageName.clone()),
+                        ("hookId", hook_for_worker.pluginId.clone()),
+                        ("executionId", executionIdForWorker.clone()),
+                        ("chunkCount", emittedChunkCount.to_string()),
+                    ],
+                );
                 stream_for_final.close();
             });
             return Some(MessageProcessingExecution {
@@ -172,21 +230,33 @@ fn runMessageProcessingHook(
     eventPayload: Value,
     onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
 ) -> Option<Value> {
-    manager
-        .runToolPkgMainHook(
-            &hook.containerPackageName,
-            &hook.functionName,
-            TOOLPKG_EVENT_MESSAGE_PROCESSING,
-            None,
-            Some(&hook.pluginId),
-            hook.functionSource.as_deref(),
-            eventPayload,
-            None,
-            None,
-            onIntermediateResult,
-        )
-        .ok()
-        .and_then(decodeToolPkgHookResult)
+    match manager.runToolPkgMainHook(
+        &hook.containerPackageName,
+        &hook.functionName,
+        TOOLPKG_EVENT_MESSAGE_PROCESSING,
+        None,
+        Some(&hook.pluginId),
+        hook.functionSource.as_deref(),
+        eventPayload,
+        None,
+        None,
+        onIntermediateResult,
+    ) {
+        Ok(raw) => decodeToolPkgHookResult(raw),
+        Err(error) => {
+            ChainLogger::error(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.message_processing.run.error",
+                &[
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.pluginId.clone()),
+                    ("function", hook.functionName.clone()),
+                    ("error", error),
+                ],
+            );
+            None
+        }
+    }
 }
 
 struct ParsedMessageProcessingResult {

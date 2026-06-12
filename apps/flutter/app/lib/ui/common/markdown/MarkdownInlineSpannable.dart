@@ -85,7 +85,7 @@ InlineSpan appendInlineNode({
       recognizer: onLinkClick == null
           ? null
           : (TapGestureRecognizer()
-            ..onTap = () => onLinkClick(extractLinkUrl(segment.text))),
+              ..onTap = () => onLinkClick(extractLinkUrl(segment.text))),
       text: nestedChildren.isEmpty ? extractLinkText(segment.text) : null,
       children: nestedChildren.isEmpty || depth >= maxInlineRenderDepth
           ? null
@@ -270,11 +270,12 @@ TextStyle? markdownInlineStyle(
         decoration: TextDecoration.underline,
       );
     case 'InlineCode':
-      return base?.copyWith(
-        fontFamily: markdownCodeFontFamily,
-        fontSize: base.fontSize! * 0.9,
-        backgroundColor: _inlineCodeBackgroundColor(textColor),
-      );
+      return base
+          ?.apply(fontSizeFactor: 0.9)
+          .copyWith(
+            fontFamily: markdownCodeFontFamily,
+            backgroundColor: _inlineCodeBackgroundColor(textColor),
+          );
   }
   return base;
 }

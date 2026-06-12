@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
 use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -27,14 +27,15 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::util::ChainLogger::{self, SEND_CHAIN};
 use crate::util::stream::Stream::Stream;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {
     pub chatId: String,
     pub promptFunctionType: PromptFunctionType,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
     pub roleCardIdOverride: Option<String>,
     pub isGroupOrchestrationTurn: bool,
@@ -68,8 +69,8 @@ pub struct MessageCoordinationDelegate {
     pub summaryJob: Option<String>,
     pub sendTriggeredSummaryJob: Option<String>,
     pub currentPromptFunctionType: PromptFunctionType,
-    pub currentChatModelConfigIdOverride: Option<String>,
-    pub currentChatModelIndexOverride: Option<i32>,
+    pub currentChatProviderIdOverride: Option<String>,
+    pub currentChatModelIdOverride: Option<String>,
     pub currentPreferenceProfileIdOverride: Option<String>,
     pub nonFatalErrorCollectorJob: Option<String>,
     pub pendingAutoContinuationByChatId: HashMap<String, PendingAutoContinuationRequest>,
@@ -95,8 +96,8 @@ impl MessageCoordinationDelegate {
             summaryJob: None,
             sendTriggeredSummaryJob: None,
             currentPromptFunctionType: PromptFunctionType::CHAT,
-            currentChatModelConfigIdOverride: None,
-            currentChatModelIndexOverride: None,
+            currentChatProviderIdOverride: None,
+            currentChatModelIdOverride: None,
             currentPreferenceProfileIdOverride: None,
             nonFatalErrorCollectorJob: None,
             pendingAutoContinuationByChatId: HashMap::new(),
@@ -127,8 +128,8 @@ impl MessageCoordinationDelegate {
         promptFunctionType: PromptFunctionType,
         groupOrchestrationMode: bool,
         groupParticipantNamesText: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
     ) -> i32 {
         let currentChat = chatId.as_ref().and_then(|chatId| {
@@ -147,8 +148,8 @@ impl MessageCoordinationDelegate {
         let runtimeOptions = SendMessageOptions {
             roleCardId: roleCardId.clone(),
             promptFunctionType: promptFunctionType.clone(),
-            chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride: chatProviderIdOverride.clone(),
+            chatModelIdOverride: chatModelIdOverride.clone(),
             preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
             ..SendMessageOptions::new()
         };
@@ -171,8 +172,8 @@ impl MessageCoordinationDelegate {
             groupOrchestrationMode,
             groupParticipantNamesText,
             proxySenderName: None,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride,
+            chatModelIdOverride,
             preferenceProfileIdOverride,
             publishEstimate: false,
             runtime,
@@ -189,17 +190,17 @@ impl MessageCoordinationDelegate {
         promptFunctionType: Option<PromptFunctionType>,
         groupOrchestrationMode: bool,
         groupParticipantNamesText: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
     ) -> Option<i32> {
         let targetChatId = chatId.or_else(|| self.chatHistoryDelegate.currentChatId.clone())?;
         let effectivePromptFunctionType =
             promptFunctionType.unwrap_or_else(|| self.currentPromptFunctionType.clone());
-        let effectiveChatModelConfigIdOverride =
-            chatModelConfigIdOverride.or_else(|| self.currentChatModelConfigIdOverride.clone());
-        let effectiveChatModelIndexOverride =
-            chatModelIndexOverride.or(self.currentChatModelIndexOverride);
+        let effectiveChatModelIdOverride =
+            chatModelIdOverride.or_else(|| self.currentChatModelIdOverride.clone());
+        let effectiveChatProviderIdOverride =
+            chatProviderIdOverride.or_else(|| self.currentChatProviderIdOverride.clone());
         let effectivePreferenceProfileIdOverride =
             preferenceProfileIdOverride.or_else(|| self.currentPreferenceProfileIdOverride.clone());
         let newWindowSize = self
@@ -210,8 +211,8 @@ impl MessageCoordinationDelegate {
                 effectivePromptFunctionType,
                 groupOrchestrationMode,
                 groupParticipantNamesText,
-                effectiveChatModelConfigIdOverride,
-                effectiveChatModelIndexOverride,
+                effectiveChatProviderIdOverride,
+                effectiveChatModelIdOverride,
                 effectivePreferenceProfileIdOverride,
             )
             .await;
@@ -241,8 +242,8 @@ impl MessageCoordinationDelegate {
         chatIdOverride: Option<String>,
         messageTextOverride: Option<String>,
         proxySenderNameOverride: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
@@ -301,8 +302,8 @@ impl MessageCoordinationDelegate {
             chatIdOverride,
             messageTextOverride,
             proxySenderNameOverride,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride,
+            chatModelIdOverride,
             None,
             attachments,
             replyToMessage,
@@ -378,8 +379,8 @@ impl MessageCoordinationDelegate {
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
-                chatModelConfigIdOverride: None,
-                chatModelIndexOverride: None,
+                chatProviderIdOverride: None,
+                chatModelIdOverride: None,
                 preferenceProfileIdOverride: None,
             })
             .await
@@ -422,8 +423,8 @@ impl MessageCoordinationDelegate {
         chatIdOverride: Option<String>,
         messageTextOverride: Option<String>,
         proxySenderNameOverride: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
@@ -433,8 +434,8 @@ impl MessageCoordinationDelegate {
         turnOptions: ChatTurnOptions,
     ) {
         self.currentPromptFunctionType = promptFunctionType.clone();
-        self.currentChatModelConfigIdOverride = chatModelConfigIdOverride.clone();
-        self.currentChatModelIndexOverride = chatModelIndexOverride;
+        self.currentChatProviderIdOverride = chatProviderIdOverride.clone();
+        self.currentChatModelIdOverride = chatModelIdOverride.clone();
         self.currentPreferenceProfileIdOverride = preferenceProfileIdOverride.clone();
         let chatId = chatIdOverride
             .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
@@ -446,6 +447,41 @@ impl MessageCoordinationDelegate {
                     .clone()
                     .unwrap_or_default()
             });
+        let providerOverrideSet = match chatProviderIdOverride.as_ref() {
+            Some(value) => !value.trim().is_empty(),
+            None => false,
+        };
+        let modelOverrideSet = match chatModelIdOverride.as_ref() {
+            Some(value) => !value.trim().is_empty(),
+            None => false,
+        };
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.dispatch.start",
+            &[
+                ("chatId", chatId.clone()),
+                ("prompt", format!("{:?}", promptFunctionType)),
+                ("continuation", ChainLogger::boolField(isContinuation)),
+                (
+                    "autoContinuation",
+                    ChainLogger::boolField(isAutoContinuation),
+                ),
+                (
+                    "groupOrchestration",
+                    ChainLogger::boolField(isGroupOrchestrationTurn),
+                ),
+                ("attachments", attachments.len().to_string()),
+                (
+                    "persistTurn",
+                    ChainLogger::boolField(turnOptions.persistTurn),
+                ),
+                (
+                    "providerOverrideSet",
+                    ChainLogger::boolField(providerOverrideSet),
+                ),
+                ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
+            ],
+        );
         self.tokenStatisticsDelegate
             .setActiveChatId(Some(chatId.clone()));
         self.tokenStatisticsDelegate
@@ -469,6 +505,11 @@ impl MessageCoordinationDelegate {
             None => match self.resolveRoleCardIdForSend(currentChat.as_ref()) {
                 Ok(roleCardId) => roleCardId,
                 Err(error) => {
+                    ChainLogger::error(
+                        SEND_CHAIN,
+                        "send.dispatch.role.resolve.error",
+                        &[("chatId", chatId.clone()), ("error", error.to_string())],
+                    );
                     self.messageProcessingDelegate
                         .setInputProcessingStateForChat(
                             chatId.clone(),
@@ -508,8 +549,8 @@ impl MessageCoordinationDelegate {
                 enableMemoryAutoUpdate: false,
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride,
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 isGroupOrchestrationTurn,
                 groupParticipantNamesText,
@@ -522,6 +563,11 @@ impl MessageCoordinationDelegate {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
+                ChainLogger::error(
+                    SEND_CHAIN,
+                    "send.dispatch.error",
+                    &[("chatId", chatId.clone()), ("error", error.to_string())],
+                );
                 self.messageProcessingDelegate
                     .setInputProcessingStateForChat(
                         chatId.clone(),
@@ -555,6 +601,16 @@ impl MessageCoordinationDelegate {
                 Some(chatId.clone()),
             );
         }
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.dispatch.accepted",
+            &[
+                ("chatId", chatId.clone()),
+                ("inputTokens", inputTokens.to_string()),
+                ("outputTokens", outputTokens.to_string()),
+                ("windowSize", windowSize.to_string()),
+            ],
+        );
         if isAutoContinuation {
             self.removePendingAutoContinuation(chatId);
         }
@@ -1111,26 +1167,33 @@ impl MessageCoordinationDelegate {
         chatId: String,
         promptFunctionType: PromptFunctionType,
     ) {
-        let configId = match self.currentChatModelConfigIdOverride.clone() {
-            Some(configId) if !configId.trim().is_empty() => configId,
+        let (providerId, modelId) = match (
+            self.currentChatProviderIdOverride.clone(),
+            self.currentChatModelIdOverride.clone(),
+        ) {
+            (Some(providerId), Some(modelId))
+                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
+            {
+                (providerId, modelId)
+            }
             _ => match self
                 .messageProcessingDelegate
                 .functionalConfigManager
-                .getConfigIdForFunction(FunctionType::CHAT)
+                .getModelBindingForFunction(FunctionType::CHAT)
             {
-                Ok(configId) => configId,
+                Ok(binding) => (binding.providerId, binding.modelId),
                 Err(_) => return,
             },
         };
         let chatContextSettings = match self
             .messageProcessingDelegate
             .modelConfigManager
-            .getModelConfig(&configId)
+            .getResolvedModelConfig(&providerId, &modelId)
         {
             Ok(config) => config,
             Err(_) => return,
         };
-        if !chatContextSettings.enableSummary {
+        if !chatContextSettings.summary.enableSummary {
             return;
         }
         let currentMessages = self
@@ -1139,20 +1202,20 @@ impl MessageCoordinationDelegate {
         let currentTokens = self
             .tokenStatisticsDelegate
             .getLastCurrentWindowSize(Some(chatId.clone()));
-        let effectiveContextLength = if chatContextSettings.enableMaxContextMode {
-            chatContextSettings.maxContextLength
+        let effectiveContextLength = if chatContextSettings.context.enableMaxContextMode {
+            chatContextSettings.context.maxContextLength
         } else {
-            chatContextSettings.contextLength
+            chatContextSettings.context.maxContextLength * 0.4
         };
         let maxTokens = (effectiveContextLength * 1024.0) as i32;
         let shouldSummarize = AIMessageManager::shouldGenerateSummary(
             currentMessages.clone(),
             currentTokens,
             maxTokens,
-            chatContextSettings.summaryTokenThreshold as f64,
-            chatContextSettings.enableSummary,
-            chatContextSettings.enableSummaryByMessageCount,
-            chatContextSettings.summaryMessageCountThreshold,
+            chatContextSettings.summary.summaryTokenThreshold as f64,
+            chatContextSettings.summary.enableSummary,
+            chatContextSettings.summary.enableSummaryByMessageCount,
+            chatContextSettings.summary.summaryMessageCountThreshold,
         );
         if shouldSummarize {
             self.summarizeHistory(
@@ -1160,8 +1223,8 @@ impl MessageCoordinationDelegate {
                 false,
                 Some(promptFunctionType),
                 Some(chatId),
-                self.currentChatModelConfigIdOverride.clone(),
-                self.currentChatModelIndexOverride,
+                self.currentChatProviderIdOverride.clone(),
+                self.currentChatModelIdOverride.clone(),
                 self.currentPreferenceProfileIdOverride.clone(),
                 None,
                 true,
@@ -1299,8 +1362,8 @@ impl MessageCoordinationDelegate {
         afterTimestamp: Option<i64>,
         originalChatId: Option<String>,
         roleCardId: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
     ) {
         if snapshotMessages.is_empty() || originalChatId.is_none() {
@@ -1348,8 +1411,8 @@ impl MessageCoordinationDelegate {
                 None,
                 false,
                 None,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride,
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
             )
             .await;
@@ -1370,8 +1433,8 @@ impl MessageCoordinationDelegate {
         autoContinue: bool,
         promptFunctionType: Option<PromptFunctionType>,
         chatIdOverride: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         roleCardIdOverride: Option<String>,
         isGroupChat: bool,
@@ -1396,10 +1459,10 @@ impl MessageCoordinationDelegate {
                     },
                 );
         }
-        let effectiveChatModelConfigIdOverride =
-            chatModelConfigIdOverride.or_else(|| self.currentChatModelConfigIdOverride.clone());
-        let effectiveChatModelIndexOverride =
-            chatModelIndexOverride.or(self.currentChatModelIndexOverride);
+        let effectiveChatModelIdOverride =
+            chatModelIdOverride.or_else(|| self.currentChatModelIdOverride.clone());
+        let effectiveChatProviderIdOverride =
+            chatProviderIdOverride.or_else(|| self.currentChatProviderIdOverride.clone());
         let effectivePreferenceProfileIdOverride =
             preferenceProfileIdOverride.or_else(|| self.currentPreferenceProfileIdOverride.clone());
         let currentMessages = currentChatId
@@ -1442,8 +1505,8 @@ impl MessageCoordinationDelegate {
                 None,
                 isGroupOrchestrationTurn,
                 groupParticipantNamesText.clone(),
-                effectiveChatModelConfigIdOverride.clone(),
-                effectiveChatModelIndexOverride,
+                effectiveChatProviderIdOverride.clone(),
+                effectiveChatModelIdOverride.clone(),
                 effectivePreferenceProfileIdOverride.clone(),
             )
             .await;
@@ -1465,8 +1528,8 @@ impl MessageCoordinationDelegate {
                     self.queuePendingAutoContinuation(
                         currentChatId,
                         continuationPromptType,
-                        effectiveChatModelConfigIdOverride,
-                        effectiveChatModelIndexOverride,
+                        effectiveChatProviderIdOverride.clone(),
+                        effectiveChatModelIdOverride,
                         effectivePreferenceProfileIdOverride,
                         roleCardIdOverride,
                         isGroupOrchestrationTurn,
@@ -1484,8 +1547,8 @@ impl MessageCoordinationDelegate {
                         Some(currentChatId),
                         None,
                         None,
-                        effectiveChatModelConfigIdOverride,
-                        effectiveChatModelIndexOverride,
+                        effectiveChatProviderIdOverride,
+                        effectiveChatModelIdOverride,
                         effectivePreferenceProfileIdOverride,
                         Vec::new(),
                         None,
@@ -1505,8 +1568,8 @@ impl MessageCoordinationDelegate {
         &mut self,
         chatId: String,
         promptFunctionType: PromptFunctionType,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         roleCardIdOverride: Option<String>,
         isGroupOrchestrationTurn: bool,
@@ -1517,8 +1580,8 @@ impl MessageCoordinationDelegate {
             PendingAutoContinuationRequest {
                 chatId,
                 promptFunctionType,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride,
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 roleCardIdOverride,
                 isGroupOrchestrationTurn,

@@ -57,10 +57,7 @@ class WebVisitLink {
   final String text;
 
   Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'url': url,
-      'text': text,
-    };
+    return <String, Object?>{'url': url, 'text': text};
   }
 }
 

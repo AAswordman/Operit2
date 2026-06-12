@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -9,6 +8,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/SettingsControlStyles.dart';
 
 class ModelSettingsPanel extends StatefulWidget {
   const ModelSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -23,8 +23,8 @@ class ModelSettingsPanel extends StatefulWidget {
 
 class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   Future<_ModelSettingsData>? _future;
-  core_proxy.ModelConnectionTestReport? _connectionTestReport;
-  bool _isTestingConnection = false;
+  String? _testingModelKey;
+  String? _selectedProviderId;
 
   @override
   void initState() {
@@ -38,31 +38,19 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     final apiPreferences = widget.clients.preferencesApiPreferences;
     await modelManager.initializeIfNeeded();
     await functionManager.initializeIfNeeded();
-    final chatMapping = await functionManager.getConfigMappingForFunction(
+    final chatBinding = await functionManager.getModelBindingForFunction(
       functionType: 'CHAT',
     );
-    final currentConfig = await modelManager.getModelConfig(
-      configId: chatMapping.configId,
-    );
-    final summaries = await modelManager.getAllConfigSummaries();
-    final configDataById = <String, core_proxy.ModelConfigData>{};
-    for (final summary in summaries) {
-      configDataById[summary.id] = await modelManager.getModelConfig(
-        configId: summary.id,
-      );
-    }
     return _ModelSettingsData(
-      summaries: summaries,
-      chatMapping: chatMapping,
-      currentConfig: currentConfig,
-      functionMappings: await functionManager
-          .functionConfigMappingWithIndexFlowSnapshot(),
-      configDataById: configDataById,
-      enableThinkingMode: await apiPreferences.enableThinkingModeFlowSnapshot(),
-      thinkingQualityLevel: await apiPreferences
-          .thinkingQualityLevelFlowSnapshot(),
-      disableStreamOutput: await apiPreferences
-          .disableStreamOutputFlowSnapshot(),
+      providers: await modelManager.getProviderProfiles(),
+      summaries: await modelManager.getAllModelSummaries(),
+      chatBinding: chatBinding,
+      currentConfig: await modelManager.getResolvedModelConfig(
+        providerId: chatBinding.providerId,
+        modelId: chatBinding.modelId,
+      ),
+      functionBindings: await functionManager
+          .functionModelBindingFlowSnapshot(),
       maxImageHistoryUserTurns: await apiPreferences
           .maxImageHistoryUserTurnsFlowSnapshot(),
       maxMediaHistoryUserTurns: await apiPreferences
@@ -76,21 +64,19 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     });
   }
 
-  Future<void> _selectChatModel(core_proxy.ModelConfigSummary summary) async {
+  Future<void> _selectChatModel(String providerId, String modelId) async {
     final l10n = AppLocalizations.of(context)!;
-    final modelName = _modelNameAt(summary.modelName, summary.modelIndex);
-    if (modelName.toLowerCase().contains('autoglm')) {
+    if (modelId.toLowerCase().contains('autoglm')) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.settingsModelChatAutoGlmWarning)),
       );
       return;
     }
-    await widget.clients.preferencesFunctionalConfigManager
-        .setConfigForFunctionWithIndex(
-          functionType: 'CHAT',
-          configId: summary.id,
-          modelIndex: summary.modelIndex,
-        );
+    await widget.clients.preferencesFunctionalConfigManager.setModelForFunction(
+      functionType: 'CHAT',
+      providerId: providerId,
+      modelId: modelId,
+    );
     _reload();
   }
 
@@ -99,288 +85,361 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     _ModelSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
-    final selection = await _FunctionModelSelectorDialog.show(
+    final selected = await _FunctionModelSelectorDialog.show(
       context: context,
       functionType: functionType,
       summaries: data.summaries,
-      currentMapping: data.functionMappings[functionType]!,
+      currentBinding: data.functionBindings[functionType]!,
     );
-    if (selection == null) {
+    if (selected == null) {
       return;
     }
-    if (!mounted) {
-      return;
-    }
-    final summary = data.summaryForConfigId(selection.configId);
-    final modelName = _modelNameAt(summary.modelName, selection.modelIndex);
-    if (functionType == 'CHAT' && modelName.toLowerCase().contains('autoglm')) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.settingsModelChatAutoGlmWarning)),
-      );
-      return;
-    }
-    await widget.clients.preferencesFunctionalConfigManager
-        .setConfigForFunctionWithIndex(
-          functionType: functionType,
-          configId: selection.configId,
-          modelIndex: selection.modelIndex,
-        );
-    if (!mounted) {
-      return;
-    }
-    _reload();
-  }
-
-  Future<void> _resetFunctionMappings() async {
-    await widget.clients.preferencesFunctionalConfigManager
-        .resetAllFunctionConfigs();
-    _reload();
-  }
-
-  Future<void> _createModelConfig() async {
-    final l10n = AppLocalizations.of(context)!;
-    final result = await _ModelConfigEditorDialog.show(
-      context: context,
-      title: l10n.settingsModelCreateProfile,
-    );
-    if (result == null) {
-      return;
-    }
-    final manager = widget.clients.preferencesModelConfigManager;
-    final configId = await manager.createConfig(name: result.name);
-    await _saveModelConfig(configId, result);
-  }
-
-  Future<void> _editModelConfig(core_proxy.ModelConfigSummary summary) async {
-    final l10n = AppLocalizations.of(context)!;
-    final manager = widget.clients.preferencesModelConfigManager;
-    final config = await manager.getModelConfig(configId: summary.id);
-    if (!mounted) {
-      return;
-    }
-    final result = await _ModelConfigEditorDialog.show(
-      context: context,
-      title: l10n.settingsModelEditProfile,
-      config: config,
-    );
-    if (result == null) {
-      return;
-    }
-    await _saveModelConfig(config.id, result);
-  }
-
-  Future<void> _saveModelConfig(
-    String configId,
-    _ModelConfigEditResult result,
-  ) async {
-    final manager = widget.clients.preferencesModelConfigManager;
-    await manager.updateConfigBase(configId: configId, name: result.name);
-    await manager.updateModelConfig(
-      configId: configId,
-      apiKey: result.apiKey,
-      apiEndpoint: result.apiEndpoint,
-      modelName: result.modelName,
-    );
-    await manager.updateApiSettingsFull(
-      configId: configId,
-      apiKey: result.apiKey,
-      apiEndpoint: result.apiEndpoint,
-      modelName: result.modelName,
-      apiProviderType: result.apiProviderType,
-      apiProviderTypeId: result.apiProviderTypeId,
-      mnnForwardType: result.mnnForwardType,
-      mnnThreadCount: result.mnnThreadCount,
-      llamaThreadCount: result.llamaThreadCount,
-      llamaContextSize: result.llamaContextSize,
-      llamaGpuLayers: result.llamaGpuLayers,
-      enableDirectImageProcessing: result.enableDirectImageProcessing,
-      enableDirectAudioProcessing: result.enableDirectAudioProcessing,
-      enableDirectVideoProcessing: result.enableDirectVideoProcessing,
-      enableGoogleSearch: result.enableGoogleSearch,
-      enableToolCall: result.enableToolCall,
-    );
-    await manager.updateRequestQueueSettings(
-      configId: configId,
-      requestLimitPerMinute: result.requestLimitPerMinute,
-      maxConcurrentRequests: result.maxConcurrentRequests,
-    );
-    await manager.updateContextSettings(
-      configId: configId,
-      contextLength: result.contextLength,
-      maxContextLength: result.maxContextLength,
-      enableMaxContextMode: result.enableMaxContextMode,
-    );
-    await manager.updateSummarySettings(
-      configId: configId,
-      enableSummary: result.enableSummary,
-      summaryTokenThreshold: result.summaryTokenThreshold,
-      enableSummaryByMessageCount: result.enableSummaryByMessageCount,
-      summaryMessageCountThreshold: result.summaryMessageCountThreshold,
-    );
-    await manager.updateCustomHeaders(
-      configId: configId,
-      customHeaders: result.customHeaders,
-    );
-    await manager.updateParameters(
-      configId: configId,
-      parameters: _standardModelParameterPayload(result),
-    );
-    await manager.updateCustomParameters(
-      configId: configId,
-      parametersJson: result.customParameters,
-    );
-    await manager.updateApiKeyPoolSettings(
-      configId: configId,
-      useMultipleApiKeys: result.useMultipleApiKeys,
-      apiKeyPool: result.apiKeyPool,
-    );
-    _reload();
-  }
-
-  Future<void> _deleteModelConfig(core_proxy.ModelConfigSummary summary) async {
-    await widget.clients.preferencesModelConfigManager.deleteConfig(
-      configId: summary.id,
-    );
-    _reload();
-  }
-
-  Future<void> _toggleThinking(_ModelSettingsData data) async {
-    await widget.clients.preferencesApiPreferences.updateThinkingSettings(
-      enableThinkingMode: !data.enableThinkingMode,
-      thinkingQualityLevel: null,
-    );
-    _reload();
-  }
-
-  Future<void> _toggleStream(_ModelSettingsData data) async {
-    await widget.clients.preferencesApiPreferences.saveDisableStreamOutput(
-      isDisabled: !data.disableStreamOutput,
-    );
-    _reload();
-  }
-
-  Future<void> _toggleToolCall(_ModelSettingsData data) async {
-    await widget.clients.preferencesModelConfigManager.updateToolCall(
-      configId: data.currentConfig.id,
-      enableToolCall: !data.currentConfig.enableToolCall,
-    );
-    _reload();
-  }
-
-  Future<void> _toggleDirectImage(_ModelSettingsData data) async {
-    await widget.clients.preferencesModelConfigManager
-        .updateDirectImageProcessing(
-          configId: data.currentConfig.id,
-          enableDirectImageProcessing:
-              !data.currentConfig.enableDirectImageProcessing,
-        );
-    _reload();
-  }
-
-  Future<void> _toggleDirectAudio(_ModelSettingsData data) async {
-    await widget.clients.preferencesModelConfigManager
-        .updateDirectAudioProcessing(
-          configId: data.currentConfig.id,
-          enableDirectAudioProcessing:
-              !data.currentConfig.enableDirectAudioProcessing,
-        );
-    _reload();
-  }
-
-  Future<void> _toggleDirectVideo(_ModelSettingsData data) async {
-    await widget.clients.preferencesModelConfigManager
-        .updateDirectVideoProcessing(
-          configId: data.currentConfig.id,
-          enableDirectVideoProcessing:
-              !data.currentConfig.enableDirectVideoProcessing,
-        );
-    _reload();
-  }
-
-  Future<void> _toggleGoogleSearch(_ModelSettingsData data) async {
-    await widget.clients.preferencesModelConfigManager.updateGoogleSearch(
-      configId: data.currentConfig.id,
-      enableGoogleSearch: !data.currentConfig.enableGoogleSearch,
-    );
-    _reload();
-  }
-
-  Future<void> _testConnection(_ModelSettingsData data) async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() {
-      _isTestingConnection = true;
-    });
-    try {
-      final report = await widget.clients.preferencesModelConfigManager
-          .testModelConfigConnection(
-            configId: data.currentConfig.id,
-            modelIndex: data.chatMapping.modelIndex,
-          );
-      if (!mounted) {
-        return;
-      }
-      await _applyConnectionTestCapabilities(data, report);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _connectionTestReport = report;
-      });
-    } catch (error) {
+    if (functionType == 'CHAT' &&
+        selected.modelId.toLowerCase().contains('autoglm')) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.settingsModelConnectionTestError('$error')),
-        ),
+        SnackBar(content: Text(l10n.settingsModelChatAutoGlmWarning)),
       );
+      return;
+    }
+    await widget.clients.preferencesFunctionalConfigManager.setModelForFunction(
+      functionType: functionType,
+      providerId: selected.providerId,
+      modelId: selected.modelId,
+    );
+    _reload();
+  }
+
+  Future<void> _createProvider() async {
+    final catalogEntries = await widget.clients.preferencesModelConfigManager
+        .getProviderCatalogEntries();
+    if (!mounted) {
+      return;
+    }
+    final result = await _ProviderEditorDialog.show(
+      context: context,
+      catalogEntries: catalogEntries,
+    );
+    if (result == null) {
+      return;
+    }
+    final providerId = await widget.clients.preferencesModelConfigManager
+        .createProvider(
+          name: result.name,
+          providerTypeId: result.providerTypeId,
+          endpoint: result.endpoint,
+        );
+    final provider = await widget.clients.preferencesModelConfigManager
+        .getProviderProfile(providerId: providerId);
+    await widget.clients.preferencesModelConfigManager.updateProviderProfile(
+      provider: core_proxy.ProviderProfile(
+        id: provider.id,
+        name: provider.name,
+        providerTypeId: provider.providerTypeId,
+        providerType: provider.providerType,
+        endpoint: provider.endpoint,
+        apiKey: result.apiKey,
+        useMultipleApiKeys: provider.useMultipleApiKeys,
+        apiKeyPool: provider.apiKeyPool,
+        currentKeyIndex: provider.currentKeyIndex,
+        keyRotationMode: provider.keyRotationMode,
+        customHeaders: result.customHeaders,
+        requestLimitPerMinute: result.requestLimitPerMinute,
+        maxConcurrentRequests: result.maxConcurrentRequests,
+        models: provider.models,
+      ),
+    );
+    _selectedProviderId = providerId;
+    _reload();
+  }
+
+  Future<void> _editProvider(core_proxy.ProviderProfile provider) async {
+    final catalogEntries = await widget.clients.preferencesModelConfigManager
+        .getProviderCatalogEntries();
+    if (!mounted) {
+      return;
+    }
+    final result = await _ProviderEditorDialog.show(
+      context: context,
+      catalogEntries: catalogEntries,
+      provider: provider,
+    );
+    if (result == null) {
+      return;
+    }
+    await widget.clients.preferencesModelConfigManager.updateProviderProfile(
+      provider: core_proxy.ProviderProfile(
+        id: provider.id,
+        name: result.name,
+        providerTypeId: provider.providerTypeId,
+        providerType: provider.providerType,
+        endpoint: result.endpoint,
+        apiKey: result.apiKey,
+        useMultipleApiKeys: provider.useMultipleApiKeys,
+        apiKeyPool: provider.apiKeyPool,
+        currentKeyIndex: provider.currentKeyIndex,
+        keyRotationMode: provider.keyRotationMode,
+        customHeaders: result.customHeaders,
+        requestLimitPerMinute: result.requestLimitPerMinute,
+        maxConcurrentRequests: result.maxConcurrentRequests,
+        models: provider.models,
+      ),
+    );
+    _reload();
+  }
+
+  Future<void> _deleteProvider(core_proxy.ProviderProfile provider) async {
+    final bindings = await widget.clients.preferencesFunctionalConfigManager
+        .functionModelBindingFlowSnapshot();
+    final boundFunctions = _boundFunctionTypesForProvider(
+      bindings,
+      provider.id,
+    );
+    if (boundFunctions.isNotEmpty) {
+      if (!mounted) {
+        return;
+      }
+      await _DeleteProviderBlockedDialog.show(
+        context: context,
+        functionTypes: boundFunctions,
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final confirmed = await _DeleteProviderConfirmDialog.show(
+      context: context,
+      providerName: provider.name,
+      modelCount: provider.models.length,
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await widget.clients.preferencesModelConfigManager.deleteProvider(
+      providerId: provider.id,
+    );
+    if (_selectedProviderId == provider.id) {
+      _selectedProviderId = null;
+    }
+    _reload();
+  }
+
+  Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final models = await widget.clients.preferencesModelConfigManager
+          .getAvailableProviderModels(providerId: provider.id);
+      if (!mounted) {
+        return;
+      }
+      final selection = await _AvailableModelDialog.show(
+        context: context,
+        models: models,
+      );
+      if (selection == null) {
+        return;
+      }
+      switch (selection) {
+        case _AvailableModelPicked(:final model):
+          await widget.clients.preferencesModelConfigManager
+              .addProviderModelFromAvailable(
+                providerId: provider.id,
+                modelId: model.modelId,
+              );
+          _reload();
+        case _AvailableModelCustom():
+          if (!mounted) {
+            return;
+          }
+          await _createCustomProviderModel(provider);
+      }
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  Future<void> _createCustomProviderModel(
+    core_proxy.ProviderProfile provider,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final modelId = await _TextInputDialog.show(
+      context: context,
+      title: l10n.settingsModelCustomModel,
+      label: l10n.settingsModelModelId,
+    );
+    if (modelId == null) {
+      return;
+    }
+    await widget.clients.preferencesModelConfigManager.createProviderModel(
+      providerId: provider.id,
+      modelId: modelId,
+    );
+    _reload();
+  }
+
+  Future<void> _deleteModel(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  ) async {
+    final bindings = await widget.clients.preferencesFunctionalConfigManager
+        .functionModelBindingFlowSnapshot();
+    final boundFunctions = _boundFunctionTypesForModel(
+      bindings,
+      provider.id,
+      model.id,
+    );
+    if (boundFunctions.isNotEmpty) {
+      if (!mounted) {
+        return;
+      }
+      await _DeleteModelBlockedDialog.show(
+        context: context,
+        functionTypes: boundFunctions,
+      );
+      return;
+    }
+    await widget.clients.preferencesModelConfigManager.deleteModel(
+      providerId: provider.id,
+      modelId: model.id,
+    );
+    _reload();
+  }
+
+  Future<void> _editModelSettings(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  ) async {
+    final config = await widget.clients.preferencesModelConfigManager
+        .getResolvedModelConfig(providerId: provider.id, modelId: model.id);
+    if (!mounted) {
+      return;
+    }
+    final result = await _ModelSettingsEditorDialog.show(
+      context: context,
+      providerName: provider.name,
+      modelId: model.id,
+      initialCapabilities: config.capabilities,
+      initialBuiltinTools: config.builtinTools,
+      initialContext: config.context,
+      initialSummary: config.summary,
+      onTest: () => _testModelConnection(provider, model),
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    final _ModelSettingsChange changed;
+    switch (result) {
+      case _ModelSettingsDeleteRequested():
+        await _deleteModel(provider, model);
+        return;
+      case _ModelSettingsSaved(:final change):
+        changed = change;
+    }
+    if (changed.capabilities != config.capabilities) {
+      await widget.clients.preferencesModelConfigManager
+          .updateCapabilitiesForModel(
+            providerId: provider.id,
+            modelId: model.id,
+            capabilities: changed.capabilities,
+          );
+    }
+    if (changed.builtinTools != config.builtinTools) {
+      await widget.clients.preferencesModelConfigManager
+          .updateBuiltinToolsForModel(
+            providerId: provider.id,
+            modelId: model.id,
+            builtinTools: changed.builtinTools,
+          );
+    }
+    if (changed.context != config.context) {
+      await widget.clients.preferencesModelConfigManager.updateContextForModel(
+        providerId: provider.id,
+        modelId: model.id,
+        context: changed.context,
+      );
+    }
+    if (changed.summary != config.summary) {
+      await widget.clients.preferencesModelConfigManager.updateSummaryForModel(
+        providerId: provider.id,
+        modelId: model.id,
+        summary: changed.summary,
+      );
+    }
+    if (!mounted) {
+      return;
+    }
+    _reload();
+  }
+
+  Future<core_proxy.ModelConnectionTestReport?> _testModelConnection(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final testKey = _modelTestKey(provider.id, model.id);
+    setState(() {
+      _testingModelKey = testKey;
+    });
+    try {
+      final report = await widget.clients.preferencesModelConfigManager
+          .testModelConnection(providerId: provider.id, modelId: model.id);
+      if (!mounted) {
+        return report;
+      }
+      await _applyConnectionTestCapabilities(
+        providerId: provider.id,
+        modelId: model.id,
+        report: report,
+      );
+      if (!mounted) {
+        return report;
+      }
+      await _ConnectionTestReportDialog.show(context: context, report: report);
+      return report;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      await _ConnectionTestErrorDialog.show(
+        context: context,
+        message: l10n.settingsModelConnectionTestError('$error'),
+      );
+      return null;
     } finally {
-      if (mounted) {
+      if (mounted && _testingModelKey == testKey) {
         setState(() {
-          _isTestingConnection = false;
+          _testingModelKey = null;
         });
       }
     }
   }
 
-  Future<void> _applyConnectionTestCapabilities(
-    _ModelSettingsData data,
-    core_proxy.ModelConnectionTestReport report,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
+  Future<void> _applyConnectionTestCapabilities({
+    required String providerId,
+    required String modelId,
+    required core_proxy.ModelConnectionTestReport report,
+  }) async {
     final chatPassed = _connectionTestSucceeded(report, 'CHAT');
     if (!chatPassed) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.settingsModelCapabilitiesNeedChat)),
-      );
       return;
     }
-    final manager = widget.clients.preferencesModelConfigManager;
-    await manager.updateToolCall(
-      configId: data.currentConfig.id,
-      enableToolCall: _connectionTestSucceeded(report, 'TOOL_CALL'),
-    );
-    await manager.updateDirectImageProcessing(
-      configId: data.currentConfig.id,
-      enableDirectImageProcessing: _connectionTestSucceeded(report, 'IMAGE'),
-    );
-    await manager.updateDirectAudioProcessing(
-      configId: data.currentConfig.id,
-      enableDirectAudioProcessing: _connectionTestSucceeded(report, 'AUDIO'),
-    );
-    await manager.updateDirectVideoProcessing(
-      configId: data.currentConfig.id,
-      enableDirectVideoProcessing: _connectionTestSucceeded(report, 'VIDEO'),
-    );
+    await widget.clients.preferencesModelConfigManager
+        .updateCapabilitiesForModel(
+          providerId: providerId,
+          modelId: modelId,
+          capabilities: core_proxy.ModelCapabilities(
+            directImage: _connectionTestSucceeded(report, 'IMAGE'),
+            directAudio: _connectionTestSucceeded(report, 'AUDIO'),
+            directVideo: _connectionTestSucceeded(report, 'VIDEO'),
+            toolCall: _connectionTestSucceeded(report, 'TOOL_CALL'),
+          ),
+        );
     if (!mounted) {
       return;
     }
-    messenger.showSnackBar(
-      SnackBar(content: Text(l10n.settingsModelCapabilitiesApplied)),
-    );
     _reload();
   }
 
@@ -395,97 +454,39 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
           return const M3LoadingPane();
         }
         return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _SectionCard(
-              title: l10n.settingsModelCurrentSection,
-              children: <Widget>[
-                _InfoLine(
-                  label: l10n.settingsModelCurrentChatModel,
-                  value:
-                      '${data.currentConfig.name} · ${_modelNameAt(data.currentConfig.modelName, data.chatMapping.modelIndex)}',
-                ),
-                _SwitchLine(
-                  title: l10n.settingsChatThinkingMode,
-                  subtitle: l10n.settingsChatThinkingModeDescription,
-                  value: data.enableThinkingMode,
-                  onChanged: (_) => _toggleThinking(data),
-                ),
-                _SwitchLine(
-                  title: l10n.settingsChatStreamOutput,
-                  subtitle: l10n.settingsChatStreamOutputDescription,
-                  value: !data.disableStreamOutput,
-                  onChanged: (_) => _toggleStream(data),
-                ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsModelConnectionTestSection,
+              title: l10n.settingsModelProvidersSection,
               action: FilledButton.icon(
-                onPressed: _isTestingConnection
-                    ? null
-                    : () => _testConnection(data),
-                icon: const Icon(Icons.network_check_outlined),
-                label: Text(l10n.settingsModelRunConnectionTest),
-              ),
-              children: <Widget>[
-                if (_isTestingConnection) ...<Widget>[
-                  Row(
-                    children: <Widget>[
-                      const M3LoadingIndicator(size: 24),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(l10n.settingsModelTestingConnection),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (_connectionTestReport case final report?) ...<Widget>[
-                  _InfoLine(
-                    label: l10n.settingsModelTestedModel,
-                    value: report.testedModelName,
-                  ),
-                  _InfoLine(
-                    label: l10n.settingsModelConnectionTestSection,
-                    value: report.success
-                        ? l10n.settingsModelConnectionTestPassed
-                        : l10n.settingsModelConnectionTestFailed,
-                  ),
-                  for (final item in report.items)
-                    _ConnectionTestItemTile(item: item),
-                ],
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsModelProfilesSection,
-              action: FilledButton.icon(
-                onPressed: _createModelConfig,
-                icon: const Icon(Icons.add),
+                onPressed: _createProvider,
+                style: SettingsControlStyles.sectionFilledButton(),
+                icon: const Icon(Icons.add, size: 18),
                 label: Text(l10n.create),
               ),
               children: <Widget>[
-                for (final summary in data.summaries)
-                  _ModelSummaryTile(
-                    summary: summary,
-                    selected: summary.id == data.chatMapping.configId,
-                    deletable:
-                        summary.id != data.chatMapping.configId &&
-                        data.summaries.length > 1,
-                    onTap: () => _selectChatModel(summary),
-                    onEdit: () => _editModelConfig(summary),
-                    onDelete: () => _deleteModelConfig(summary),
-                  ),
+                _ProviderModelManager(
+                  providers: data.providers,
+                  summaries: data.summaries,
+                  chatBinding: data.chatBinding,
+                  selectedProviderId: _selectedProviderId,
+                  onSelectedProviderChanged: (providerId) {
+                    setState(() {
+                      _selectedProviderId = providerId;
+                    });
+                  },
+                  onEditProvider: _editProvider,
+                  onDeleteProvider: _deleteProvider,
+                  onAddModel: _addProviderModel,
+                  onSelectModel: _selectChatModel,
+                  testingModelKey: _testingModelKey,
+                  onEditModelSettings: _editModelSettings,
+                ),
               ],
             ),
             _SectionCard(
               title: l10n.settingsModelFunctionMappingsSection,
               initiallyExpanded: false,
-              action: TextButton.icon(
-                onPressed: _resetFunctionMappings,
-                icon: const Icon(Icons.refresh),
-                label: Text(l10n.settingsModelFunctionMappingsReset),
-              ),
               children: <Widget>[
                 Align(
                   alignment: Alignment.centerLeft,
@@ -500,68 +501,12 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
                 for (final functionType in _functionTypes)
                   _FunctionMappingTile(
                     functionType: functionType,
-                    mapping: data.functionMappings[functionType]!,
-                    summary: data.summaryForConfigId(
-                      data.functionMappings[functionType]!.configId,
+                    binding: data.functionBindings[functionType]!,
+                    summary: data.summaryForBinding(
+                      data.functionBindings[functionType]!,
                     ),
-                    config:
-                        data.configDataById[data
-                            .functionMappings[functionType]!
-                            .configId]!,
                     onTap: () => _selectFunctionModel(functionType, data),
                   ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsAdvanced,
-              initiallyExpanded: false,
-              children: <Widget>[
-                _SwitchLine(
-                  title: l10n.settingsModelToolCall,
-                  subtitle: l10n.settingsModelToolCallDescription,
-                  value: data.currentConfig.enableToolCall,
-                  onChanged: (_) => _toggleToolCall(data),
-                ),
-                _SwitchLine(
-                  title: l10n.settingsModelDirectImage,
-                  subtitle: l10n.settingsModelDirectImageDescription,
-                  value: data.currentConfig.enableDirectImageProcessing,
-                  onChanged: (_) => _toggleDirectImage(data),
-                ),
-                _SwitchLine(
-                  title: l10n.settingsModelDirectAudio,
-                  subtitle: l10n.settingsModelDirectAudioDescription,
-                  value: data.currentConfig.enableDirectAudioProcessing,
-                  onChanged: (_) => _toggleDirectAudio(data),
-                ),
-                _SwitchLine(
-                  title: l10n.settingsModelDirectVideo,
-                  subtitle: l10n.settingsModelDirectVideoDescription,
-                  value: data.currentConfig.enableDirectVideoProcessing,
-                  onChanged: (_) => _toggleDirectVideo(data),
-                ),
-                _SwitchLine(
-                  title: l10n.settingsModelGoogleSearch,
-                  subtitle: l10n.settingsModelGoogleSearchDescription,
-                  value: data.currentConfig.enableGoogleSearch,
-                  onChanged: (_) => _toggleGoogleSearch(data),
-                ),
-                _InfoLine(
-                  label: l10n.settingsModelContext,
-                  value:
-                      '${data.currentConfig.contextLength.toStringAsFixed(0)}k / ${data.currentConfig.maxContextLength.toStringAsFixed(0)}k',
-                ),
-                _InfoLine(
-                  label: l10n.settingsModelSummary,
-                  value: data.currentConfig.enableSummary
-                      ? l10n.enable
-                      : l10n.disable,
-                ),
-                _InfoLine(
-                  label: l10n.settingsModelMediaHistory,
-                  value:
-                      '${data.maxImageHistoryUserTurns} / ${data.maxMediaHistoryUserTurns}',
-                ),
               ],
             ),
           ],
@@ -573,416 +518,236 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
 
 class _ModelSettingsData {
   const _ModelSettingsData({
+    required this.providers,
     required this.summaries,
-    required this.chatMapping,
+    required this.chatBinding,
     required this.currentConfig,
-    required this.functionMappings,
-    required this.configDataById,
-    required this.enableThinkingMode,
-    required this.thinkingQualityLevel,
-    required this.disableStreamOutput,
+    required this.functionBindings,
     required this.maxImageHistoryUserTurns,
     required this.maxMediaHistoryUserTurns,
   });
 
-  final List<core_proxy.ModelConfigSummary> summaries;
-  final core_proxy.FunctionConfigMapping chatMapping;
-  final core_proxy.ModelConfigData currentConfig;
-  final Map<Object?, core_proxy.FunctionConfigMapping> functionMappings;
-  final Map<String, core_proxy.ModelConfigData> configDataById;
-  final bool enableThinkingMode;
-  final int thinkingQualityLevel;
-  final bool disableStreamOutput;
+  final List<core_proxy.ProviderProfile> providers;
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding chatBinding;
+  final core_proxy.ResolvedModelConfig currentConfig;
+  final Map<Object?, core_proxy.FunctionModelBinding> functionBindings;
   final int maxImageHistoryUserTurns;
   final int maxMediaHistoryUserTurns;
 
-  core_proxy.ModelConfigSummary summaryForConfigId(String configId) {
-    return summaries.firstWhere((summary) => summary.id == configId);
+  core_proxy.ProviderModelSummary? summaryForBinding(
+    core_proxy.FunctionModelBinding binding,
+  ) {
+    for (final summary in summaries) {
+      if (summary.providerId == binding.providerId &&
+          summary.modelId == binding.modelId) {
+        return summary;
+      }
+    }
+    return null;
   }
 }
 
-class _ModelConfigEditResult {
-  const _ModelConfigEditResult({
+class _ProviderEditResult {
+  const _ProviderEditResult({
     required this.name,
+    required this.providerTypeId,
+    required this.endpoint,
     required this.apiKey,
-    required this.apiEndpoint,
-    required this.modelName,
-    required this.apiProviderType,
-    required this.apiProviderTypeId,
-    required this.mnnForwardType,
-    required this.mnnThreadCount,
-    required this.llamaThreadCount,
-    required this.llamaContextSize,
-    required this.llamaGpuLayers,
-    required this.enableDirectImageProcessing,
-    required this.enableDirectAudioProcessing,
-    required this.enableDirectVideoProcessing,
-    required this.enableGoogleSearch,
-    required this.enableToolCall,
+    required this.customHeaders,
     required this.requestLimitPerMinute,
     required this.maxConcurrentRequests,
-    required this.contextLength,
-    required this.maxContextLength,
-    required this.enableMaxContextMode,
-    required this.enableSummary,
-    required this.summaryTokenThreshold,
-    required this.enableSummaryByMessageCount,
-    required this.summaryMessageCountThreshold,
-    required this.customHeaders,
-    required this.customParameters,
-    required this.useMultipleApiKeys,
-    required this.apiKeyPool,
-    required this.maxTokensEnabled,
-    required this.temperatureEnabled,
-    required this.topPEnabled,
-    required this.topKEnabled,
-    required this.presencePenaltyEnabled,
-    required this.frequencyPenaltyEnabled,
-    required this.repetitionPenaltyEnabled,
-    required this.maxTokens,
-    required this.temperature,
-    required this.topP,
-    required this.topK,
-    required this.presencePenalty,
-    required this.frequencyPenalty,
-    required this.repetitionPenalty,
   });
 
   final String name;
+  final String providerTypeId;
+  final String endpoint;
   final String apiKey;
-  final String apiEndpoint;
-  final String modelName;
-  final Object? apiProviderType;
-  final String apiProviderTypeId;
-  final int mnnForwardType;
-  final int mnnThreadCount;
-  final int llamaThreadCount;
-  final int llamaContextSize;
-  final int llamaGpuLayers;
-  final bool enableDirectImageProcessing;
-  final bool enableDirectAudioProcessing;
-  final bool enableDirectVideoProcessing;
-  final bool enableGoogleSearch;
-  final bool enableToolCall;
+  final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
-  final double contextLength;
-  final double maxContextLength;
-  final bool enableMaxContextMode;
-  final bool enableSummary;
-  final double summaryTokenThreshold;
-  final bool enableSummaryByMessageCount;
-  final int summaryMessageCountThreshold;
-  final String customHeaders;
-  final String customParameters;
-  final bool useMultipleApiKeys;
-  final List<core_proxy.ApiKeyInfo> apiKeyPool;
-  final bool maxTokensEnabled;
-  final bool temperatureEnabled;
-  final bool topPEnabled;
-  final bool topKEnabled;
-  final bool presencePenaltyEnabled;
-  final bool frequencyPenaltyEnabled;
-  final bool repetitionPenaltyEnabled;
-  final int maxTokens;
-  final double temperature;
-  final double topP;
-  final int topK;
-  final double presencePenalty;
-  final double frequencyPenalty;
-  final double repetitionPenalty;
 }
 
-class _ModelConfigEditorDialog extends StatefulWidget {
-  const _ModelConfigEditorDialog({required this.title, this.config});
+class _ProviderEditorDialog extends StatefulWidget {
+  const _ProviderEditorDialog({required this.catalogEntries, this.provider});
 
-  final String title;
-  final core_proxy.ModelConfigData? config;
+  final List<core_proxy.ProviderCatalogEntry> catalogEntries;
+  final core_proxy.ProviderProfile? provider;
 
-  static Future<_ModelConfigEditResult?> show({
+  static Future<_ProviderEditResult?> show({
     required BuildContext context,
-    required String title,
-    core_proxy.ModelConfigData? config,
+    required List<core_proxy.ProviderCatalogEntry> catalogEntries,
+    core_proxy.ProviderProfile? provider,
   }) {
-    return showDialog<_ModelConfigEditResult>(
+    return showDialog<_ProviderEditResult>(
       context: context,
-      builder: (context) =>
-          _ModelConfigEditorDialog(title: title, config: config),
+      builder: (context) => _ProviderEditorDialog(
+        catalogEntries: catalogEntries,
+        provider: provider,
+      ),
     );
   }
 
   @override
-  State<_ModelConfigEditorDialog> createState() =>
-      _ModelConfigEditorDialogState();
+  State<_ProviderEditorDialog> createState() => _ProviderEditorDialogState();
 }
 
-class _ModelConfigEditorDialogState extends State<_ModelConfigEditorDialog> {
+class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
+  late final TextEditingController _endpointController;
   late final TextEditingController _apiKeyController;
-  late final TextEditingController _apiEndpointController;
-  late final TextEditingController _modelNameController;
-  late final TextEditingController _providerIdController;
+  late final TextEditingController _customHeadersController;
   late final TextEditingController _requestLimitController;
   late final TextEditingController _maxConcurrentController;
-  late final TextEditingController _contextLengthController;
-  late final TextEditingController _maxContextLengthController;
-  late final TextEditingController _summaryThresholdController;
-  late final TextEditingController _summaryCountController;
-  late final TextEditingController _customHeadersController;
-  late final TextEditingController _customParametersController;
-  late final TextEditingController _maxTokensController;
-  late final TextEditingController _temperatureController;
-  late final TextEditingController _topPController;
-  late final TextEditingController _topKController;
-  late final TextEditingController _presencePenaltyController;
-  late final TextEditingController _frequencyPenaltyController;
-  late final TextEditingController _repetitionPenaltyController;
-  late bool _useMultipleApiKeys;
-  late List<core_proxy.ApiKeyInfo> _apiKeyPool;
-  bool _maxTokensEnabled = false;
-  bool _temperatureEnabled = false;
-  bool _topPEnabled = false;
-  bool _topKEnabled = false;
-  bool _presencePenaltyEnabled = false;
-  bool _frequencyPenaltyEnabled = false;
-  bool _repetitionPenaltyEnabled = false;
-  bool _enableToolCall = false;
-  bool _enableDirectImage = false;
-  bool _enableDirectAudio = false;
-  bool _enableDirectVideo = false;
-  bool _enableGoogleSearch = false;
-  bool _enableMaxContextMode = false;
-  bool _enableSummary = false;
-  bool _enableSummaryByMessageCount = false;
+  String? _selectedProviderTypeId;
 
   @override
   void initState() {
     super.initState();
-    final config = widget.config;
-    _nameController = TextEditingController(text: config?.name ?? '');
-    _apiKeyController = TextEditingController(text: config?.apiKey ?? '');
-    _apiEndpointController = TextEditingController(
-      text: config?.apiEndpoint ?? '',
-    );
-    _modelNameController = TextEditingController(text: config?.modelName ?? '');
-    _providerIdController = TextEditingController(
-      text: config?.apiProviderTypeId ?? '',
+    final provider = widget.provider;
+    _nameController = TextEditingController(text: provider?.name ?? '');
+    _endpointController = TextEditingController(text: provider?.endpoint ?? '');
+    _apiKeyController = TextEditingController(text: provider?.apiKey ?? '');
+    _customHeadersController = TextEditingController(
+      text: provider?.customHeaders ?? '{}',
     );
     _requestLimitController = TextEditingController(
-      text: (config?.requestLimitPerMinute ?? 0).toString(),
+      text: (provider?.requestLimitPerMinute ?? 0).toString(),
     );
     _maxConcurrentController = TextEditingController(
-      text: (config?.maxConcurrentRequests ?? 1).toString(),
+      text: (provider?.maxConcurrentRequests ?? 1).toString(),
     );
-    _contextLengthController = TextEditingController(
-      text: (config?.contextLength ?? 32).toStringAsFixed(0),
-    );
-    _maxContextLengthController = TextEditingController(
-      text: (config?.maxContextLength ?? 32).toStringAsFixed(0),
-    );
-    _summaryThresholdController = TextEditingController(
-      text: (config?.summaryTokenThreshold ?? 30).toStringAsFixed(0),
-    );
-    _summaryCountController = TextEditingController(
-      text: (config?.summaryMessageCountThreshold ?? 20).toString(),
-    );
-    _customHeadersController = TextEditingController(
-      text: config?.customHeaders ?? '',
-    );
-    _customParametersController = TextEditingController(
-      text: config?.customParameters ?? '',
-    );
-    _maxTokensController = TextEditingController(
-      text: (config?.maxTokens ?? 4096).toString(),
-    );
-    _temperatureController = TextEditingController(
-      text: (config?.temperature ?? 1.0).toString(),
-    );
-    _topPController = TextEditingController(
-      text: (config?.topP ?? 1.0).toString(),
-    );
-    _topKController = TextEditingController(
-      text: (config?.topK ?? 0).toString(),
-    );
-    _presencePenaltyController = TextEditingController(
-      text: (config?.presencePenalty ?? 0.0).toString(),
-    );
-    _frequencyPenaltyController = TextEditingController(
-      text: (config?.frequencyPenalty ?? 0.0).toString(),
-    );
-    _repetitionPenaltyController = TextEditingController(
-      text: (config?.repetitionPenalty ?? 1.0).toString(),
-    );
-    _useMultipleApiKeys = config?.useMultipleApiKeys ?? false;
-    _apiKeyPool = _apiKeyPoolFromRaw(config?.apiKeyPool ?? const <Object?>[]);
-    _maxTokensEnabled = config?.maxTokensEnabled ?? false;
-    _temperatureEnabled = config?.temperatureEnabled ?? false;
-    _topPEnabled = config?.topPEnabled ?? false;
-    _topKEnabled = config?.topKEnabled ?? false;
-    _presencePenaltyEnabled = config?.presencePenaltyEnabled ?? false;
-    _frequencyPenaltyEnabled = config?.frequencyPenaltyEnabled ?? false;
-    _repetitionPenaltyEnabled = config?.repetitionPenaltyEnabled ?? false;
-    _enableToolCall = config?.enableToolCall ?? false;
-    _enableDirectImage = config?.enableDirectImageProcessing ?? false;
-    _enableDirectAudio = config?.enableDirectAudioProcessing ?? false;
-    _enableDirectVideo = config?.enableDirectVideoProcessing ?? false;
-    _enableGoogleSearch = config?.enableGoogleSearch ?? false;
-    _enableMaxContextMode = config?.enableMaxContextMode ?? false;
-    _enableSummary = config?.enableSummary ?? false;
-    _enableSummaryByMessageCount = config?.enableSummaryByMessageCount ?? false;
+    if (provider != null) {
+      _selectedProviderTypeId = provider.providerTypeId;
+    } else {
+      // Default to DEEPSEEK if present
+      _selectedProviderTypeId = _catalogDeepseek()?.providerTypeId;
+    }
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _endpointController.dispose();
     _apiKeyController.dispose();
-    _apiEndpointController.dispose();
-    _modelNameController.dispose();
-    _providerIdController.dispose();
+    _customHeadersController.dispose();
     _requestLimitController.dispose();
     _maxConcurrentController.dispose();
-    _contextLengthController.dispose();
-    _maxContextLengthController.dispose();
-    _summaryThresholdController.dispose();
-    _summaryCountController.dispose();
-    _customHeadersController.dispose();
-    _customParametersController.dispose();
-    _maxTokensController.dispose();
-    _temperatureController.dispose();
-    _topPController.dispose();
-    _topKController.dispose();
-    _presencePenaltyController.dispose();
-    _frequencyPenaltyController.dispose();
-    _repetitionPenaltyController.dispose();
     super.dispose();
   }
 
+  core_proxy.ProviderCatalogEntry? _catalogDeepseek() {
+    for (final entry in widget.catalogEntries) {
+      if (entry.providerTypeId == 'DEEPSEEK') {
+        return entry;
+      }
+    }
+    return widget.catalogEntries.isNotEmpty
+        ? widget.catalogEntries.first
+        : null;
+  }
+
+  core_proxy.ProviderCatalogEntry? _selectedCatalog() {
+    if (_selectedProviderTypeId == null) {
+      return null;
+    }
+    for (final entry in widget.catalogEntries) {
+      if (entry.providerTypeId == _selectedProviderTypeId) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  bool get _needsCustomEndpoint {
+    final catalog = _selectedCatalog();
+    return catalog == null || catalog.defaultEndpoint.trim().isEmpty;
+  }
+
+  void _onProviderTypeChanged(String? providerTypeId) {
+    setState(() {
+      _selectedProviderTypeId = providerTypeId;
+    });
+    if (!_needsCustomEndpoint && _endpointController.text.isEmpty) {
+      final catalog = _selectedCatalog();
+      if (catalog != null) {
+        _endpointController.text = catalog.defaultEndpoint;
+      }
+    }
+  }
+
   void _save() {
-    if (!_formKey.currentState!.validate()) {
+    if (!_formKey.currentState!.validate() || _selectedProviderTypeId == null) {
       return;
     }
-    final config = widget.config;
     Navigator.of(context).pop(
-      _ModelConfigEditResult(
+      _ProviderEditResult(
         name: _nameController.text.trim(),
+        providerTypeId: _selectedProviderTypeId!,
+        endpoint: _endpointController.text.trim(),
         apiKey: _apiKeyController.text,
-        apiEndpoint: _apiEndpointController.text.trim(),
-        modelName: _modelNameController.text.trim(),
-        apiProviderType: config?.apiProviderType,
-        apiProviderTypeId: _providerIdController.text.trim(),
-        mnnForwardType: config?.mnnForwardType ?? 0,
-        mnnThreadCount: config?.mnnThreadCount ?? 4,
-        llamaThreadCount: config?.llamaThreadCount ?? 4,
-        llamaContextSize: config?.llamaContextSize ?? 4096,
-        llamaGpuLayers: config?.llamaGpuLayers ?? 0,
-        enableDirectImageProcessing: _enableDirectImage,
-        enableDirectAudioProcessing: _enableDirectAudio,
-        enableDirectVideoProcessing: _enableDirectVideo,
-        enableGoogleSearch: _enableGoogleSearch,
-        enableToolCall: _enableToolCall,
+        customHeaders: _customHeadersController.text,
         requestLimitPerMinute: int.parse(_requestLimitController.text),
         maxConcurrentRequests: int.parse(_maxConcurrentController.text),
-        contextLength: double.parse(_contextLengthController.text),
-        maxContextLength: double.parse(_maxContextLengthController.text),
-        enableMaxContextMode: _enableMaxContextMode,
-        enableSummary: _enableSummary,
-        summaryTokenThreshold: double.parse(_summaryThresholdController.text),
-        enableSummaryByMessageCount: _enableSummaryByMessageCount,
-        summaryMessageCountThreshold: int.parse(_summaryCountController.text),
-        customHeaders: _customHeadersController.text,
-        customParameters: _customParametersController.text,
-        useMultipleApiKeys: _useMultipleApiKeys,
-        apiKeyPool: List<core_proxy.ApiKeyInfo>.from(_apiKeyPool),
-        maxTokensEnabled: _maxTokensEnabled,
-        temperatureEnabled: _temperatureEnabled,
-        topPEnabled: _topPEnabled,
-        topKEnabled: _topKEnabled,
-        presencePenaltyEnabled: _presencePenaltyEnabled,
-        frequencyPenaltyEnabled: _frequencyPenaltyEnabled,
-        repetitionPenaltyEnabled: _repetitionPenaltyEnabled,
-        maxTokens: int.parse(_maxTokensController.text),
-        temperature: double.parse(_temperatureController.text),
-        topP: double.parse(_topPController.text),
-        topK: int.parse(_topKController.text),
-        presencePenalty: double.parse(_presencePenaltyController.text),
-        frequencyPenalty: double.parse(_frequencyPenaltyController.text),
-        repetitionPenalty: double.parse(_repetitionPenaltyController.text),
       ),
     );
-  }
-
-  Future<void> _editApiKey({core_proxy.ApiKeyInfo? keyInfo}) async {
-    final l10n = AppLocalizations.of(context)!;
-    final edited = await _ApiKeyEditorDialog.show(
-      context: context,
-      title: keyInfo == null
-          ? l10n.settingsModelAddApiKey
-          : l10n.settingsModelEditApiKey,
-      keyInfo: keyInfo,
-    );
-    if (edited == null) {
-      return;
-    }
-    setState(() {
-      if (keyInfo == null) {
-        _apiKeyPool.add(edited);
-      } else {
-        _apiKeyPool = _apiKeyPool
-            .map((item) => item.id == keyInfo.id ? edited : item)
-            .toList(growable: false);
-      }
-    });
-  }
-
-  void _toggleApiKey(core_proxy.ApiKeyInfo keyInfo, bool enabled) {
-    setState(() {
-      _apiKeyPool = _apiKeyPool
-          .map(
-            (item) => item.id == keyInfo.id
-                ? _apiKeyInfoWith(item, isEnabled: enabled)
-                : item,
-          )
-          .toList(growable: false);
-    });
-  }
-
-  void _deleteApiKey(core_proxy.ApiKeyInfo keyInfo) {
-    setState(() {
-      _apiKeyPool = _apiKeyPool
-          .where((item) => item.id != keyInfo.id)
-          .toList(growable: false);
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final editing = widget.provider != null;
     return AlertDialog(
-      title: Text(widget.title),
+      title: Text(
+        editing
+            ? l10n.settingsModelEditProvider
+            : l10n.settingsModelCreateProvider,
+      ),
       content: SizedBox(
-        width: 640,
+        width: 560,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 _DialogTextField(
                   controller: _nameController,
                   label: l10n.settingsModelProfileName,
                   requiredField: true,
                 ),
-                _DialogTextField(
-                  controller: _apiEndpointController,
-                  label: l10n.settingsModelApiEndpoint,
-                  requiredField: true,
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _selectedProviderTypeId,
+                    decoration: InputDecoration(
+                      labelText: l10n.settingsModelProviderType,
+                    ),
+                    items: widget.catalogEntries
+                        .map(
+                          (entry) => DropdownMenuItem<String>(
+                            value: entry.providerTypeId,
+                            child: Text(_providerCatalogLabel(l10n, entry)),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: editing ? null : _onProviderTypeChanged,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return l10n.settingsModelProviderType;
+                      }
+                      return null;
+                    },
+                  ),
                 ),
-                _DialogTextField(
-                  controller: _modelNameController,
-                  label: l10n.settingsModelModelNames,
-                  requiredField: true,
-                ),
+                if (_needsCustomEndpoint)
+                  _DialogTextField(
+                    controller: _endpointController,
+                    label: l10n.settingsModelApiEndpoint,
+                    requiredField: true,
+                  ),
                 _DialogTextField(
                   controller: _apiKeyController,
                   label: l10n.settingsModelApiKey,
@@ -990,121 +755,12 @@ class _ModelConfigEditorDialogState extends State<_ModelConfigEditorDialog> {
                 ),
                 ExpansionTile(
                   title: Text(l10n.settingsAdvanced),
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: EdgeInsets.zero,
+                  initiallyExpanded: false,
                   children: <Widget>[
                     _DialogTextField(
-                      controller: _providerIdController,
-                      label: l10n.settingsModelProviderId,
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsModelApiKeyPool),
-                      subtitle: Text(l10n.settingsModelApiKeyPoolDescription),
-                      value: _useMultipleApiKeys,
-                      onChanged: (value) =>
-                          setState(() => _useMultipleApiKeys = value),
-                    ),
-                    if (_useMultipleApiKeys)
-                      _ApiKeyPoolEditor(
-                        apiKeyPool: _apiKeyPool,
-                        onAdd: () => _editApiKey(),
-                        onEdit: (keyInfo) => _editApiKey(keyInfo: keyInfo),
-                        onToggle: _toggleApiKey,
-                        onDelete: _deleteApiKey,
-                      ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelMaxTokens,
-                      subtitle: l10n.settingsModelMaxTokensDescription,
-                      controller: _maxTokensController,
-                      enabled: _maxTokensEnabled,
-                      integerOnly: true,
-                      onEnabledChanged: (value) =>
-                          setState(() => _maxTokensEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelTemperature,
-                      subtitle: l10n.settingsModelTemperatureDescription,
-                      controller: _temperatureController,
-                      enabled: _temperatureEnabled,
-                      onEnabledChanged: (value) =>
-                          setState(() => _temperatureEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelTopP,
-                      subtitle: l10n.settingsModelTopPDescription,
-                      controller: _topPController,
-                      enabled: _topPEnabled,
-                      onEnabledChanged: (value) =>
-                          setState(() => _topPEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelTopK,
-                      subtitle: l10n.settingsModelTopKDescription,
-                      controller: _topKController,
-                      enabled: _topKEnabled,
-                      integerOnly: true,
-                      onEnabledChanged: (value) =>
-                          setState(() => _topKEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelPresencePenalty,
-                      subtitle: l10n.settingsModelPresencePenaltyDescription,
-                      controller: _presencePenaltyController,
-                      enabled: _presencePenaltyEnabled,
-                      onEnabledChanged: (value) =>
-                          setState(() => _presencePenaltyEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelFrequencyPenalty,
-                      subtitle: l10n.settingsModelFrequencyPenaltyDescription,
-                      controller: _frequencyPenaltyController,
-                      enabled: _frequencyPenaltyEnabled,
-                      onEnabledChanged: (value) =>
-                          setState(() => _frequencyPenaltyEnabled = value),
-                    ),
-                    _ModelParameterControl(
-                      title: l10n.settingsModelRepetitionPenalty,
-                      subtitle: l10n.settingsModelRepetitionPenaltyDescription,
-                      controller: _repetitionPenaltyController,
-                      enabled: _repetitionPenaltyEnabled,
-                      onEnabledChanged: (value) =>
-                          setState(() => _repetitionPenaltyEnabled = value),
-                    ),
-                    _SwitchLine(
-                      title: l10n.settingsModelToolCall,
-                      subtitle: l10n.settingsModelToolCallDescription,
-                      value: _enableToolCall,
-                      onChanged: (value) =>
-                          setState(() => _enableToolCall = value),
-                    ),
-                    _SwitchLine(
-                      title: l10n.settingsModelDirectImage,
-                      subtitle: l10n.settingsModelDirectImageDescription,
-                      value: _enableDirectImage,
-                      onChanged: (value) =>
-                          setState(() => _enableDirectImage = value),
-                    ),
-                    _SwitchLine(
-                      title: l10n.settingsModelDirectAudio,
-                      subtitle: l10n.settingsModelDirectAudioDescription,
-                      value: _enableDirectAudio,
-                      onChanged: (value) =>
-                          setState(() => _enableDirectAudio = value),
-                    ),
-                    _SwitchLine(
-                      title: l10n.settingsModelDirectVideo,
-                      subtitle: l10n.settingsModelDirectVideoDescription,
-                      value: _enableDirectVideo,
-                      onChanged: (value) =>
-                          setState(() => _enableDirectVideo = value),
-                    ),
-                    _SwitchLine(
-                      title: l10n.settingsModelGoogleSearch,
-                      subtitle: l10n.settingsModelGoogleSearchDescription,
-                      value: _enableGoogleSearch,
-                      onChanged: (value) =>
-                          setState(() => _enableGoogleSearch = value),
+                      controller: _customHeadersController,
+                      label: l10n.settingsModelCustomHeaders,
+                      maxLines: 4,
                     ),
                     Row(
                       children: <Widget>[
@@ -1125,75 +781,6 @@ class _ModelConfigEditorDialogState extends State<_ModelConfigEditorDialog> {
                         ),
                       ],
                     ),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _contextLengthController,
-                            label: l10n.settingsModelContextLength,
-                            numberOnly: true,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _maxContextLengthController,
-                            label: l10n.settingsModelMaxContextLength,
-                            numberOnly: true,
-                          ),
-                        ),
-                      ],
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsModelMaxContextMode),
-                      value: _enableMaxContextMode,
-                      onChanged: (value) =>
-                          setState(() => _enableMaxContextMode = value),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsModelSummary),
-                      value: _enableSummary,
-                      onChanged: (value) =>
-                          setState(() => _enableSummary = value),
-                    ),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _summaryThresholdController,
-                            label: l10n.settingsModelSummaryThreshold,
-                            numberOnly: true,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _summaryCountController,
-                            label: l10n.settingsModelSummaryMessageCount,
-                            numberOnly: true,
-                          ),
-                        ),
-                      ],
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsModelSummaryByMessageCount),
-                      value: _enableSummaryByMessageCount,
-                      onChanged: (value) =>
-                          setState(() => _enableSummaryByMessageCount = value),
-                    ),
-                    _DialogTextField(
-                      controller: _customHeadersController,
-                      label: l10n.settingsModelCustomHeaders,
-                      maxLines: 4,
-                    ),
-                    _DialogTextField(
-                      controller: _customParametersController,
-                      label: l10n.settingsModelCustomParameters,
-                      maxLines: 4,
-                    ),
                   ],
                 ),
               ],
@@ -1212,158 +799,162 @@ class _ModelConfigEditorDialogState extends State<_ModelConfigEditorDialog> {
   }
 }
 
-class _ApiKeyPoolEditor extends StatelessWidget {
-  const _ApiKeyPoolEditor({
-    required this.apiKeyPool,
-    required this.onAdd,
-    required this.onEdit,
-    required this.onToggle,
-    required this.onDelete,
-  });
+sealed class _AvailableModelSelection {
+  const _AvailableModelSelection();
+}
 
-  final List<core_proxy.ApiKeyInfo> apiKeyPool;
-  final VoidCallback onAdd;
-  final ValueChanged<core_proxy.ApiKeyInfo> onEdit;
-  final void Function(core_proxy.ApiKeyInfo keyInfo, bool enabled) onToggle;
-  final ValueChanged<core_proxy.ApiKeyInfo> onDelete;
+class _AvailableModelPicked extends _AvailableModelSelection {
+  const _AvailableModelPicked(this.model);
+
+  final core_proxy.AvailableProviderModel model;
+}
+
+class _AvailableModelCustom extends _AvailableModelSelection {
+  const _AvailableModelCustom();
+}
+
+class _AvailableModelDialog extends StatefulWidget {
+  const _AvailableModelDialog({required this.models});
+
+  final List<core_proxy.AvailableProviderModel> models;
+
+  static Future<_AvailableModelSelection?> show({
+    required BuildContext context,
+    required List<core_proxy.AvailableProviderModel> models,
+  }) {
+    return showDialog<_AvailableModelSelection>(
+      context: context,
+      builder: (context) => _AvailableModelDialog(models: models),
+    );
+  }
+
+  @override
+  State<_AvailableModelDialog> createState() => _AvailableModelDialogState();
+}
+
+class _AvailableModelDialogState extends State<_AvailableModelDialog> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<core_proxy.AvailableProviderModel> _filteredModels(
+    AppLocalizations l10n,
+  ) {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return widget.models;
+    }
+    return widget.models
+        .where((model) {
+          final text =
+              '${model.modelId} ${_availableModelSubtitle(l10n, model)}'
+                  .toLowerCase();
+          return text.contains(query);
+        })
+        .toList(growable: false);
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+    final filteredModels = _filteredModels(l10n);
+    return AlertDialog(
+      title: Text(l10n.settingsModelAddModel),
+      content: SizedBox(
+        width: 520,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 520),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      l10n.settingsModelApiKeyPoolCount(apiKeyPool.length),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: onAdd,
-                    icon: const Icon(Icons.add),
-                    label: Text(l10n.settingsModelAddApiKey),
-                  ),
-                ],
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  labelText: l10n.search,
+                ),
+                onChanged: (_) => setState(() {}),
               ),
-              if (apiKeyPool.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  child: Text(
-                    l10n.settingsModelApiKeyPoolEmpty,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                )
-              else
-                for (final keyInfo in apiKeyPool)
-                  _ApiKeyTile(
-                    keyInfo: keyInfo,
-                    onEdit: () => onEdit(keyInfo),
-                    onToggle: (enabled) => onToggle(keyInfo, enabled),
-                    onDelete: () => onDelete(keyInfo),
-                  ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView(
+                  children: <Widget>[
+                    for (final model in filteredModels)
+                      Material(
+                        type: MaterialType.transparency,
+                        child: ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(model.modelId),
+                          subtitle: Text(_availableModelSubtitle(l10n, model)),
+                          onTap: () => Navigator.of(
+                            context,
+                          ).pop(_AvailableModelPicked(model)),
+                        ),
+                      ),
+                    Material(
+                      type: MaterialType.transparency,
+                      child: ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.add),
+                        title: Text(l10n.settingsModelCustomModel),
+                        subtitle: Text(l10n.settingsModelModelId),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(const _AvailableModelCustom()),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
     );
   }
 }
 
-class _ApiKeyTile extends StatelessWidget {
-  const _ApiKeyTile({
-    required this.keyInfo,
-    required this.onEdit,
-    required this.onToggle,
-    required this.onDelete,
-  });
-
-  final core_proxy.ApiKeyInfo keyInfo;
-  final VoidCallback onEdit;
-  final ValueChanged<bool> onToggle;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Switch(value: keyInfo.isEnabled, onChanged: onToggle),
-      title: Text(keyInfo.name),
-      subtitle: Text(
-        '${_maskApiKey(keyInfo.key)} · ${_apiKeyStatusText(keyInfo.availabilityStatus)}',
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          IconButton(
-            tooltip: l10n.delete,
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ApiKeyEditorDialog extends StatefulWidget {
-  const _ApiKeyEditorDialog({required this.title, this.keyInfo});
+class _TextInputDialog extends StatefulWidget {
+  const _TextInputDialog({required this.title, required this.label});
 
   final String title;
-  final core_proxy.ApiKeyInfo? keyInfo;
+  final String label;
 
-  static Future<core_proxy.ApiKeyInfo?> show({
+  static Future<String?> show({
     required BuildContext context,
     required String title,
-    core_proxy.ApiKeyInfo? keyInfo,
+    required String label,
   }) {
-    return showDialog<core_proxy.ApiKeyInfo>(
+    return showDialog<String>(
       context: context,
-      builder: (context) => _ApiKeyEditorDialog(title: title, keyInfo: keyInfo),
+      builder: (context) => _TextInputDialog(title: title, label: label),
     );
   }
 
   @override
-  State<_ApiKeyEditorDialog> createState() => _ApiKeyEditorDialogState();
+  State<_TextInputDialog> createState() => _TextInputDialogState();
 }
 
-class _ApiKeyEditorDialogState extends State<_ApiKeyEditorDialog> {
+class _TextInputDialogState extends State<_TextInputDialog> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
-  late final TextEditingController _keyController;
-  late bool _isEnabled;
-
-  @override
-  void initState() {
-    super.initState();
-    final keyInfo = widget.keyInfo;
-    _nameController = TextEditingController(text: keyInfo?.name ?? '');
-    _keyController = TextEditingController(text: keyInfo?.key ?? '');
-    _isEnabled = keyInfo?.isEnabled ?? true;
-  }
+  final _controller = TextEditingController();
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _keyController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -1371,19 +962,7 @@ class _ApiKeyEditorDialogState extends State<_ApiKeyEditorDialog> {
     if (!_formKey.currentState!.validate()) {
       return;
     }
-    final keyInfo = widget.keyInfo;
-    Navigator.of(context).pop(
-      core_proxy.ApiKeyInfo(
-        id: keyInfo?.id ?? _newApiKeyId(),
-        key: _keyController.text.trim(),
-        name: _nameController.text.trim(),
-        isEnabled: _isEnabled,
-        availabilityStatus: keyInfo?.availabilityStatus ?? 'UNTESTED',
-        usageCount: keyInfo?.usageCount ?? 0,
-        lastUsed: keyInfo?.lastUsed ?? 0,
-        errorCount: keyInfo?.errorCount ?? 0,
-      ),
-    );
+    Navigator.of(context).pop(_controller.text.trim());
   }
 
   @override
@@ -1391,34 +970,12 @@ class _ApiKeyEditorDialogState extends State<_ApiKeyEditorDialog> {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(widget.title),
-      content: SizedBox(
-        width: 520,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _DialogTextField(
-                  controller: _nameController,
-                  label: l10n.settingsModelApiKeyName,
-                  requiredField: true,
-                ),
-                _DialogTextField(
-                  controller: _keyController,
-                  label: l10n.settingsModelApiKey,
-                  requiredField: true,
-                  obscureText: true,
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(l10n.settingsModelApiKeyEnabled),
-                  value: _isEnabled,
-                  onChanged: (value) => setState(() => _isEnabled = value),
-                ),
-              ],
-            ),
-          ),
+      content: Form(
+        key: _formKey,
+        child: _DialogTextField(
+          controller: _controller,
+          label: widget.label,
+          requiredField: true,
         ),
       ),
       actions: <Widget>[
@@ -1432,53 +989,1374 @@ class _ApiKeyEditorDialogState extends State<_ApiKeyEditorDialog> {
   }
 }
 
-class _ModelParameterControl extends StatelessWidget {
-  const _ModelParameterControl({
+class _ProviderModelManager extends StatelessWidget {
+  const _ProviderModelManager({
+    required this.providers,
+    required this.summaries,
+    required this.chatBinding,
+    required this.selectedProviderId,
+    required this.onSelectedProviderChanged,
+    required this.onEditProvider,
+    required this.onDeleteProvider,
+    required this.onAddModel,
+    required this.onSelectModel,
+    required this.testingModelKey,
+    required this.onEditModelSettings,
+  });
+
+  final List<core_proxy.ProviderProfile> providers;
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding chatBinding;
+  final String? selectedProviderId;
+  final ValueChanged<String> onSelectedProviderChanged;
+  final void Function(core_proxy.ProviderProfile provider) onEditProvider;
+  final void Function(core_proxy.ProviderProfile provider) onDeleteProvider;
+  final void Function(core_proxy.ProviderProfile provider) onAddModel;
+  final void Function(String providerId, String modelId) onSelectModel;
+  final String? testingModelKey;
+  final void Function(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  )
+  onEditModelSettings;
+
+  String get _selectedProviderId {
+    final selectedId = selectedProviderId ?? chatBinding.providerId;
+    for (final provider in providers) {
+      if (provider.id == selectedId) {
+        return provider.id;
+      }
+    }
+    for (final provider in providers) {
+      if (provider.id == chatBinding.providerId) {
+        return provider.id;
+      }
+    }
+    return providers.first.id;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (providers.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final selectedProviderId = _selectedProviderId;
+    return Column(
+      children: <Widget>[
+        for (final provider in providers)
+          _ProviderModelGroup(
+            provider: provider,
+            summaries: summaries,
+            chatBinding: chatBinding,
+            selected: provider.id == selectedProviderId,
+            onSelectedProviderChanged: () =>
+                onSelectedProviderChanged(provider.id),
+            onEditProvider: () => onEditProvider(provider),
+            onDeleteProvider: () => onDeleteProvider(provider),
+            onAddModel: () => onAddModel(provider),
+            onSelectModel: onSelectModel,
+            testingModelKey: testingModelKey,
+            onEditModelSettings: onEditModelSettings,
+          ),
+      ],
+    );
+  }
+}
+
+class _ProviderModelGroup extends StatelessWidget {
+  const _ProviderModelGroup({
+    required this.provider,
+    required this.summaries,
+    required this.chatBinding,
+    required this.selected,
+    required this.onSelectedProviderChanged,
+    required this.onEditProvider,
+    required this.onDeleteProvider,
+    required this.onAddModel,
+    required this.onSelectModel,
+    required this.testingModelKey,
+    required this.onEditModelSettings,
+  });
+
+  final core_proxy.ProviderProfile provider;
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding chatBinding;
+  final bool selected;
+  final VoidCallback onSelectedProviderChanged;
+  final VoidCallback onEditProvider;
+  final VoidCallback onDeleteProvider;
+  final VoidCallback onAddModel;
+  final void Function(String providerId, String modelId) onSelectModel;
+  final String? testingModelKey;
+  final void Function(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  )
+  onEditModelSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final chatProvider = provider.id == chatBinding.providerId;
+    final radius = BorderRadius.circular(8);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Material(
+            color: selected
+                ? colorScheme.primaryContainer.withValues(alpha: 0.56)
+                : Colors.transparent,
+            borderRadius: radius,
+            child: InkWell(
+              borderRadius: radius,
+              onTap: onSelectedProviderChanged,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      chatProvider
+                          ? Icons.check_circle
+                          : selected
+                          ? Icons.expand_more
+                          : Icons.chevron_right,
+                      size: 18,
+                      color: chatProvider
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            provider.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${provider.providerTypeId} · ${provider.models.length}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall!
+                                .copyWith(color: colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (selected) ...<Widget>[
+                      TextButton.icon(
+                        onPressed: onAddModel,
+                        style: SettingsControlStyles.sectionTextButton(),
+                        icon: const Icon(Icons.playlist_add, size: 18),
+                        label: Text(l10n.settingsModelAddModelShort),
+                      ),
+                      SettingsEntityIconButton(
+                        tooltip: l10n.edit,
+                        icon: Icons.edit_outlined,
+                        onPressed: onEditProvider,
+                      ),
+                      SettingsEntityIconButton(
+                        tooltip: l10n.delete,
+                        icon: Icons.delete_outline,
+                        onPressed: onDeleteProvider,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (selected)
+            Padding(
+              padding: const EdgeInsets.only(left: 14, top: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (provider.models.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        l10n.settingsModelAddModel,
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                    )
+                  else
+                    _ProviderModelGrid(
+                      provider: provider,
+                      summaries: summaries,
+                      chatBinding: chatBinding,
+                      onSelectModel: onSelectModel,
+                      testingModelKey: testingModelKey,
+                      onEditModelSettings: onEditModelSettings,
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProviderModelGrid extends StatelessWidget {
+  const _ProviderModelGrid({
+    required this.provider,
+    required this.summaries,
+    required this.chatBinding,
+    required this.onSelectModel,
+    required this.testingModelKey,
+    required this.onEditModelSettings,
+  });
+
+  final core_proxy.ProviderProfile provider;
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding chatBinding;
+  final void Function(String providerId, String modelId) onSelectModel;
+  final String? testingModelKey;
+  final void Function(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  )
+  onEditModelSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = <Widget>[
+      for (final model in provider.models)
+        if (_summaryForModelOrNull(summaries, provider.id, model.id)
+            case final summary?)
+          _ProviderModelTile(
+            provider: provider,
+            model: model,
+            summary: summary,
+            selected:
+                provider.id == chatBinding.providerId &&
+                model.id == chatBinding.modelId,
+            onSelect: onSelectModel,
+            testing: testingModelKey == _modelTestKey(provider.id, model.id),
+            onEditSettings: () => onEditModelSettings(provider, model),
+          ),
+    ];
+    if (tiles.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return GridView.builder(
+      padding: EdgeInsets.zero,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 320,
+        mainAxisExtent: 54,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 4,
+      ),
+      itemCount: tiles.length,
+      itemBuilder: (context, index) => tiles[index],
+    );
+  }
+}
+
+class _ProviderModelTile extends StatelessWidget {
+  const _ProviderModelTile({
+    required this.provider,
+    required this.model,
+    required this.summary,
+    required this.selected,
+    required this.onSelect,
+    required this.testing,
+    required this.onEditSettings,
+  });
+
+  final core_proxy.ProviderProfile provider;
+  final core_proxy.ModelProfile model;
+  final core_proxy.ProviderModelSummary summary;
+  final bool selected;
+  final void Function(String providerId, String modelId) onSelect;
+  final bool testing;
+  final VoidCallback onEditSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: EdgeInsets.zero,
+        title: Text(model.id),
+        subtitle: _ModelCapabilityIcons(capabilities: summary.capabilities),
+        onTap: onEditSettings,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (selected)
+              SettingsActivePill(label: l10n.settingsModelCurrentActive)
+            else
+              SettingsSetActiveButton(
+                label: l10n.settingsModelSetCurrentActive,
+                onPressed: () => onSelect(provider.id, model.id),
+              ),
+            if (testing) ...<Widget>[
+              const SizedBox(width: 8),
+              const SizedBox.square(
+                dimension: 24,
+                child: Center(child: M3LoadingIndicator(size: 24)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelCapabilityIcons extends StatelessWidget {
+  const _ModelCapabilityIcons({required this.capabilities});
+
+  final core_proxy.ModelCapabilities capabilities;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    final icons = <Widget>[
+      if (capabilities.toolCall)
+        _CapabilityIcon(
+          icon: Icons.build_outlined,
+          tooltip: l10n.settingsModelToolCall,
+          color: color,
+        ),
+      if (capabilities.directImage)
+        _CapabilityIcon(
+          icon: Icons.image_outlined,
+          tooltip: l10n.settingsModelDirectImage,
+          color: color,
+        ),
+      if (capabilities.directAudio)
+        _CapabilityIcon(
+          icon: Icons.graphic_eq,
+          tooltip: l10n.settingsModelDirectAudio,
+          color: color,
+        ),
+      if (capabilities.directVideo)
+        _CapabilityIcon(
+          icon: Icons.videocam_outlined,
+          tooltip: l10n.settingsModelDirectVideo,
+          color: color,
+        ),
+    ];
+    if (icons.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Wrap(spacing: 6, runSpacing: 3, children: icons),
+    );
+  }
+}
+
+class _CapabilityIcon extends StatelessWidget {
+  const _CapabilityIcon({
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Icon(icon, size: 14, color: color),
+    );
+  }
+}
+
+class _FunctionMappingTile extends StatelessWidget {
+  const _FunctionMappingTile({
+    required this.functionType,
+    required this.binding,
+    required this.summary,
+    required this.onTap,
+  });
+
+  final String functionType;
+  final core_proxy.FunctionModelBinding binding;
+  final core_proxy.ProviderModelSummary? summary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final warning = summary == null
+        ? l10n.settingsModelFunctionMappingsMissing(
+            binding.providerId,
+            binding.modelId,
+          )
+        : _functionMappingWarning(l10n, functionType, summary!);
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: EdgeInsets.zero,
+        title: Text(_functionTypeTitle(l10n, functionType)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(_functionTypeDescription(l10n, functionType)),
+            const SizedBox(height: 4),
+            Text(
+              summary == null
+                  ? '${binding.providerId} · ${binding.modelId}'
+                  : l10n.settingsModelFunctionMappingsCurrent(
+                      summary!.providerName,
+                      binding.modelId,
+                    ),
+              style: TextStyle(
+                color: summary == null
+                    ? colorScheme.error
+                    : colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (warning != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Row(
+                children: <Widget>[
+                  Icon(
+                    Icons.warning_amber_outlined,
+                    size: 16,
+                    color: colorScheme.error,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      warning,
+                      style: TextStyle(color: colorScheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+        trailing: TextButton(
+          onPressed: onTap,
+          child: Text(l10n.settingsModelFunctionMappingsChange),
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _FunctionModelSelection {
+  const _FunctionModelSelection({
+    required this.providerId,
+    required this.modelId,
+  });
+
+  final String providerId;
+  final String modelId;
+}
+
+class _FunctionModelSelectorDialog extends StatefulWidget {
+  const _FunctionModelSelectorDialog({
+    required this.functionType,
+    required this.summaries,
+    required this.currentBinding,
+  });
+
+  final String functionType;
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding currentBinding;
+
+  static Future<_FunctionModelSelection?> show({
+    required BuildContext context,
+    required String functionType,
+    required List<core_proxy.ProviderModelSummary> summaries,
+    required core_proxy.FunctionModelBinding currentBinding,
+  }) {
+    return showDialog<_FunctionModelSelection>(
+      context: context,
+      builder: (context) => _FunctionModelSelectorDialog(
+        functionType: functionType,
+        summaries: summaries,
+        currentBinding: currentBinding,
+      ),
+    );
+  }
+
+  @override
+  State<_FunctionModelSelectorDialog> createState() =>
+      _FunctionModelSelectorDialogState();
+}
+
+class _FunctionModelSelectorDialogState
+    extends State<_FunctionModelSelectorDialog> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _selectModel(core_proxy.ProviderModelSummary summary) {
+    Navigator.of(context).pop(
+      _FunctionModelSelection(
+        providerId: summary.providerId,
+        modelId: summary.modelId,
+      ),
+    );
+  }
+
+  List<core_proxy.ProviderModelSummary> _filteredModels() {
+    final candidates = widget.summaries
+        .where(
+          (summary) => _functionModelSupported(widget.functionType, summary),
+        )
+        .toList(growable: false);
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return candidates;
+    }
+    return candidates
+        .where(
+          (summary) =>
+              '${summary.modelId} ${summary.providerName} ${summary.providerTypeId}'
+                  .toLowerCase()
+                  .contains(query),
+        )
+        .toList(growable: false);
+  }
+
+  Widget _modelList(AppLocalizations l10n) {
+    final filteredModels = _filteredModels();
+    return Column(
+      children: <Widget>[
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            labelText: l10n.search,
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filteredModels.isEmpty
+              ? Center(child: Text(l10n.noData))
+              : ListView.builder(
+                  itemCount: filteredModels.length,
+                  itemBuilder: (context, index) {
+                    final summary = filteredModels[index];
+                    return _FunctionModelOptionTile(
+                      summary: summary,
+                      selected:
+                          summary.providerId ==
+                              widget.currentBinding.providerId &&
+                          summary.modelId == widget.currentBinding.modelId,
+                      onTap: () => _selectModel(summary),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (widget.summaries.isEmpty) {
+      return AlertDialog(
+        title: Text(
+          l10n.settingsModelFunctionMappingsSelect(
+            _functionTypeTitle(l10n, widget.functionType),
+          ),
+        ),
+        content: SizedBox(width: 420, child: Text(l10n.noData)),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.cancel),
+          ),
+        ],
+      );
+    }
+    return AlertDialog(
+      title: Text(
+        l10n.settingsModelFunctionMappingsSelect(
+          _functionTypeTitle(l10n, widget.functionType),
+        ),
+      ),
+      content: SizedBox(width: 560, height: 480, child: _modelList(l10n)),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
+    );
+  }
+}
+
+class _FunctionModelOptionTile extends StatelessWidget {
+  const _FunctionModelOptionTile({
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final core_proxy.ProviderModelSummary summary;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          child: Row(
+            children: <Widget>[
+              SizedBox(
+                width: 24,
+                child: Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  size: 20,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      summary.modelId,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      summary.providerName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelSettingsChange {
+  const _ModelSettingsChange({
+    required this.capabilities,
+    required this.builtinTools,
+    required this.context,
+    required this.summary,
+  });
+
+  final core_proxy.ModelCapabilities capabilities;
+  final List<core_proxy.ModelBuiltinTool> builtinTools;
+  final core_proxy.ModelContextSpec context;
+  final core_proxy.ModelSummarySettings summary;
+}
+
+sealed class _ModelSettingsEditorResult {
+  const _ModelSettingsEditorResult();
+}
+
+class _ModelSettingsSaved extends _ModelSettingsEditorResult {
+  const _ModelSettingsSaved(this.change);
+
+  final _ModelSettingsChange change;
+}
+
+class _ModelSettingsDeleteRequested extends _ModelSettingsEditorResult {
+  const _ModelSettingsDeleteRequested();
+}
+
+class _ModelSettingsEditorDialog extends StatefulWidget {
+  const _ModelSettingsEditorDialog({
+    required this.providerName,
+    required this.modelId,
+    required this.initialCapabilities,
+    required this.initialBuiltinTools,
+    required this.initialContext,
+    required this.initialSummary,
+    required this.onTest,
+  });
+
+  final String providerName;
+  final String modelId;
+  final core_proxy.ModelCapabilities initialCapabilities;
+  final List<core_proxy.ModelBuiltinTool> initialBuiltinTools;
+  final core_proxy.ModelContextSpec initialContext;
+  final core_proxy.ModelSummarySettings initialSummary;
+  final Future<core_proxy.ModelConnectionTestReport?> Function() onTest;
+
+  static Future<_ModelSettingsEditorResult?> show({
+    required BuildContext context,
+    required String providerName,
+    required String modelId,
+    required core_proxy.ModelCapabilities initialCapabilities,
+    required List<core_proxy.ModelBuiltinTool> initialBuiltinTools,
+    required core_proxy.ModelContextSpec initialContext,
+    required core_proxy.ModelSummarySettings initialSummary,
+    required Future<core_proxy.ModelConnectionTestReport?> Function() onTest,
+  }) {
+    return showDialog<_ModelSettingsEditorResult>(
+      context: context,
+      builder: (context) => _ModelSettingsEditorDialog(
+        providerName: providerName,
+        modelId: modelId,
+        initialCapabilities: initialCapabilities,
+        initialBuiltinTools: initialBuiltinTools,
+        initialContext: initialContext,
+        initialSummary: initialSummary,
+        onTest: onTest,
+      ),
+    );
+  }
+
+  @override
+  State<_ModelSettingsEditorDialog> createState() =>
+      _ModelSettingsEditorDialogState();
+}
+
+class _ModelSettingsEditorDialogState
+    extends State<_ModelSettingsEditorDialog> {
+  late bool _toolCall;
+  late bool _directImage;
+  late bool _directAudio;
+  late bool _directVideo;
+  late List<core_proxy.ModelBuiltinTool> _builtinTools;
+  late bool _enableMaxContextMode;
+  late bool _enableSummary;
+  late bool _enableSummaryByMessageCount;
+  late final TextEditingController _maxContextLengthController;
+  late final TextEditingController _summaryThresholdController;
+  late final TextEditingController _summaryMessageCountController;
+  String? _maxContextLengthError;
+  bool _testingConnection = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final caps = widget.initialCapabilities;
+    _toolCall = caps.toolCall;
+    _directImage = caps.directImage;
+    _directAudio = caps.directAudio;
+    _directVideo = caps.directVideo;
+    _builtinTools = widget.initialBuiltinTools;
+    _enableMaxContextMode = widget.initialContext.enableMaxContextMode;
+    _enableSummary = widget.initialSummary.enableSummary;
+    _enableSummaryByMessageCount =
+        widget.initialSummary.enableSummaryByMessageCount;
+    _maxContextLengthController = TextEditingController(
+      text: widget.initialContext.maxContextLength.toStringAsFixed(0),
+    );
+    _summaryThresholdController = TextEditingController(
+      text: widget.initialSummary.summaryTokenThreshold.toString(),
+    );
+    _summaryMessageCountController = TextEditingController(
+      text: widget.initialSummary.summaryMessageCountThreshold.toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _maxContextLengthController.dispose();
+    _summaryThresholdController.dispose();
+    _summaryMessageCountController.dispose();
+    super.dispose();
+  }
+
+  void _setBuiltinToolEnabled(int index, bool enabled) {
+    final current = _builtinTools[index];
+    final updated = core_proxy.ModelBuiltinTool(
+      toolType: current.toolType,
+      displayName: current.displayName,
+      enabled: enabled,
+      requestFormat: current.requestFormat,
+      exclusivity: current.exclusivity,
+      config: current.config,
+    );
+    setState(() {
+      _builtinTools = <core_proxy.ModelBuiltinTool>[
+        for (var i = 0; i < _builtinTools.length; i++)
+          i == index ? updated : _builtinTools[i],
+      ];
+      if (enabled && current.exclusivity == 'ExclusiveWithExternalTools') {
+        _toolCall = false;
+      }
+    });
+  }
+
+  Future<void> _runConnectionTest() async {
+    setState(() {
+      _testingConnection = true;
+    });
+    try {
+      final report = await widget.onTest();
+      if (mounted &&
+          report != null &&
+          _connectionTestSucceeded(report, 'CHAT')) {
+        setState(() {
+          _directImage = _connectionTestSucceeded(report, 'IMAGE');
+          _directAudio = _connectionTestSucceeded(report, 'AUDIO');
+          _directVideo = _connectionTestSucceeded(report, 'VIDEO');
+          _toolCall = _connectionTestSucceeded(report, 'TOOL_CALL');
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _testingConnection = false;
+        });
+      }
+    }
+  }
+
+  void _save() {
+    final maxContextLength = double.tryParse(
+      _maxContextLengthController.text.trim(),
+    );
+    if (maxContextLength == null || maxContextLength <= 0) {
+      setState(() {
+        _maxContextLengthError = AppLocalizations.of(
+          context,
+        )!.settingsModelMaxContextLengthInvalid;
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      _ModelSettingsSaved(
+        _ModelSettingsChange(
+          capabilities: core_proxy.ModelCapabilities(
+            directImage: _directImage,
+            directAudio: _directAudio,
+            directVideo: _directVideo,
+            toolCall: _toolCall,
+          ),
+          builtinTools: _builtinTools,
+          context: core_proxy.ModelContextSpec(
+            maxContextLength: maxContextLength,
+            enableMaxContextMode: _enableMaxContextMode,
+          ),
+          summary: core_proxy.ModelSummarySettings(
+            enableSummary: _enableSummary,
+            summaryTokenThreshold:
+                double.tryParse(_summaryThresholdController.text) ?? 0,
+            enableSummaryByMessageCount: _enableSummaryByMessageCount,
+            summaryMessageCountThreshold:
+                int.tryParse(_summaryMessageCountController.text) ?? 0,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsModelEditModelSettings),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                '${widget.providerName} \u00b7 ${widget.modelId}',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _testingConnection ? null : _runConnectionTest,
+                  icon: _testingConnection
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: Center(child: M3LoadingIndicator(size: 18)),
+                        )
+                      : const Icon(Icons.wifi_find_outlined, size: 18),
+                  label: Text(l10n.settingsModelTestModel),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                l10n.settingsModelCapabilities,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              _ModelSettingsSwitch(
+                title: l10n.settingsModelToolCall,
+                subtitle: l10n.settingsModelToolCallDescription,
+                value: _toolCall,
+                onChanged: (v) => setState(() => _toolCall = v),
+              ),
+              _ModelSettingsSwitch(
+                title: l10n.settingsModelDirectImage,
+                subtitle: l10n.settingsModelDirectImageDescription,
+                value: _directImage,
+                onChanged: (v) => setState(() => _directImage = v),
+              ),
+              _ModelSettingsSwitch(
+                title: l10n.settingsModelDirectAudio,
+                subtitle: l10n.settingsModelDirectAudioDescription,
+                value: _directAudio,
+                onChanged: (v) => setState(() => _directAudio = v),
+              ),
+              _ModelSettingsSwitch(
+                title: l10n.settingsModelDirectVideo,
+                subtitle: l10n.settingsModelDirectVideoDescription,
+                value: _directVideo,
+                onChanged: (v) => setState(() => _directVideo = v),
+              ),
+              if (_builtinTools.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  l10n.settingsModelBuiltinTools,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                for (var index = 0; index < _builtinTools.length; index++)
+                  _ModelSettingsSwitch(
+                    title: _builtinTools[index].displayName,
+                    subtitle: _builtinToolSubtitle(l10n, _builtinTools[index]),
+                    value: _builtinTools[index].enabled,
+                    onChanged: (value) => _setBuiltinToolEnabled(index, value),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              Text(
+                l10n.settingsModelContext,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _maxContextLengthController,
+                decoration: InputDecoration(
+                  labelText: l10n.settingsModelMaxContextLength,
+                  errorText: _maxContextLengthError,
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) {
+                  setState(() => _maxContextLengthError = null);
+                },
+              ),
+              const SizedBox(height: 8),
+              _ModelSettingsSwitch(
+                title: l10n.settingsModelMaxContextMode,
+                subtitle:
+                    '${l10n.settingsModelMaxContextLength}: ${_maxContextLengthController.text.trim()}k',
+                value: _enableMaxContextMode,
+                onChanged: (v) => setState(() => _enableMaxContextMode = v),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                l10n.settingsModelSummary,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              _ModelSettingsSwitch(
+                title: l10n.enable,
+                subtitle: '',
+                value: _enableSummary,
+                onChanged: (v) => setState(() => _enableSummary = v),
+              ),
+              if (_enableSummary) ...<Widget>[
+                TextField(
+                  controller: _summaryThresholdController,
+                  decoration: InputDecoration(
+                    labelText: l10n.settingsModelSummaryThreshold,
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  title: Text(l10n.settingsModelSummaryByMessageCount),
+                  value: _enableSummaryByMessageCount,
+                  onChanged: (v) =>
+                      setState(() => _enableSummaryByMessageCount = v),
+                ),
+                if (_enableSummaryByMessageCount)
+                  TextField(
+                    controller: _summaryMessageCountController,
+                    decoration: InputDecoration(
+                      labelText: l10n.settingsModelSummaryMessageCount,
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton.icon(
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
+          onPressed: () =>
+              Navigator.of(context).pop(const _ModelSettingsDeleteRequested()),
+          icon: const Icon(Icons.delete_outline),
+          label: Text(l10n.delete),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(onPressed: _save, child: Text(l10n.save)),
+      ],
+    );
+  }
+}
+
+class _ModelSettingsSwitch extends StatelessWidget {
+  const _ModelSettingsSwitch({
     required this.title,
     required this.subtitle,
-    required this.controller,
-    required this.enabled,
-    required this.onEnabledChanged,
-    this.integerOnly = false,
+    required this.value,
+    required this.onChanged,
   });
 
   final String title;
   final String subtitle;
-  final TextEditingController controller;
-  final bool enabled;
-  final ValueChanged<bool> onEnabledChanged;
-  final bool integerOnly;
+  final bool value;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      title: Text(title),
+      subtitle: subtitle.isNotEmpty ? Text(subtitle) : null,
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _ConnectionTestReportDialog extends StatelessWidget {
+  const _ConnectionTestReportDialog({required this.report});
+
+  final core_proxy.ModelConnectionTestReport report;
+
+  static Future<void> show({
+    required BuildContext context,
+    required core_proxy.ModelConnectionTestReport report,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _ConnectionTestReportDialog(report: report),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Text(l10n.settingsModelConnectionTestSection),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '${report.providerName} \u00b7 ${report.modelId}',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            for (final item in report.items)
+              _ConnectionTestItemTile(item: item),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.ok),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionTestErrorDialog extends StatelessWidget {
+  const _ConnectionTestErrorDialog({required this.message});
+
+  final String message;
+
+  static Future<void> show({
+    required BuildContext context,
+    required String message,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _ConnectionTestErrorDialog(message: message),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsModelConnectionTestSection),
+      content: Text(message),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.ok),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteModelBlockedDialog extends StatelessWidget {
+  const _DeleteModelBlockedDialog({required this.functionTypes});
+
+  final List<String> functionTypes;
+
+  static Future<void> show({
+    required BuildContext context,
+    required List<String> functionTypes,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _DeleteModelBlockedDialog(functionTypes: functionTypes),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final names = functionTypes
+        .map((functionType) => _functionTypeTitle(l10n, functionType))
+        .join(' · ');
+    return AlertDialog(
+      title: Text(l10n.delete),
+      content: Text(l10n.settingsModelDeleteBlocked(names)),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.ok),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteProviderBlockedDialog extends StatelessWidget {
+  const _DeleteProviderBlockedDialog({required this.functionTypes});
+
+  final List<String> functionTypes;
+
+  static Future<void> show({
+    required BuildContext context,
+    required List<String> functionTypes,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _DeleteProviderBlockedDialog(functionTypes: functionTypes),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final names = functionTypes
+        .map((functionType) => _functionTypeTitle(l10n, functionType))
+        .join(' · ');
+    return AlertDialog(
+      title: Text(l10n.delete),
+      content: Text(l10n.settingsModelDeleteProviderBlocked(names)),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.ok),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteProviderConfirmDialog extends StatelessWidget {
+  const _DeleteProviderConfirmDialog({
+    required this.providerName,
+    required this.modelCount,
+  });
+
+  final String providerName;
+  final int modelCount;
+
+  static Future<bool?> show({
+    required BuildContext context,
+    required String providerName,
+    required int modelCount,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => _DeleteProviderConfirmDialog(
+        providerName: providerName,
+        modelCount: modelCount,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.delete),
+      content: Text(
+        l10n.settingsModelDeleteProviderConfirm(providerName, modelCount),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(l10n.settingsModelDeleteProviderConfirmAction),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionTestItemTile extends StatelessWidget {
+  const _ConnectionTestItemTile({required this.item});
+
+  final core_proxy.CoreApiChatLlmproviderModelConfigConnectionTesterModelConnectionTestItem
+  item;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = item.success ? Colors.green : colorScheme.error;
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          item.success ? Icons.check_circle_outline : Icons.error_outline,
+          color: color,
+        ),
+        title: Text(_connectionTestTypeLabel(l10n, item.type)),
+        subtitle: item.error == null ? null : Text(item.error!),
+        trailing: Text(
+          item.success
+              ? l10n.settingsModelConnectionTestPassed
+              : l10n.settingsModelConnectionTestFailed,
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.children,
+    this.action,
+    this.initiallyExpanded = true,
+  });
+
+  final String title;
+  final List<Widget> children;
+  final Widget? action;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(12);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
+      child: Material(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.18),
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Column(
-            children: <Widget>[
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(title),
-                subtitle: Text(subtitle),
-                value: enabled,
-                onChanged: onEnabledChanged,
-              ),
-              _DialogTextField(
-                controller: controller,
-                label: title,
-                requiredField: true,
-                numberOnly: integerOnly,
-                decimalNumber: !integerOnly,
-              ),
-            ],
+        clipBehavior: Clip.antiAlias,
+        child: OperitGlassSurface(
+          color: Colors.transparent,
+          borderRadius: radius,
+          material: true,
+          clip: false,
+          child: ExpansionTile(
+            initiallyExpanded: initiallyExpanded,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            shape: RoundedRectangleBorder(borderRadius: radius),
+            collapsedShape: RoundedRectangleBorder(borderRadius: radius),
+            title: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    title,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  ),
+                ),
+                ?action,
+              ],
+            ),
+            children: children,
           ),
         ),
       ),
@@ -1493,7 +2371,6 @@ class _DialogTextField extends StatelessWidget {
     this.requiredField = false,
     this.obscureText = false,
     this.numberOnly = false,
-    this.decimalNumber = false,
     this.maxLines = 1,
   });
 
@@ -1502,7 +2379,6 @@ class _DialogTextField extends StatelessWidget {
   final bool requiredField;
   final bool obscureText;
   final bool numberOnly;
-  final bool decimalNumber;
   final int maxLines;
 
   @override
@@ -1513,18 +2389,7 @@ class _DialogTextField extends StatelessWidget {
         controller: controller,
         obscureText: obscureText,
         maxLines: obscureText ? 1 : maxLines,
-        keyboardType: numberOnly
-            ? TextInputType.number
-            : decimalNumber
-            ? const TextInputType.numberWithOptions(decimal: true, signed: true)
-            : TextInputType.text,
-        inputFormatters: numberOnly
-            ? <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly]
-            : decimalNumber
-            ? <TextInputFormatter>[
-                FilteringTextInputFormatter.allow(RegExp(r'[-0-9.]')),
-              ]
-            : null,
+        keyboardType: numberOnly ? TextInputType.number : TextInputType.text,
         decoration: InputDecoration(labelText: label),
         validator: (value) {
           final text = value?.trim() ?? '';
@@ -1532,9 +2397,6 @@ class _DialogTextField extends StatelessWidget {
             return label;
           }
           if (numberOnly && text.isEmpty) {
-            return label;
-          }
-          if (decimalNumber && double.tryParse(text) == null) {
             return label;
           }
           return null;
@@ -1557,35 +2419,35 @@ const List<String> _functionTypes = <String>[
   'VIDEO_RECOGNITION',
 ];
 
-class _IndexedModelName {
-  const _IndexedModelName({required this.index, required this.name});
-
-  final int index;
-  final String name;
-}
-
-List<_IndexedModelName> _indexedModelNames(String raw) {
-  final names = raw
-      .split(',')
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toList(growable: false);
-  return <_IndexedModelName>[
-    for (var index = 0; index < names.length; index++)
-      _IndexedModelName(index: index, name: names[index]),
-  ];
-}
-
-String _modelNameAt(String raw, int index) {
-  final names = raw
-      .split(',')
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toList(growable: false);
-  if (names.isEmpty) {
-    return raw;
+List<String> _boundFunctionTypesForModel(
+  Map<Object?, core_proxy.FunctionModelBinding> bindings,
+  String providerId,
+  String modelId,
+) {
+  final result = <String>[];
+  for (final entry in bindings.entries) {
+    final functionType = '${entry.key}';
+    final binding = entry.value;
+    if (binding.providerId == providerId && binding.modelId == modelId) {
+      result.add(functionType);
+    }
   }
-  return names[index.clamp(0, names.length - 1)];
+  return result;
+}
+
+List<String> _boundFunctionTypesForProvider(
+  Map<Object?, core_proxy.FunctionModelBinding> bindings,
+  String providerId,
+) {
+  final result = <String>[];
+  for (final entry in bindings.entries) {
+    final functionType = '${entry.key}';
+    final binding = entry.value;
+    if (binding.providerId == providerId) {
+      result.add(functionType);
+    }
+  }
+  return result;
 }
 
 String _functionTypeTitle(AppLocalizations l10n, String functionType) {
@@ -1601,6 +2463,57 @@ String _functionTypeTitle(AppLocalizations l10n, String functionType) {
     'AUDIO_RECOGNITION' => l10n.settingsModelFunctionAudioRecognition,
     'VIDEO_RECOGNITION' => l10n.settingsModelFunctionVideoRecognition,
     _ => functionType,
+  };
+}
+
+String _providerCatalogLabel(
+  AppLocalizations l10n,
+  core_proxy.ProviderCatalogEntry entry,
+) {
+  return l10n.settingsModelProviderTypeOption(
+    _providerTypeLocalName(l10n, entry.providerTypeId),
+    entry.displayName,
+  );
+}
+
+String _providerTypeLocalName(AppLocalizations l10n, String providerTypeId) {
+  return switch (providerTypeId) {
+    'OPENAI' => l10n.settingsModelProviderTypeOpenai,
+    'OPENAI_RESPONSES' => l10n.settingsModelProviderTypeOpenaiResponses,
+    'OPENAI_RESPONSES_GENERIC' =>
+      l10n.settingsModelProviderTypeOpenaiResponsesGeneric,
+    'OPENAI_GENERIC' => l10n.settingsModelProviderTypeOpenaiGeneric,
+    'ANTHROPIC' => l10n.settingsModelProviderTypeAnthropic,
+    'ANTHROPIC_GENERIC' => l10n.settingsModelProviderTypeAnthropicGeneric,
+    'GOOGLE' => l10n.settingsModelProviderTypeGoogle,
+    'GEMINI_GENERIC' => l10n.settingsModelProviderTypeGeminiGeneric,
+    'BAIDU' => l10n.settingsModelProviderTypeBaidu,
+    'ALIYUN' => l10n.settingsModelProviderTypeAliyun,
+    'XUNFEI' => l10n.settingsModelProviderTypeXunfei,
+    'ZHIPU' => l10n.settingsModelProviderTypeZhipu,
+    'BAICHUAN' => l10n.settingsModelProviderTypeBaichuan,
+    'MOONSHOT' => l10n.settingsModelProviderTypeMoonshot,
+    'MIMO' => l10n.settingsModelProviderTypeMimo,
+    'DEEPSEEK' => l10n.settingsModelProviderTypeDeepseek,
+    'MISTRAL' => l10n.settingsModelProviderTypeMistral,
+    'SILICONFLOW' => l10n.settingsModelProviderTypeSiliconflow,
+    'IFLOW' => l10n.settingsModelProviderTypeIflow,
+    'OPENROUTER' => l10n.settingsModelProviderTypeOpenrouter,
+    'FOUR_ROUTER' => l10n.settingsModelProviderTypeFourRouter,
+    'NOUS_PORTAL' => l10n.settingsModelProviderTypeNousPortal,
+    'INFINIAI' => l10n.settingsModelProviderTypeInfiniai,
+    'ALIPAY_BAILING' => l10n.settingsModelProviderTypeAlipayBailing,
+    'DOUBAO' => l10n.settingsModelProviderTypeDoubao,
+    'NVIDIA' => l10n.settingsModelProviderTypeNvidia,
+    'LMSTUDIO' => l10n.settingsModelProviderTypeLmstudio,
+    'OLLAMA' => l10n.settingsModelProviderTypeOllama,
+    'OPENAI_LOCAL' => l10n.settingsModelProviderTypeOpenaiLocal,
+    'MNN' => l10n.settingsModelProviderTypeMnn,
+    'LLAMA_CPP' => l10n.settingsModelProviderTypeLlamaCpp,
+    'PPINFRA' => l10n.settingsModelProviderTypePpinfra,
+    'NOVITA' => l10n.settingsModelProviderTypeNovita,
+    'OTHER' => l10n.settingsModelProviderTypeOther,
+    _ => throw UnsupportedError('missing provider type i18n: $providerTypeId'),
   };
 }
 
@@ -1627,454 +2540,84 @@ String _functionTypeDescription(AppLocalizations l10n, String functionType) {
 String? _functionMappingWarning(
   AppLocalizations l10n,
   String functionType,
-  core_proxy.ModelConfigData config,
+  core_proxy.ProviderModelSummary summary,
 ) {
   return switch (functionType) {
-    'IMAGE_RECOGNITION' when !config.enableDirectImageProcessing =>
+    'IMAGE_RECOGNITION' when !summary.capabilities.directImage =>
       l10n.settingsModelFunctionImageUnsupported,
-    'AUDIO_RECOGNITION' when !config.enableDirectAudioProcessing =>
+    'AUDIO_RECOGNITION' when !summary.capabilities.directAudio =>
       l10n.settingsModelFunctionAudioUnsupported,
-    'VIDEO_RECOGNITION' when !config.enableDirectVideoProcessing =>
+    'VIDEO_RECOGNITION' when !summary.capabilities.directVideo =>
       l10n.settingsModelFunctionVideoUnsupported,
     _ => null,
   };
 }
 
-List<Object?> _standardModelParameterPayload(_ModelConfigEditResult result) {
-  return <Object?>[
-    _modelParameterJson(
-      id: 'max_tokens',
-      name: 'Max tokens',
-      apiName: 'max_tokens',
-      description: 'Maximum number of tokens to generate in one response',
-      defaultValue: 4096,
-      currentValue: result.maxTokens,
-      isEnabled: result.maxTokensEnabled,
-      valueType: 'INT',
-      minValue: 1,
-      maxValue: null,
-      category: 'GENERATION',
-    ),
-    _modelParameterJson(
-      id: 'temperature',
-      name: 'Temperature',
-      apiName: 'temperature',
-      description:
-          'Controls randomness: lower is more deterministic, higher is more random',
-      defaultValue: 1.0,
-      currentValue: result.temperature,
-      isEnabled: result.temperatureEnabled,
-      valueType: 'FLOAT',
-      minValue: 0.0,
-      maxValue: 2.0,
-      category: 'CREATIVITY',
-    ),
-    _modelParameterJson(
-      id: 'top_p',
-      name: 'Top-p sampling',
-      apiName: 'top_p',
-      description:
-          'Alternative to temperature: consider only tokens within cumulative probability top-p',
-      defaultValue: 1.0,
-      currentValue: result.topP,
-      isEnabled: result.topPEnabled,
-      valueType: 'FLOAT',
-      minValue: 0.0,
-      maxValue: 1.0,
-      category: 'CREATIVITY',
-    ),
-    _modelParameterJson(
-      id: 'top_k',
-      name: 'Top-k sampling',
-      apiName: 'top_k',
-      description: 'Consider only the top-k tokens by probability. 0 disables',
-      defaultValue: 0,
-      currentValue: result.topK,
-      isEnabled: result.topKEnabled,
-      valueType: 'INT',
-      minValue: 0,
-      maxValue: 100,
-      category: 'CREATIVITY',
-    ),
-    _modelParameterJson(
-      id: 'presence_penalty',
-      name: 'Presence penalty',
-      apiName: 'presence_penalty',
-      description:
-          'Encourages new topics: higher values reduce repetition of existing tokens',
-      defaultValue: 0.0,
-      currentValue: result.presencePenalty,
-      isEnabled: result.presencePenaltyEnabled,
-      valueType: 'FLOAT',
-      minValue: -2.0,
-      maxValue: 2.0,
-      category: 'REPETITION',
-    ),
-    _modelParameterJson(
-      id: 'frequency_penalty',
-      name: 'Frequency penalty',
-      apiName: 'frequency_penalty',
-      description:
-          'Reduces repetition: higher values penalize tokens based on frequency',
-      defaultValue: 0.0,
-      currentValue: result.frequencyPenalty,
-      isEnabled: result.frequencyPenaltyEnabled,
-      valueType: 'FLOAT',
-      minValue: -2.0,
-      maxValue: 2.0,
-      category: 'REPETITION',
-    ),
-    _modelParameterJson(
-      id: 'repetition_penalty',
-      name: 'Repetition penalty',
-      apiName: 'repetition_penalty',
-      description:
-          'Further reduces repetition: 1.0 means no penalty; values > 1.0 discourage repetition',
-      defaultValue: 1.0,
-      currentValue: result.repetitionPenalty,
-      isEnabled: result.repetitionPenaltyEnabled,
-      valueType: 'FLOAT',
-      minValue: 0.0,
-      maxValue: 2.0,
-      category: 'REPETITION',
-    ),
-  ];
-}
-
-Map<String, Object?> _modelParameterJson({
-  required String id,
-  required String name,
-  required String apiName,
-  required String description,
-  required Object defaultValue,
-  required Object currentValue,
-  required bool isEnabled,
-  required String valueType,
-  required Object? minValue,
-  required Object? maxValue,
-  required String category,
-}) {
-  return <String, Object?>{
-    'id': id,
-    'name': name,
-    'apiName': apiName,
-    'description': description,
-    'defaultValue': defaultValue,
-    'currentValue': currentValue,
-    'isEnabled': isEnabled,
-    'valueType': valueType,
-    'minValue': minValue,
-    'maxValue': maxValue,
-    'category': category,
-    'isCustom': false,
+bool _functionModelSupported(
+  String functionType,
+  core_proxy.ProviderModelSummary summary,
+) {
+  return switch (functionType) {
+    'IMAGE_RECOGNITION' => summary.capabilities.directImage,
+    'AUDIO_RECOGNITION' => summary.capabilities.directAudio,
+    'VIDEO_RECOGNITION' => summary.capabilities.directVideo,
+    _ => true,
   };
 }
 
-List<core_proxy.ApiKeyInfo> _apiKeyPoolFromRaw(List<Object?> rawItems) {
-  return rawItems
-      .map(
-        (item) => core_proxy.ApiKeyInfo.fromJson(
-          Map<String, Object?>.from(item as Map),
-        ),
-      )
-      .toList(growable: false);
-}
-
-core_proxy.ApiKeyInfo _apiKeyInfoWith(
-  core_proxy.ApiKeyInfo keyInfo, {
-  bool? isEnabled,
-}) {
-  return core_proxy.ApiKeyInfo(
-    id: keyInfo.id,
-    key: keyInfo.key,
-    name: keyInfo.name,
-    isEnabled: isEnabled ?? keyInfo.isEnabled,
-    availabilityStatus: keyInfo.availabilityStatus,
-    usageCount: keyInfo.usageCount,
-    lastUsed: keyInfo.lastUsed,
-    errorCount: keyInfo.errorCount,
-  );
-}
-
-String _newApiKeyId() {
-  return 'api-key-${DateTime.now().microsecondsSinceEpoch}';
-}
-
-String _maskApiKey(String key) {
-  if (key.length <= 8) {
-    return '****';
+String _availableModelSubtitle(
+  AppLocalizations l10n,
+  core_proxy.AvailableProviderModel model,
+) {
+  final labels = <String>[];
+  final capabilities = model.capabilities;
+  if (capabilities != null) {
+    if (capabilities.directImage) {
+      labels.add(l10n.settingsModelDirectImage);
+    }
+    if (capabilities.directAudio) {
+      labels.add(l10n.settingsModelDirectAudio);
+    }
+    if (capabilities.directVideo) {
+      labels.add(l10n.settingsModelDirectVideo);
+    }
+    if (capabilities.toolCall) {
+      labels.add(l10n.settingsModelToolCall);
+    }
   }
-  return '${key.substring(0, 4)}****${key.substring(key.length - 4)}';
-}
-
-String _apiKeyStatusText(Object? status) {
-  final text = '$status';
-  final match = RegExp(r'[A-Z_]+').firstMatch(text);
-  return match?.group(0) ?? text;
-}
-
-class _ModelSummaryTile extends StatelessWidget {
-  const _ModelSummaryTile({
-    required this.summary,
-    required this.selected,
-    required this.deletable,
-    required this.onTap,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final core_proxy.ModelConfigSummary summary;
-  final bool selected;
-  final bool deletable;
-  final VoidCallback onTap;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-        color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
-      ),
-      title: Text(summary.name),
-      subtitle: Text('${summary.apiEndpoint}\n${summary.modelName}'),
-      isThreeLine: true,
-      onTap: onTap,
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          IconButton(
-            tooltip: l10n.edit,
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
-          ),
-          IconButton(
-            tooltip: l10n.delete,
-            onPressed: deletable ? onDelete : null,
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
-      ),
-    );
+  if (model.builtinTools.isNotEmpty) {
+    labels.add(l10n.settingsModelBuiltinTools);
   }
+  final context = model.context;
+  if (context != null) {
+    labels.add('${context.maxContextLength.toStringAsFixed(0)}k');
+  }
+  return labels.isEmpty ? '-' : labels.join(' · ');
 }
 
-class _FunctionMappingTile extends StatelessWidget {
-  const _FunctionMappingTile({
-    required this.functionType,
-    required this.mapping,
-    required this.summary,
-    required this.config,
-    required this.onTap,
-  });
-
-  final String functionType;
-  final core_proxy.FunctionConfigMapping mapping;
-  final core_proxy.ModelConfigSummary summary;
-  final core_proxy.ModelConfigData config;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    final warning = _functionMappingWarning(l10n, functionType, config);
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(_functionTypeTitle(l10n, functionType)),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(_functionTypeDescription(l10n, functionType)),
-          const SizedBox(height: 4),
-          Text(
-            l10n.settingsModelFunctionMappingsCurrent(
-              summary.name,
-              _modelNameAt(summary.modelName, mapping.modelIndex),
-            ),
-            style: TextStyle(
-              color: colorScheme.primary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          if (warning != null) ...<Widget>[
-            const SizedBox(height: 4),
-            Row(
-              children: <Widget>[
-                Icon(
-                  Icons.warning_amber_outlined,
-                  size: 16,
-                  color: colorScheme.error,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    warning,
-                    style: TextStyle(color: colorScheme.error),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-      trailing: TextButton(
-        onPressed: onTap,
-        child: Text(l10n.settingsModelFunctionMappingsChange),
-      ),
-      onTap: onTap,
-    );
+String _builtinToolSubtitle(
+  AppLocalizations l10n,
+  core_proxy.ModelBuiltinTool tool,
+) {
+  final labels = <String>[];
+  labels.add('${tool.requestFormat}');
+  if (tool.exclusivity == 'ExclusiveWithExternalTools') {
+    labels.add(l10n.settingsModelBuiltinToolExclusive);
   }
+  return labels.join(' · ');
 }
 
-class _FunctionModelSelection {
-  const _FunctionModelSelection({
-    required this.configId,
-    required this.modelIndex,
-  });
-
-  final String configId;
-  final int modelIndex;
-}
-
-class _FunctionModelSelectorDialog extends StatelessWidget {
-  const _FunctionModelSelectorDialog({
-    required this.functionType,
-    required this.summaries,
-    required this.currentMapping,
-  });
-
-  final String functionType;
-  final List<core_proxy.ModelConfigSummary> summaries;
-  final core_proxy.FunctionConfigMapping currentMapping;
-
-  static Future<_FunctionModelSelection?> show({
-    required BuildContext context,
-    required String functionType,
-    required List<core_proxy.ModelConfigSummary> summaries,
-    required core_proxy.FunctionConfigMapping currentMapping,
-  }) {
-    return showDialog<_FunctionModelSelection>(
-      context: context,
-      builder: (context) => _FunctionModelSelectorDialog(
-        functionType: functionType,
-        summaries: summaries,
-        currentMapping: currentMapping,
-      ),
-    );
+core_proxy.ProviderModelSummary? _summaryForModelOrNull(
+  List<core_proxy.ProviderModelSummary> summaries,
+  String providerId,
+  String modelId,
+) {
+  for (final summary in summaries) {
+    if (summary.providerId == providerId && summary.modelId == modelId) {
+      return summary;
+    }
   }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(
-        l10n.settingsModelFunctionMappingsSelect(
-          _functionTypeTitle(l10n, functionType),
-        ),
-      ),
-      content: SizedBox(
-        width: 560,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              for (final summary in summaries)
-                for (final indexedModel in _indexedModelNames(
-                  summary.modelName,
-                ))
-                  _FunctionModelOptionTile(
-                    summary: summary,
-                    modelName: indexedModel.name,
-                    modelIndex: indexedModel.index,
-                    selected:
-                        summary.id == currentMapping.configId &&
-                        indexedModel.index == currentMapping.modelIndex,
-                    onTap: () {
-                      Navigator.of(context).pop(
-                        _FunctionModelSelection(
-                          configId: summary.id,
-                          modelIndex: indexedModel.index,
-                        ),
-                      );
-                    },
-                  ),
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-      ],
-    );
-  }
-}
-
-class _FunctionModelOptionTile extends StatelessWidget {
-  const _FunctionModelOptionTile({
-    required this.summary,
-    required this.modelName,
-    required this.modelIndex,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final core_proxy.ModelConfigSummary summary;
-  final String modelName;
-  final int modelIndex;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        selected ? Icons.check_circle : Icons.circle_outlined,
-        color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
-      ),
-      title: Text(summary.name),
-      subtitle: Text(modelName),
-      trailing: Text('#${modelIndex + 1}'),
-      onTap: onTap,
-    );
-  }
-}
-
-class _ConnectionTestItemTile extends StatelessWidget {
-  const _ConnectionTestItemTile({required this.item});
-
-  final core_proxy.ModelConnectionTestItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    final color = item.success ? Colors.green : colorScheme.error;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        item.success ? Icons.check_circle_outline : Icons.error_outline,
-        color: color,
-      ),
-      title: Text(_connectionTestTypeLabel(l10n, item.type)),
-      subtitle: item.error == null ? null : Text(item.error!),
-      trailing: Text(
-        item.success
-            ? l10n.settingsModelConnectionTestPassed
-            : l10n.settingsModelConnectionTestFailed,
-        style: TextStyle(color: color, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
+  return null;
 }
 
 String _connectionTestTypeLabel(AppLocalizations l10n, Object? type) {
@@ -2088,115 +2631,13 @@ String _connectionTestTypeLabel(AppLocalizations l10n, Object? type) {
   };
 }
 
+String _modelTestKey(String providerId, String modelId) {
+  return '$providerId:$modelId';
+}
+
 bool _connectionTestSucceeded(
   core_proxy.ModelConnectionTestReport report,
   String type,
 ) {
   return report.items.any((item) => item.type == type && item.success);
-}
-
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.title,
-    required this.children,
-    this.action,
-    this.initiallyExpanded = true,
-  });
-
-  final String title;
-  final List<Widget> children;
-  final Widget? action;
-  final bool initiallyExpanded;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(18);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: radius,
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        material: true,
-        child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
-          shape: RoundedRectangleBorder(borderRadius: radius),
-          collapsedShape: RoundedRectangleBorder(borderRadius: radius),
-          title: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              ?action,
-            ],
-          ),
-          childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-          children: children,
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoLine extends StatelessWidget {
-  const _InfoLine({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 9),
-      child: Row(
-        children: <Widget>[
-          Expanded(child: Text(label)),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SwitchLine extends StatelessWidget {
-  const _SwitchLine({
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(title),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(color: colorScheme.onSurfaceVariant),
-      ),
-      value: value,
-      onChanged: onChanged,
-    );
-  }
 }

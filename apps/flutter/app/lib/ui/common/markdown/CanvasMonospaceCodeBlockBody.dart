@@ -26,7 +26,8 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
             _CodeLine(
               lineNumber: index + 1,
               text: lines[index],
-              span: highlightedLines == null || index >= highlightedLines!.length
+              span:
+                  highlightedLines == null || index >= highlightedLines!.length
                   ? null
                   : highlightedLines![index],
               autoWrapEnabled: autoWrapEnabled,
@@ -66,7 +67,6 @@ class _CodeLine extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: const Color(0xFF858585),
                   fontFamily: markdownCodeFontFamily,
-                  fontSize: 10,
                 ),
               ),
             ),

@@ -11,6 +11,9 @@ use super::AIService::{
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::data::model::ModelConfigData::{
+    BuiltinToolExclusivity, BuiltinToolRequestFormat, ModelBuiltinTool,
+};
 use crate::data::model::ModelParameter::{ModelParameter, ParameterCategory};
 use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
@@ -22,7 +25,7 @@ pub struct GeminiProvider {
     pub model_name: String,
     pub provider_type: String,
     pub custom_headers: Vec<(String, String)>,
-    pub enable_google_search: bool,
+    pub builtin_tools: Vec<ModelBuiltinTool>,
     pub enable_tool_call: bool,
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
@@ -45,7 +48,7 @@ impl GeminiProvider {
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
-        enable_google_search: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     ) -> Self {
         Self {
@@ -54,7 +57,7 @@ impl GeminiProvider {
             model_name,
             provider_type,
             custom_headers,
-            enable_google_search,
+            builtin_tools,
             enable_tool_call,
             inputTokenCount: 0,
             cachedInputTokenCount: 0,
@@ -64,19 +67,33 @@ impl GeminiProvider {
         }
     }
 
+    fn gemini_google_search_enabled(&self) -> bool {
+        self.builtin_tools.iter().any(|tool| {
+            tool.enabled && tool.requestFormat == BuiltinToolRequestFormat::GeminiGoogleSearch
+        })
+    }
+
+    fn external_tools_enabled(&self) -> bool {
+        self.enable_tool_call
+            && !self.builtin_tools.iter().any(|tool| {
+                tool.enabled
+                    && tool.exclusivity == BuiltinToolExclusivity::ExclusiveWithExternalTools
+            })
+    }
+
     pub fn create_request_body(
         &mut self,
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let mut root = Map::new();
         let mut tools = Vec::new();
-        if self.enable_tool_call && !request.available_tools.is_empty() {
+        if self.external_tools_enabled() && !request.available_tools.is_empty() {
             let declarations = self.build_tool_definitions_for_gemini(&request.available_tools);
             if !declarations.is_empty() {
                 tools.push(json!({"function_declarations": declarations}));
             }
         }
-        if self.enable_google_search {
+        if self.gemini_google_search_enabled() {
             tools.push(json!({"googleSearch": {}}));
         }
         let tools_json = if tools.is_empty() {
@@ -558,7 +575,7 @@ impl GeminiProvider {
         }
         let mut content_builder = String::new();
         let mut search_sources_builder = String::new();
-        if self.enable_google_search {
+        if self.gemini_google_search_enabled() {
             if let Some(metadata) = json_response.pointer("/candidates/0/groundingMetadata") {
                 if let Some(queries) = metadata.get("webSearchQueries").and_then(Value::as_array) {
                     if !queries.is_empty() {
@@ -855,9 +872,9 @@ impl AIService for GeminiProvider {
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
     ) -> Result<i32, AiServiceError> {
-        let tools_json = if self.enable_tool_call && !available_tools.is_empty() {
+        let tools_json = if self.external_tools_enabled() && !available_tools.is_empty() {
             Some(Value::Array(self.build_tool_definitions_for_gemini(available_tools)).to_string())
-        } else if self.enable_google_search {
+        } else if self.gemini_google_search_enabled() {
             Some(json!([{"googleSearch": {}}]).to_string())
         } else {
             None

@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -157,7 +156,11 @@ class TerminalViewState extends State<TerminalView> {
 
   final _viewportKey = GlobalKey();
 
+  final _selectionOverlayKey = GlobalKey();
+
   String? _composingText;
+
+  Offset? _magnifierGlobalPosition;
 
   late TerminalController _controller;
 
@@ -308,6 +311,9 @@ class TerminalViewState extends State<TerminalView> {
           widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
       onSecondaryTapUp:
           widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
+      onMagnifierShow: _showSelectionMagnifier,
+      onMagnifierMove: _showSelectionMagnifier,
+      onMagnifierHide: _hideSelectionMagnifier,
       readOnly: widget.readOnly,
       child: child,
     );
@@ -318,9 +324,22 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     child = Container(
-      color: widget.theme.background.withOpacity(widget.backgroundOpacity),
+      color: widget.theme.background.withValues(alpha: widget.backgroundOpacity),
       padding: widget.padding,
       child: child,
+    );
+
+    child = Stack(
+      key: _selectionOverlayKey,
+      fit: StackFit.expand,
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(child: child),
+        AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => _buildSelectionOverlay(context),
+        ),
+      ],
     );
 
     return child;
@@ -341,6 +360,190 @@ class TerminalViewState extends State<TerminalView> {
   Rect get globalCursorRect {
     return renderTerminal.localToGlobal(renderTerminal.cursorOffset) &
         renderTerminal.cellSize;
+  }
+
+  Widget _buildSelectionOverlay(BuildContext context) {
+    final selection = _controller.selection?.normalized;
+    final overlayContext = _selectionOverlayKey.currentContext;
+    if (selection == null || selection.isCollapsed || overlayContext == null) {
+      return const SizedBox.shrink();
+    }
+
+    final overlayBox = overlayContext.findRenderObject();
+    if (overlayBox is! RenderBox || !overlayBox.hasSize) {
+      return const SizedBox.shrink();
+    }
+
+    final start = _selectionHandlePosition(overlayBox, selection.begin);
+    final end = _selectionHandlePosition(overlayBox, selection.end);
+    final cellHeight = renderTerminal.cellSize.height;
+    final magnifier = _magnifierGlobalPosition == null
+        ? null
+        : _buildSelectionMagnifier(overlayBox, _magnifierGlobalPosition!);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (magnifier == null) _buildCopyToolbar(context, overlayBox, start, end),
+        _SelectionHandle(
+          position: start.translate(0, cellHeight),
+          onDrag: (globalPosition) => _dragSelectionHandle(
+            globalPosition,
+            isStart: true,
+          ),
+          onDragEnd: _hideSelectionMagnifier,
+        ),
+        _SelectionHandle(
+          position: end.translate(0, cellHeight),
+          onDrag: (globalPosition) => _dragSelectionHandle(
+            globalPosition,
+            isStart: false,
+          ),
+          onDragEnd: _hideSelectionMagnifier,
+        ),
+        if (magnifier != null) magnifier,
+      ],
+    );
+  }
+
+  Widget _buildCopyToolbar(
+    BuildContext context,
+    RenderBox overlayBox,
+    Offset start,
+    Offset end,
+  ) {
+    final theme = Theme.of(context);
+    final toolbarWidth = 72.0;
+    final toolbarHeight = 38.0;
+    final centerX = ((start.dx + end.dx) / 2).clamp(
+      toolbarWidth / 2 + 8,
+      overlayBox.size.width - toolbarWidth / 2 - 8,
+    );
+    final top = (start.dy - toolbarHeight - 12).clamp(
+      8,
+      overlayBox.size.height - toolbarHeight - 8,
+    );
+
+    return Positioned(
+      left: centerX - toolbarWidth / 2,
+      top: top.toDouble(),
+      width: toolbarWidth,
+      height: toolbarHeight,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: _copySelectionToClipboard,
+          child: Center(
+            child: Text(
+              '复制',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectionMagnifier(RenderBox overlayBox, Offset globalPosition) {
+    const magnifierSize = Size(116, 48);
+    const lensOffset = Offset(0, -54);
+    final overlayPosition = overlayBox.globalToLocal(globalPosition);
+    final lensCenter = overlayPosition + lensOffset;
+    final left = (lensCenter.dx - magnifierSize.width / 2).clamp(
+      8,
+      overlayBox.size.width - magnifierSize.width - 8,
+    );
+    final top = (lensCenter.dy - magnifierSize.height / 2).clamp(
+      8,
+      overlayBox.size.height - magnifierSize.height - 8,
+    );
+    final actualCenter = Offset(
+      left.toDouble() + magnifierSize.width / 2,
+      top.toDouble() + magnifierSize.height / 2,
+    );
+    final focalPointOffset = overlayPosition - actualCenter;
+
+    return Positioned(
+      left: left.toDouble(),
+      top: top.toDouble(),
+      width: magnifierSize.width,
+      height: magnifierSize.height,
+      child: RawMagnifier(
+        size: magnifierSize,
+        magnificationScale: 1.7,
+        focalPointOffset: focalPointOffset,
+        clipBehavior: Clip.hardEdge,
+        decoration: MagnifierDecoration(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(
+              color: Colors.white.withValues(alpha: 0.42),
+              width: 1.2,
+            ),
+          ),
+          shadows: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Offset _selectionHandlePosition(RenderBox overlayBox, CellOffset offset) {
+    final terminalOffset = renderTerminal.getOffset(offset);
+    final globalOffset = renderTerminal.localToGlobal(terminalOffset);
+    return overlayBox.globalToLocal(globalOffset);
+  }
+
+  void _dragSelectionHandle(Offset globalPosition, {required bool isStart}) {
+    final selection = _controller.selection?.normalized;
+    if (selection == null) {
+      return;
+    }
+
+    _showSelectionMagnifier(globalPosition);
+    final localPosition = renderTerminal.globalToLocal(globalPosition);
+    final cell = renderTerminal.getCellOffset(localPosition);
+    final adjustedCell = isStart ? cell : CellOffset(cell.x + 1, cell.y);
+
+    renderTerminal.setSelectionRange(
+      isStart ? adjustedCell : selection.begin,
+      isStart ? selection.end : adjustedCell,
+    );
+  }
+
+  void _showSelectionMagnifier(Offset globalPosition) {
+    if (_magnifierGlobalPosition == globalPosition) {
+      return;
+    }
+    setState(() => _magnifierGlobalPosition = globalPosition);
+  }
+
+  void _hideSelectionMagnifier() {
+    if (_magnifierGlobalPosition == null) {
+      return;
+    }
+    setState(() => _magnifierGlobalPosition = null);
+  }
+
+  Future<void> _copySelectionToClipboard() async {
+    final selection = _controller.selection;
+    if (selection == null) {
+      return;
+    }
+    final text = widget.terminal.buffer.getText(selection);
+    await Clipboard.setData(ClipboardData(text: text));
+    _controller.clearSelection();
   }
 
   void _onTapUp(TapUpDetails details) {
@@ -450,6 +653,75 @@ class TerminalViewState extends State<TerminalView> {
     if (position != null) {
       position.jumpTo(position.maxScrollExtent);
     }
+  }
+}
+
+class _SelectionHandle extends StatelessWidget {
+  const _SelectionHandle({
+    required this.position,
+    required this.onDrag,
+    required this.onDragEnd,
+  });
+
+  static const double _touchSize = 44;
+  static const double _stemWidth = 2;
+  static const double _stemHeight = 14;
+  static const double _knobSize = 12;
+
+  final Offset position;
+  final ValueChanged<Offset> onDrag;
+  final VoidCallback onDragEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Positioned(
+      left: position.dx - _touchSize / 2,
+      top: position.dy - _stemHeight,
+      width: _touchSize,
+      height: _touchSize,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (details) => onDrag(details.globalPosition),
+        onPanUpdate: (details) => onDrag(details.globalPosition),
+        onPanEnd: (_) => onDragEnd(),
+        onPanCancel: onDragEnd,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: _touchSize,
+            height: _stemHeight + _knobSize,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                Positioned(
+                  top: 0,
+                  width: _stemWidth,
+                  height: _stemHeight,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(_stemWidth),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: _stemHeight,
+                  width: _knobSize,
+                  height: _knobSize,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

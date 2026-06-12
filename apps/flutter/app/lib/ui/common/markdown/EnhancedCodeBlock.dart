@@ -269,7 +269,8 @@ class MermaidRenderer extends StatelessWidget {
     return SizedBox(
       height: height,
       child: _HtmlWebView(
-        html: '''
+        html:
+            '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -422,7 +423,10 @@ InlineSpan _highlightSyntaxLine(String line, String language) {
     'Promise',
   };
   if (line.trimLeft().startsWith('//') || line.trimLeft().startsWith('%')) {
-    return TextSpan(text: line, style: TextStyle(color: commentColor));
+    return TextSpan(
+      text: line,
+      style: TextStyle(color: commentColor),
+    );
   }
   final spans = <TextSpan>[];
   final tokenPattern = RegExp(
@@ -441,7 +445,12 @@ InlineSpan _highlightSyntaxLine(String line, String language) {
         : _looksLikeFunction(line, match.end)
         ? functionColor
         : textColor;
-    spans.add(TextSpan(text: token, style: TextStyle(color: color)));
+    spans.add(
+      TextSpan(
+        text: token,
+        style: TextStyle(color: color),
+      ),
+    );
   }
   return TextSpan(children: spans);
 }

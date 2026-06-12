@@ -276,6 +276,29 @@ pub fn buildRuntimeBootstrapScript() -> String {
             getPluginConfigDir: function(pluginId) {{
                 return __operitNativeGetPluginConfigDir(String(pluginId || ''));
             }},
+            isPackageImported: function(packageName) {{
+                return __operitNativeIsPackageImported(String(packageName || '')) === 'true';
+            }},
+            importPackage: function(packageName) {{
+                return __operitNativeImportPackage(String(packageName || ''));
+            }},
+            removePackage: function(packageName) {{
+                return __operitNativeRemovePackage(String(packageName || ''));
+            }},
+            usePackage: function(packageName) {{
+                return __operitNativeUsePackage(String(packageName || ''));
+            }},
+            listImportedPackagesJson: function() {{
+                return __operitNativeListImportedPackagesJson();
+            }},
+            resolveToolName: function(packageName, subpackageId, toolName, preferImported) {{
+                return __operitNativeResolveToolName(
+                    String(packageName || ''),
+                    String(subpackageId || ''),
+                    String(toolName || ''),
+                    String(preferImported || '')
+                );
+            }},
             invokeToolPkgIpcAsync: function(callbackId, packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payloadJson) {{
                 var normalizedCallbackId = String(callbackId || '').trim();
                 if (!normalizedCallbackId) {{

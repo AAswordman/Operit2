@@ -26,7 +26,7 @@ class AgentModelSelectorPopup extends StatefulWidget {
 
 class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   Future<_AgentModelSelectorData>? _settingsFuture;
-  String? _expandedConfigId;
+  String? _expandedProviderId;
   String? _infoTitle;
   String? _infoDescription;
 
@@ -41,15 +41,17 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   Future<_AgentModelSelectorData> _loadSettings() async {
     await _clients.preferencesModelConfigManager.initializeIfNeeded();
     await _clients.preferencesFunctionalConfigManager.initializeIfNeeded();
-    final mapping = await _clients.preferencesFunctionalConfigManager
-        .getConfigMappingForFunction(functionType: 'CHAT');
-    final config = await _clients.preferencesModelConfigManager.getModelConfig(
-      configId: mapping.configId,
-    );
+    final binding = await _clients.preferencesFunctionalConfigManager
+        .getModelBindingForFunction(functionType: 'CHAT');
+    final config = await _clients.preferencesModelConfigManager
+        .getResolvedModelConfig(
+          providerId: binding.providerId,
+          modelId: binding.modelId,
+        );
     return _AgentModelSelectorData(
-      configSummaries: await _clients.preferencesModelConfigManager
-          .getAllConfigSummaries(),
-      currentConfigMapping: mapping,
+      providers: await _clients.preferencesModelConfigManager
+          .getProviderProfiles(),
+      currentBinding: binding,
       currentConfig: config,
       enableThinkingMode: await _clients.preferencesApiPreferences
           .enableThinkingModeFlowSnapshot(),
@@ -65,11 +67,10 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   }
 
   Future<void> _selectModel(
-    core_proxy.ModelConfigSummary config,
-    int modelIndex,
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
   ) async {
-    final modelName = _modelList(config.modelName)[modelIndex];
-    if (modelName.toLowerCase().contains('autoglm')) {
+    if (model.id.toLowerCase().contains('autoglm')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('禁止使用autoglm作为对话主模型。对话模型和ui控制模型是分离的，请选择任意一个别的聪明的大模型。'),
@@ -77,13 +78,12 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       );
       return;
     }
-    await _clients.preferencesFunctionalConfigManager
-        .setConfigForFunctionWithIndex(
-          functionType: 'CHAT',
-          configId: config.id,
-          modelIndex: modelIndex,
-        );
-    widget.onModelChanged(modelName);
+    await _clients.preferencesFunctionalConfigManager.setModelForFunction(
+      functionType: 'CHAT',
+      providerId: provider.id,
+      modelId: model.id,
+    );
+    widget.onModelChanged(model.id);
     widget.onDismiss();
   }
 
@@ -105,11 +105,13 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
 
   Future<void> _toggleMaxContext(_AgentModelSelectorData data) async {
     final config = data.currentConfig;
-    await _clients.preferencesModelConfigManager.updateContextSettings(
-      configId: config.id,
-      contextLength: config.contextLength,
-      maxContextLength: config.maxContextLength,
-      enableMaxContextMode: !config.enableMaxContextMode,
+    await _clients.preferencesModelConfigManager.updateContextForModel(
+      providerId: config.providerId,
+      modelId: config.modelId,
+      context: core_proxy.ModelContextSpec(
+        maxContextLength: config.context.maxContextLength,
+        enableMaxContextMode: !config.context.enableMaxContextMode,
+      ),
     );
     _reloadSettings();
   }
@@ -165,21 +167,22 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                           ),
                         ),
                         _MaxContextSettingItem(
-                          enabled: data.currentConfig.enableMaxContextMode,
+                          enabled:
+                              data.currentConfig.context.enableMaxContextMode,
                           onToggle: () => _toggleMaxContext(data),
                           onInfoClick: () => _showInfo(
                             'Max模式',
-                            'Max Mode（超大上下文模式）开启后将使用 ${_formatContextLength(data.currentConfig.maxContextLength)}k 上下文窗口，关闭则回到 ${_formatContextLength(data.currentConfig.contextLength)}k。',
+                            'Max Mode（超大上下文模式）开启后将使用 ${_formatContextLength(data.currentConfig.context.maxContextLength)}k 上下文窗口，关闭则使用 ${_formatContextLength(data.currentConfig.context.maxContextLength * 0.4)}k。',
                           ),
                         ),
                         _ModelSelectorItem(
                           popupContainerColor: popupContainerColor,
-                          configSummaries: data.configSummaries,
-                          currentConfigMapping: data.currentConfigMapping,
-                          expandedConfigId: _expandedConfigId,
-                          onExpandedConfigChanged: (configId) {
+                          providers: data.providers,
+                          currentBinding: data.currentBinding,
+                          expandedProviderId: _expandedProviderId,
+                          onExpandedProviderChanged: (providerId) {
                             setState(() {
-                              _expandedConfigId = configId;
+                              _expandedProviderId = providerId;
                             });
                           },
                           onSelectModel: _selectModel,
@@ -226,16 +229,16 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
 
 class _AgentModelSelectorData {
   const _AgentModelSelectorData({
-    required this.configSummaries,
-    required this.currentConfigMapping,
+    required this.providers,
+    required this.currentBinding,
     required this.currentConfig,
     required this.enableThinkingMode,
     required this.thinkingQualityLevel,
   });
 
-  final List<core_proxy.ModelConfigSummary> configSummaries;
-  final core_proxy.FunctionConfigMapping currentConfigMapping;
-  final core_proxy.ModelConfigData currentConfig;
+  final List<core_proxy.ProviderProfile> providers;
+  final core_proxy.FunctionModelBinding currentBinding;
+  final core_proxy.ResolvedModelConfig currentConfig;
   final bool enableThinkingMode;
   final int thinkingQualityLevel;
 }
@@ -276,6 +279,7 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final thinkingTypeText = widget.data.enableThinkingMode ? 'mode' : 'off';
     return Column(
       children: <Widget>[
@@ -324,10 +328,9 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
                               const Spacer(),
                               Text(
                                 _sliderValue.round().toString(),
-                                style: TextStyle(
+                                style: textTheme.bodySmall!.copyWith(
                                   color: colorScheme.primary,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 13,
                                 ),
                               ),
                             ],
@@ -384,21 +387,24 @@ class _MaxContextSettingItem extends StatelessWidget {
 class _ModelSelectorItem extends StatelessWidget {
   const _ModelSelectorItem({
     required this.popupContainerColor,
-    required this.configSummaries,
-    required this.currentConfigMapping,
-    required this.expandedConfigId,
-    required this.onExpandedConfigChanged,
+    required this.providers,
+    required this.currentBinding,
+    required this.expandedProviderId,
+    required this.onExpandedProviderChanged,
     required this.onSelectModel,
     required this.onManageClick,
     required this.onInfoClick,
   });
 
   final Color popupContainerColor;
-  final List<core_proxy.ModelConfigSummary> configSummaries;
-  final core_proxy.FunctionConfigMapping currentConfigMapping;
-  final String? expandedConfigId;
-  final ValueChanged<String?> onExpandedConfigChanged;
-  final void Function(core_proxy.ModelConfigSummary config, int modelIndex)
+  final List<core_proxy.ProviderProfile> providers;
+  final core_proxy.FunctionModelBinding currentBinding;
+  final String? expandedProviderId;
+  final ValueChanged<String?> onExpandedProviderChanged;
+  final void Function(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  )
   onSelectModel;
   final VoidCallback onManageClick;
   final VoidCallback onInfoClick;
@@ -406,12 +412,13 @@ class _ModelSelectorItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Column(
       children: <Widget>[
         _SettingsHeaderRow(
           icon: Icons.data_object_outlined,
           title: '模型:',
-          value: _currentModelName(),
+          value: currentBinding.modelId,
           expanded: true,
           onTap: () {},
           onInfoClick: onInfoClick,
@@ -423,7 +430,7 @@ class _ModelSelectorItem extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Column(
               children: <Widget>[
-                if (configSummaries.isEmpty)
+                if (providers.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -436,25 +443,29 @@ class _ModelSelectorItem extends StatelessWidget {
                       ),
                     ),
                   ),
-                for (var i = 0; i < configSummaries.length; i++) ...[
-                  _ModelConfigRow(
-                    config: configSummaries[i],
+                for (var i = 0; i < providers.length; i++) ...[
+                  _ModelProviderRow(
+                    provider: providers[i],
                     selected:
-                        configSummaries[i].id == currentConfigMapping.configId,
-                    selectedModelIndex: currentConfigMapping.modelIndex,
-                    expanded: expandedConfigId == configSummaries[i].id,
-                    onExpandedChanged: onExpandedConfigChanged,
+                        providers[i].id == currentBinding.providerId &&
+                        providers[i].models.any(
+                          (model) => model.id == currentBinding.modelId,
+                        ),
+                    selectedProviderId: currentBinding.providerId,
+                    selectedModelId: currentBinding.modelId,
+                    expanded: expandedProviderId == providers[i].id,
+                    onExpandedChanged: onExpandedProviderChanged,
                     onSelectModel: onSelectModel,
                   ),
-                  if (i < configSummaries.length - 1) const SizedBox(height: 4),
+                  if (i < providers.length - 1) const SizedBox(height: 4),
                 ],
                 InkWell(
                   borderRadius: BorderRadius.circular(4),
                   onTap: onManageClick,
-                  child: const SizedBox(
+                  child: SizedBox(
                     height: 30,
                     child: Center(
-                      child: Text('管理配置', style: TextStyle(fontSize: 13)),
+                      child: Text('管理配置', style: textTheme.bodySmall),
                     ),
                   ),
                 ),
@@ -465,37 +476,36 @@ class _ModelSelectorItem extends StatelessWidget {
       ],
     );
   }
-
-  String _currentModelName() {
-    final config = configSummaries.firstWhere(
-      (item) => item.id == currentConfigMapping.configId,
-    );
-    return _modelList(config.modelName)[currentConfigMapping.modelIndex];
-  }
 }
 
-class _ModelConfigRow extends StatelessWidget {
-  const _ModelConfigRow({
-    required this.config,
+class _ModelProviderRow extends StatelessWidget {
+  const _ModelProviderRow({
+    required this.provider,
     required this.selected,
-    required this.selectedModelIndex,
+    required this.selectedProviderId,
+    required this.selectedModelId,
     required this.expanded,
     required this.onExpandedChanged,
     required this.onSelectModel,
   });
 
-  final core_proxy.ModelConfigSummary config;
+  final core_proxy.ProviderProfile provider;
   final bool selected;
-  final int selectedModelIndex;
+  final String selectedProviderId;
+  final String selectedModelId;
   final bool expanded;
   final ValueChanged<String?> onExpandedChanged;
-  final void Function(core_proxy.ModelConfigSummary config, int modelIndex)
+  final void Function(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  )
   onSelectModel;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final models = _modelList(config.modelName);
+    final textTheme = Theme.of(context).textTheme;
+    final models = provider.models;
     final hasMultipleModels = models.length > 1;
     return Column(
       children: <Widget>[
@@ -503,9 +513,11 @@ class _ModelConfigRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           onTap: () {
             if (hasMultipleModels) {
-              onExpandedChanged(expanded ? null : config.id);
+              onExpandedChanged(expanded ? null : provider.id);
+            } else if (models.isNotEmpty) {
+              onSelectModel(provider, models.first);
             } else {
-              onSelectModel(config, 0);
+              onExpandedChanged(expanded ? null : provider.id);
             }
           },
           child: Container(
@@ -520,11 +532,10 @@ class _ModelConfigRow extends StatelessWidget {
               children: <Widget>[
                 Expanded(
                   child: Text(
-                    config.name,
+                    provider.name,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: textTheme.bodySmall!.copyWith(
                       color: selected
                           ? colorScheme.primary
                           : colorScheme.onSurface,
@@ -538,8 +549,7 @@ class _ModelConfigRow extends StatelessWidget {
                 if (hasMultipleModels) ...[
                   Text(
                     '${models.length}个模型',
-                    style: TextStyle(
-                      fontSize: 10,
+                    style: textTheme.labelSmall!.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -553,11 +563,12 @@ class _ModelConfigRow extends StatelessWidget {
                 ] else
                   Flexible(
                     child: Text(
-                      config.modelName,
+                      provider.models.isEmpty
+                          ? provider.providerTypeId
+                          : provider.models.first.id,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
+                      style: textTheme.labelSmall!.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -575,9 +586,11 @@ class _ModelConfigRow extends StatelessWidget {
                 children: <Widget>[
                   for (var index = 0; index < models.length; index++) ...[
                     _ModelNameRow(
-                      modelName: models[index],
-                      selected: selected && selectedModelIndex == index,
-                      onTap: () => onSelectModel(config, index),
+                      modelName: models[index].id,
+                      selected:
+                          provider.id == selectedProviderId &&
+                          models[index].id == selectedModelId,
+                      onTap: () => onSelectModel(provider, models[index]),
                     ),
                     if (index < models.length - 1) const SizedBox(height: 2),
                   ],
@@ -604,6 +617,7 @@ class _ModelNameRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return InkWell(
       borderRadius: BorderRadius.circular(4),
       onTap: onTap,
@@ -620,8 +634,7 @@ class _ModelNameRow extends StatelessWidget {
           modelName,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 12,
+          style: textTheme.bodySmall!.copyWith(
             color: selected ? colorScheme.primary : colorScheme.onSurface,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
@@ -653,6 +666,7 @@ class _SettingsHeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return InkWell(
       onTap: onTap,
       child: ConstrainedBox(
@@ -668,15 +682,14 @@ class _SettingsHeaderRow extends StatelessWidget {
               ),
               _InfoIconButton(onPressed: onInfoClick),
               const SizedBox(width: 8),
-              Text(title, style: const TextStyle(fontSize: 13)),
+              Text(title, style: textTheme.bodySmall),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: textTheme.bodySmall!.copyWith(
                     color: colorScheme.primary,
                     fontWeight: FontWeight.bold,
                   ),
@@ -716,6 +729,7 @@ class _SwitchSettingRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return InkWell(
       onTap: onToggle,
       child: ConstrainedBox(
@@ -738,7 +752,7 @@ class _SwitchSettingRow extends StatelessWidget {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
+                  style: textTheme.bodySmall,
                 ),
               ),
               Transform.scale(
@@ -792,6 +806,7 @@ class _InfoPopup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Card(
       margin: EdgeInsets.zero,
       color: colorScheme.surfaceContainer,
@@ -810,8 +825,7 @@ class _InfoPopup extends StatelessWidget {
                     child: Text(
                       title,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 16,
+                      style: textTheme.titleMedium!.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -825,8 +839,7 @@ class _InfoPopup extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 description,
-                style: TextStyle(
-                  fontSize: 14,
+                style: textTheme.bodyMedium!.copyWith(
                   height: 20 / 14,
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -837,14 +850,6 @@ class _InfoPopup extends StatelessWidget {
       ),
     );
   }
-}
-
-List<String> _modelList(String modelName) {
-  return modelName
-      .split(',')
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toList(growable: false);
 }
 
 String _formatContextLength(double value) {

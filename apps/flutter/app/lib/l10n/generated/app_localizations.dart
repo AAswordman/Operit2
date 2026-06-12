@@ -1445,7 +1445,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryCharactersDescription.
   ///
   /// In en, this message translates to:
-  /// **'Manage character cards, character groups, active roles, and role-level model, memory, and tool bindings.'**
+  /// **'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.'**
   String get settingsCategoryCharactersDescription;
 
   /// No description provided for @settingsCategoryToolsTitle.
@@ -1556,6 +1556,18 @@ abstract class AppLocalizations {
   /// **'Chat uses'**
   String get settingsModelCurrentChatModel;
 
+  /// No description provided for @settingsModelCurrentActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get settingsModelCurrentActive;
+
+  /// No description provided for @settingsModelSetCurrentActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Set active'**
+  String get settingsModelSetCurrentActive;
+
   /// No description provided for @settingsChatThinkingMode.
   ///
   /// In en, this message translates to:
@@ -1624,6 +1636,39 @@ abstract class AppLocalizations {
     String configName,
     String modelName,
   );
+
+  /// No description provided for @settingsModelFunctionMappingsMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Bound model does not exist: {providerId} · {modelId}'**
+  String settingsModelFunctionMappingsMissing(
+    String providerId,
+    String modelId,
+  );
+
+  /// No description provided for @settingsModelDeleteBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'This model is used by these functions. Change their model assignments first: {functions}'**
+  String settingsModelDeleteBlocked(String functions);
+
+  /// No description provided for @settingsModelDeleteProviderBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Models under this provider are used by these functions. Change their model assignments first: {functions}'**
+  String settingsModelDeleteProviderBlocked(String functions);
+
+  /// No description provided for @settingsModelDeleteProviderConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete provider “{name}”? This will also delete its {count} models.'**
+  String settingsModelDeleteProviderConfirm(String name, int count);
+
+  /// No description provided for @settingsModelDeleteProviderConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete provider'**
+  String get settingsModelDeleteProviderConfirmAction;
 
   /// No description provided for @settingsModelChatAutoGlmWarning.
   ///
@@ -1712,7 +1757,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelFunctionRoleResponsePlannerDescription.
   ///
   /// In en, this message translates to:
-  /// **'Model used to plan speaking roles and order in character group conversations.'**
+  /// **'Model used to plan speaking roles and order in group conversations.'**
   String get settingsModelFunctionRoleResponsePlannerDescription;
 
   /// No description provided for @settingsModelFunctionImageRecognition.
@@ -1859,6 +1904,270 @@ abstract class AppLocalizations {
   /// **'Provider ID'**
   String get settingsModelProviderId;
 
+  /// No description provided for @settingsModelProvidersSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Providers'**
+  String get settingsModelProvidersSection;
+
+  /// No description provided for @settingsModelProviderType.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider type'**
+  String get settingsModelProviderType;
+
+  /// No description provided for @settingsModelProviderTypeOption.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} ({original})'**
+  String settingsModelProviderTypeOption(String name, String original);
+
+  /// No description provided for @settingsModelProviderTypeOpenai.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI'**
+  String get settingsModelProviderTypeOpenai;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiResponses.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Responses'**
+  String get settingsModelProviderTypeOpenaiResponses;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiResponsesGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Responses compatible'**
+  String get settingsModelProviderTypeOpenaiResponsesGeneric;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI compatible'**
+  String get settingsModelProviderTypeOpenaiGeneric;
+
+  /// No description provided for @settingsModelProviderTypeAnthropic.
+  ///
+  /// In en, this message translates to:
+  /// **'Anthropic'**
+  String get settingsModelProviderTypeAnthropic;
+
+  /// No description provided for @settingsModelProviderTypeAnthropicGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'Anthropic compatible'**
+  String get settingsModelProviderTypeAnthropicGeneric;
+
+  /// No description provided for @settingsModelProviderTypeGoogle.
+  ///
+  /// In en, this message translates to:
+  /// **'Google Gemini'**
+  String get settingsModelProviderTypeGoogle;
+
+  /// No description provided for @settingsModelProviderTypeGeminiGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'Gemini compatible'**
+  String get settingsModelProviderTypeGeminiGeneric;
+
+  /// No description provided for @settingsModelProviderTypeBaidu.
+  ///
+  /// In en, this message translates to:
+  /// **'Baidu'**
+  String get settingsModelProviderTypeBaidu;
+
+  /// No description provided for @settingsModelProviderTypeAliyun.
+  ///
+  /// In en, this message translates to:
+  /// **'Aliyun'**
+  String get settingsModelProviderTypeAliyun;
+
+  /// No description provided for @settingsModelProviderTypeXunfei.
+  ///
+  /// In en, this message translates to:
+  /// **'Xunfei'**
+  String get settingsModelProviderTypeXunfei;
+
+  /// No description provided for @settingsModelProviderTypeZhipu.
+  ///
+  /// In en, this message translates to:
+  /// **'Zhipu AI'**
+  String get settingsModelProviderTypeZhipu;
+
+  /// No description provided for @settingsModelProviderTypeBaichuan.
+  ///
+  /// In en, this message translates to:
+  /// **'Baichuan'**
+  String get settingsModelProviderTypeBaichuan;
+
+  /// No description provided for @settingsModelProviderTypeMoonshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Moonshot'**
+  String get settingsModelProviderTypeMoonshot;
+
+  /// No description provided for @settingsModelProviderTypeMimo.
+  ///
+  /// In en, this message translates to:
+  /// **'MiMo'**
+  String get settingsModelProviderTypeMimo;
+
+  /// No description provided for @settingsModelProviderTypeDeepseek.
+  ///
+  /// In en, this message translates to:
+  /// **'DeepSeek'**
+  String get settingsModelProviderTypeDeepseek;
+
+  /// No description provided for @settingsModelProviderTypeMistral.
+  ///
+  /// In en, this message translates to:
+  /// **'Mistral'**
+  String get settingsModelProviderTypeMistral;
+
+  /// No description provided for @settingsModelProviderTypeSiliconflow.
+  ///
+  /// In en, this message translates to:
+  /// **'SiliconFlow'**
+  String get settingsModelProviderTypeSiliconflow;
+
+  /// No description provided for @settingsModelProviderTypeIflow.
+  ///
+  /// In en, this message translates to:
+  /// **'iFlow'**
+  String get settingsModelProviderTypeIflow;
+
+  /// No description provided for @settingsModelProviderTypeOpenrouter.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenRouter'**
+  String get settingsModelProviderTypeOpenrouter;
+
+  /// No description provided for @settingsModelProviderTypeFourRouter.
+  ///
+  /// In en, this message translates to:
+  /// **'4Router'**
+  String get settingsModelProviderTypeFourRouter;
+
+  /// No description provided for @settingsModelProviderTypeNousPortal.
+  ///
+  /// In en, this message translates to:
+  /// **'Nous Portal'**
+  String get settingsModelProviderTypeNousPortal;
+
+  /// No description provided for @settingsModelProviderTypeInfiniai.
+  ///
+  /// In en, this message translates to:
+  /// **'InfiniAI'**
+  String get settingsModelProviderTypeInfiniai;
+
+  /// No description provided for @settingsModelProviderTypeAlipayBailing.
+  ///
+  /// In en, this message translates to:
+  /// **'Alipay Bailing'**
+  String get settingsModelProviderTypeAlipayBailing;
+
+  /// No description provided for @settingsModelProviderTypeDoubao.
+  ///
+  /// In en, this message translates to:
+  /// **'Doubao'**
+  String get settingsModelProviderTypeDoubao;
+
+  /// No description provided for @settingsModelProviderTypeNvidia.
+  ///
+  /// In en, this message translates to:
+  /// **'NVIDIA'**
+  String get settingsModelProviderTypeNvidia;
+
+  /// No description provided for @settingsModelProviderTypeLmstudio.
+  ///
+  /// In en, this message translates to:
+  /// **'LM Studio'**
+  String get settingsModelProviderTypeLmstudio;
+
+  /// No description provided for @settingsModelProviderTypeOllama.
+  ///
+  /// In en, this message translates to:
+  /// **'Ollama'**
+  String get settingsModelProviderTypeOllama;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Local'**
+  String get settingsModelProviderTypeOpenaiLocal;
+
+  /// No description provided for @settingsModelProviderTypeMnn.
+  ///
+  /// In en, this message translates to:
+  /// **'MNN'**
+  String get settingsModelProviderTypeMnn;
+
+  /// No description provided for @settingsModelProviderTypeLlamaCpp.
+  ///
+  /// In en, this message translates to:
+  /// **'llama.cpp'**
+  String get settingsModelProviderTypeLlamaCpp;
+
+  /// No description provided for @settingsModelProviderTypePpinfra.
+  ///
+  /// In en, this message translates to:
+  /// **'PPInfra'**
+  String get settingsModelProviderTypePpinfra;
+
+  /// No description provided for @settingsModelProviderTypeNovita.
+  ///
+  /// In en, this message translates to:
+  /// **'Novita AI'**
+  String get settingsModelProviderTypeNovita;
+
+  /// No description provided for @settingsModelProviderTypeOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Other'**
+  String get settingsModelProviderTypeOther;
+
+  /// No description provided for @settingsModelEditModelSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Model settings'**
+  String get settingsModelEditModelSettings;
+
+  /// No description provided for @settingsModelCreateProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Create provider'**
+  String get settingsModelCreateProvider;
+
+  /// No description provided for @settingsModelEditProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit provider'**
+  String get settingsModelEditProvider;
+
+  /// No description provided for @settingsModelAddModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Add model'**
+  String get settingsModelAddModel;
+
+  /// No description provided for @settingsModelAddModelShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get settingsModelAddModelShort;
+
+  /// No description provided for @settingsModelCustomModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom model'**
+  String get settingsModelCustomModel;
+
+  /// No description provided for @settingsModelModelId.
+  ///
+  /// In en, this message translates to:
+  /// **'Model ID'**
+  String get settingsModelModelId;
+
   /// No description provided for @settingsModelMaxTokens.
   ///
   /// In en, this message translates to:
@@ -1966,6 +2275,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Max context length'**
   String get settingsModelMaxContextLength;
+
+  /// No description provided for @settingsModelMaxContextLengthInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a max context length greater than 0'**
+  String get settingsModelMaxContextLengthInvalid;
 
   /// No description provided for @settingsModelMaxContextMode.
   ///
@@ -2081,6 +2396,24 @@ abstract class AppLocalizations {
   /// **'Media history'**
   String get settingsModelMediaHistory;
 
+  /// No description provided for @settingsModelCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'Capabilities'**
+  String get settingsModelCapabilities;
+
+  /// No description provided for @settingsModelBuiltinTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-in tools'**
+  String get settingsModelBuiltinTools;
+
+  /// No description provided for @settingsModelBuiltinToolExclusive.
+  ///
+  /// In en, this message translates to:
+  /// **'Turns off external tool calling when enabled'**
+  String get settingsModelBuiltinToolExclusive;
+
   /// No description provided for @settingsModelConnectionTestSection.
   ///
   /// In en, this message translates to:
@@ -2092,6 +2425,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Test current model'**
   String get settingsModelRunConnectionTest;
+
+  /// No description provided for @settingsModelTestModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Test model'**
+  String get settingsModelTestModel;
 
   /// No description provided for @settingsModelTestingConnection.
   ///
@@ -2192,13 +2531,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersCreateGroup.
   ///
   /// In en, this message translates to:
-  /// **'New character group'**
+  /// **'New group'**
   String get settingsCharactersCreateGroup;
 
   /// No description provided for @settingsCharactersEditGroup.
   ///
   /// In en, this message translates to:
-  /// **'Edit character group'**
+  /// **'Edit group'**
   String get settingsCharactersEditGroup;
 
   /// No description provided for @settingsCharactersGroupName.
@@ -2260,6 +2599,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No tags available. Create tags in prompt/tag management, then bind them to character cards.'**
   String get settingsCharactersNoTags;
+
+  /// No description provided for @settingsCharactersImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get settingsCharactersImport;
+
+  /// No description provided for @settingsCharactersExport.
+  ///
+  /// In en, this message translates to:
+  /// **'Export'**
+  String get settingsCharactersExport;
 
   /// No description provided for @settingsCharactersImportJson.
   ///
@@ -2330,13 +2681,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersImportGroupJson.
   ///
   /// In en, this message translates to:
-  /// **'Import character group JSON'**
+  /// **'Import group JSON'**
   String get settingsCharactersImportGroupJson;
 
   /// No description provided for @settingsCharactersImportGroupJsonDone.
   ///
   /// In en, this message translates to:
-  /// **'Character group imported.'**
+  /// **'Group imported.'**
   String get settingsCharactersImportGroupJsonDone;
 
   /// No description provided for @settingsCharactersImportJsonError.
@@ -2438,7 +2789,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersToolAccess.
   ///
   /// In en, this message translates to:
-  /// **'Enable character tool allowlist'**
+  /// **'Tool permission mode'**
   String get settingsCharactersToolAccess;
 
   /// No description provided for @settingsCharactersChatModelFollowGlobal.
@@ -2482,6 +2833,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Follow global tool permissions'**
   String get settingsCharactersToolAccessFollowGlobal;
+
+  /// No description provided for @settingsCharactersToolAccessCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom character tool permissions'**
+  String get settingsCharactersToolAccessCustom;
 
   /// No description provided for @settingsCharactersToolAccessEmpty.
   ///
@@ -2671,7 +3028,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersGroupsSection.
   ///
   /// In en, this message translates to:
-  /// **'Character groups'**
+  /// **'Groups'**
   String get settingsCharactersGroupsSection;
 
   /// No description provided for @settingsCharactersGroupMembers.
@@ -3691,13 +4048,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataCharacterGroupsBackup.
   ///
   /// In en, this message translates to:
-  /// **'Character group backup'**
+  /// **'Group backup'**
   String get settingsDataCharacterGroupsBackup;
 
   /// No description provided for @settingsDataCharacterGroupsBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Copy all character groups as JSON. Import keeps member references and ordering.'**
+  /// **'Copy all groups as JSON. Import keeps member references and ordering.'**
   String get settingsDataCharacterGroupsBackupDescription;
 
   /// No description provided for @settingsDataModelConfigsBackup.

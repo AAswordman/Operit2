@@ -8,11 +8,13 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{
-    ExternalRuntimeEvent, ExternalRuntimeEventBusConfig, ExternalRuntimeEventHandler,
+    logHostError, ExternalRuntimeEvent, ExternalRuntimeEventBusConfig, ExternalRuntimeEventHandler,
     ExternalRuntimeEventHost, ExternalRuntimeEventRegistration, ExternalRuntimeEventResponse,
     ExternalRuntimeRegistrationDescriptor, HostError, HostResult,
 };
 use uuid::Uuid;
+
+const TAG: &str = "ExternalRuntimeEvent";
 
 #[derive(Clone, Debug, Default)]
 pub struct LocalExternalRuntimeEventHost;
@@ -120,7 +122,10 @@ pub fn startExternalRuntimeEventBus(
                 &threadResponsesDir,
                 &handler,
             ) {
-                eprintln!("external runtime event error: {}", error.message);
+                logHostError(
+                    TAG,
+                    &format!("external runtime event error: {}", error.message),
+                );
             }
             thread::sleep(threadPollInterval);
         }
@@ -158,10 +163,13 @@ fn processExternalRuntimeEvents(
             responsesDir,
             handler,
         ) {
-            eprintln!(
-                "external runtime event file error: path={}, error={}",
-                eventPath.to_string_lossy(),
-                error.message
+            logHostError(
+                TAG,
+                &format!(
+                    "external runtime event file error: path={}, error={}",
+                    eventPath.to_string_lossy(),
+                    error.message
+                ),
             );
         }
     }
@@ -210,7 +218,10 @@ fn processExternalRuntimeEventFile(
             runtimeId: runtimeId.to_string(),
             accepted: false,
             result: None,
-            error: Some(format!("unsupported external runtime event: {}", event.name)),
+            error: Some(format!(
+                "unsupported external runtime event: {}",
+                event.name
+            )),
             handledAtMillis: currentTimeMillis()?,
         }
     };
@@ -237,7 +248,8 @@ fn setPrivateDirectoryPermissions(_path: &Path) -> HostResult<()> {
 }
 
 fn writeJsonFile<T: serde::Serialize>(path: &Path, value: &T) -> HostResult<()> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(|error| HostError::new(error.to_string()))?;
+    let bytes =
+        serde_json::to_vec_pretty(value).map_err(|error| HostError::new(error.to_string()))?;
     fs::write(path, bytes)?;
     setPrivateFilePermissions(path)
 }

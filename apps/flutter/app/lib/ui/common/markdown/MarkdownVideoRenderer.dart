@@ -121,8 +121,8 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                   child: FutureBuilder<void>(
                     future: _initializeFuture,
                     builder: (context, snapshot) {
-                      final ready = snapshot.connectionState ==
-                          ConnectionState.done;
+                      final ready =
+                          snapshot.connectionState == ConnectionState.done;
                       if (!ready) {
                         return const AspectRatio(
                           aspectRatio: 16 / 9,

@@ -1,17 +1,19 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
     ModelConfigConnectionTester, ModelConnectionTestReport,
 };
-use crate::data::model::ApiKeyInfo::ApiKeyInfo;
-use crate::data::model::ModelConfigData::{ApiProviderType, ModelConfigData, ModelConfigSummary};
-use crate::data::model::ModelParameter::{
-    CustomParameterData, ModelParameter, ParameterCategory, ParameterValueType,
+use crate::data::model::ModelConfigData::{
+    default_deepseek_provider, ApiProviderType, AvailableProviderModel,
+    AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
+    ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
+    ProviderProfile, ResolvedModelConfig,
 };
-use crate::data::model::StandardModelParameters::StandardModelParameters;
+use crate::data::model::ModelCatalog::ModelCatalog;
+use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
@@ -24,19 +26,30 @@ pub enum ModelConfigError {
     Json(#[from] serde_json::Error),
     #[error("store error: {0}")]
     Store(#[from] PreferencesDataStoreError),
-    #[error("model index out of range: {modelIndex}, available model count: {modelCount}")]
-    ModelIndexOutOfRange {
-        modelIndex: usize,
-        modelCount: usize,
+    #[error("provider not found: {0}")]
+    ProviderNotFound(String),
+    #[error("model not found: {0}")]
+    ModelNotFound(String),
+    #[error("catalog model not found: {providerTypeId}:{modelId}")]
+    CatalogModelNotFound {
+        providerTypeId: String,
+        modelId: String,
     },
-    #[error("model name list is empty")]
-    EmptyModelNameList,
-    #[error("custom parameter value type error: {0}")]
-    CustomParameterValueType(String),
-    #[error("custom parameter category error: {0}")]
-    CustomParameterCategory(String),
-    #[error("custom parameter conversion error: {0}")]
-    CustomParameterConversion(String),
+    #[error("missing model context: {0}")]
+    MissingModelContext(String),
+    #[error("missing model capabilities: {0}")]
+    MissingModelCapabilities(String),
+    #[error("missing model request spec: {0}")]
+    MissingModelRequestSpec(String),
+    #[error("invalid provider type: {0}")]
+    InvalidProviderType(String),
+    #[error("available provider model not found: {providerId}:{modelId}")]
+    AvailableProviderModelNotFound {
+        providerId: String,
+        modelId: String,
+    },
+    #[error("model list fetch error: {0}")]
+    ModelListFetch(String),
     #[error("connection test error: {0}")]
     ConnectionTest(String),
 }
@@ -47,20 +60,12 @@ pub struct ModelConfigManager {
     modelConfigDataStore: PreferencesDataStore,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ModelConfigImportResult {
-    pub new: i32,
-    pub updated: i32,
-    pub skipped: i32,
-    pub total: i32,
-}
-
 impl ModelConfigManager {
-    pub const DEFAULT_CONFIG_ID: &'static str = "default";
-    pub const DEFAULT_CONFIG_NAME: &'static str = "model_config_default_name";
+    pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
+    pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
-    pub fn CONFIG_LIST_KEY() -> operit_store::PreferencesDataStore::PreferencesKey {
-        stringPreferencesKey("config_list")
+    pub fn PROVIDER_LIST_KEY() -> operit_store::PreferencesDataStore::PreferencesKey {
+        stringPreferencesKey("provider_list")
     }
 
     pub fn new(root_dir: PathBuf) -> Self {
@@ -78,975 +83,543 @@ impl ModelConfigManager {
     }
 
     pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
-        let configList = self.configListFlow()?.first()?;
-        if configList.is_empty() {
-            let defaultConfig = self.createFreshDefaultConfig();
-            self.saveConfigToDataStore(&defaultConfig)?;
-            let encoded = serde_json::to_string(&vec![Self::DEFAULT_CONFIG_ID.to_string()])?;
-            self.modelConfigDataStore.edit(|preferences| {
-                preferences.set(&Self::CONFIG_LIST_KEY(), encoded);
-            })?;
+        let providerIds = self.providerListFlow()?.first()?;
+        if providerIds.is_empty() {
+            let provider = default_deepseek_provider();
+            self.saveProviderToDataStore(&provider)?;
+            self.saveProviderList(vec![provider.id.clone()])?;
         }
         Ok(())
     }
 
-    pub fn createFreshDefaultConfig(&self) -> ModelConfigData {
-        let mut config = ModelConfigData::new(
-            Self::DEFAULT_CONFIG_ID.to_string(),
-            Self::DEFAULT_CONFIG_NAME.to_string(),
-        );
-        config.apiKey = ApiPreferences::DEFAULT_API_KEY.to_string();
-        config.apiEndpoint = ApiPreferences::DEFAULT_API_ENDPOINT.to_string();
-        config.modelName = ApiPreferences::DEFAULT_MODEL_NAME.to_string();
-        config.apiProviderType = ApiProviderType::DEEPSEEK;
-        config.apiProviderTypeId = ApiProviderType::DEEPSEEK.name().to_string();
-        config.hasCustomParameters = false;
-        config.maxTokensEnabled = false;
-        config.temperatureEnabled = false;
-        config.topPEnabled = false;
-        config.topKEnabled = false;
-        config.presencePenaltyEnabled = false;
-        config.frequencyPenaltyEnabled = false;
-        config.repetitionPenaltyEnabled = false;
-        config.customParameters = "[]".to_string();
-        config
-    }
-
-    pub fn configListFlow(&self) -> Result<Flow<Vec<String>>, ModelConfigError> {
+    pub fn providerListFlow(&self) -> Result<Flow<Vec<String>>, ModelConfigError> {
         Ok(self
             .modelConfigDataStore
             .dataFlow()
-            .mapResult(|preferences| Self::readConfigList(&preferences)))
+            .mapResult(|preferences| Self::readProviderList(&preferences)))
     }
 
-    fn readConfigList(preferences: &Preferences) -> Result<Vec<String>, PreferencesDataStoreError> {
-        match preferences.get(&Self::CONFIG_LIST_KEY()) {
-            Some(configList) if !configList.is_empty() => Ok(serde_json::from_str(configList)?),
-            _ => Ok(Vec::new()),
-        }
+    pub fn getProviderIds(&self) -> Result<Vec<String>, ModelConfigError> {
+        Ok(self.providerListFlow()?.first()?)
     }
 
-    pub fn saveModelConfig(&self, config: ModelConfigData) -> Result<(), ModelConfigError> {
-        let configKey = self.configKey(&config.id);
-        let encodedConfig = serde_json::to_string(&config)?;
-        self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&configKey, encodedConfig);
-        })?;
-        Ok(())
-    }
-
-    pub fn getConfigIds(&self) -> Result<Vec<String>, ModelConfigError> {
-        Ok(self.configListFlow()?.first()?)
-    }
-
-    pub fn getModelConfigFlow(
-        &self,
-        configId: &str,
-    ) -> Result<Flow<ModelConfigData>, ModelConfigError> {
-        let configId = configId.to_string();
+    pub fn getProviderProfilesFlow(&self) -> Result<Flow<Vec<ProviderProfile>>, ModelConfigError> {
         let manager = self.clone();
         Ok(self.modelConfigDataStore.dataFlow().mapResult(move |_| {
             manager
-                .loadConfigFromDataStore(&configId)
+                .getProviderProfiles()
                 .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))
         }))
     }
 
-    pub fn getModelConfig(&self, configId: &str) -> Result<ModelConfigData, ModelConfigError> {
-        self.loadConfigFromDataStore(configId)
+    pub fn getProviderProfiles(&self) -> Result<Vec<ProviderProfile>, ModelConfigError> {
+        self.getProviderIds()?
+            .iter()
+            .map(|providerId| self.getProviderProfile(providerId))
+            .collect()
     }
 
-    pub fn getAllConfigSummaries(&self) -> Result<Vec<ModelConfigSummary>, ModelConfigError> {
-        let configIds = self.configListFlow()?.first()?;
+    pub fn getProviderProfile(
+        &self,
+        providerId: &str,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        self.loadProviderFromDataStore(providerId)
+    }
+
+    pub fn getAllModelSummaries(&self) -> Result<Vec<ProviderModelSummary>, ModelConfigError> {
+        let providers = self.getProviderProfiles()?;
         let mut summaries = Vec::new();
-        for id in configIds {
-            let config = self.getModelConfigFlow(&id)?.first()?;
-            summaries.push(ModelConfigSummary {
-                id: config.id.clone(),
-                name: config.name.clone(),
-                modelName: self.modelNameByIndexFromConfig(&config, 0)?,
-                apiEndpoint: config.apiEndpoint.clone(),
-                apiProviderType: config.apiProviderType.clone(),
-                modelIndex: 0,
-            });
+        for provider in providers {
+            for model in &provider.models {
+                let resolved = self.resolveFromProfiles(&provider, model)?;
+                summaries.push(ProviderModelSummary {
+                    providerId: provider.id.clone(),
+                    providerName: provider.name.clone(),
+                    providerTypeId: provider.providerTypeId.clone(),
+                    endpoint: provider.endpoint.clone(),
+                    modelId: model.id.clone(),
+                    capabilities: resolved.capabilities,
+                    pricing: resolved.pricing,
+                });
+            }
         }
         Ok(summaries)
     }
 
-    pub fn createConfig(&self, name: String) -> Result<String, ModelConfigError> {
-        let configId = self.createConfigId();
-        let mut configList = self.configListFlow()?.first()?;
-        let mut newConfig = ModelConfigData::new(configId.clone(), name);
-        newConfig.apiProviderType = ApiProviderType::OPENAI_GENERIC;
-        newConfig.apiProviderTypeId = ApiProviderType::OPENAI_GENERIC.name().to_string();
-        newConfig.enableToolCall = true;
-        self.saveConfigToDataStore(&newConfig)?;
-        configList.push(configId.clone());
-        self.saveConfigList(configList)?;
-        Ok(configId)
+    pub fn getProviderCatalogEntries(&self) -> Result<Vec<crate::data::model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError> {
+        ModelCatalog::providers().map_err(ModelConfigError::ModelListFetch)
     }
 
-    pub fn deleteConfig(&self, configId: &str) -> Result<(), ModelConfigError> {
-        if configId == Self::DEFAULT_CONFIG_ID {
-            return Ok(());
-        }
-        let mut configList = self.configListFlow()?.first()?;
-        configList.retain(|id| id != configId);
-        let configKey = self.configKey(configId);
-        let encodedList = serde_json::to_string(&configList)?;
-        self.modelConfigDataStore.edit(|preferences| {
-            preferences.remove(&configKey);
-            preferences.set(&Self::CONFIG_LIST_KEY(), encodedList);
-        })?;
-        Ok(())
-    }
-
-    pub fn saveConfigList(&self, configList: Vec<String>) -> Result<(), ModelConfigError> {
-        let encoded = serde_json::to_string(&configList)?;
-        self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&Self::CONFIG_LIST_KEY(), encoded);
-        })?;
-        Ok(())
-    }
-
-    pub fn updateConfigBase(
+    pub fn createProvider(
         &self,
-        configId: &str,
         name: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.name = name;
-            config
-        })
+        providerTypeId: String,
+        endpoint: String,
+    ) -> Result<String, ModelConfigError> {
+        let providerType = ApiProviderType::fromProviderTypeId(&providerTypeId)
+            .ok_or_else(|| ModelConfigError::InvalidProviderType(providerTypeId.clone()))?;
+        let providerId = self.createProviderId();
+        let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
+        let mut providerIds = self.getProviderIds()?;
+        providerIds.push(providerId.clone());
+        self.saveProviderToDataStore(&provider)?;
+        self.saveProviderList(providerIds)?;
+        Ok(providerId)
     }
 
-    pub fn updateModelConfig(
+    pub fn updateProviderProfile(
         &self,
-        configId: &str,
-        apiKey: String,
-        apiEndpoint: String,
-        modelName: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config.apiEndpoint = apiEndpoint;
-            config.modelName = modelName;
-            config
-        })
+        provider: ProviderProfile,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        self.assertProviderExists(&provider.id)?;
+        self.saveProviderToDataStore(&provider)?;
+        Ok(provider)
     }
 
-    pub fn updateToolCall(
-        &self,
-        configId: &str,
-        enableToolCall: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableToolCall = enableToolCall;
-            config
-        })
+    pub fn deleteProvider(&self, providerId: &str) -> Result<(), ModelConfigError> {
+        self.assertProviderExists(providerId)?;
+        let mut providerIds = self.getProviderIds()?;
+        providerIds.retain(|id| id != providerId);
+        let providerKey = self.providerKey(providerId);
+        let encodedProviderIds = serde_json::to_string(&providerIds)?;
+        self.modelConfigDataStore.edit(|preferences| {
+            preferences.remove(&providerKey);
+            preferences.set(&Self::PROVIDER_LIST_KEY(), encodedProviderIds);
+        })?;
+        Ok(())
     }
 
-    pub fn updateDirectImageProcessing(
+    pub fn createProviderModel(
         &self,
-        configId: &str,
-        enableDirectImageProcessing: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableDirectImageProcessing = enableDirectImageProcessing;
-            config
-        })
+        providerId: &str,
+        modelId: String,
+    ) -> Result<String, ModelConfigError> {
+        self.updateProviderInternal(providerId, |mut provider| {
+            provider.models.push(ModelProfile::new(modelId.clone()));
+            provider
+        })?;
+        Ok(modelId)
     }
 
-    pub fn updateDirectAudioProcessing(
+    pub fn getAvailableProviderModels(
         &self,
-        configId: &str,
-        enableDirectAudioProcessing: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableDirectAudioProcessing = enableDirectAudioProcessing;
-            config
-        })
-    }
-
-    pub fn updateDirectVideoProcessing(
-        &self,
-        configId: &str,
-        enableDirectVideoProcessing: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableDirectVideoProcessing = enableDirectVideoProcessing;
-            config
-        })
-    }
-
-    pub fn updateGoogleSearch(
-        &self,
-        configId: &str,
-        enableGoogleSearch: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableGoogleSearch = enableGoogleSearch;
-            config
-        })
-    }
-
-    pub fn updateModelConfigWithModelIndex(
-        &self,
-        configId: &str,
-        apiKey: String,
-        apiEndpoint: String,
-        modelName: String,
-        modelIndex: usize,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        let config = self.loadConfigFromDataStore(configId)?;
-        let modelNames = Self::modelNameListFromConfig(&config);
-        if modelNames.is_empty() {
-            return Err(ModelConfigError::EmptyModelNameList);
+        providerId: &str,
+    ) -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
+            .map_err(ModelConfigError::ModelListFetch)?;
+        let mut models: Vec<AvailableProviderModel> = providerCatalog
+            .models
+            .iter()
+            .map(|model| AvailableProviderModel {
+                modelId: model.modelId.clone(),
+                source: AvailableProviderModelSource::Catalog,
+                pricing: model.pricing.clone(),
+                context: model.context.clone(),
+                capabilities: model.capabilities.clone(),
+                builtinTools: model.builtinTools.clone(),
+                request: model.request.clone(),
+            })
+            .collect();
+        let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog)
+            .map_err(ModelConfigError::ModelListFetch)?;
+        for remoteModel in remoteModels {
+            if !models.iter().any(|model| {
+                model
+                    .modelId
+                    .eq_ignore_ascii_case(&remoteModel.modelId)
+            }) {
+                models.push(remoteModel);
+            }
         }
-        if modelIndex >= modelNames.len() {
-            return Err(ModelConfigError::ModelIndexOutOfRange {
-                modelIndex,
-                modelCount: modelNames.len(),
-            });
-        }
-
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config.apiEndpoint = apiEndpoint;
-            let mut modelNames = Self::modelNameListFromConfig(&config);
-            modelNames[modelIndex] = modelName;
-            config.modelName = Self::joinModelNameList(modelNames);
-            config
-        })
+        Ok(models)
     }
 
-    pub fn updateModelConfigWithProvider(
+    pub fn addProviderModelFromAvailable(
         &self,
-        configId: &str,
-        apiKey: String,
-        apiEndpoint: String,
-        modelName: String,
-        apiProviderType: ApiProviderType,
-        apiProviderTypeId: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config.apiEndpoint = apiEndpoint;
-            config.modelName = modelName;
-            config.apiProviderType = apiProviderType;
-            config.apiProviderTypeId = apiProviderTypeId;
-            config
-        })
+        providerId: &str,
+        modelId: String,
+    ) -> Result<String, ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        let availableModel = self.findAvailableProviderModel(&provider, &modelId)?;
+        self.updateProviderInternal(providerId, |mut provider| {
+            let mut model = ModelProfile::new(modelId.clone());
+            match availableModel.source {
+                AvailableProviderModelSource::Catalog => {
+                    model.catalogKey = Some(ModelCatalogKey {
+                        providerTypeId: provider.providerTypeId.clone(),
+                        modelId: modelId.clone(),
+                    });
+                }
+                AvailableProviderModelSource::Remote => {
+                    model.pricingOverride = availableModel.pricing.clone();
+                    model.contextOverride = availableModel.context.clone();
+                    model.capabilitiesOverride = availableModel.capabilities.clone();
+                    model.builtinToolsOverride = Some(availableModel.builtinTools.clone());
+                    model.requestOverride = availableModel.request.clone();
+                }
+            }
+            provider.models.push(model);
+            provider
+        })?;
+        Ok(modelId)
     }
 
-    pub fn updateModelConfigWithProviderAndMnn(
+    pub fn updateModelProfile(
         &self,
-        configId: &str,
-        apiKey: String,
-        apiEndpoint: String,
-        modelName: String,
-        apiProviderType: ApiProviderType,
-        apiProviderTypeId: String,
-        mnnForwardType: i32,
-        mnnThreadCount: i32,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config.apiEndpoint = apiEndpoint;
-            config.modelName = modelName;
-            config.apiProviderType = apiProviderType;
-            config.apiProviderTypeId = apiProviderTypeId;
-            config.mnnForwardType = mnnForwardType;
-            config.mnnThreadCount = mnnThreadCount;
-            config
-        })
+        providerId: &str,
+        model: ModelProfile,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        self.updateProviderInternal(providerId, |mut provider| {
+            for current in &mut provider.models {
+                if current.id == model.id {
+                    *current = model.clone();
+                }
+            }
+            provider
+        })?;
+        Ok(model)
     }
 
-    pub fn updateApiSettingsFull(
-        &self,
-        configId: &str,
-        apiKey: String,
-        apiEndpoint: String,
-        modelName: String,
-        apiProviderType: ApiProviderType,
-        apiProviderTypeId: String,
-        mnnForwardType: i32,
-        mnnThreadCount: i32,
-        llamaThreadCount: i32,
-        llamaContextSize: i32,
-        llamaGpuLayers: i32,
-        enableDirectImageProcessing: bool,
-        enableDirectAudioProcessing: bool,
-        enableDirectVideoProcessing: bool,
-        enableGoogleSearch: bool,
-        enableToolCall: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config.apiEndpoint = apiEndpoint;
-            config.modelName = modelName;
-            config.apiProviderType = apiProviderType;
-            config.apiProviderTypeId = apiProviderTypeId;
-            config.mnnForwardType = mnnForwardType;
-            config.mnnThreadCount = mnnThreadCount;
-            config.llamaThreadCount = llamaThreadCount.max(1);
-            config.llamaContextSize = llamaContextSize.max(1);
-            config.llamaGpuLayers = llamaGpuLayers.max(0);
-            config.enableDirectImageProcessing = enableDirectImageProcessing;
-            config.enableDirectAudioProcessing = enableDirectAudioProcessing;
-            config.enableDirectVideoProcessing = enableDirectVideoProcessing;
-            config.enableGoogleSearch = enableGoogleSearch;
-            config.enableToolCall = enableToolCall;
-            config
-        })
+    pub fn deleteModel(&self, providerId: &str, modelId: &str) -> Result<(), ModelConfigError> {
+        self.updateProviderInternal(providerId, |mut provider| {
+            provider.models.retain(|model| model.id != modelId);
+            provider
+        })?;
+        Ok(())
     }
 
-    pub fn updateCustomHeaders(
-        &self,
-        configId: &str,
-        customHeaders: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.customHeaders = customHeaders;
-            config
-        })
+    pub fn getModelProfile(&self, providerId: &str, modelId: &str) -> Result<ModelProfile, ModelConfigError> {
+        let (_, model) = self.findModel(providerId, modelId)?;
+        Ok(model)
     }
 
-    pub fn updateRequestQueueSettings(
+    pub fn getResolvedModelConfig(
         &self,
-        configId: &str,
-        requestLimitPerMinute: i32,
-        maxConcurrentRequests: i32,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.requestLimitPerMinute = requestLimitPerMinute.max(0);
-            config.maxConcurrentRequests = maxConcurrentRequests.max(0);
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<ResolvedModelConfig, ModelConfigError> {
+        let (provider, model) = self.findModel(providerId, modelId)?;
+        self.resolveFromProfiles(&provider, &model)
     }
 
-    pub fn updateApiKeyPoolSettings(
+    pub fn getModelParametersForModel(
         &self,
-        configId: &str,
-        useMultipleApiKeys: bool,
-        apiKeyPool: Vec<ApiKeyInfo>,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.useMultipleApiKeys = useMultipleApiKeys;
-            config.apiKeyPool = apiKeyPool;
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<Vec<ModelParameter<serde_json::Value>>, ModelConfigError> {
+        let (_, model) = self.findModel(providerId, modelId)?;
+        Ok(model.parameters)
     }
 
-    pub fn updateCustomParameters(
+    pub fn updateParametersForModel(
         &self,
-        configId: &str,
-        parametersJson: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.hasCustomParameters =
-                !parametersJson.trim().is_empty() && parametersJson != "[]";
-            config.customParameters = parametersJson;
-            config
-        })
-    }
-
-    pub fn updateParameters(
-        &self,
-        configId: &str,
+        providerId: &str,
+        modelId: &str,
         parameters: Vec<ModelParameter<serde_json::Value>>,
     ) -> Result<(), ModelConfigError> {
-        let customParams = parameters
-            .iter()
-            .filter(|parameter| parameter.isCustom)
-            .map(|parameter| self.modelParameterToCustomParameterData(parameter.clone()))
-            .collect::<Result<Vec<_>, _>>()?;
-        let customParamsJson = if customParams.is_empty() {
-            "[]".to_string()
-        } else {
-            serde_json::to_string(&customParams)?
-        };
-
-        self.updateConfigInternal(configId, |mut current| {
-            if let Some(parameter) = parameters
-                .iter()
-                .find(|parameter| parameter.id == "max_tokens")
-            {
-                current.maxTokens = parameter.currentValue.as_i64().unwrap() as i32;
-                current.maxTokensEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters
-                .iter()
-                .find(|parameter| parameter.id == "temperature")
-            {
-                current.temperature = parameter.currentValue.as_f64().unwrap() as f32;
-                current.temperatureEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "top_p") {
-                current.topP = parameter.currentValue.as_f64().unwrap() as f32;
-                current.topPEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters.iter().find(|parameter| parameter.id == "top_k") {
-                current.topK = parameter.currentValue.as_i64().unwrap() as i32;
-                current.topKEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters
-                .iter()
-                .find(|parameter| parameter.id == "presence_penalty")
-            {
-                current.presencePenalty = parameter.currentValue.as_f64().unwrap() as f32;
-                current.presencePenaltyEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters
-                .iter()
-                .find(|parameter| parameter.id == "frequency_penalty")
-            {
-                current.frequencyPenalty = parameter.currentValue.as_f64().unwrap() as f32;
-                current.frequencyPenaltyEnabled = parameter.isEnabled;
-            }
-            if let Some(parameter) = parameters
-                .iter()
-                .find(|parameter| parameter.id == "repetition_penalty")
-            {
-                current.repetitionPenalty = parameter.currentValue.as_f64().unwrap() as f32;
-                current.repetitionPenaltyEnabled = parameter.isEnabled;
-            }
-            current.customParameters = customParamsJson;
-            current.hasCustomParameters = !customParams.is_empty();
-            current
-        })?;
-
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.parameters = parameters;
+        self.updateModelProfile(providerId, model)?;
         Ok(())
     }
 
-    pub fn updateConfigKeyIndex(
+    pub fn updateCapabilitiesForModel(
         &self,
-        configId: &str,
-        newIndex: i32,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.currentKeyIndex = newIndex;
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+        capabilities: ModelCapabilities,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.capabilitiesOverride = Some(capabilities);
+        self.updateModelProfile(providerId, model)
     }
 
-    pub fn updateApiKey(
+    pub fn updateContextForModel(
         &self,
-        configId: &str,
-        apiKey: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKey = apiKey;
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+        context: ModelContextSpec,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.contextOverride = Some(context);
+        self.updateModelProfile(providerId, model)
     }
 
-    pub fn updateApiKeyPool(
+    pub fn updateBuiltinToolsForModel(
         &self,
-        configId: &str,
-        apiKeyPool: Vec<ApiKeyInfo>,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiKeyPool = apiKeyPool;
-            config.useMultipleApiKeys = true;
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+        builtinTools: Vec<crate::data::model::ModelConfigData::ModelBuiltinTool>,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.builtinToolsOverride = Some(builtinTools);
+        self.updateModelProfile(providerId, model)
     }
 
-    pub fn updateModelName(
+    pub fn updateRequestForModel(
         &self,
-        configId: &str,
-        modelName: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.modelName = modelName;
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+        request: ModelRequestSpec,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.requestOverride = Some(request);
+        self.updateModelProfile(providerId, model)
     }
 
-    pub fn updateModelNameAtIndex(
+    pub fn updateSummaryForModel(
         &self,
-        configId: &str,
-        modelIndex: usize,
-        modelName: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        let config = self.loadConfigFromDataStore(configId)?;
-        let modelNames = Self::modelNameListFromConfig(&config);
-        if modelNames.is_empty() {
-            return Err(ModelConfigError::EmptyModelNameList);
-        }
-        if modelIndex >= modelNames.len() {
-            return Err(ModelConfigError::ModelIndexOutOfRange {
-                modelIndex,
-                modelCount: modelNames.len(),
-            });
-        }
-
-        self.updateConfigInternal(configId, |mut config| {
-            let mut modelNames = Self::modelNameListFromConfig(&config);
-            modelNames[modelIndex] = modelName;
-            config.modelName = Self::joinModelNameList(modelNames);
-            config
-        })
+        providerId: &str,
+        modelId: &str,
+        summary: ModelSummarySettings,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        model.summary = summary;
+        self.updateModelProfile(providerId, model)
     }
 
-    pub fn updateModelNames(
+    pub async fn testModelConnection(
         &self,
-        configId: &str,
-        modelNames: Vec<String>,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        if modelNames.is_empty() {
-            return Err(ModelConfigError::EmptyModelNameList);
-        }
-        self.updateConfigInternal(configId, |mut config| {
-            config.modelName = Self::joinModelNameList(modelNames);
-            config
-        })
-    }
-
-    pub fn getModelNameByIndex(
-        &self,
-        configId: &str,
-        modelIndex: usize,
-    ) -> Result<String, ModelConfigError> {
-        let config = self.loadConfigFromDataStore(configId)?;
-        self.modelNameByIndexFromConfig(&config, modelIndex)
-    }
-
-    pub fn getModelNames(&self, configId: &str) -> Result<Vec<String>, ModelConfigError> {
-        let config = self.loadConfigFromDataStore(configId)?;
-        let modelNames = Self::modelNameListFromConfig(&config);
-        if modelNames.is_empty() {
-            return Err(ModelConfigError::EmptyModelNameList);
-        }
-        Ok(modelNames)
-    }
-
-    pub fn getModelParametersForConfig(
-        &self,
-        configId: &str,
-    ) -> Result<Vec<ModelParameter<serde_json::Value>>, ModelConfigError> {
-        let config = self.getModelConfigFlow(configId)?.first()?;
-        let mut parameters = Vec::new();
-
-        for def in StandardModelParameters::DEFINITIONS() {
-            let (currentValue, isEnabled) = match def.id {
-                "max_tokens" => (serde_json::json!(config.maxTokens), config.maxTokensEnabled),
-                "temperature" => (
-                    serde_json::json!(config.temperature),
-                    config.temperatureEnabled,
-                ),
-                "top_p" => (serde_json::json!(config.topP), config.topPEnabled),
-                "top_k" => (serde_json::json!(config.topK), config.topKEnabled),
-                "presence_penalty" => (
-                    serde_json::json!(config.presencePenalty),
-                    config.presencePenaltyEnabled,
-                ),
-                "frequency_penalty" => (
-                    serde_json::json!(config.frequencyPenalty),
-                    config.frequencyPenaltyEnabled,
-                ),
-                "repetition_penalty" => (
-                    serde_json::json!(config.repetitionPenalty),
-                    config.repetitionPenaltyEnabled,
-                ),
-                other => {
-                    return Err(ModelConfigError::CustomParameterConversion(
-                        other.to_string(),
-                    ))
-                }
-            };
-
-            parameters.push(ModelParameter {
-                id: def.id.to_string(),
-                name: def.name.to_string(),
-                apiName: def.apiName.to_string(),
-                description: def.description.to_string(),
-                defaultValue: def.defaultValue,
-                currentValue,
-                isEnabled,
-                valueType: def.valueType,
-                minValue: def.minValue,
-                maxValue: def.maxValue,
-                category: def.category,
-                isCustom: false,
-            });
-        }
-
-        if config.hasCustomParameters
-            && !config.customParameters.trim().is_empty()
-            && config.customParameters.trim() != "[]"
-        {
-            let customParamsData: Vec<CustomParameterData> =
-                serde_json::from_str(&config.customParameters)?;
-            for data in customParamsData {
-                parameters.push(self.convertCustomParameterData(data)?);
-            }
-        }
-
-        Ok(parameters)
-    }
-
-    pub fn updateEndpoint(
-        &self,
-        configId: &str,
-        apiEndpoint: String,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.apiEndpoint = apiEndpoint;
-            config
-        })
-    }
-
-    pub fn updateContextSettings(
-        &self,
-        configId: &str,
-        contextLength: f32,
-        maxContextLength: f32,
-        enableMaxContextMode: bool,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.contextLength = contextLength;
-            config.maxContextLength = maxContextLength;
-            config.enableMaxContextMode = enableMaxContextMode;
-            config
-        })
-    }
-
-    pub fn updateSummarySettings(
-        &self,
-        configId: &str,
-        enableSummary: bool,
-        summaryTokenThreshold: f32,
-        enableSummaryByMessageCount: bool,
-        summaryMessageCountThreshold: i32,
-    ) -> Result<ModelConfigData, ModelConfigError> {
-        self.updateConfigInternal(configId, |mut config| {
-            config.enableSummary = enableSummary;
-            config.summaryTokenThreshold = summaryTokenThreshold;
-            config.enableSummaryByMessageCount = enableSummaryByMessageCount;
-            config.summaryMessageCountThreshold = summaryMessageCountThreshold;
-            config
-        })
-    }
-
-    pub async fn testModelConfigConnection(
-        &self,
-        configId: &str,
-        modelIndex: i32,
+        providerId: &str,
+        modelId: &str,
     ) -> Result<ModelConnectionTestReport, ModelConfigError> {
-        ModelConfigConnectionTester::run(self.paths.root_dir().to_path_buf(), configId, modelIndex)
+        ModelConfigConnectionTester::run(self.paths.root_dir().to_path_buf(), providerId, modelId)
             .await
             .map_err(ModelConfigError::ConnectionTest)
     }
 
-    #[allow(non_snake_case)]
-    pub fn exportAllConfigs(&self) -> Result<String, String> {
-        let configList = self.configListFlow().map_err(|error| error.to_string())?;
-        let configIds = configList.first().map_err(|error| error.to_string())?;
-        let mut allConfigs = Vec::new();
-        for configId in configIds {
-            allConfigs.push(
-                self.getModelConfigFlow(&configId)
-                    .map_err(|error| error.to_string())?
-                    .first()
-                    .map_err(|error| error.to_string())?,
-            );
-        }
-        serde_json::to_string_pretty(&allConfigs).map_err(|error| error.to_string())
+    pub fn exportAllProviders(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(
+            &self
+                .getProviderProfiles()
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())
     }
 
-    #[allow(non_snake_case)]
-    pub fn importConfigs(&self, jsonContent: &str) -> Result<ModelConfigImportResult, String> {
-        if jsonContent.trim().is_empty() {
-            return Err("模型配置备份内容不能为空".to_string());
-        }
-        let importedConfigs = serde_json::from_str::<Vec<ModelConfigData>>(jsonContent)
-            .map_err(|error| format!("模型配置 JSON 格式错误：{error}"))?;
-        let mut existingConfigList = self
-            .configListFlow()
-            .map_err(|error| error.to_string())?
-            .first()
-            .map_err(|error| error.to_string())?;
-        let existingConfigIds = existingConfigList.clone();
-        let mut newCount = 0;
-        let mut updatedCount = 0;
-        let mut skippedCount = 0;
+    fn resolveFromProfiles(
+        &self,
+        provider: &ProviderProfile,
+        model: &ModelProfile,
+    ) -> Result<ResolvedModelConfig, ModelConfigError> {
+        let catalogModel = match &model.catalogKey {
+            Some(key) => Some(ModelCatalog::model(&key.providerTypeId, &key.modelId).map_err(
+                |_| ModelConfigError::CatalogModelNotFound {
+                    providerTypeId: key.providerTypeId.clone(),
+                    modelId: key.modelId.clone(),
+                },
+            )?),
+            None => None,
+        };
 
-        for config in importedConfigs {
-            if config.id.trim().is_empty() || config.name.trim().is_empty() {
-                skippedCount += 1;
-                continue;
-            }
-            self.saveConfigToDataStore(&config)
-                .map_err(|error| error.to_string())?;
-            if existingConfigIds.contains(&config.id) {
-                updatedCount += 1;
-            } else {
-                newCount += 1;
-                existingConfigList.push(config.id);
-            }
-        }
+        let pricing = match &model.pricingOverride {
+            Some(pricing) => Some(pricing.clone()),
+            None => match &catalogModel {
+                Some(entry) => entry.pricing.clone(),
+                None => None,
+            },
+        };
+        let context = match &model.contextOverride {
+            Some(context) => context.clone(),
+            None => match &catalogModel {
+                Some(entry) => entry
+                    .context
+                    .clone()
+                    .ok_or_else(|| ModelConfigError::MissingModelContext(model.id.clone()))?,
+                None => return Err(ModelConfigError::MissingModelContext(model.id.clone())),
+            },
+        };
+        let capabilities = match &model.capabilitiesOverride {
+            Some(capabilities) => capabilities.clone(),
+            None => match &catalogModel {
+                Some(entry) => entry.capabilities.clone().ok_or_else(|| {
+                    ModelConfigError::MissingModelCapabilities(model.id.clone())
+                })?,
+                None => {
+                    return Err(ModelConfigError::MissingModelCapabilities(
+                        model.id.clone(),
+                    ))
+                }
+            },
+        };
+        let builtinTools = match &model.builtinToolsOverride {
+            Some(builtinTools) => builtinTools.clone(),
+            None => match &catalogModel {
+                Some(entry) => entry.builtinTools.clone(),
+                None => Vec::new(),
+            },
+        };
+        let request = match &model.requestOverride {
+            Some(request) => request.clone(),
+            None => match &catalogModel {
+                Some(entry) => entry
+                    .request
+                    .clone()
+                    .ok_or_else(|| ModelConfigError::MissingModelRequestSpec(model.id.clone()))?,
+                None => return Err(ModelConfigError::MissingModelRequestSpec(model.id.clone())),
+            },
+        };
 
-        if newCount > 0 {
-            existingConfigList.sort();
-            existingConfigList.dedup();
-            self.saveConfigList(existingConfigList)
-                .map_err(|error| error.to_string())?;
-        }
-
-        Ok(ModelConfigImportResult {
-            new: newCount,
-            updated: updatedCount,
-            skipped: skippedCount,
-            total: newCount + updatedCount,
+        Ok(ResolvedModelConfig {
+            providerId: provider.id.clone(),
+            providerName: provider.name.clone(),
+            modelId: model.id.clone(),
+            apiKey: provider.apiKey.clone(),
+            apiEndpoint: provider.endpoint.clone(),
+            apiProviderType: provider.providerType.clone(),
+            apiProviderTypeId: provider.providerTypeId.clone(),
+            useMultipleApiKeys: provider.useMultipleApiKeys,
+            apiKeyPool: provider.apiKeyPool.clone(),
+            currentKeyIndex: provider.currentKeyIndex,
+            keyRotationMode: provider.keyRotationMode.clone(),
+            customHeaders: provider.customHeaders.clone(),
+            requestLimitPerMinute: provider.requestLimitPerMinute,
+            maxConcurrentRequests: provider.maxConcurrentRequests,
+            pricing,
+            context,
+            capabilities,
+            builtinTools,
+            request,
+            parameters: model.parameters.clone(),
+            summary: model.summary.clone(),
+            localRuntime: model.localRuntime.clone(),
         })
     }
 
-    fn loadConfigFromDataStore(&self, configId: &str) -> Result<ModelConfigData, ModelConfigError> {
-        let preferences = self.modelConfigDataStore.data()?;
-        let configKey = self.configKey(configId);
-        match preferences.get(&configKey) {
-            Some(configJson) => Ok(serde_json::from_str(configJson)?),
-            None => Ok(self.createConfigForId(configId)),
+    fn readProviderList(
+        preferences: &Preferences,
+    ) -> Result<Vec<String>, PreferencesDataStoreError> {
+        match preferences.get(&Self::PROVIDER_LIST_KEY()) {
+            Some(providerList) if !providerList.is_empty() => Ok(serde_json::from_str(providerList)?),
+            _ => Ok(Vec::new()),
         }
     }
 
-    fn saveConfigToDataStore(&self, config: &ModelConfigData) -> Result<(), ModelConfigError> {
-        let configKey = self.configKey(&config.id);
-        let encodedConfig = serde_json::to_string(config)?;
+    fn loadProviderFromDataStore(
+        &self,
+        providerId: &str,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        let preferences = self.modelConfigDataStore.data()?;
+        let providerKey = self.providerKey(providerId);
+        let providerJson = preferences
+            .get(&providerKey)
+            .ok_or_else(|| ModelConfigError::ProviderNotFound(providerId.to_string()))?;
+        Ok(serde_json::from_str(providerJson)?)
+    }
+
+    fn saveProviderToDataStore(
+        &self,
+        provider: &ProviderProfile,
+    ) -> Result<(), ModelConfigError> {
+        let providerKey = self.providerKey(&provider.id);
+        let encodedProvider = serde_json::to_string(provider)?;
         self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&configKey, encodedConfig);
+            preferences.set(&providerKey, encodedProvider);
         })?;
         Ok(())
     }
 
-    fn updateConfigInternal<F>(
-        &self,
-        configId: &str,
-        transform: F,
-    ) -> Result<ModelConfigData, ModelConfigError>
-    where
-        F: FnOnce(ModelConfigData) -> ModelConfigData,
-    {
-        let current = self.loadConfigFromDataStore(configId)?;
-        let newConfig = transform(current);
-        let configKey = self.configKey(configId);
-        let encodedConfig = serde_json::to_string(&newConfig)?;
+    fn saveProviderList(&self, providerIds: Vec<String>) -> Result<(), ModelConfigError> {
+        let encoded = serde_json::to_string(&providerIds)?;
         self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&configKey, encodedConfig);
+            preferences.set(&Self::PROVIDER_LIST_KEY(), encoded);
         })?;
-        Ok(newConfig)
+        Ok(())
     }
 
-    fn configKey(&self, configId: &str) -> operit_store::PreferencesDataStore::PreferencesKey {
-        stringPreferencesKey(&format!("config_{configId}"))
+    fn updateProviderInternal<F>(
+        &self,
+        providerId: &str,
+        transform: F,
+    ) -> Result<ProviderProfile, ModelConfigError>
+    where
+        F: FnOnce(ProviderProfile) -> ProviderProfile,
+    {
+        let provider = self.loadProviderFromDataStore(providerId)?;
+        let updated = transform(provider);
+        self.saveProviderToDataStore(&updated)?;
+        Ok(updated)
     }
 
-    fn createConfigForId(&self, configId: &str) -> ModelConfigData {
-        if configId == Self::DEFAULT_CONFIG_ID {
-            return self.createFreshDefaultConfig();
+    fn findAvailableProviderModel(
+        &self,
+        provider: &ProviderProfile,
+        modelId: &str,
+    ) -> Result<AvailableProviderModel, ModelConfigError> {
+        let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
+            .map_err(ModelConfigError::ModelListFetch)?;
+        if let Some(model) = providerCatalog
+            .models
+            .iter()
+            .find(|model| model.modelId.eq_ignore_ascii_case(modelId))
+        {
+            return Ok(AvailableProviderModel {
+                modelId: model.modelId.clone(),
+                source: AvailableProviderModelSource::Catalog,
+                pricing: model.pricing.clone(),
+                context: model.context.clone(),
+                capabilities: model.capabilities.clone(),
+                builtinTools: model.builtinTools.clone(),
+                request: model.request.clone(),
+            });
         }
-        ModelConfigData::new(
-            configId.to_string(),
-            format!("model_config_config_id_{configId}"),
+        ModelListFetcher::fetch(provider, &providerCatalog)
+            .map_err(ModelConfigError::ModelListFetch)?
+            .into_iter()
+            .find(|model| model.modelId.eq_ignore_ascii_case(modelId))
+            .ok_or_else(|| ModelConfigError::AvailableProviderModelNotFound {
+                providerId: provider.id.clone(),
+                modelId: modelId.to_string(),
+            })
+    }
+
+    fn assertProviderExists(&self, providerId: &str) -> Result<(), ModelConfigError> {
+        let providerIds = self.getProviderIds()?;
+        if providerIds.iter().any(|id| id == providerId) {
+            Ok(())
+        } else {
+            Err(ModelConfigError::ProviderNotFound(providerId.to_string()))
+        }
+    }
+
+    fn findModel(
+        &self,
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<(ProviderProfile, ModelProfile), ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        for model in &provider.models {
+            if model.id == modelId {
+                return Ok((provider.clone(), model.clone()));
+            }
+        }
+        Err(ModelConfigError::ModelNotFound(format!("{providerId}:{modelId}")))
+    }
+
+    fn providerKey(&self, providerId: &str) -> operit_store::PreferencesDataStore::PreferencesKey {
+        stringPreferencesKey(&format!("provider_{providerId}"))
+    }
+
+    fn createProviderId(&self) -> String {
+        format!(
+            "provider_{}",
+            operit_host_api::TimeUtils::currentTimeMillis()
         )
     }
 
-    fn modelNameByIndexFromConfig(
-        &self,
-        config: &ModelConfigData,
-        modelIndex: usize,
-    ) -> Result<String, ModelConfigError> {
-        let modelNames = Self::modelNameListFromConfig(config);
-        if modelNames.is_empty() {
-            return Err(ModelConfigError::EmptyModelNameList);
-        }
-        match modelNames.get(modelIndex) {
-            Some(modelName) => Ok(modelName.clone()),
-            None => Err(ModelConfigError::ModelIndexOutOfRange {
-                modelIndex,
-                modelCount: modelNames.len(),
-            }),
-        }
-    }
+}
 
-    fn modelNameListFromConfig(config: &ModelConfigData) -> Vec<String> {
-        config
-            .modelName
-            .split(',')
-            .map(str::trim)
-            .filter(|modelName| !modelName.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    }
+#[cfg(test)]
+mod tests {
+    use super::ModelConfigManager;
+    use crate::data::model::ModelConfigData::ModelConfigDefaults;
 
-    fn joinModelNameList(modelNames: Vec<String>) -> String {
-        modelNames
-            .into_iter()
-            .map(|modelName| modelName.trim().to_string())
-            .filter(|modelName| !modelName.is_empty())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    fn createConfigId(&self) -> String {
-        let now = operit_host_api::TimeUtils::currentTimeMillis();
-        format!("config_{now}")
-    }
-
-    fn convertCustomParameterData(
-        &self,
-        data: CustomParameterData,
-    ) -> Result<ModelParameter<serde_json::Value>, ModelConfigError> {
-        let valueType = Self::parseParameterValueType(&data.valueType)?;
-        let category = Self::parseParameterCategory(&data.category)?;
-        let defaultValue = Self::parseCustomParameterValue(&data.defaultValue, &valueType)?;
-        let currentValue = Self::parseCustomParameterValue(&data.currentValue, &valueType)?;
-        let minValue = data
-            .minValue
-            .map(|value| Self::parseCustomParameterValue(&value, &valueType))
-            .transpose()?;
-        let maxValue = data
-            .maxValue
-            .map(|value| Self::parseCustomParameterValue(&value, &valueType))
-            .transpose()?;
-
-        Ok(ModelParameter {
-            id: data.id,
-            name: data.name,
-            apiName: data.apiName,
-            description: data.description,
-            defaultValue,
-            currentValue,
-            isEnabled: data.isEnabled,
-            valueType,
-            minValue,
-            maxValue,
-            category,
-            isCustom: true,
-        })
-    }
-
-    fn modelParameterToCustomParameterData(
-        &self,
-        parameter: ModelParameter<serde_json::Value>,
-    ) -> Result<CustomParameterData, ModelConfigError> {
-        Ok(CustomParameterData {
-            id: parameter.id,
-            name: parameter.name,
-            apiName: parameter.apiName,
-            description: parameter.description,
-            defaultValue: Self::customParameterValueToString(
-                &parameter.defaultValue,
-                &parameter.valueType,
-            )?,
-            currentValue: Self::customParameterValueToString(
-                &parameter.currentValue,
-                &parameter.valueType,
-            )?,
-            isEnabled: parameter.isEnabled,
-            valueType: Self::parameterValueTypeName(&parameter.valueType).to_string(),
-            minValue: parameter
-                .minValue
-                .map(|value| Self::customParameterValueToString(&value, &parameter.valueType))
-                .transpose()?,
-            maxValue: parameter
-                .maxValue
-                .map(|value| Self::customParameterValueToString(&value, &parameter.valueType))
-                .transpose()?,
-            category: Self::parameterCategoryName(&parameter.category).to_string(),
-        })
-    }
-
-    fn parameterValueTypeName(valueType: &ParameterValueType) -> &'static str {
-        match valueType {
-            ParameterValueType::INT => "INT",
-            ParameterValueType::FLOAT => "FLOAT",
-            ParameterValueType::STRING => "STRING",
-            ParameterValueType::BOOLEAN => "BOOLEAN",
-            ParameterValueType::OBJECT => "OBJECT",
-        }
-    }
-
-    fn parameterCategoryName(category: &ParameterCategory) -> &'static str {
-        match category {
-            ParameterCategory::GENERATION => "GENERATION",
-            ParameterCategory::CREATIVITY => "CREATIVITY",
-            ParameterCategory::REPETITION => "REPETITION",
-            ParameterCategory::OTHER => "OTHER",
-        }
-    }
-
-    fn customParameterValueToString(
-        value: &serde_json::Value,
-        valueType: &ParameterValueType,
-    ) -> Result<String, ModelConfigError> {
-        match valueType {
-            ParameterValueType::INT => value
-                .as_i64()
-                .map(|parsed| parsed.to_string())
-                .ok_or_else(|| ModelConfigError::CustomParameterConversion("INT".to_string())),
-            ParameterValueType::FLOAT => value
-                .as_f64()
-                .map(|parsed| parsed.to_string())
-                .ok_or_else(|| ModelConfigError::CustomParameterConversion("FLOAT".to_string())),
-            ParameterValueType::STRING => value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| ModelConfigError::CustomParameterConversion("STRING".to_string())),
-            ParameterValueType::BOOLEAN => value
-                .as_bool()
-                .map(|parsed| parsed.to_string())
-                .ok_or_else(|| ModelConfigError::CustomParameterConversion("BOOLEAN".to_string())),
-            ParameterValueType::OBJECT => Ok(value.to_string()),
-        }
-    }
-
-    fn parseParameterValueType(value: &str) -> Result<ParameterValueType, ModelConfigError> {
-        match value {
-            "INT" => Ok(ParameterValueType::INT),
-            "FLOAT" => Ok(ParameterValueType::FLOAT),
-            "STRING" => Ok(ParameterValueType::STRING),
-            "BOOLEAN" => Ok(ParameterValueType::BOOLEAN),
-            "OBJECT" => Ok(ParameterValueType::OBJECT),
-            other => Err(ModelConfigError::CustomParameterValueType(
-                other.to_string(),
-            )),
-        }
-    }
-
-    fn parseParameterCategory(value: &str) -> Result<ParameterCategory, ModelConfigError> {
-        match value {
-            "GENERATION" => Ok(ParameterCategory::GENERATION),
-            "CREATIVITY" => Ok(ParameterCategory::CREATIVITY),
-            "REPETITION" => Ok(ParameterCategory::REPETITION),
-            "OTHER" => Ok(ParameterCategory::OTHER),
-            other => Err(ModelConfigError::CustomParameterCategory(other.to_string())),
-        }
-    }
-
-    fn parseCustomParameterValue(
-        value: &str,
-        valueType: &ParameterValueType,
-    ) -> Result<serde_json::Value, ModelConfigError> {
-        match valueType {
-            ParameterValueType::INT => value
-                .parse::<i32>()
-                .map(serde_json::Value::from)
-                .map_err(|error| ModelConfigError::CustomParameterConversion(error.to_string())),
-            ParameterValueType::FLOAT => value
-                .parse::<f32>()
-                .map(|parsed| serde_json::json!(parsed))
-                .map_err(|error| ModelConfigError::CustomParameterConversion(error.to_string())),
-            ParameterValueType::STRING => Ok(serde_json::Value::String(value.to_string())),
-            ParameterValueType::BOOLEAN => value
-                .parse::<bool>()
-                .map(serde_json::Value::from)
-                .map_err(|error| ModelConfigError::CustomParameterConversion(error.to_string())),
-            ParameterValueType::OBJECT => {
-                serde_json::from_str(value).map_err(ModelConfigError::Json)
-            }
-        }
+    #[test]
+    fn default_ids_are_model_ids() {
+        assert_eq!(
+            ModelConfigManager::DEFAULT_MODEL_ID,
+            ModelConfigDefaults::DEFAULT_MODEL_ID
+        );
     }
 }

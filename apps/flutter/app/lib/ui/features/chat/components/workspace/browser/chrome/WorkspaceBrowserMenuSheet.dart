@@ -160,6 +160,7 @@ class _MenuActionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 40),
       child: Padding(
@@ -173,7 +174,9 @@ class _MenuActionRow extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: colorScheme.onSurface),
+                style: textTheme.bodySmall!.copyWith(
+                  color: colorScheme.onSurface,
+                ),
               ),
             ),
             IconButton(
@@ -192,8 +195,7 @@ class _MenuActionRow extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 child: Text(
                   value,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: textTheme.bodySmall!.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
                   ),
@@ -234,6 +236,7 @@ class _MenuTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return InkWell(
       onTap: onTap,
       child: ColoredBox(
@@ -259,8 +262,7 @@ class _MenuTile extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: textTheme.bodySmall!.copyWith(
                       color: selected
                           ? colorScheme.primary
                           : colorScheme.onSurface,
@@ -278,8 +280,7 @@ class _MenuTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: textTheme.bodySmall!.copyWith(
                         color: selected
                             ? colorScheme.primary
                             : colorScheme.onSurfaceVariant,

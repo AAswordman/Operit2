@@ -193,11 +193,7 @@ class WorkspaceBrowserDownloadStore extends ChangeNotifier {
   void pause(WorkspaceBrowserDownloadItem item) {
     _cancelledUrls.add(item.url);
     _activeClients.remove(item.url)?.close();
-    _update(
-      item.url,
-      state: WorkspaceBrowserDownloadState.paused,
-      detail: '',
-    );
+    _update(item.url, state: WorkspaceBrowserDownloadState.paused, detail: '');
   }
 
   Future<void> resume(WorkspaceBrowserDownloadItem item) {

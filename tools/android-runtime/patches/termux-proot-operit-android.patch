@@ -1,0 +1,40 @@
+--- a/src/execve/enter.c
++++ b/src/execve/enter.c
+@@ -79,7 +79,7 @@
+ 		return -ENOMEM;
+ 
+ 	start_address = P(vaddr) & page_mask;
+-	end_address   = (P(vaddr) + P(filesz) + page_size) & page_mask;
++	end_address   = (P(vaddr) + P(filesz) + page_size - 1) & page_mask;
+ 
+ 	load_info->mappings[index].fd     = -1; /* Unknown yet.  */
+ 	load_info->mappings[index].offset = P(offset) & page_mask;
+@@ -100,7 +100,7 @@
+ 
+ 		/* Create new pages for the remaining extra bytes.  */
+ 		start_address = end_address;
+-		end_address   = (P(vaddr) + P(memsz) + page_size) & page_mask;
++		end_address   = (P(vaddr) + P(memsz) + page_size - 1) & page_mask;
+ 		if (end_address > start_address) {
+ 			index++;
+ 			load_info->mappings = talloc_realloc(load_info, load_info->mappings,
+--- a/src/extension/ashmem_memfd/ashmem_memfd.c
++++ b/src/extension/ashmem_memfd/ashmem_memfd.c
+@@ -1,5 +1,6 @@
+ #include <stdlib.h>
+ #include <signal.h>
++#include <string.h>
+ #include <unistd.h>
+ #include <sys/syscall.h>  /* __NR_memfd_create,  */
+ #include <linux/ashmem.h> /* ASHMEM_GET_SIZE,  */
+--- a/src/extension/sysvipc/sysvipc_shm.c
++++ b/src/extension/sysvipc/sysvipc_shm.c
+@@ -728,7 +728,7 @@
+ 
+ 		sysvipc_shm_update_stats(shm);
+ 		size_t map_size = shm->stats.shm_segsz;
+-		map_size = (map_size + (page_size - 1)) & ~page_size;
++		map_size = (map_size + (page_size - 1)) & ~(page_size - 1);
+ 
+ 		fprintf(
+ 			proc_file,

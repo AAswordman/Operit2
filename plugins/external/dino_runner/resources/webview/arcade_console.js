@@ -5,25 +5,47 @@
     return;
   }
 
-  var FPS = 1000 / 60;
-  var BASE_GROUND_MARGIN = 23;
-  var VIEWPORT = {
-    width: 420,
-    height: 150,
-    groundY: 150 - BASE_GROUND_MARGIN,
-  };
+  var FPS = 60;
+  var FRAME_TIME = 1000 / FPS;
   var SPRITE_URL = "/assets/chrome_dino_sprite.png";
-  var DIGIT_WIDTH = 10;
-  var DIGIT_HEIGHT = 13;
-  var DIGIT_ADVANCE = 11;
-  var SCORE_COEFFICIENT = 0.025;
-  var MAX_SPEED = 13;
-  var MIN_SPAWN_DISTANCE = 170;
-  var JUMP_CONFIG = {
-    gravity: 0.6,
-    baseVelocity: -10,
+  var BG_COLOR = "#f7f7f7";
+
+  var DEFAULT_DIMENSIONS = {
+    width: 600,
+    height: 150,
+  };
+
+  var CONFIG = {
+    acceleration: 0.001,
+    bgCloudSpeed: 0.2,
+    bottomPad: 10,
+    clearTime: 3000,
+    cloudFrequency: 0.5,
+    gameoverClearTime: 1200,
+    gapCoefficient: 0.6,
+    maxBlinkCount: 3,
+    maxClouds: 6,
+    maxObstacleDuplication: 2,
+    maxObstacleLength: 3,
+    maxSpeed: 13,
+    mobileSpeedCoefficient: 1.2,
+    speed: 6,
+    speedDropCoefficient: 3,
+    arcadeModeInitialTopPosition: 35,
+    arcadeModeTopPositionPercent: 0.1,
+  };
+
+  var TREX_CONFIG = {
     dropVelocity: -5,
-    maxRise: 62,
+    gravity: 0.6,
+    height: 47,
+    initialJumpVelocity: -10,
+    maxJumpHeight: 30,
+    minJumpHeight: 30,
+    speedDropCoefficient: 3,
+    startXPos: 50,
+    width: 44,
+    widthDuck: 59,
   };
 
   var sprite = new Image();
@@ -31,15 +53,17 @@
 
   var spriteMap = {
     cloud: { x: 86, y: 2, width: 46, height: 14 },
-    bird: { x: 134, y: 2, width: 46, height: 40 },
-    cactusSmall: { x: 228, y: 2, width: 17, height: 35 },
     cactusLarge: { x: 332, y: 2, width: 25, height: 50 },
-    horizon: { x: 2, y: 54, width: 600, height: 12 },
-    text: { x: 655, y: 2, width: 10, height: 13 },
-    trex: { x: 848, y: 2, width: 44, height: 47, duckWidth: 59, duckHeight: 25 },
+    cactusSmall: { x: 228, y: 2, width: 17, height: 35 },
+    horizon: { x: 2, y: 52, width: 600, height: 12, yPos: 127 },
+    pterodactyl: { x: 134, y: 2, width: 46, height: 40 },
+    restart: { x: 2, y: 68, width: 36, height: 32 },
+    text: { x: 655, y: 2, width: 10, height: 13, advance: 11 },
+    trex: { x: 848, y: 2, width: 44, height: 47, widthDuck: 59 },
   };
 
-  var dinoCollisionBoxes = {
+  var trexCollisionBoxes = {
+    ducking: [{ x: 1, y: 18, width: 55, height: 25 }],
     running: [
       { x: 22, y: 0, width: 17, height: 16 },
       { x: 1, y: 18, width: 30, height: 9 },
@@ -48,15 +72,14 @@
       { x: 5, y: 30, width: 21, height: 4 },
       { x: 9, y: 34, width: 15, height: 4 },
     ],
-    ducking: [{ x: 1, y: 18, width: 55, height: 25 }],
   };
 
   var obstacleTypes = [
     {
-      kind: "cactusSmall",
+      type: "cactusSmall",
       width: 17,
       height: 35,
-      y: 105,
+      yPos: 105,
       multipleSpeed: 4,
       minGap: 120,
       minSpeed: 0,
@@ -67,10 +90,10 @@
       ],
     },
     {
-      kind: "cactusLarge",
+      type: "cactusLarge",
       width: 25,
       height: 50,
-      y: 90,
+      yPos: 90,
       multipleSpeed: 7,
       minGap: 120,
       minSpeed: 0,
@@ -81,13 +104,16 @@
       ],
     },
     {
-      kind: "bird",
+      type: "pterodactyl",
       width: 46,
       height: 40,
-      yOptions: [100, 75, 50],
+      yPos: [100, 75, 50],
+      multipleSpeed: 999,
       minGap: 150,
       minSpeed: 8.5,
       speedOffset: 0.8,
+      numFrames: 2,
+      frameRate: 1000 / 6,
       collisionBoxes: [
         { x: 15, y: 15, width: 16, height: 5 },
         { x: 18, y: 21, width: 24, height: 6 },
@@ -98,58 +124,86 @@
     },
   ];
 
+  var Status = {
+    CRASHED: "crashed",
+    DUCKING: "ducking",
+    JUMPING: "jumping",
+    RUNNING: "running",
+    WAITING: "waiting",
+  };
+
+  var animFrames = {};
+  animFrames[Status.WAITING] = { frames: [44, 0], msPerFrame: 1000 / 3 };
+  animFrames[Status.RUNNING] = { frames: [88, 132], msPerFrame: 1000 / 12 };
+  animFrames[Status.CRASHED] = { frames: [220], msPerFrame: 1000 / 60 };
+  animFrames[Status.JUMPING] = { frames: [0], msPerFrame: 1000 / 60 };
+  animFrames[Status.DUCKING] = { frames: [264, 323], msPerFrame: 1000 / 8 };
+
+  var dimensions = {
+    width: DEFAULT_DIMENSIONS.width,
+    height: DEFAULT_DIMENSIONS.height,
+  };
+
   var layout = {
-    width: window.innerWidth,
-    height: window.innerHeight,
+    width: window.innerWidth || DEFAULT_DIMENSIONS.width,
+    height: window.innerHeight || DEFAULT_DIMENSIONS.height,
     scale: 1,
     offsetX: 0,
     offsetY: 0,
+    ratio: 1,
   };
 
   var state = {
-    running: false,
+    activated: false,
+    playing: false,
     paused: false,
     crashed: false,
     score: 0,
-    bestScore: 0,
-    distance: 0,
-    speed: 6,
-    acceleration: 0.001,
+    highScore: 0,
+    distanceRan: 0,
+    runningTime: 0,
+    currentSpeed: CONFIG.speed,
     lastPublishedScore: -1,
     lastPublishedAt: 0,
-    introText: "轻触屏幕或按空格开始",
+    lastAchievement: 0,
+    achievement: false,
+    achievementTimer: 0,
+    achievementFlashCount: 0,
+    gameOverAt: 0,
   };
 
-  var dino = {
-    x: 50,
-    y: VIEWPORT.groundY - spriteMap.trex.height,
-    velocityY: 0,
+  var trex = {
+    xPos: TREX_CONFIG.startXPos,
+    yPos: getTrexGroundY(),
+    jumpVelocity: 0,
     jumping: false,
     ducking: false,
     speedDrop: false,
     reachedMinHeight: false,
-    blinkTimer: 0,
-    animTimer: 0,
+    jumpCount: 0,
+    status: Status.WAITING,
     currentFrame: 0,
+    currentAnimFrames: animFrames[Status.WAITING].frames,
+    msPerFrame: animFrames[Status.WAITING].msPerFrame,
+    timer: 0,
+    blinkTimer: 0,
+    blinkDelay: 0,
+    blinkCount: 0,
   };
 
   var world = {
     clouds: [],
     obstacles: [],
-    horizonX: [0, VIEWPORT.width],
+    obstacleHistory: [],
+    horizonX: [0, spriteMap.horizon.width],
     horizonSourceX: [spriteMap.horizon.x, spriteMap.horizon.x + spriteMap.horizon.width],
     frameHandle: 0,
     lastTime: 0,
-    pointerStartY: 0,
+    pointerActive: false,
   };
 
   function getHost() {
     return window.ArcadeHost || null;
-  }
-
-  function hostReady() {
-    var host = getHost();
-    return !!(host && typeof host.updateOverlayScore === "function");
   }
 
   function publishOverlayScore(force) {
@@ -169,165 +223,23 @@
     host.updateOverlayScore({ score: state.score });
   }
 
-  function resizeCanvas() {
-    var ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    var width = Math.max(
-      320,
-      Math.round(window.innerWidth || document.documentElement.clientWidth || 360)
-    );
-    var height = Math.max(
-      420,
-      Math.round(window.innerHeight || document.documentElement.clientHeight || 640)
-    );
-    var horizontalInset = Math.max(18, Math.min(34, Math.round(width * 0.08)));
-    var playableWidth = Math.max(280, Math.min(460, width - horizontalInset * 2));
-    var playableHeight = Math.max(136, Math.min(176, Math.round(height * 0.2)));
-    VIEWPORT.width = playableWidth;
-    VIEWPORT.height = playableHeight;
-    VIEWPORT.groundY = VIEWPORT.height - BASE_GROUND_MARGIN;
-    dino.x = Math.max(36, Math.round(VIEWPORT.width * 0.085));
-    canvas.width = Math.round(width * ratio);
-    canvas.height = Math.round(height * ratio);
-    canvas.style.width = width + "px";
-    canvas.style.height = height + "px";
-    context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    layout.width = width;
-    layout.height = height;
-    layout.scale = 1;
-    layout.offsetX = Math.round((width - VIEWPORT.width) / 2);
-    layout.offsetY = Math.round(
-      Math.max(26, Math.min(84, Math.round(height * 0.18)))
-    );
+  function hostReady() {
+    var host = getHost();
+    return !!(host && typeof host.updateOverlayScore === "function");
   }
 
-  function resetDino() {
-    dino.y = VIEWPORT.groundY - spriteMap.trex.height;
-    dino.velocityY = 0;
-    dino.jumping = false;
-    dino.ducking = false;
-    dino.speedDrop = false;
-    dino.reachedMinHeight = false;
-    dino.blinkTimer = 0;
-    dino.animTimer = 0;
-    dino.currentFrame = 0;
+  function getTrexGroundY() {
+    return DEFAULT_DIMENSIONS.height - TREX_CONFIG.height - CONFIG.bottomPad;
   }
 
-  function resetWorld() {
-    world.clouds = [
-      { x: Math.round(VIEWPORT.width * 0.58), y: 30 },
-      { x: Math.round(VIEWPORT.width * 0.84), y: 48 },
-    ];
-    world.obstacles = [];
-    world.horizonX = [0, VIEWPORT.width];
-    world.horizonSourceX = [spriteMap.horizon.x, spriteMap.horizon.x + spriteMap.horizon.width];
+  function getTimeStamp() {
+    return performance && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
   }
 
-  function resetGame(silentBridge) {
-    state.score = 0;
-    state.distance = 0;
-    state.speed = 6;
-    state.paused = false;
-    state.crashed = false;
-    state.lastPublishedScore = -1;
-    state.lastPublishedAt = 0;
-    resetDino();
-    resetWorld();
-    if (!silentBridge) {
-      publishOverlayScore(true);
-    }
-  }
-
-  function startGame(silentBridge) {
-    resetGame(silentBridge === true);
-    state.running = true;
-  }
-
-  function setPaused(paused) {
-    if (!state.running || state.crashed) {
-      return;
-    }
-    state.paused = !!paused;
-  }
-
-  function togglePause() {
-    if (!state.running || state.crashed) {
-      return;
-    }
-    state.paused = !state.paused;
-  }
-
-  function handlePrimaryAction(options) {
-    var silentBridge = !!(options && options.silentBridge);
-    if (!state.running || state.crashed) {
-      startGame(silentBridge);
-      return { ok: true, action: "start", state: snapshot() };
-    }
-    togglePause();
-    return { ok: true, action: state.paused ? "pause" : "resume", state: snapshot() };
-  }
-
-  function hostPrimaryAction() {
-    return handlePrimaryAction({ silentBridge: true });
-  }
-
-  function hostResetBoard() {
-    resetGame(true);
-    state.running = false;
-    return { ok: true, action: "reset", state: snapshot() };
-  }
-
-  function startJump() {
-    if (!state.running || state.paused || state.crashed || dino.jumping) {
-      return;
-    }
-    dino.jumping = true;
-    dino.speedDrop = false;
-    dino.velocityY = JUMP_CONFIG.baseVelocity - state.speed / 10;
-  }
-
-  function setDuck(isDucking) {
-    if (state.crashed) {
-      return;
-    }
-    dino.ducking = !!isDucking && !dino.jumping;
-  }
-
-  function speedDrop() {
-    if (dino.jumping) {
-      dino.speedDrop = true;
-      dino.velocityY = Math.max(1, dino.velocityY);
-    }
-  }
-
-  function handleJumpInput() {
-    if (!spriteReady) {
-      return;
-    }
-    if (state.crashed) {
-      startGame(false);
-      startJump();
-      return;
-    }
-    if (!state.running) {
-      startGame(false);
-      startJump();
-      return;
-    }
-    if (state.paused) {
-      setPaused(false);
-      return;
-    }
-    startJump();
-  }
-
-  function createObstacleConfig() {
-    var available = [];
-    for (var i = 0; i < obstacleTypes.length; i += 1) {
-      if (state.speed >= obstacleTypes[i].minSpeed) {
-        available.push(obstacleTypes[i]);
-      }
-    }
-    return available[Math.floor(Math.random() * available.length)];
+  function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
   function cloneCollisionBoxes(source) {
@@ -343,139 +255,459 @@
     return boxes;
   }
 
-  function getGap(width, minGap, speed) {
-    var base = Math.round(width * speed + minGap * 1.5);
-    return randomInt(base, Math.round(base * 1.5));
-  }
-
-  function spawnObstacle() {
-    var type = createObstacleConfig();
-    if (!type) {
-      return;
-    }
-    var size = 1;
-    if (type.kind !== "bird" && state.speed >= type.multipleSpeed) {
-      size = randomInt(1, 3);
-    }
-    var width = type.width * size;
-    var y = Array.isArray(type.yOptions)
-      ? type.yOptions[randomInt(0, type.yOptions.length - 1)]
-      : type.y;
-    var obstacle = {
-      kind: type.kind,
-      x: VIEWPORT.width + 20,
-      y: y,
-      width: width,
-      height: type.height,
-      size: size,
-      frame: 0,
-      frameTimer: 0,
-      speedOffset: type.speedOffset || 0,
-      collisionBoxes: cloneCollisionBoxes(type.collisionBoxes),
-      gap: getGap(width, type.minGap, state.speed),
-      spriteX:
-        (type.width * size) * (0.5 * (size - 1)) +
-        spriteMap[type.kind === "bird" ? "bird" : type.kind].x,
-    };
-    if (size > 1 && obstacle.collisionBoxes.length >= 3) {
-      obstacle.collisionBoxes[1].width =
-        width - obstacle.collisionBoxes[0].width - obstacle.collisionBoxes[2].width;
-      obstacle.collisionBoxes[2].x = width - obstacle.collisionBoxes[2].width;
-    }
-    world.obstacles.push(obstacle);
-  }
-
-  function maybeSpawnObstacle() {
-    if (!state.running || state.paused || state.crashed) {
-      return;
-    }
-    if (!world.obstacles.length) {
-      spawnObstacle();
-      return;
-    }
-    var last = world.obstacles[world.obstacles.length - 1];
-    if (last.x + last.width + last.gap < VIEWPORT.width) {
-      spawnObstacle();
+  function setSpeed(newSpeed) {
+    var speed = newSpeed || state.currentSpeed;
+    if (dimensions.width < DEFAULT_DIMENSIONS.width) {
+      var mobileSpeed =
+        (speed * dimensions.width * CONFIG.mobileSpeedCoefficient) /
+        DEFAULT_DIMENSIONS.width;
+      state.currentSpeed = mobileSpeed > speed ? speed : mobileSpeed;
+    } else if (newSpeed) {
+      state.currentSpeed = newSpeed;
     }
   }
 
-  function updateClouds(frameScale) {
+  function adjustDimensions() {
+    var width = Math.max(
+      240,
+      Math.round(window.innerWidth || document.documentElement.clientWidth || 360)
+    );
+    var height = Math.max(
+      240,
+      Math.round(window.innerHeight || document.documentElement.clientHeight || 360)
+    );
+    var horizontalPadding = Math.min(24, Math.max(0, Math.round(width * 0.04)));
+    dimensions.width = Math.min(
+      DEFAULT_DIMENSIONS.width,
+      Math.max(320, width - horizontalPadding * 2)
+    );
+    dimensions.height = DEFAULT_DIMENSIONS.height;
+
+    var scaleWidth = width / dimensions.width;
+    var scaleHeight = height / dimensions.height;
+    var scale = Math.min(scaleWidth, scaleHeight);
+    if (scale > 1) {
+      scale = Math.max(1, Math.min(scaleWidth, scaleHeight));
+    }
+
+    var scaledHeight = dimensions.height * scale;
+    var translateY = Math.ceil(
+      Math.max(0, (height - scaledHeight - CONFIG.arcadeModeInitialTopPosition) *
+        CONFIG.arcadeModeTopPositionPercent)
+    );
+
+    layout.width = width;
+    layout.height = height;
+    layout.scale = scale;
+    layout.offsetX = Math.round((width - dimensions.width * scale) / 2);
+    layout.offsetY = translateY;
+    layout.ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+    canvas.width = Math.round(width * layout.ratio);
+    canvas.height = Math.round(height * layout.ratio);
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    context.setTransform(layout.ratio, 0, 0, layout.ratio, 0, 0);
+    context.imageSmoothingEnabled = false;
+    setSpeed(state.playing ? state.currentSpeed : CONFIG.speed);
+  }
+
+  function setTrexStatus(status) {
+    trex.status = status;
+    trex.currentFrame = 0;
+    trex.timer = 0;
+    trex.currentAnimFrames = animFrames[status].frames;
+    trex.msPerFrame = animFrames[status].msPerFrame;
+    if (status === Status.WAITING) {
+      trex.blinkTimer = 0;
+      trex.blinkDelay = randomInt(1000, 7000);
+    }
+  }
+
+  function resetTrex(waiting) {
+    trex.xPos = TREX_CONFIG.startXPos;
+    trex.yPos = getTrexGroundY();
+    trex.jumpVelocity = 0;
+    trex.jumping = false;
+    trex.ducking = false;
+    trex.speedDrop = false;
+    trex.reachedMinHeight = false;
+    trex.jumpCount = 0;
+    trex.blinkCount = 0;
+    setTrexStatus(waiting ? Status.WAITING : Status.RUNNING);
+  }
+
+  function resetWorld() {
+    world.clouds = [];
+    world.obstacles = [];
+    world.obstacleHistory = [];
+    world.horizonX = [0, spriteMap.horizon.width];
+    world.horizonSourceX = [spriteMap.horizon.x, spriteMap.horizon.x + spriteMap.horizon.width];
+    addCloud();
+  }
+
+  function resetGame(silentBridge) {
+    state.activated = false;
+    state.playing = false;
+    state.paused = false;
+    state.crashed = false;
+    state.score = 0;
+    state.distanceRan = 0;
+    state.runningTime = 0;
+    state.lastAchievement = 0;
+    state.achievement = false;
+    state.achievementTimer = 0;
+    state.achievementFlashCount = 0;
+    state.gameOverAt = 0;
+    setSpeed(CONFIG.speed);
+    resetTrex(true);
+    resetWorld();
+    if (!silentBridge) {
+      publishOverlayScore(true);
+    }
+  }
+
+  function startRun(silentBridge) {
+    state.activated = true;
+    state.playing = true;
+    state.paused = false;
+    state.crashed = false;
+    state.score = 0;
+    state.distanceRan = 0;
+    state.runningTime = 0;
+    state.lastAchievement = 0;
+    state.achievement = false;
+    state.achievementTimer = 0;
+    state.achievementFlashCount = 0;
+    setSpeed(CONFIG.speed);
+    resetTrex(false);
+    resetWorld();
+    world.lastTime = getTimeStamp();
+    if (!silentBridge) {
+      publishOverlayScore(true);
+    }
+  }
+
+  function setPaused(paused) {
+    if (!state.playing || state.crashed) {
+      return;
+    }
+    state.paused = !!paused;
+    if (!state.paused) {
+      world.lastTime = getTimeStamp();
+    }
+  }
+
+  function togglePause() {
+    if (!state.playing || state.crashed) {
+      return;
+    }
+    setPaused(!state.paused);
+  }
+
+  function handlePrimaryAction(options) {
+    var silentBridge = !!(options && options.silentBridge);
+    if (!state.playing || state.crashed) {
+      startRun(silentBridge);
+      return { ok: true, action: "start", state: snapshot() };
+    }
+    togglePause();
+    return { ok: true, action: state.paused ? "pause" : "resume", state: snapshot() };
+  }
+
+  function hostPrimaryAction() {
+    return handlePrimaryAction({ silentBridge: true });
+  }
+
+  function hostResetBoard() {
+    resetGame(true);
+    return { ok: true, action: "reset", state: snapshot() };
+  }
+
+  function startJump() {
+    if (!state.playing || state.paused || state.crashed || trex.jumping || trex.ducking) {
+      return;
+    }
+    setTrexStatus(Status.JUMPING);
+    trex.jumpVelocity = TREX_CONFIG.initialJumpVelocity - state.currentSpeed / 10;
+    trex.jumping = true;
+    trex.reachedMinHeight = false;
+    trex.speedDrop = false;
+  }
+
+  function endJump() {
+    if (trex.reachedMinHeight && trex.jumpVelocity < TREX_CONFIG.dropVelocity) {
+      trex.jumpVelocity = TREX_CONFIG.dropVelocity;
+    }
+  }
+
+  function setDuck(isDucking) {
+    if (!state.playing || state.paused || state.crashed) {
+      return;
+    }
+    if (isDucking && trex.status !== Status.DUCKING && !trex.jumping) {
+      trex.ducking = true;
+      setTrexStatus(Status.DUCKING);
+    } else if (!isDucking && trex.status === Status.DUCKING) {
+      trex.ducking = false;
+      setTrexStatus(Status.RUNNING);
+    }
+  }
+
+  function setSpeedDrop() {
+    if (trex.jumping) {
+      trex.speedDrop = true;
+      trex.jumpVelocity = 1;
+    }
+  }
+
+  function handleJumpInput() {
+    if (!spriteReady) {
+      return;
+    }
+    if (state.crashed) {
+      if (getTimeStamp() - state.gameOverAt < CONFIG.gameoverClearTime) {
+        return;
+      }
+      startRun(false);
+      startJump();
+      return;
+    }
+    if (!state.playing) {
+      startRun(false);
+      startJump();
+      return;
+    }
+    if (state.paused) {
+      resetTrex(false);
+      setPaused(false);
+      return;
+    }
+    startJump();
+  }
+
+  function addCloud() {
+    world.clouds.push({
+      xPos: dimensions.width,
+      yPos: randomInt(30, 71),
+      gap: randomInt(100, 400),
+      remove: false,
+    });
+  }
+
+  function updateClouds(deltaTime, speed) {
+    var cloudSpeed = (CONFIG.bgCloudSpeed / 1000) * deltaTime * speed;
     if (!world.clouds.length) {
-      world.clouds.push({ x: VIEWPORT.width, y: randomInt(18, 56) });
+      addCloud();
     }
     for (var i = world.clouds.length - 1; i >= 0; i -= 1) {
-      world.clouds[i].x -= 0.5 * frameScale;
-      if (world.clouds[i].x + spriteMap.cloud.width < -12) {
+      var cloud = world.clouds[i];
+      cloud.xPos -= Math.ceil(cloudSpeed);
+      if (cloud.xPos + spriteMap.cloud.width <= 0) {
         world.clouds.splice(i, 1);
       }
     }
-    var last = world.clouds[world.clouds.length - 1];
-    if (!last || VIEWPORT.width - last.x > randomInt(160, 280)) {
-      world.clouds.push({
-        x: VIEWPORT.width + randomInt(12, 60),
-        y: randomInt(18, 56),
-      });
+    var lastCloud = world.clouds[world.clouds.length - 1];
+    if (
+      world.clouds.length < CONFIG.maxClouds &&
+      lastCloud &&
+      dimensions.width - lastCloud.xPos > lastCloud.gap &&
+      CONFIG.cloudFrequency > Math.random()
+    ) {
+      addCloud();
     }
   }
 
-  function updateHorizon(frameScale) {
-    var increment = Math.floor(state.speed * frameScale);
-    for (var i = 0; i < 2; i += 1) {
-      world.horizonX[i] -= increment;
-    }
-    if (world.horizonX[0] <= -VIEWPORT.width) {
-      world.horizonX[0] += VIEWPORT.width * 2;
-      world.horizonSourceX[0] =
-        spriteMap.horizon.x + (Math.random() > 0.5 ? 0 : spriteMap.horizon.width);
-    }
-    if (world.horizonX[1] <= -VIEWPORT.width) {
-      world.horizonX[1] += VIEWPORT.width * 2;
-      world.horizonSourceX[1] =
-        spriteMap.horizon.x + (Math.random() > 0.5 ? 0 : spriteMap.horizon.width);
+  function updateHorizonLine(deltaTime, speed) {
+    var increment = Math.floor(speed * (FPS / 1000) * deltaTime);
+    var line1 = world.horizonX[0] <= 0 ? 0 : 1;
+    var line2 = line1 === 0 ? 1 : 0;
+    world.horizonX[line1] -= increment;
+    world.horizonX[line2] = world.horizonX[line1] + spriteMap.horizon.width;
+
+    if (world.horizonX[line1] <= -spriteMap.horizon.width) {
+      world.horizonX[line1] += spriteMap.horizon.width * 2;
+      world.horizonX[line2] = world.horizonX[line1] - spriteMap.horizon.width;
+      world.horizonSourceX[line1] =
+        spriteMap.horizon.x + (Math.random() > 0.5 ? spriteMap.horizon.width : 0);
     }
   }
 
-  function updateDino(deltaMs) {
-    if (!dino.jumping) {
+  function duplicateObstacleCheck(nextObstacleType) {
+    var duplicateCount = 0;
+    for (var i = 0; i < world.obstacleHistory.length; i += 1) {
+      duplicateCount =
+        world.obstacleHistory[i] === nextObstacleType ? duplicateCount + 1 : 0;
+    }
+    return duplicateCount >= CONFIG.maxObstacleDuplication;
+  }
+
+  function getObstacleType(currentSpeed) {
+    var obstacleType = obstacleTypes[randomInt(0, obstacleTypes.length - 1)];
+    if (duplicateObstacleCheck(obstacleType.type) || currentSpeed < obstacleType.minSpeed) {
+      return getObstacleType(currentSpeed);
+    }
+    return obstacleType;
+  }
+
+  function getObstacleGap(width, minGap, speed) {
+    var min = Math.round(width * speed + minGap * CONFIG.gapCoefficient);
+    var max = Math.round(min * 1.5);
+    return randomInt(min, max);
+  }
+
+  function createObstacle(type, currentSpeed, xOffset) {
+    var size = randomInt(1, CONFIG.maxObstacleLength);
+    if (size > 1 && type.multipleSpeed > currentSpeed) {
+      size = 1;
+    }
+    var yPos = Array.isArray(type.yPos)
+      ? type.yPos[randomInt(0, type.yPos.length - 1)]
+      : type.yPos;
+    var width = type.width * size;
+    var speedOffset = 0;
+    if (type.speedOffset) {
+      speedOffset = Math.random() > 0.5 ? type.speedOffset : -type.speedOffset;
+    }
+    var collisionBoxes = cloneCollisionBoxes(type.collisionBoxes);
+    if (size > 1 && collisionBoxes.length >= 3) {
+      collisionBoxes[1].width =
+        width - collisionBoxes[0].width - collisionBoxes[2].width;
+      collisionBoxes[2].x = width - collisionBoxes[2].width;
+    }
+    return {
+      type: type.type,
+      xPos: dimensions.width + xOffset,
+      yPos: yPos,
+      width: width,
+      height: type.height,
+      size: size,
+      gap: getObstacleGap(width, type.minGap, currentSpeed),
+      speedOffset: speedOffset,
+      collisionBoxes: collisionBoxes,
+      frame: 0,
+      frameTimer: 0,
+      followingObstacleCreated: false,
+      remove: false,
+    };
+  }
+
+  function addNewObstacle(currentSpeed) {
+    var obstacleType = getObstacleType(currentSpeed);
+    var obstacle = createObstacle(obstacleType, currentSpeed, obstacleType.width);
+    world.obstacles.push(obstacle);
+    world.obstacleHistory.unshift(obstacleType.type);
+    if (world.obstacleHistory.length > CONFIG.maxObstacleDuplication) {
+      world.obstacleHistory.splice(CONFIG.maxObstacleDuplication);
+    }
+  }
+
+  function updateObstacles(deltaTime, currentSpeed) {
+    for (var i = world.obstacles.length - 1; i >= 0; i -= 1) {
+      var obstacle = world.obstacles[i];
+      var speed = currentSpeed + obstacle.speedOffset;
+      obstacle.xPos -= Math.floor(speed * (FPS / 1000) * deltaTime);
+      if (obstacle.type === "pterodactyl") {
+        obstacle.frameTimer += deltaTime;
+        if (obstacle.frameTimer >= 1000 / 6) {
+          obstacle.frameTimer = 0;
+          obstacle.frame = obstacle.frame === 0 ? 1 : 0;
+        }
+      }
+      if (obstacle.xPos + obstacle.width <= 0) {
+        world.obstacles.splice(i, 1);
+      }
+    }
+
+    if (world.obstacles.length > 0) {
+      var lastObstacle = world.obstacles[world.obstacles.length - 1];
+      if (
+        lastObstacle &&
+        !lastObstacle.followingObstacleCreated &&
+        lastObstacle.xPos + lastObstacle.width > 0 &&
+        lastObstacle.xPos + lastObstacle.width + lastObstacle.gap < dimensions.width
+      ) {
+        addNewObstacle(currentSpeed);
+        lastObstacle.followingObstacleCreated = true;
+      }
+    } else {
+      addNewObstacle(currentSpeed);
+    }
+  }
+
+  function updateTrexJump(deltaTime) {
+    var framesElapsed = deltaTime / animFrames[Status.JUMPING].msPerFrame;
+    if (trex.speedDrop) {
+      trex.yPos += Math.round(
+        trex.jumpVelocity * TREX_CONFIG.speedDropCoefficient * framesElapsed
+      );
+    } else {
+      trex.yPos += Math.round(trex.jumpVelocity * framesElapsed);
+    }
+    trex.jumpVelocity += TREX_CONFIG.gravity * framesElapsed;
+
+    var minJumpY = getTrexGroundY() - TREX_CONFIG.minJumpHeight;
+    if (trex.yPos < minJumpY || trex.speedDrop) {
+      trex.reachedMinHeight = true;
+    }
+    if (trex.yPos < TREX_CONFIG.maxJumpHeight || trex.speedDrop) {
+      endJump();
+    }
+    if (trex.yPos > getTrexGroundY()) {
+      trex.yPos = getTrexGroundY();
+      trex.jumpVelocity = 0;
+      trex.jumping = false;
+      trex.speedDrop = false;
+      trex.reachedMinHeight = false;
+      trex.jumpCount += 1;
+      setTrexStatus(Status.RUNNING);
+    }
+  }
+
+  function updateTrexAnimation(deltaTime) {
+    if (trex.status === Status.WAITING) {
+      trex.blinkTimer += deltaTime;
+      if (trex.blinkTimer >= trex.blinkDelay && trex.currentFrame === 0) {
+        trex.currentFrame = 1;
+      }
+      if (trex.blinkTimer >= trex.blinkDelay + animFrames[Status.WAITING].msPerFrame) {
+        trex.currentFrame = 0;
+        trex.blinkTimer = 0;
+        trex.blinkDelay = randomInt(1000, 7000);
+        trex.blinkCount += 1;
+      }
       return;
     }
-    var framesElapsed = deltaMs / FPS;
-    var speedDropCoefficient = 3;
-    var groundDinoY = VIEWPORT.groundY - spriteMap.trex.height;
-    var maxJumpY = groundDinoY - JUMP_CONFIG.maxRise;
-    if (dino.speedDrop) {
-      dino.y += Math.round(dino.velocityY * speedDropCoefficient * framesElapsed);
-    } else {
-      dino.y += Math.round(dino.velocityY * framesElapsed);
-    }
-    dino.velocityY += JUMP_CONFIG.gravity * framesElapsed;
-    if ((dino.y < maxJumpY || dino.speedDrop) && dino.velocityY < JUMP_CONFIG.dropVelocity) {
-      dino.velocityY = JUMP_CONFIG.dropVelocity;
-    }
-    if (dino.y >= groundDinoY) {
-      resetDino();
+
+    trex.timer += deltaTime;
+    if (trex.timer >= trex.msPerFrame) {
+      trex.currentFrame =
+        trex.currentFrame === trex.currentAnimFrames.length - 1
+          ? 0
+          : trex.currentFrame + 1;
+      trex.timer = 0;
     }
   }
 
-  function getDinoCollisionBoxes() {
-    return dino.ducking ? dinoCollisionBoxes.ducking : dinoCollisionBoxes.running;
+  function getTrexCollisionBoxes() {
+    return trex.ducking ? trexCollisionBoxes.ducking : trexCollisionBoxes.running;
   }
 
   function collisionDetected(obstacle) {
-    var dinoBoxes = getDinoCollisionBoxes();
-    for (var i = 0; i < dinoBoxes.length; i += 1) {
-      var dinoBox = dinoBoxes[i];
+    var trexBoxes = getTrexCollisionBoxes();
+    for (var i = 0; i < trexBoxes.length; i += 1) {
+      var trexBox = trexBoxes[i];
       var a = {
-        x: dino.x + dinoBox.x,
-        y: dino.y + dinoBox.y,
-        width: dinoBox.width,
-        height: dinoBox.height,
+        x: trex.xPos + trexBox.x,
+        y: trex.yPos + trexBox.y,
+        width: trexBox.width,
+        height: trexBox.height,
       };
       for (var j = 0; j < obstacle.collisionBoxes.length; j += 1) {
         var obsBox = obstacle.collisionBoxes[j];
         var b = {
-          x: obstacle.x + obsBox.x,
-          y: obstacle.y + obsBox.y,
+          x: obstacle.xPos + obsBox.x,
+          y: obstacle.yPos + obsBox.y,
           width: obsBox.width,
           height: obsBox.height,
         };
@@ -492,105 +724,118 @@
     return false;
   }
 
-  function crash() {
-    state.running = false;
-    state.paused = false;
-    state.crashed = true;
-    state.bestScore = Math.max(state.bestScore, state.score);
-    dino.ducking = false;
-    dino.jumping = false;
-    dino.velocityY = 0;
-    publishOverlayScore(true);
-  }
-
-  function updateObstacles(deltaMs, frameScale) {
-    maybeSpawnObstacle();
-    for (var i = world.obstacles.length - 1; i >= 0; i -= 1) {
-      var obstacle = world.obstacles[i];
-      var travelSpeed = state.speed + obstacle.speedOffset;
-      obstacle.x -= Math.floor(travelSpeed * frameScale);
-      if (obstacle.kind === "bird") {
-        obstacle.frameTimer += deltaMs;
-        if (obstacle.frameTimer >= 1000 / 6) {
-          obstacle.frameTimer = 0;
-          obstacle.frame = obstacle.frame === 0 ? 1 : 0;
-        }
-      }
-      if (collisionDetected(obstacle)) {
-        crash();
-        return;
-      }
-      if (obstacle.x + obstacle.width < -MIN_SPAWN_DISTANCE) {
-        world.obstacles.splice(i, 1);
-      }
-    }
-  }
-
-  function updateScore() {
-    var nextScore = Math.max(0, Math.round(state.distance * SCORE_COEFFICIENT));
+  function updateDistanceMeter(deltaTime) {
+    var nextScore = state.distanceRan
+      ? Math.round(state.distanceRan * 0.025)
+      : 0;
     if (nextScore !== state.score) {
       state.score = nextScore;
       publishOverlayScore(false);
     }
+    if (nextScore > 0 && nextScore % 100 === 0 && nextScore !== state.lastAchievement) {
+      state.lastAchievement = nextScore;
+      state.achievement = true;
+      state.achievementTimer = 0;
+      state.achievementFlashCount = 0;
+    }
+    if (state.achievement) {
+      state.achievementTimer += deltaTime;
+      if (state.achievementTimer > 1000 / 2) {
+        state.achievementTimer = 0;
+        state.achievementFlashCount += 1;
+      }
+      if (state.achievementFlashCount > 3) {
+        state.achievement = false;
+      }
+    }
   }
 
-  function update(deltaMs) {
+  function gameOver() {
+    state.playing = false;
+    state.paused = false;
+    state.crashed = true;
+    state.gameOverAt = getTimeStamp();
+    state.highScore = Math.max(state.highScore, Math.ceil(state.distanceRan));
+    trex.jumping = false;
+    trex.ducking = false;
+    trex.speedDrop = false;
+    setTrexStatus(Status.CRASHED);
+    publishOverlayScore(true);
+  }
+
+  function update(deltaTime) {
     if (!spriteReady) {
       return;
     }
-    if (state.running && !state.paused && !state.crashed) {
-      var frameScale = deltaMs / FPS;
-      state.speed = Math.min(MAX_SPEED, state.speed + state.acceleration * deltaMs);
-      state.distance += state.speed * frameScale;
-      updateScore();
-      updateClouds(frameScale);
-      updateHorizon(frameScale);
-      updateDino(deltaMs);
-      updateObstacles(deltaMs, frameScale);
-      dino.animTimer += deltaMs;
-      if (dino.animTimer >= 1000 / 12) {
-        dino.animTimer = 0;
-        dino.currentFrame = dino.currentFrame === 0 ? 1 : 0;
+
+    if (state.playing && !state.paused && !state.crashed) {
+      if (trex.jumping) {
+        updateTrexJump(deltaTime);
       }
+      state.runningTime += deltaTime;
+      var hasObstacles = state.runningTime > CONFIG.clearTime;
+      updateClouds(deltaTime, state.currentSpeed);
+      updateHorizonLine(deltaTime, state.currentSpeed);
+      if (hasObstacles) {
+        updateObstacles(deltaTime, state.currentSpeed);
+      }
+
+      var firstObstacle = world.obstacles[0];
+      if (hasObstacles && firstObstacle && collisionDetected(firstObstacle)) {
+        gameOver();
+      } else {
+        state.distanceRan += state.currentSpeed * deltaTime / FRAME_TIME;
+        if (state.currentSpeed < CONFIG.maxSpeed) {
+          state.currentSpeed += CONFIG.acceleration;
+        }
+        updateDistanceMeter(deltaTime);
+      }
+      updateTrexAnimation(deltaTime);
       return;
     }
 
-    if (state.crashed) {
-      dino.currentFrame = 2;
+    if (state.paused || state.crashed) {
+      updateTrexAnimation(deltaTime);
       return;
     }
 
-    dino.animTimer += deltaMs;
-    if (dino.animTimer >= 1000 / 3) {
-      dino.animTimer = 0;
-      dino.currentFrame = dino.currentFrame === 3 ? 0 : 3;
+    if (!state.activated && trex.blinkCount < CONFIG.maxBlinkCount) {
+      updateTrexAnimation(deltaTime);
     }
   }
 
-  function drawSprite(sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height) {
-    context.drawImage(sprite, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
+  function drawSprite(sourceX, sourceY, sourceWidth, sourceHeight, targetX, targetY, targetWidth, targetHeight) {
+    context.drawImage(
+      sprite,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      targetX,
+      targetY,
+      targetWidth,
+      targetHeight
+    );
   }
 
   function drawBackground() {
-    context.fillStyle = "#f7f7f7";
-    context.fillRect(0, 0, layout.width, layout.height);
     context.save();
-    context.translate(layout.offsetX, layout.offsetY);
-    context.scale(layout.scale, layout.scale);
-    context.fillStyle = "#f7f7f7";
-    context.fillRect(0, 0, VIEWPORT.width, VIEWPORT.height);
+    context.setTransform(layout.ratio, 0, 0, layout.ratio, 0, 0);
+    context.fillStyle = BG_COLOR;
+    context.fillRect(0, 0, layout.width, layout.height);
     context.restore();
   }
 
   function drawClouds() {
     for (var i = 0; i < world.clouds.length; i += 1) {
+      var cloud = world.clouds[i];
       drawSprite(
         spriteMap.cloud.x,
         spriteMap.cloud.y,
         spriteMap.cloud.width,
         spriteMap.cloud.height,
-        world.clouds[i].x,
-        world.clouds[i].y,
+        cloud.xPos,
+        cloud.yPos,
         spriteMap.cloud.width,
         spriteMap.cloud.height
       );
@@ -605,121 +850,159 @@
         spriteMap.horizon.width,
         spriteMap.horizon.height,
         world.horizonX[i],
-        VIEWPORT.groundY,
-        VIEWPORT.width,
+        spriteMap.horizon.yPos,
+        spriteMap.horizon.width,
         spriteMap.horizon.height
       );
     }
   }
 
   function drawObstacle(obstacle) {
-    if (obstacle.kind === "bird") {
+    if (obstacle.type === "pterodactyl") {
       drawSprite(
-        spriteMap.bird.x + spriteMap.bird.width * obstacle.frame,
-        spriteMap.bird.y,
-        spriteMap.bird.width,
-        spriteMap.bird.height,
-        obstacle.x,
-        obstacle.y,
-        spriteMap.bird.width,
-        spriteMap.bird.height
+        spriteMap.pterodactyl.x + spriteMap.pterodactyl.width * obstacle.frame,
+        spriteMap.pterodactyl.y,
+        spriteMap.pterodactyl.width,
+        spriteMap.pterodactyl.height,
+        obstacle.xPos,
+        obstacle.yPos,
+        spriteMap.pterodactyl.width,
+        spriteMap.pterodactyl.height
       );
       return;
     }
+
+    var map = spriteMap[obstacle.type];
+    var sourceX =
+      map.x + (map.width * obstacle.size) * (0.5 * (obstacle.size - 1));
     drawSprite(
-      obstacle.spriteX,
-      spriteMap[obstacle.kind].y,
-      spriteMap[obstacle.kind].width * obstacle.size,
-      spriteMap[obstacle.kind].height,
-      obstacle.x,
-      obstacle.y,
+      sourceX,
+      map.y,
+      map.width * obstacle.size,
+      map.height,
+      obstacle.xPos,
+      obstacle.yPos,
       obstacle.width,
       obstacle.height
     );
   }
 
-  function drawDino() {
-    var frameOffset = 0;
-    var width = spriteMap.trex.width;
-    var height = spriteMap.trex.height;
-    if (state.crashed) {
-      frameOffset = 220;
-    } else if (dino.jumping) {
-      frameOffset = 0;
-    } else if (dino.ducking) {
-      width = spriteMap.trex.duckWidth;
-      height = spriteMap.trex.duckHeight;
-      frameOffset = dino.currentFrame === 0 ? 264 : 323;
-    } else if (!state.running) {
-      frameOffset = dino.currentFrame === 0 ? 44 : 0;
-    } else {
-      frameOffset = dino.currentFrame === 0 ? 88 : 132;
+  function drawTrex() {
+    var frameOffset = trex.currentAnimFrames[trex.currentFrame] || 0;
+    var sourceWidth = TREX_CONFIG.width;
+    var targetWidth = TREX_CONFIG.width;
+    if (trex.status === Status.DUCKING) {
+      sourceWidth = TREX_CONFIG.widthDuck;
+      targetWidth = TREX_CONFIG.widthDuck;
     }
     drawSprite(
       spriteMap.trex.x + frameOffset,
       spriteMap.trex.y,
-      width,
-      height,
-      dino.x,
-      dino.ducking ? VIEWPORT.groundY - height : dino.y,
-      width,
-      height
+      sourceWidth,
+      TREX_CONFIG.height,
+      trex.xPos,
+      trex.yPos,
+      targetWidth,
+      TREX_CONFIG.height
     );
   }
 
-  function drawScoreDigits(value, x, y) {
-    var digits = ("00000" + Math.max(0, value)).slice(-5).split("");
+  function drawDistanceDigits(value, x, y, alpha) {
+    var digits = ("00000" + Math.max(0, value)).slice(-5);
+    context.save();
+    context.globalAlpha = alpha;
     for (var i = 0; i < digits.length; i += 1) {
       drawSprite(
-        spriteMap.text.x + DIGIT_WIDTH * Number(digits[i]),
+        spriteMap.text.x + spriteMap.text.width * Number(digits[i]),
         spriteMap.text.y,
-        DIGIT_WIDTH,
-        DIGIT_HEIGHT,
-        x + i * DIGIT_ADVANCE,
+        spriteMap.text.width,
+        spriteMap.text.height,
+        x + i * spriteMap.text.advance,
         y,
-        DIGIT_WIDTH,
-        DIGIT_HEIGHT
+        spriteMap.text.width,
+        spriteMap.text.height
       );
     }
+    context.restore();
   }
 
-  function drawHiScore(x, y) {
-    drawSprite(
-      spriteMap.text.x + DIGIT_WIDTH * 10,
-      spriteMap.text.y,
-      DIGIT_WIDTH,
-      DIGIT_HEIGHT,
-      x,
-      y,
-      DIGIT_WIDTH,
-      DIGIT_HEIGHT
-    );
-    drawSprite(
-      spriteMap.text.x + DIGIT_WIDTH * 11,
-      spriteMap.text.y,
-      DIGIT_WIDTH,
-      DIGIT_HEIGHT,
-      x + DIGIT_ADVANCE,
-      y,
-      DIGIT_WIDTH,
-      DIGIT_HEIGHT
-    );
-    drawScoreDigits(state.bestScore, x + DIGIT_ADVANCE * 2, y);
-  }
-
-  function drawPrompt() {
-    context.fillStyle = "#535353";
-    context.textAlign = "center";
-    context.font = "14px 'Microsoft YaHei', sans-serif";
-    if (state.crashed) {
-      context.fillText("撞上了，轻触或空格重新开始", VIEWPORT.width / 2, 66);
-      context.fillText("GAME OVER", VIEWPORT.width / 2, 88);
-    } else if (state.paused) {
-      context.fillText("已暂停，点击开始/暂停或轻触继续", VIEWPORT.width / 2, 74);
-    } else if (!state.running) {
-      context.fillText(state.introText, VIEWPORT.width / 2, 74);
+  function drawHighScore() {
+    var highScore = Math.round(state.highScore * 0.025);
+    if (!highScore) {
+      return;
     }
-    context.textAlign = "left";
+    var scoreX = dimensions.width - spriteMap.text.advance * 6;
+    var highScoreX = scoreX - 100;
+    context.save();
+    context.globalAlpha = 0.8;
+    drawSprite(
+      spriteMap.text.x + spriteMap.text.width * 10,
+      spriteMap.text.y,
+      spriteMap.text.width,
+      spriteMap.text.height,
+      highScoreX,
+      5,
+      spriteMap.text.width,
+      spriteMap.text.height
+    );
+    drawSprite(
+      spriteMap.text.x + spriteMap.text.width * 11,
+      spriteMap.text.y,
+      spriteMap.text.width,
+      spriteMap.text.height,
+      highScoreX + spriteMap.text.advance,
+      5,
+      spriteMap.text.width,
+      spriteMap.text.height
+    );
+    drawDistanceDigits(highScore, highScoreX + spriteMap.text.advance * 3, 5, 1);
+    context.restore();
+  }
+
+  function drawDistanceMeter() {
+    var scoreX = dimensions.width - spriteMap.text.advance * 6;
+    var paint = !state.achievement || state.achievementFlashCount % 2 === 0;
+    if (paint) {
+      drawDistanceDigits(state.score, scoreX, 5, 1);
+    }
+    drawHighScore();
+  }
+
+  function drawGameOverPanel() {
+    var centerX = dimensions.width / 2;
+    var textWidth = 191;
+    var textHeight = 11;
+    var textTargetX = Math.round(centerX - textWidth / 2);
+    var textTargetY = Math.round((dimensions.height - 25) / 3);
+    drawSprite(
+      spriteMap.text.x,
+      spriteMap.text.y + 13,
+      textWidth,
+      textHeight,
+      textTargetX,
+      textTargetY,
+      textWidth,
+      textHeight
+    );
+    drawSprite(
+      spriteMap.restart.x,
+      spriteMap.restart.y,
+      spriteMap.restart.width,
+      spriteMap.restart.height,
+      centerX - spriteMap.restart.height / 2,
+      dimensions.height / 2,
+      spriteMap.restart.width,
+      spriteMap.restart.height
+    );
+  }
+
+  function drawPausedPrompt() {
+    context.save();
+    context.fillStyle = "#535353";
+    context.font = "12px 'Microsoft YaHei', sans-serif";
+    context.textAlign = "center";
+    context.fillText("PAUSED", dimensions.width / 2, 74);
+    context.restore();
   }
 
   function drawScene() {
@@ -736,16 +1019,20 @@
     context.save();
     context.translate(layout.offsetX, layout.offsetY);
     context.scale(layout.scale, layout.scale);
+    context.imageSmoothingEnabled = false;
 
     drawClouds();
     drawHorizon();
     for (var i = 0; i < world.obstacles.length; i += 1) {
       drawObstacle(world.obstacles[i]);
     }
-    drawDino();
-    drawScoreDigits(state.score, VIEWPORT.width - 63, 5);
-    drawHiScore(VIEWPORT.width - 140, 5);
-    drawPrompt();
+    drawTrex();
+    drawDistanceMeter();
+    if (state.crashed) {
+      drawGameOverPanel();
+    } else if (state.paused) {
+      drawPausedPrompt();
+    }
 
     context.restore();
   }
@@ -753,12 +1040,12 @@
   function snapshot() {
     return {
       score: state.score,
-      bestScore: state.bestScore,
-      runActive: state.running,
+      bestScore: Math.round(state.highScore * 0.025),
+      runActive: state.playing,
       runPaused: state.paused,
       crashed: state.crashed,
       obstacleCount: world.obstacles.length,
-      speed: Number(state.speed.toFixed(2)),
+      speed: Number(state.currentSpeed.toFixed(2)),
       hostReady: hostReady(),
     };
   }
@@ -767,19 +1054,18 @@
     if (!world.lastTime) {
       world.lastTime = now;
     }
-    var deltaMs = Math.min(40, now - world.lastTime);
+    var deltaTime = Math.min(100, now - world.lastTime);
     world.lastTime = now;
-    update(deltaMs);
+    update(deltaTime);
     drawScene();
     world.frameHandle = window.requestAnimationFrame(frame);
   }
 
-  function randomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
   function bindEvents() {
-    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("resize", function () {
+      adjustDimensions();
+      drawScene();
+    });
     window.addEventListener("keydown", function (event) {
       if (event.code === "Space" || event.code === "ArrowUp") {
         event.preventDefault();
@@ -788,11 +1074,16 @@
       }
       if (event.code === "ArrowDown") {
         event.preventDefault();
-        if (dino.jumping) {
-          speedDrop();
+        if (trex.jumping) {
+          setSpeedDrop();
           return;
         }
         setDuck(true);
+        return;
+      }
+      if (event.code === "Enter" && state.crashed) {
+        event.preventDefault();
+        handleJumpInput();
         return;
       }
       if (event.code === "KeyP") {
@@ -801,22 +1092,42 @@
       }
     });
     window.addEventListener("keyup", function (event) {
+      if (event.code === "Space" || event.code === "ArrowUp") {
+        endJump();
+        return;
+      }
       if (event.code === "ArrowDown") {
+        trex.speedDrop = false;
         setDuck(false);
       }
     });
     canvas.addEventListener("pointerdown", function (event) {
-      world.pointerStartY = event.clientY;
+      event.preventDefault();
+      world.pointerActive = true;
       handleJumpInput();
     });
     canvas.addEventListener("pointerup", function (event) {
-      if (event.clientY - world.pointerStartY > 24) {
-        speedDrop();
+      event.preventDefault();
+      if (world.pointerActive) {
+        endJump();
       }
+      world.pointerActive = false;
+    });
+    canvas.addEventListener("pointercancel", function () {
+      world.pointerActive = false;
+      endJump();
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
+        setPaused(true);
+      }
+    });
+    window.addEventListener("blur", function () {
+      setPaused(true);
     });
   }
 
-  resizeCanvas();
+  adjustDimensions();
   resetGame(false);
   bindEvents();
 
@@ -833,11 +1144,10 @@
     togglePause: togglePause,
     resetBoard: function () {
       resetGame(false);
-      state.running = false;
       return snapshot();
     },
     startRun: function () {
-      startGame(false);
+      startRun(false);
       return snapshot();
     },
   };

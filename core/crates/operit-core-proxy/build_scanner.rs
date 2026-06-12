@@ -173,7 +173,7 @@ pub(crate) fn discover_factory_object_specs(
     specs
 }
 
-fn has_proxyable_instance_methods(methods: &[SourceMethod]) -> bool {
+pub(crate) fn has_proxyable_instance_methods(methods: &[SourceMethod]) -> bool {
     methods
         .iter()
         .any(|method| method.call_protocol().is_some() || method.watch_protocol().is_some())
@@ -346,6 +346,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let mut has_context_ref_get_instance_arc_mutex = false;
         let mut has_store_paths_new = false;
         let mut has_result_store_paths_new = false;
+        let mut has_public_instance_method = false;
 
         for item in &file.items {
             let Item::Impl(item_impl) = item else {
@@ -361,6 +362,11 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                 if !matches!(function.vis, Visibility::Public(_)) {
                     continue;
                 }
+                has_public_instance_method |= function
+                    .sig
+                    .inputs
+                    .iter()
+                    .any(|input| matches!(input, FnArg::Receiver(_)));
                 let name = function.sig.ident.to_string();
                 if function.sig.inputs.is_empty() {
                     has_default |= name == "default";
@@ -413,6 +419,9 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
             }
         }
 
+        if !has_public_instance_method {
+            continue;
+        }
         if has_context_get_instance_arc_mutex {
             return Some((type_name, ObjectAccess::ContextGetInstanceArcMutexConstruct));
         }

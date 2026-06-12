@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::core::chat::AIMessageManager::{
-    logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
-    SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
+    AIMessageManager, BuildUserMessageContentRequest, SendMessageRequest as AIMessageSendRequest,
+    StableContextWindowRequest, logMessageTiming, messageTimingNow,
 };
 use crate::core::tools::ToolProgressBus::ToolProgressBus;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
@@ -24,11 +24,12 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
+use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use crate::util::stream::HotStream::SharedStream;
 use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
 use crate::util::stream::Stream::Stream;
 use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -90,7 +91,8 @@ pub struct BuildUserMessageContentForSendRequest {
     pub replyToMessage: Option<ChatMessage>,
     pub chatId: String,
     pub roleCardId: String,
-    pub chatModelConfigIdOverride: Option<String>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
 }
 
 pub struct BuildUserMessageContentForGroupOrchestrationRequest {
@@ -122,8 +124,8 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
     pub isGroupOrchestrationTurn: bool,
     pub groupParticipantNamesText: Option<String>,
@@ -156,8 +158,8 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
 }
 
@@ -464,7 +466,8 @@ impl MessageProcessingDelegate {
             replyToMessage: request.replyToMessage,
             chatId: request.chatId,
             roleCardId: request.roleCardId,
-            chatModelConfigIdOverride: None,
+            chatProviderIdOverride: None,
+            chatModelIdOverride: None,
         })
     }
 
@@ -473,40 +476,51 @@ impl MessageProcessingDelegate {
         &self,
         request: BuildUserMessageContentForSendRequest,
     ) -> Result<String, crate::api::chat::llmprovider::AIService::AiServiceError> {
-        let configId = match request.chatModelConfigIdOverride.as_ref() {
-            Some(value) if !value.trim().is_empty() => value.clone(),
-            _ => self
-                .functionalConfigManager
-                .getConfigIdForFunction(FunctionType::CHAT)
-                .map_err(|error| {
+        let (providerId, modelId) = match (
+            request.chatProviderIdOverride.as_ref(),
+            request.chatModelIdOverride.as_ref(),
+        ) {
+            (Some(providerId), Some(modelId))
+                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
+            {
+                (providerId.clone(), modelId.clone())
+            }
+            (None, None) => {
+                let binding = self
+                    .functionalConfigManager
+                    .getModelBindingForFunction(FunctionType::CHAT)
+                    .map_err(|error| {
+                        crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                            error.to_string(),
+                        )
+                    })?;
+                (binding.providerId, binding.modelId)
+            }
+            _ => {
+                return Err(
                     crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                        error.to_string(),
-                    )
-                })?,
+                        "chat provider and model override must be set together".to_string(),
+                    ),
+                );
+            }
         };
 
         let loadModelConfigStartTime = messageTimingNow();
         let currentModelConfig = self
             .modelConfigManager
-            .getModelConfigFlow(&configId)
-            .map_err(|error| {
-                crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                    error.to_string(),
-                )
-            })?
-            .first()
+            .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| {
                 crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
                     error.to_string(),
                 )
             })?;
-        let enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing;
-        let enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing;
-        let enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing;
+        let enableDirectImageProcessing = currentModelConfig.capabilities.directImage;
+        let enableDirectAudioProcessing = currentModelConfig.capabilities.directAudio;
+        let enableDirectVideoProcessing = currentModelConfig.capabilities.directVideo;
         logMessageTiming(
             "delegate.loadModelConfig",
             loadModelConfigStartTime,
-            Some(format!("chatId={}, configId={configId}", request.chatId)),
+            Some(format!("chatId={}, modelId={modelId}", request.chatId)),
         );
 
         let buildUserMessageStartTime = messageTimingNow();
@@ -750,6 +764,23 @@ impl MessageProcessingDelegate {
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.processing.start",
+            &[
+                ("chatId", chatId.clone()),
+                ("messageChars", ChainLogger::lenField(&originalMessageText)),
+                ("attachments", request.attachments.len().to_string()),
+                (
+                    "suppressUserMessage",
+                    ChainLogger::boolField(request.suppressUserMessageInHistory),
+                ),
+                (
+                    "groupOrchestration",
+                    ChainLogger::boolField(request.isGroupOrchestrationTurn),
+                ),
+            ],
+        );
         self.resetCurrentTurnToolInvocationCount(chatId.clone());
         self.withRuntime(Some(chatId.clone()), |runtime| {
             runtime.currentTurnOptions = request.turnOptions.clone();
@@ -777,10 +808,16 @@ impl MessageProcessingDelegate {
                 replyToMessage: request.replyToMessage.clone(),
                 chatId: chatId.clone(),
                 roleCardId: request.roleCardId.clone(),
-                chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
+                chatProviderIdOverride: request.chatProviderIdOverride.clone(),
+                chatModelIdOverride: request.chatModelIdOverride.clone(),
             }) {
                 Ok(content) => content,
                 Err(error) => {
+                    ChainLogger::error(
+                        SEND_CHAIN,
+                        "send.processing.build_user_content.error",
+                        &[("chatId", chatId.clone()), ("error", error.to_string())],
+                    );
                     self.withExistingRuntime(Some(chatId.clone()), |runtime| {
                         runtime.isLoading = false;
                         runtime.responseStream = None;
@@ -850,9 +887,29 @@ impl MessageProcessingDelegate {
             workspaceToolHookSession = Some(session);
         }
         if shouldAddUserMessageToChat {
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.user.start",
+                &[
+                    ("chatId", chatId.clone()),
+                    ("timestamp", userMessage.timestamp.to_string()),
+                    (
+                        "contentChars",
+                        userMessage.content.chars().count().to_string(),
+                    ),
+                ],
+            );
             request
                 .chatHistoryDelegate
                 .addMessageToChat(userMessage.clone(), Some(chatId.clone()));
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.user.done",
+                &[
+                    ("chatId", chatId.clone()),
+                    ("timestamp", userMessage.timestamp.to_string()),
+                ],
+            );
             userMessageAdded = true;
         }
         request
@@ -894,8 +951,8 @@ impl MessageProcessingDelegate {
             let groupOrchestrationMode = request.isGroupOrchestrationTurn;
             let groupParticipantNamesText = request.groupParticipantNamesText.clone();
             let proxySenderName = request.proxySenderNameOverride.clone();
-            let chatModelConfigIdOverride = request.chatModelConfigIdOverride.clone();
-            let chatModelIndexOverride = request.chatModelIndexOverride;
+            let chatProviderIdOverride = request.chatProviderIdOverride.clone();
+            let chatModelIdOverride = request.chatModelIdOverride.clone();
             let preferenceProfileIdOverride = request.preferenceProfileIdOverride.clone();
             move |service: &mut EnhancedAIService,
                   chatHistoryDelegate: &ChatHistoryDelegate,
@@ -904,8 +961,8 @@ impl MessageProcessingDelegate {
                 let runtimeOptions = SendMessageOptions {
                     roleCardId: Some(roleCardId.clone()),
                     promptFunctionType: promptFunctionType.clone(),
-                    chatModelConfigIdOverride: chatModelConfigIdOverride.clone(),
-                    chatModelIndexOverride,
+                    chatProviderIdOverride: chatProviderIdOverride.clone(),
+                    chatModelIdOverride: chatModelIdOverride.clone(),
                     preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
                     ..SendMessageOptions::new()
                 };
@@ -930,8 +987,8 @@ impl MessageProcessingDelegate {
                             groupOrchestrationMode,
                             groupParticipantNamesText,
                             proxySenderName,
-                            chatModelConfigIdOverride,
-                            chatModelIndexOverride,
+                            chatProviderIdOverride,
+                            chatModelIdOverride,
                             preferenceProfileIdOverride,
                             publishEstimate: true,
                             runtime,
@@ -962,8 +1019,8 @@ impl MessageProcessingDelegate {
             groupParticipantNamesText: request.groupParticipantNamesText.clone(),
             proxySenderName: request.proxySenderNameOverride.clone(),
             notifyReplyOverride: request.turnOptions.notifyReply,
-            chatModelConfigIdOverride: request.chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride: request.chatModelIndexOverride,
+            chatProviderIdOverride: request.chatProviderIdOverride.clone(),
+            chatModelIdOverride: request.chatModelIdOverride.clone(),
             preferenceProfileIdOverride: request.preferenceProfileIdOverride.clone(),
             disableWarning: request.turnOptions.disableWarning,
             callbacks: Some(Arc::new(MessageProcessingCallbacks {
@@ -973,8 +1030,20 @@ impl MessageProcessingDelegate {
         })
         .await
         {
-            Ok(stream) => stream,
+            Ok(stream) => {
+                ChainLogger::info(
+                    RECEIVE_CHAIN,
+                    "receive.stream.created",
+                    &[("chatId", chatId.clone())],
+                );
+                stream
+            }
             Err(error) => {
+                ChainLogger::error(
+                    RECEIVE_CHAIN,
+                    "receive.stream.create.error",
+                    &[("chatId", chatId.clone()), ("error", error.to_string())],
+                );
                 if let Some(session) = workspaceToolHookSession.as_ref() {
                     workspaceToolHookHandler.removeToolHook(session.hookId());
                     session.close();
@@ -1043,11 +1112,24 @@ impl MessageProcessingDelegate {
                 .addMessageToChat(userMessage, Some(chatId.clone()));
         }
         if workerTurnOptions.persistTurn {
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.ai.placeholder",
+                &[
+                    ("chatId", chatId.clone()),
+                    ("timestamp", aiMessage.timestamp.to_string()),
+                ],
+            );
             request
                 .chatHistoryDelegate
                 .addMessageToChat(aiMessage.clone(), Some(chatId.clone()));
         }
         std::thread::spawn(move || {
+            ChainLogger::info(
+                RECEIVE_CHAIN,
+                "receive.stream.collect.start",
+                &[("chatId", workerChatId.clone())],
+            );
             let eventWorker = std::thread::spawn(move || {
                 let mut events = workerEventCollector;
                 events.collect(&mut |event| match event.event_type {
@@ -1067,6 +1149,11 @@ impl MessageProcessingDelegate {
             workerResponseStream.collect(&mut |chunk| {
                 if firstResponseElapsed.is_none() {
                     firstResponseElapsed = Some(messageTimingNow().startedAtMs as i64);
+                    ChainLogger::info(
+                        RECEIVE_CHAIN,
+                        "receive.first_chunk",
+                        &[("chatId", workerChatId.clone())],
+                    );
                 }
                 let content = if let Ok(mut tracker) = workerRevisionTracker.lock() {
                     tracker.append(&chunk)
@@ -1112,6 +1199,18 @@ impl MessageProcessingDelegate {
                 completedElapsed,
             );
             if workerTurnOptions.persistTurn {
+                ChainLogger::info(
+                    MESSAGE_STORE_CHAIN,
+                    "message.store.ai.final",
+                    &[
+                        ("chatId", workerChatId.clone()),
+                        ("timestamp", finalMessage.timestamp.to_string()),
+                        (
+                            "contentChars",
+                            finalMessage.content.chars().count().to_string(),
+                        ),
+                    ],
+                );
                 workerChatHistoryDelegate
                     .addMessageToChat(finalMessage.clone(), Some(workerChatId.clone()));
             }
@@ -1180,8 +1279,8 @@ impl MessageProcessingDelegate {
                 enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
                 maxTokens: request.maxTokens,
                 tokenUsageThreshold: request.tokenUsageThreshold,
-                chatModelConfigIdOverride: request.chatModelConfigIdOverride,
-                chatModelIndexOverride: request.chatModelIndexOverride,
+                chatProviderIdOverride: request.chatProviderIdOverride,
+                chatModelIdOverride: request.chatModelIdOverride,
                 preferenceProfileIdOverride: request.preferenceProfileIdOverride,
                 isGroupOrchestrationTurn: false,
                 groupParticipantNamesText: None,

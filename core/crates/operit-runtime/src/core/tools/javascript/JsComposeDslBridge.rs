@@ -192,6 +192,23 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 return node;
             }
 
+            function resolvePackageName(value) {
+                var name = String(value || runtime.packageName || '').trim();
+                return name;
+            }
+
+            function normalizeToolName(targetPackage, toolName) {
+                var basePackage = String(targetPackage || '').trim();
+                var normalizedTool = String(toolName || '').trim();
+                if (!normalizedTool) {
+                    return '';
+                }
+                if (normalizedTool.indexOf(':') >= 0 || !basePackage) {
+                    return normalizedTool;
+                }
+                return basePackage + ':' + normalizedTool;
+            }
+
             function createUiRegistry(runtime) {
                 return new Proxy({}, {
                     get: function(_target, prop) {
@@ -615,6 +632,81 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     },
                     getCurrentUiModuleId: function() {
                         return runtime.uiModuleId;
+                    },
+                    isPackageImported: function(packageName) {
+                        var target = resolvePackageName(packageName);
+                        if (!target) {
+                            return Promise.resolve(false);
+                        }
+                        var result = invokeNative('isPackageImported', [target]);
+                        if (result === true || result === false || result === 'true' || result === 'false') {
+                            return Promise.resolve(result === true || result === 'true');
+                        }
+                        return toolCall('is_package_imported', { package_name: target });
+                    },
+                    importPackage: function(packageName) {
+                        var target = resolvePackageName(packageName);
+                        if (!target) {
+                            return Promise.resolve('');
+                        }
+                        var result = invokeNative('importPackage', [target]);
+                        if (result !== undefined && result !== null) {
+                            return Promise.resolve(result);
+                        }
+                        return toolCall('import_package', { package_name: target });
+                    },
+                    removePackage: function(packageName) {
+                        var target = resolvePackageName(packageName);
+                        if (!target) {
+                            return Promise.resolve('');
+                        }
+                        var result = invokeNative('removePackage', [target]);
+                        if (result !== undefined && result !== null) {
+                            return Promise.resolve(result);
+                        }
+                        return toolCall('remove_package', { package_name: target });
+                    },
+                    usePackage: function(packageName) {
+                        var target = resolvePackageName(packageName);
+                        if (!target) {
+                            return Promise.resolve('');
+                        }
+                        var result = invokeNative('usePackage', [target]);
+                        if (result !== undefined && result !== null) {
+                            return Promise.resolve(result);
+                        }
+                        return toolCall('use_package', { package_name: target });
+                    },
+                    listImportedPackages: function() {
+                        var json = invokeNative('listImportedPackagesJson', []);
+                        if (typeof json === 'string' && json.trim()) {
+                            try {
+                                return Promise.resolve(JSON.parse(json));
+                            } catch (e) {
+                                return Promise.resolve([]);
+                            }
+                        }
+                        return toolCall('list_imported_packages', {});
+                    },
+                    resolveToolName: function(request) {
+                        var req = request && typeof request === 'object' ? request : {};
+                        var packageName = String(req.packageName || runtime.packageName || '');
+                        var subpackageId = String(req.subpackageId || '');
+                        var toolName = String(req.toolName || '');
+                        var preferImported = req.preferImported === false ? 'false' : 'true';
+                        if (!toolName) {
+                            return Promise.resolve('');
+                        }
+                        var result = invokeNative('resolveToolName', [
+                            packageName,
+                            subpackageId,
+                            toolName,
+                            preferImported
+                        ]);
+                        if (typeof result === 'string' && result.trim()) {
+                            return Promise.resolve(result);
+                        }
+                        return Promise.resolve(normalizeToolName(packageName, toolName));
                     },
                     formatTemplate: function(template, values) {
                         var result = String(template || '');

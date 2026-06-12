@@ -372,7 +372,7 @@
   "settingsCategoryModelDescription": "Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.",
   "settingsCategoryCharactersTitle": "Characters & Memory",
   "settingsCategoryCharactersSubtitle": "Cards, groups, bindings",
-  "settingsCategoryCharactersDescription": "Manage character cards, character groups, active roles, and role-level model, memory, and tool bindings.",
+  "settingsCategoryCharactersDescription": "Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.",
   "settingsCategoryToolsTitle": "Tools & Extensions",
   "settingsCategoryToolsSubtitle": "Permissions, packages, skills, MCP",
   "settingsCategoryToolsDescription": "Control which tools Operit can call, and manage plugins, tool packages, skills, and MCP servers.",
@@ -391,6 +391,8 @@
   "settingsActivate": "Activate",
   "settingsModelCurrentSection": "Current chat model",
   "settingsModelCurrentChatModel": "Chat uses",
+  "settingsModelCurrentActive": "Active",
+  "settingsModelSetCurrentActive": "Set active",
   "settingsChatThinkingMode": "Thinking mode",
   "settingsChatThinkingModeDescription": "Let supported models produce steadier reasoning.",
   "settingsChatStreamOutput": "Stream output",
@@ -419,6 +421,45 @@
       }
     }
   },
+  "settingsModelFunctionMappingsMissing": "Bound model does not exist: {providerId} · {modelId}",
+  "@settingsModelFunctionMappingsMissing": {
+    "placeholders": {
+      "providerId": {
+        "type": "String"
+      },
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteBlocked": "This model is used by these functions. Change their model assignments first: {functions}",
+  "@settingsModelDeleteBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderBlocked": "Models under this provider are used by these functions. Change their model assignments first: {functions}",
+  "@settingsModelDeleteProviderBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirm": "Delete provider “{name}”? This will also delete its {count} models.",
+  "@settingsModelDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirmAction": "Delete provider",
   "settingsModelChatAutoGlmWarning": "AutoGLM cannot be used as the main chat model. Chat and UI control use separate model assignments; choose another large model.",
   "settingsModelFunctionChat": "Chat",
   "settingsModelFunctionChatDescription": "Model used for main conversation replies.",
@@ -433,7 +474,7 @@
   "settingsModelFunctionGrep": "Text search",
   "settingsModelFunctionGrepDescription": "Model used to filter search results and judge text matches.",
   "settingsModelFunctionRoleResponsePlanner": "Group reply planner",
-  "settingsModelFunctionRoleResponsePlannerDescription": "Model used to plan speaking roles and order in character group conversations.",
+  "settingsModelFunctionRoleResponsePlannerDescription": "Model used to plan speaking roles and order in group conversations.",
   "settingsModelFunctionImageRecognition": "Image recognition",
   "settingsModelFunctionImageRecognitionDescription": "Model used to understand images and extract image content.",
   "settingsModelFunctionAudioRecognition": "Audio recognition",
@@ -465,6 +506,60 @@
   "settingsModelApiKeyName": "Key name",
   "settingsModelApiKeyEnabled": "Enable this key",
   "settingsModelProviderId": "Provider ID",
+  "settingsModelProvidersSection": "Providers",
+  "settingsModelProviderType": "Provider type",
+  "settingsModelProviderTypeOption": "{name} ({original})",
+  "@settingsModelProviderTypeOption": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "original": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelProviderTypeOpenai": "OpenAI",
+  "settingsModelProviderTypeOpenaiResponses": "OpenAI Responses",
+  "settingsModelProviderTypeOpenaiResponsesGeneric": "OpenAI Responses compatible",
+  "settingsModelProviderTypeOpenaiGeneric": "OpenAI compatible",
+  "settingsModelProviderTypeAnthropic": "Anthropic",
+  "settingsModelProviderTypeAnthropicGeneric": "Anthropic compatible",
+  "settingsModelProviderTypeGoogle": "Google Gemini",
+  "settingsModelProviderTypeGeminiGeneric": "Gemini compatible",
+  "settingsModelProviderTypeBaidu": "Baidu",
+  "settingsModelProviderTypeAliyun": "Aliyun",
+  "settingsModelProviderTypeXunfei": "Xunfei",
+  "settingsModelProviderTypeZhipu": "Zhipu AI",
+  "settingsModelProviderTypeBaichuan": "Baichuan",
+  "settingsModelProviderTypeMoonshot": "Moonshot",
+  "settingsModelProviderTypeMimo": "MiMo",
+  "settingsModelProviderTypeDeepseek": "DeepSeek",
+  "settingsModelProviderTypeMistral": "Mistral",
+  "settingsModelProviderTypeSiliconflow": "SiliconFlow",
+  "settingsModelProviderTypeIflow": "iFlow",
+  "settingsModelProviderTypeOpenrouter": "OpenRouter",
+  "settingsModelProviderTypeFourRouter": "4Router",
+  "settingsModelProviderTypeNousPortal": "Nous Portal",
+  "settingsModelProviderTypeInfiniai": "InfiniAI",
+  "settingsModelProviderTypeAlipayBailing": "Alipay Bailing",
+  "settingsModelProviderTypeDoubao": "Doubao",
+  "settingsModelProviderTypeNvidia": "NVIDIA",
+  "settingsModelProviderTypeLmstudio": "LM Studio",
+  "settingsModelProviderTypeOllama": "Ollama",
+  "settingsModelProviderTypeOpenaiLocal": "OpenAI Local",
+  "settingsModelProviderTypeMnn": "MNN",
+  "settingsModelProviderTypeLlamaCpp": "llama.cpp",
+  "settingsModelProviderTypePpinfra": "PPInfra",
+  "settingsModelProviderTypeNovita": "Novita AI",
+  "settingsModelProviderTypeOther": "Other",
+  "settingsModelEditModelSettings": "Model settings",
+  "settingsModelCreateProvider": "Create provider",
+  "settingsModelEditProvider": "Edit provider",
+  "settingsModelAddModel": "Add model",
+  "settingsModelAddModelShort": "Add",
+  "settingsModelCustomModel": "Custom model",
+  "settingsModelModelId": "Model ID",
   "settingsModelMaxTokens": "Max tokens",
   "settingsModelMaxTokensDescription": "Limit how many tokens one response may generate.",
   "settingsModelTemperature": "Temperature",
@@ -483,6 +578,7 @@
   "settingsModelMaxConcurrent": "Max concurrent requests",
   "settingsModelContextLength": "Context length",
   "settingsModelMaxContextLength": "Max context length",
+  "settingsModelMaxContextLengthInvalid": "Enter a max context length greater than 0",
   "settingsModelMaxContextMode": "Max context mode",
   "settingsModelSummaryThreshold": "Summary token threshold",
   "settingsModelSummaryByMessageCount": "Summarize by message count",
@@ -502,8 +598,12 @@
   "settingsModelContext": "Context window",
   "settingsModelSummary": "Auto summary",
   "settingsModelMediaHistory": "Media history",
+  "settingsModelCapabilities": "Capabilities",
+  "settingsModelBuiltinTools": "Built-in tools",
+  "settingsModelBuiltinToolExclusive": "Turns off external tool calling when enabled",
   "settingsModelConnectionTestSection": "Connection test",
   "settingsModelRunConnectionTest": "Test current model",
+  "settingsModelTestModel": "Test model",
   "settingsModelTestingConnection": "Testing current model connection…",
   "settingsModelTestedModel": "Tested model",
   "settingsModelConnectionTestPassed": "All checks passed",
@@ -527,8 +627,8 @@
   "settingsCharactersCreateCard": "New character card",
   "settingsCharactersEditCard": "Edit character card",
   "settingsCharactersCardName": "Character name",
-  "settingsCharactersCreateGroup": "New character group",
-  "settingsCharactersEditGroup": "Edit character group",
+  "settingsCharactersCreateGroup": "New group",
+  "settingsCharactersEditGroup": "Edit group",
   "settingsCharactersGroupName": "Group name",
   "settingsCharactersDescription": "Description",
   "settingsCharactersCharacterSetting": "Character setting",
@@ -539,6 +639,8 @@
   "settingsCharactersMarks": "Notes",
   "settingsCharactersTags": "Tags",
   "settingsCharactersNoTags": "No tags available. Create tags in prompt/tag management, then bind them to character cards.",
+  "settingsCharactersImport": "Import",
+  "settingsCharactersExport": "Export",
   "settingsCharactersImportJson": "Import JSON",
   "settingsCharactersCopyJson": "Copy JSON",
   "settingsCharactersImportTavernJson": "Import Tavern JSON",
@@ -564,8 +666,8 @@
   "settingsCharactersImportCardJson": "Import character card JSON",
   "settingsCharactersImportCardJsonDone": "Character card imported.",
   "settingsCharactersImportTavernJsonDone": "Tavern character card imported.",
-  "settingsCharactersImportGroupJson": "Import character group JSON",
-  "settingsCharactersImportGroupJsonDone": "Character group imported.",
+  "settingsCharactersImportGroupJson": "Import group JSON",
+  "settingsCharactersImportGroupJsonDone": "Group imported.",
   "settingsCharactersImportJsonError": "JSON import failed: {error}",
   "@settingsCharactersImportJsonError": {
     "placeholders": {
@@ -610,7 +712,7 @@
   "settingsCharactersChatModelIndex": "Chat model index",
   "settingsCharactersMemoryBindingMode": "Memory binding mode",
   "settingsCharactersMemoryProfileId": "Memory profile ID",
-  "settingsCharactersToolAccess": "Enable character tool allowlist",
+  "settingsCharactersToolAccess": "Tool permission mode",
   "settingsCharactersChatModelFollowGlobal": "Follow global model",
   "settingsCharactersChatModelFixedConfig": "Use fixed model config",
   "settingsCharactersChatModelConfig": "Model config",
@@ -618,6 +720,7 @@
   "settingsCharactersMemoryProfileFixedProfile": "Use fixed memory profile",
   "settingsCharactersMemoryProfile": "Memory profile",
   "settingsCharactersToolAccessFollowGlobal": "Follow global tool permissions",
+  "settingsCharactersToolAccessCustom": "Custom character tool permissions",
   "settingsCharactersToolAccessEmpty": "Enabled with no selected tools",
   "settingsCharactersToolAccessSummaryCounts": "Built-in {builtinCount} · packages {packageCount} · skills {skillCount} · MCP {mcpCount}",
   "@settingsCharactersToolAccessSummaryCounts": {
@@ -664,7 +767,7 @@
   "settingsCharactersPreferenceLocksSection": "Preference field locks",
   "settingsCharactersPreferenceLockDescription": "When locked, automatic memory updates will not rewrite this field.",
   "settingsCharactersCardsSection": "Character cards",
-  "settingsCharactersGroupsSection": "Character groups",
+  "settingsCharactersGroupsSection": "Groups",
   "settingsCharactersGroupMembers": "{count} members",
   "@settingsCharactersGroupMembers": {
     "placeholders": {
@@ -858,8 +961,8 @@
   "settingsDataChatHistoriesBackupDescription": "Copy all chats and messages as JSON. Import updates or creates chats by chat ID.",
   "settingsDataCharacterCardsBackup": "Character card backup",
   "settingsDataCharacterCardsBackupDescription": "Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.",
-  "settingsDataCharacterGroupsBackup": "Character group backup",
-  "settingsDataCharacterGroupsBackupDescription": "Copy all character groups as JSON. Import keeps member references and ordering.",
+  "settingsDataCharacterGroupsBackup": "Group backup",
+  "settingsDataCharacterGroupsBackupDescription": "Copy all groups as JSON. Import keeps member references and ordering.",
   "settingsDataModelConfigsBackup": "Model config backup",
   "settingsDataModelConfigsBackupDescription": "Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.",
   "settingsDataBackupCount": "{count} items",

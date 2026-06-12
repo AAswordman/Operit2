@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::AIService::AiServiceError;
-use crate::data::model::ModelConfigData::{ApiProviderType, ModelConfigData};
+use crate::data::model::ModelConfigData::{
+    ApiProviderType, ModelBuiltinTool, ResolvedModelConfig,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LlmRequestTraceContext {
@@ -38,7 +40,7 @@ pub enum ProviderServiceKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApiKeyProviderSpec {
     SingleApiKeyProvider { api_key: String },
-    MultiApiKeyProvider { config_id: String },
+    MultiApiKeyProvider { provider_id: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,7 +56,7 @@ pub struct LlamaSessionConfig {
     pub offload_kqv: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProviderCreateParams {
     OpenAIProvider {
         api_endpoint: String,
@@ -92,7 +94,7 @@ pub enum ProviderCreateParams {
         model_name: String,
         custom_headers: BTreeMap<String, String>,
         provider_type: ApiProviderType,
-        enable_google_search: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     },
     OllamaProvider {
@@ -234,11 +236,12 @@ pub enum ProviderCreateParams {
     },
     ToolPkgJsAiProviderService {
         provider_type_id: String,
-        config_id: String,
+        provider_id: String,
+        model_id: String,
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProviderServiceSpec {
     pub kind: ProviderServiceKind,
     pub params: ProviderCreateParams,
@@ -246,8 +249,7 @@ pub struct ProviderServiceSpec {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderCreateRequest {
-    pub config: ModelConfigData,
-    pub selected_model_name: String,
+    pub config: ResolvedModelConfig,
     pub provider_type: ApiProviderType,
     pub provider_type_id: String,
     pub tool_pkg_provider_registered: bool,
@@ -273,18 +275,20 @@ impl AIServiceFactory {
                 kind: ProviderServiceKind::ToolPkgJsAiProviderService,
                 params: ProviderCreateParams::ToolPkgJsAiProviderService {
                     provider_type_id,
-                    config_id: config.id,
+                    provider_id: config.providerId,
+                    model_id: config.modelId,
                 },
             });
         }
 
         let custom_headers = Self::parse_custom_headers(&config.customHeaders)?;
         let api_key_provider = Self::api_key_provider(&config);
-        let supports_vision = config.enableDirectImageProcessing;
-        let supports_audio = config.enableDirectAudioProcessing;
-        let supports_video = config.enableDirectVideoProcessing;
-        let enable_tool_call = config.enableToolCall;
-        let model_name = request.selected_model_name;
+        let supports_vision = config.capabilities.directImage;
+        let supports_audio = config.capabilities.directAudio;
+        let supports_video = config.capabilities.directVideo;
+        let enable_tool_call = config.capabilities.toolCall;
+        let builtin_tools = config.builtinTools.clone();
+        let model_name = config.modelId.clone();
         let provider_type = request.provider_type;
 
         let spec = match provider_type {
@@ -330,7 +334,7 @@ impl AIServiceFactory {
                 model_name,
                 custom_headers,
                 provider_type,
-                config.enableGoogleSearch,
+                builtin_tools,
                 enable_tool_call,
             ),
             ApiProviderType::LMSTUDIO => Self::open_ai_provider(
@@ -357,8 +361,8 @@ impl AIServiceFactory {
             ),
             ApiProviderType::MNN => Self::mnn_provider(
                 model_name,
-                config.mnnForwardType.to_string(),
-                config.mnnThreadCount,
+                config.localRuntime.mnnForwardType.to_string(),
+                config.localRuntime.mnnThreadCount,
                 provider_type,
                 enable_tool_call,
                 supports_vision,
@@ -547,7 +551,7 @@ impl AIServiceFactory {
             .collect()
     }
 
-    pub fn api_key_mode(config: &ModelConfigData) -> ApiKeyMode {
+    pub fn api_key_mode(config: &ResolvedModelConfig) -> ApiKeyMode {
         if config.useMultipleApiKeys {
             ApiKeyMode::Multiple
         } else {
@@ -555,10 +559,10 @@ impl AIServiceFactory {
         }
     }
 
-    pub fn api_key_provider(config: &ModelConfigData) -> ApiKeyProviderSpec {
+    pub fn api_key_provider(config: &ResolvedModelConfig) -> ApiKeyProviderSpec {
         if config.useMultipleApiKeys {
             ApiKeyProviderSpec::MultiApiKeyProvider {
-                config_id: config.id.clone(),
+                provider_id: config.providerId.clone(),
             }
         } else {
             ApiKeyProviderSpec::SingleApiKeyProvider {
@@ -568,21 +572,21 @@ impl AIServiceFactory {
     }
 
     pub fn build_android_llama_session_config(
-        config: &ModelConfigData,
+        config: &ResolvedModelConfig,
         available_processors: i32,
     ) -> LlamaSessionConfig {
         let processor_count = available_processors.max(1);
-        let safe_thread_count = config.llamaThreadCount.max(1).min(processor_count);
+        let thread_count = config.localRuntime.llamaThreadCount.max(1).min(processor_count);
         LlamaSessionConfig {
-            n_threads: safe_thread_count,
-            n_ctx: config.llamaContextSize.max(1),
-            n_batch: 512,
-            n_ubatch: 512,
-            n_gpu_layers: config.llamaGpuLayers.max(0),
-            use_mmap: false,
-            flash_attention: false,
-            kv_unified: true,
-            offload_kqv: false,
+            n_threads: thread_count,
+            n_ctx: config.localRuntime.llamaContextSize.max(1),
+            n_batch: config.localRuntime.llamaBatchSize.max(1),
+            n_ubatch: config.localRuntime.llamaUBatchSize.max(1),
+            n_gpu_layers: config.localRuntime.llamaGpuLayers.max(0),
+            use_mmap: config.localRuntime.llamaUseMmap,
+            flash_attention: config.localRuntime.llamaFlashAttention,
+            kv_unified: config.localRuntime.llamaKvUnified,
+            offload_kqv: config.localRuntime.llamaOffloadKqv,
         }
     }
 
@@ -694,7 +698,7 @@ impl AIServiceFactory {
         model_name: String,
         custom_headers: BTreeMap<String, String>,
         provider_type: ApiProviderType,
-        enable_google_search: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     ) -> Result<ProviderServiceSpec, AiServiceError> {
         Ok(ProviderServiceSpec {
@@ -705,7 +709,7 @@ impl AIServiceFactory {
                 model_name,
                 custom_headers,
                 provider_type,
-                enable_google_search,
+                builtin_tools,
                 enable_tool_call,
             },
         })

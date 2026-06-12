@@ -32,9 +32,7 @@ use crate::api::chat::llmprovider::RateLimiterRegistry::RateLimiterRegistry;
 use crate::api::chat::llmprovider::RequestConcurrencyRegistry::RequestConcurrencyRegistry;
 use crate::api::chat::llmprovider::ToolPkgJsAiProviderService::ToolPkgJsAiProviderService;
 use crate::data::model::FunctionType::FunctionType;
-use crate::data::model::ModelConfigData::{
-    getModelByIndex, getValidModelIndex, ApiProviderType, ModelConfigData,
-};
+use crate::data::model::ModelConfigData::{ApiProviderType, ResolvedModelConfig};
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
@@ -51,7 +49,7 @@ struct MultiServiceManagerState {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
     serviceInstances: HashMap<FunctionType, SharedAIServiceHandle>,
-    customServiceInstances: HashMap<String, SharedAIServiceHandle>,
+    modelServiceInstances: HashMap<String, SharedAIServiceHandle>,
     isInitialized: bool,
     defaultServiceKey: Option<FunctionType>,
 }
@@ -63,7 +61,7 @@ impl MultiServiceManager {
                 functionalConfigManager: FunctionalConfigManager::new(root_dir.clone()),
                 modelConfigManager: ModelConfigManager::new(root_dir),
                 serviceInstances: HashMap::new(),
-                customServiceInstances: HashMap::new(),
+                modelServiceInstances: HashMap::new(),
                 isInitialized: false,
                 defaultServiceKey: None,
             })),
@@ -108,18 +106,15 @@ impl MultiServiceManager {
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
         if !inner.serviceInstances.contains_key(&functionType) {
-            let configMapping = inner
+            let binding = inner
                 .functionalConfigManager
-                .getConfigMappingForFunction(functionType.clone())
+                .getModelBindingForFunction(functionType.clone())
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             let config = inner
                 .modelConfigManager
-                .getModelConfigFlow(&configMapping.configId)
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-                .first()
+                .getResolvedModelConfig(&binding.providerId, &binding.modelId)
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let service =
-                Self::createServiceFromConfigLocked(&inner, config, configMapping.modelIndex)?;
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
             inner
                 .serviceInstances
                 .insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
@@ -135,34 +130,31 @@ impl MultiServiceManager {
         Ok(service)
     }
 
-    pub fn getServiceForConfig(
+    pub fn getServiceForModel(
         &mut self,
-        configId: String,
-        modelIndex: i32,
+        providerId: String,
+        modelId: String,
     ) -> Result<SharedAIServiceHandle, AiServiceError> {
         let mut inner = self
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let normalizedIndex = modelIndex.max(0);
-        let cacheKey = format!("{configId}#{normalizedIndex}");
-        if !inner.customServiceInstances.contains_key(&cacheKey) {
+        let serviceKey = Self::modelServiceKey(&providerId, &modelId);
+        if !inner.modelServiceInstances.contains_key(&serviceKey) {
             let config = inner
                 .modelConfigManager
-                .getModelConfigFlow(&configId)
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-                .first()
+                .getResolvedModelConfig(&providerId, &modelId)
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let service = Self::createServiceFromConfigLocked(&inner, config, normalizedIndex)?;
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
             inner
-                .customServiceInstances
-                .insert(cacheKey.clone(), Arc::new(AsyncMutex::new(service)));
+                .modelServiceInstances
+                .insert(serviceKey.clone(), Arc::new(AsyncMutex::new(service)));
         }
         let service = inner
-            .customServiceInstances
-            .get(&cacheKey)
-            .expect("custom service must exist after creation")
+            .modelServiceInstances
+            .get(&serviceKey)
+            .expect("model service must exist after creation")
             .clone();
         Ok(service)
     }
@@ -176,7 +168,7 @@ impl MultiServiceManager {
         functionType: FunctionType,
     ) -> Result<
         (
-            ModelConfigData,
+            ResolvedModelConfig,
             Vec<ModelParameter<Value>>,
             SharedAIServiceHandle,
         ),
@@ -187,26 +179,17 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let configMapping = inner
+        let binding = inner
             .functionalConfigManager
-            .getConfigMappingForFunction(functionType.clone())
+            .getModelBindingForFunction(functionType.clone())
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let config = inner
             .modelConfigManager
-            .getModelConfigFlow(&configMapping.configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-            .first()
+            .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let modelParameters = inner
-            .modelConfigManager
-            .getModelParametersForConfig(&configMapping.configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let modelParameters = config.parameters.clone();
         if !inner.serviceInstances.contains_key(&functionType) {
-            let service = Self::createServiceFromConfigLocked(
-                &inner,
-                config.clone(),
-                configMapping.modelIndex,
-            )?;
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
             inner
                 .serviceInstances
                 .insert(functionType.clone(), Arc::new(AsyncMutex::new(service)));
@@ -222,13 +205,13 @@ impl MultiServiceManager {
         Ok((config, modelParameters, service))
     }
 
-    pub fn getServiceBundleForConfig(
+    pub fn getServiceBundleForModel(
         &mut self,
-        configId: String,
-        modelIndex: i32,
+        providerId: String,
+        modelId: String,
     ) -> Result<
         (
-            ModelConfigData,
+            ResolvedModelConfig,
             Vec<ModelParameter<Value>>,
             SharedAIServiceHandle,
         ),
@@ -239,40 +222,33 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
+        let serviceKey = Self::modelServiceKey(&providerId, &modelId);
         let config = inner
             .modelConfigManager
-            .getModelConfigFlow(&configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-            .first()
+            .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let modelParameters = inner
-            .modelConfigManager
-            .getModelParametersForConfig(&configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let normalizedIndex = modelIndex.max(0);
-        let cacheKey = format!("{configId}#{normalizedIndex}");
-        if !inner.customServiceInstances.contains_key(&cacheKey) {
-            let service =
-                Self::createServiceFromConfigLocked(&inner, config.clone(), normalizedIndex)?;
+        let modelParameters = config.parameters.clone();
+        if !inner.modelServiceInstances.contains_key(&serviceKey) {
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
             inner
-                .customServiceInstances
-                .insert(cacheKey.clone(), Arc::new(AsyncMutex::new(service)));
+                .modelServiceInstances
+                .insert(serviceKey.clone(), Arc::new(AsyncMutex::new(service)));
         }
         let service = inner
-            .customServiceInstances
-            .get(&cacheKey)
-            .expect("custom service must exist after creation")
+            .modelServiceInstances
+            .get(&serviceKey)
+            .expect("model service must exist after creation")
             .clone();
         Ok((config, modelParameters, service))
     }
 
-    pub fn createTransientServiceBundleForConfigData(
+    pub fn createTransientServiceBundleForModel(
         &mut self,
-        config: ModelConfigData,
-        modelIndex: i32,
+        providerId: String,
+        modelId: String,
     ) -> Result<
         (
-            ModelConfigData,
+            ResolvedModelConfig,
             Vec<ModelParameter<Value>>,
             Box<dyn AIService>,
         ),
@@ -283,12 +259,12 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let modelParameters = inner
+        let config = inner
             .modelConfigManager
-            .getModelParametersForConfig(&config.id)
+            .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let normalizedIndex = modelIndex.max(0);
-        let service = Self::createServiceFromConfigLocked(&inner, config.clone(), normalizedIndex)?;
+        let modelParameters = config.parameters.clone();
+        let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
         Ok((config, modelParameters, service))
     }
 
@@ -300,7 +276,7 @@ impl MultiServiceManager {
         for service in inner.serviceInstances.values() {
             service.blocking_lock().cancel_streaming();
         }
-        for service in inner.customServiceInstances.values() {
+        for service in inner.modelServiceInstances.values() {
             service.blocking_lock().cancel_streaming();
         }
     }
@@ -313,7 +289,7 @@ impl MultiServiceManager {
         for service in inner.serviceInstances.values() {
             service.blocking_lock().reset_token_counts();
         }
-        for service in inner.customServiceInstances.values() {
+        for service in inner.modelServiceInstances.values() {
             service.blocking_lock().reset_token_counts();
         }
     }
@@ -343,11 +319,30 @@ impl MultiServiceManager {
         }
         if functionType == FunctionType::CHAT {
             inner.defaultServiceKey = None;
-            for (_, oldService) in inner.customServiceInstances.drain() {
+            for (_, oldService) in inner.modelServiceInstances.drain() {
                 let mut service = oldService.blocking_lock();
                 service.cancel_streaming();
                 service.release();
             }
+        }
+        Ok(())
+    }
+
+    pub fn refreshServiceForModel(
+        &mut self,
+        providerId: String,
+        modelId: String,
+    ) -> Result<(), AiServiceError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("MultiServiceManager mutex poisoned");
+        Self::ensureInitializedLocked(&mut inner)?;
+        let serviceKey = Self::modelServiceKey(&providerId, &modelId);
+        if let Some(oldService) = inner.modelServiceInstances.remove(&serviceKey) {
+            let mut service = oldService.blocking_lock();
+            service.cancel_streaming();
+            service.release();
         }
         Ok(())
     }
@@ -363,7 +358,7 @@ impl MultiServiceManager {
             service.cancel_streaming();
             service.release();
         }
-        for (_, oldService) in inner.customServiceInstances.drain() {
+        for (_, oldService) in inner.modelServiceInstances.drain() {
             let mut service = oldService.blocking_lock();
             service.cancel_streaming();
             service.release();
@@ -372,31 +367,26 @@ impl MultiServiceManager {
         Ok(())
     }
 
-    fn createServiceFromConfigLocked(
+    fn createServiceFromResolvedConfigLocked(
         inner: &MultiServiceManagerState,
-        config: ModelConfigData,
-        modelIndex: i32,
+        config: ResolvedModelConfig,
     ) -> Result<Box<dyn AIService>, AiServiceError> {
-        let actualIndex = getValidModelIndex(&config.modelName, modelIndex);
-        let selectedModelName = getModelByIndex(&config.modelName, actualIndex);
         let providerTypeId = config.apiProviderTypeId.trim().to_string();
         let toolPkgProviderRegistered =
             crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::get(
                 &providerTypeId,
             )
             .is_some();
-        let providerType = if toolPkgProviderRegistered {
-            config.apiProviderType.clone()
-        } else {
-            ApiProviderType::fromProviderTypeId(&providerTypeId)
-                .expect("apiProviderTypeId must map to ApiProviderType")
+        let providerType = match toolPkgProviderRegistered {
+            true => config.apiProviderType.clone(),
+            false => ApiProviderType::fromProviderTypeId(&providerTypeId)
+                .expect("apiProviderTypeId must map to ApiProviderType"),
         };
         let requestLimitPerMinute = config.requestLimitPerMinute.max(0);
         let maxConcurrentRequests = config.maxConcurrentRequests.max(0);
-        let configId = config.id.clone();
+        let modelId = config.modelId.clone();
         let spec = AIServiceFactory::create_service(ProviderCreateRequest {
             config,
-            selected_model_name: selectedModelName,
             provider_type: providerType.clone(),
             provider_type_id: providerTypeId,
             tool_pkg_provider_registered: toolPkgProviderRegistered,
@@ -409,7 +399,7 @@ impl MultiServiceManager {
 
         let limiter = if requestLimitPerMinute > 0 {
             Some(RateLimiterRegistry::getOrCreate(
-                &configId,
+                &modelId,
                 requestLimitPerMinute,
             ))
         } else {
@@ -418,7 +408,7 @@ impl MultiServiceManager {
 
         let concurrencySemaphore = if maxConcurrentRequests > 0 {
             Some(RequestConcurrencyRegistry::getOrCreate(
-                &configId,
+                &modelId,
                 maxConcurrentRequests,
             ))
         } else {
@@ -517,14 +507,14 @@ impl MultiServiceManager {
                 custom_headers,
                 provider_type,
                 enable_tool_call,
-                enable_google_search,
+                builtin_tools,
             } => Ok(Box::new(GeminiProvider::new(
                 api_endpoint,
                 Self::resolveApiKeyProviderLocked(inner, api_key_provider)?,
                 model_name,
                 provider_type.name().to_string(),
                 custom_headers.into_iter().collect(),
-                enable_google_search,
+                builtin_tools,
                 enable_tool_call,
             ))),
             ProviderCreateParams::OllamaProvider {
@@ -751,22 +741,17 @@ impl MultiServiceManager {
             ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
             ProviderCreateParams::ToolPkgJsAiProviderService {
                 provider_type_id,
-                config_id,
+                provider_id,
+                model_id,
             } => {
                 let provider = crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::get(&provider_type_id)
                     .ok_or_else(|| AiServiceError::ProviderNotImplemented(provider_type_id.clone()))?;
                 let config = inner
                     .modelConfigManager
-                    .getModelConfigFlow(&config_id)
-                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-                    .first()
+                    .getResolvedModelConfig(&provider_id, &model_id)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
                 Ok(Box::new(ToolPkgJsAiProviderService::new(config, provider)))
             }
-            _ => Err(AiServiceError::ProviderNotImplemented(format!(
-                "{:?}",
-                spec.kind
-            ))),
         }
     }
 
@@ -776,23 +761,21 @@ impl MultiServiceManager {
     ) -> Result<String, AiServiceError> {
         match apiKeyProvider {
             ApiKeyProviderSpec::SingleApiKeyProvider { api_key } => Ok(api_key),
-            ApiKeyProviderSpec::MultiApiKeyProvider { config_id } => {
-                let config = inner
+            ApiKeyProviderSpec::MultiApiKeyProvider { provider_id } => {
+                let provider = inner
                     .modelConfigManager
-                    .getModelConfigFlow(&config_id)
-                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-                    .first()
+                    .getProviderProfile(&provider_id)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-                let index = usize::try_from(config.currentKeyIndex)
+                let index = usize::try_from(provider.currentKeyIndex)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-                let keyInfo = config.apiKeyPool.get(index).ok_or_else(|| {
+                let keyInfo = provider.apiKeyPool.get(index).ok_or_else(|| {
                     AiServiceError::RequestFailed(format!(
-                        "apiKeyPool index out of range: configId={config_id}, index={index}"
+                        "apiKeyPool index out of range: providerId={provider_id}, index={index}"
                     ))
                 })?;
                 if !keyInfo.isEnabled {
                     return Err(AiServiceError::RequestFailed(format!(
-                        "apiKeyPool entry disabled: configId={config_id}, index={index}"
+                        "apiKeyPool entry disabled: providerId={provider_id}, index={index}"
                     )));
                 }
                 Ok(keyInfo.key.clone())
@@ -804,46 +787,34 @@ impl MultiServiceManager {
         &mut self,
         functionType: FunctionType,
     ) -> Result<Vec<ModelParameter<Value>>, AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
-        let configMapping = inner
-            .functionalConfigManager
-            .getConfigMappingForFunction(functionType)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        inner
-            .modelConfigManager
-            .getModelParametersForConfig(&configMapping.configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
+        let config = self.getModelConfigForFunction(functionType)?;
+        Ok(config.parameters)
     }
 
     pub fn getModelConfigForFunction(
         &mut self,
         functionType: FunctionType,
-    ) -> Result<ModelConfigData, AiServiceError> {
+    ) -> Result<ResolvedModelConfig, AiServiceError> {
         let mut inner = self
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let configMapping = inner
+        let binding = inner
             .functionalConfigManager
-            .getConfigMappingForFunction(functionType)
+            .getModelBindingForFunction(functionType)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         inner
             .modelConfigManager
-            .getModelConfigFlow(&configMapping.configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-            .first()
+            .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
     }
 
-    pub fn getModelConfigForConfig(
+    pub fn getModelConfigForModel(
         &mut self,
-        configId: String,
-    ) -> Result<ModelConfigData, AiServiceError> {
+        providerId: String,
+        modelId: String,
+    ) -> Result<ResolvedModelConfig, AiServiceError> {
         let mut inner = self
             .inner
             .lock()
@@ -851,39 +822,35 @@ impl MultiServiceManager {
         Self::ensureInitializedLocked(&mut inner)?;
         inner
             .modelConfigManager
-            .getModelConfigFlow(&configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?
-            .first()
+            .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
     }
 
-    pub fn getModelParametersForConfig(
+    pub fn getModelParametersForModel(
         &mut self,
-        configId: String,
+        providerId: String,
+        modelId: String,
     ) -> Result<Vec<ModelParameter<Value>>, AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
-        inner
-            .modelConfigManager
-            .getModelParametersForConfig(&configId)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
+        let config = self.getModelConfigForModel(providerId, modelId)?;
+        Ok(config.parameters)
+    }
+
+    fn modelServiceKey(providerId: &str, modelId: &str) -> String {
+        format!("{providerId}:{modelId}")
     }
 
     pub fn hasImageRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::IMAGE_RECOGNITION)?;
-        Ok(config.enableDirectImageProcessing)
+        Ok(config.capabilities.directImage)
     }
 
     pub fn hasAudioRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::AUDIO_RECOGNITION)?;
-        Ok(config.enableDirectAudioProcessing)
+        Ok(config.capabilities.directAudio)
     }
 
     pub fn hasVideoRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::VIDEO_RECOGNITION)?;
-        Ok(config.enableDirectVideoProcessing)
+        Ok(config.capabilities.directVideo)
     }
 }

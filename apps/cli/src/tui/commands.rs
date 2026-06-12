@@ -44,7 +44,7 @@ const COMMAND_SPECS: [TuiCommandSpec; 20] = [
     TuiCommandSpec {
         name: "model list",
         usage: "/model list",
-        description: "list model configs",
+        description: "list models",
     },
     TuiCommandSpec {
         name: "model choose",
@@ -53,7 +53,7 @@ const COMMAND_SPECS: [TuiCommandSpec; 20] = [
     },
     TuiCommandSpec {
         name: "model use",
-        usage: "/model use <config-id> [model-index]",
+        usage: "/model use <model-id>",
         description: "switch chat model binding",
     },
     TuiCommandSpec {

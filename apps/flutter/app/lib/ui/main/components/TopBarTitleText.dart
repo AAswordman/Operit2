@@ -28,7 +28,6 @@ class TopBarTitleText extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.titleSmall?.copyWith(
               color: contentColor,
-              fontSize: 14,
               fontWeight: FontWeight.w600,
             ),
           ),

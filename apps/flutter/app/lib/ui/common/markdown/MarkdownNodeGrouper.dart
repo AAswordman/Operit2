@@ -135,7 +135,7 @@ abstract class MarkdownNodeGrouper {
     required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
-    required double fontSize,
+    required TextStyle textStyle,
   });
 }
 
@@ -165,7 +165,7 @@ class NoopMarkdownNodeGrouper extends MarkdownNodeGrouper {
     required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
-    required double fontSize,
+    required TextStyle textStyle,
   }) {
     return const SizedBox.shrink();
   }

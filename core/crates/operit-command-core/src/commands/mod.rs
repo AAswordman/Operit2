@@ -1,6 +1,7 @@
 mod approval;
 mod chat;
 mod host;
+mod log;
 mod market;
 mod mcp;
 mod memory;
@@ -49,6 +50,7 @@ pub fn run_core_command(
         "host" => {
             host::run_host_command(application.applicationContext.clone(), &args[1..], output)
         }
+        "log" => log::run_log_command(&args[1..], output),
         "prefs" => {
             prefs::run_prefs_command(application.applicationContext.clone(), &args[1..], output)
         }
@@ -78,7 +80,7 @@ pub fn run_core_command(
 }
 
 fn print_core_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|update>");
+    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|update>");
     output.push_stdout_line("operit2 tool <list|show|exec>");
     output.push_stdout_line(
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
@@ -92,6 +94,7 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
         "operit2 market <auth|stats|rank|search|show|install|comments|comment|reactions|react>",
     );
     output.push_stdout_line("operit2 host <show|capabilities|paths>");
+    output.push_stdout_line("operit2 log <show|package|path|clear>");
     output.push_stdout_line(
         "operit2 prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>",
     );

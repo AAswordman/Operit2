@@ -215,8 +215,15 @@ class ChatViewModel {
   }) async {
     await _chat.updateUserMessage(message: text);
 
-    final mapping = await clients.preferencesFunctionalConfigManager
-        .getConfigMappingForFunction(functionType: 'CHAT');
+    final binding = await clients.preferencesFunctionalConfigManager
+        .getModelBindingForFunction(functionType: 'CHAT');
+    final providerId = binding.providerId.trim();
+    final modelId = binding.modelId.trim();
+    if (providerId.isEmpty || modelId.isEmpty) {
+      throw StateError(
+        'CHAT model binding is incomplete: providerId="$providerId" modelId="$modelId"',
+      );
+    }
 
     await _chat.sendUserMessage(
       promptFunctionType: 'CHAT',
@@ -224,8 +231,8 @@ class ChatViewModel {
       chatIdOverride: null,
       messageTextOverride: null,
       proxySenderNameOverride: null,
-      chatModelConfigIdOverride: mapping.configId,
-      chatModelIndexOverride: mapping.modelIndex,
+      chatProviderIdOverride: providerId,
+      chatModelIdOverride: modelId,
       attachments: const <core_proxy.AttachmentInfo>[],
       replyToMessage: replyToMessage?.toProxy(),
       turnOptions: const core_proxy.ChatTurnOptions(
@@ -336,12 +343,14 @@ class ChatViewModel {
   }
 
   Future<String> currentModelName() async {
-    final mapping = await clients.preferencesFunctionalConfigManager
-        .getConfigMappingForFunction(functionType: 'CHAT');
-    return clients.preferencesModelConfigManager.getModelNameByIndex(
-      configId: mapping.configId,
-      modelIndex: mapping.modelIndex,
-    );
+    final binding = await clients.preferencesFunctionalConfigManager
+        .getModelBindingForFunction(functionType: 'CHAT');
+    final config = await clients.preferencesModelConfigManager
+        .getResolvedModelConfig(
+          providerId: binding.providerId,
+          modelId: binding.modelId,
+        );
+    return config.modelId;
   }
 
   Future<String> createAndBindDefaultWorkspace(

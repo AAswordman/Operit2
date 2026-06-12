@@ -89,10 +89,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     try {
       await _packageManager.loadAvailablePackages();
       final results = await Future.wait<Object>(<Future<Object>>[
-        _packageManager.getAvailablePackages(),
+        _packageManager.getExecutableAvailablePackages(),
         _packageManager.getEnabledPackageNames(),
         _packageManager.getToolPkgContainerRuntimes(),
-        _packageManager.getEnabledToolPkgContainerRuntimes(),
         _packageManager.getBundledExternalPackageCandidates(),
       ]);
       final availablePackages =
@@ -100,20 +99,22 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       final enabledPackages = results[1] as List<String>;
       final pluginContainers =
           results[2] as List<core_proxy.ToolPkgContainerRuntime>;
-      final enabledPluginContainers =
-          results[3] as List<core_proxy.ToolPkgContainerRuntime>;
       final bundledExternalPackageCandidates =
-          results[4] as List<core_proxy.BundledExternalPackageCandidate>;
+          results[3] as List<core_proxy.BundledExternalPackageCandidate>;
+      final enabledPackageNameSet = enabledPackages.toSet();
       if (!mounted) {
         return;
       }
       setState(() {
         _snapshot = PackageManagerSnapshot(
           availablePackages: availablePackages,
-          enabledPackageNames: enabledPackages.toSet(),
+          enabledPackageNames: enabledPackageNameSet,
           pluginContainers: pluginContainers,
-          enabledPluginContainerNames: enabledPluginContainers
-              .map((item) => item.packageName)
+          enabledPluginContainerNames: pluginContainers
+              .where(
+                (plugin) => enabledPackageNameSet.contains(plugin.packageName),
+              )
+              .map((plugin) => plugin.packageName)
               .toSet(),
           bundledExternalPackageCandidates: bundledExternalPackageCandidates,
         );
@@ -540,20 +541,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
 
   List<core_proxy.ToolPackage> get _filteredPackages {
     final query = _searchQuery.trim().toLowerCase();
-    final pluginNames = <String>{
-      for (final plugin in _snapshot.pluginContainers) plugin.packageName,
-      for (final plugin in _snapshot.pluginContainers)
-        for (final subpackage in plugin.subpackages) subpackage.packageName,
-    };
-    final items =
-        _snapshot.availablePackages.values
-            .where((package) => !pluginNames.contains(package.name))
-            .toList()
-          ..sort(
-            (left, right) => toolPackageDisplayName(
-              left,
-            ).compareTo(toolPackageDisplayName(right)),
-          );
+    final items = _snapshot.availablePackages.values.toList()
+      ..sort(
+        (left, right) => toolPackageDisplayName(
+          left,
+        ).compareTo(toolPackageDisplayName(right)),
+      );
     if (query.isEmpty) {
       return items;
     }
@@ -575,6 +568,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           enabled: _snapshot.enabledPluginContainerNames.contains(
             plugin.packageName,
           ),
+          packageManager: _packageManager,
           onEnabledChanged: (enabled) {
             Navigator.of(context).pop();
             _setPluginEnabled(plugin, enabled);

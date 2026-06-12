@@ -8,6 +8,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/SettingsControlStyles.dart';
 
 class DataSettingsPanel extends StatefulWidget {
   const DataSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -53,7 +54,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       characterGroupCount:
           (await characterGroupCardManager.getAllCharacterGroupCards()).length,
       modelConfigCount:
-          (await modelConfigManager.getAllConfigSummaries()).length,
+          (await modelConfigManager.getAllModelSummaries()).length,
     );
   }
 
@@ -309,7 +310,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     setState(() => _busy = true);
     try {
       final jsonText = await widget.clients.preferencesModelConfigManager
-          .exportAllConfigs();
+          .exportAllProviders();
       await Clipboard.setData(ClipboardData(text: jsonText));
       if (!mounted) {
         return;
@@ -335,45 +336,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
-  Future<void> _importModelConfigsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    final jsonText = await _BackupImportDialog.show(context: context);
-    if (jsonText == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final result = await widget.clients.preferencesModelConfigManager
-          .importConfigs(jsonContent: jsonText);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.settingsDataBackupImportResult(
-              result.newValue,
-              result.updated,
-              result.skipped,
-            ),
-          ),
-        ),
-      );
-      _reload();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -385,7 +347,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
           return const M3LoadingPane();
         }
         return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _SectionCard(
               title: l10n.settingsDataRuntimeSection,
@@ -457,7 +419,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   subtitle: l10n.settingsDataBackupCount(data.modelConfigCount),
                   description: l10n.settingsDataModelConfigsBackupDescription,
                   onExport: _busy ? null : _copyModelConfigsBackup,
-                  onImport: _busy ? null : _importModelConfigsBackup,
+                  onImport: null,
                 ),
                 const Divider(height: 20),
                 _ActionLine(
@@ -504,9 +466,9 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(18);
+    final radius = BorderRadius.circular(12);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: OperitGlassSurface(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: radius,
@@ -514,12 +476,15 @@ class _SectionCard extends StatelessWidget {
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
+              Text(
+                title,
+                style: SettingsControlStyles.sectionTitleTextStyle(context),
+              ),
+              const SizedBox(height: 6),
               ...children,
             ],
           ),
@@ -704,6 +669,8 @@ class _ActionLine extends StatelessWidget {
     final color = destructive ? colorScheme.error : colorScheme.primary;
     return ListTile(
       contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(icon, color: color),
       title: Text(title, style: TextStyle(color: destructive ? color : null)),
       subtitle: subtitle == null ? null : Text(subtitle!),

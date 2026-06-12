@@ -4,12 +4,13 @@ use serde_json::Value;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::AITool;
+use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
-use crate::core::tools::AIToolHook::AIToolHook;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, toolPkgToolHandler, ToolPkgToolLifecycleHookRegistration,
+    ToolPkgToolLifecycleHookRegistration, toolPkgPackageManager, toolPkgToolHandler,
 };
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static TOOL_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgToolLifecycleHookRegistration>>> =
     OnceLock::new();
@@ -118,9 +119,27 @@ fn deliver(eventName: &str, eventPayload: Value) {
         .lock()
         .expect("toolpkg tool lifecycle hook mutex poisoned")
         .clone();
+    ChainLogger::info(
+        PLUGIN_CHAIN,
+        "plugin.toolpkg.tool_lifecycle.scan",
+        &[
+            ("event", eventName.to_string()),
+            ("hookCount", snapshot.len().to_string()),
+        ],
+    );
     let manager = toolPkgPackageManager();
     for hook in snapshot {
-        let _ = manager.runToolPkgMainHook(
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.tool_lifecycle.run.start",
+            &[
+                ("event", eventName.to_string()),
+                ("package", hook.containerPackageName.clone()),
+                ("hookId", hook.hookId.clone()),
+                ("function", hook.functionName.clone()),
+            ],
+        );
+        match manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,
             TOOLPKG_EVENT_TOOL_LIFECYCLE,
@@ -131,6 +150,27 @@ fn deliver(eventName: &str, eventPayload: Value) {
             None,
             None,
             None,
-        );
+        ) {
+            Ok(_) => ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.tool_lifecycle.run.done",
+                &[
+                    ("event", eventName.to_string()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                ],
+            ),
+            Err(error) => ChainLogger::error(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.tool_lifecycle.run.error",
+                &[
+                    ("event", eventName.to_string()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                    ("function", hook.functionName.clone()),
+                    ("error", error),
+                ],
+            ),
+        }
     }
 }

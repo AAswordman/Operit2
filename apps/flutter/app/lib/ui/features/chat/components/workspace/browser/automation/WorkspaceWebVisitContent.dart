@@ -498,10 +498,12 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
         children: <Widget>[
           Row(
             children: <Widget>[
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Visit Web',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleMedium!.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               DecoratedBox(
@@ -521,8 +523,7 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
                         _statusText,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
+                        style: theme.textTheme.labelSmall!.copyWith(
                           color: theme.colorScheme.onPrimaryContainer,
                         ),
                       );
@@ -554,15 +555,14 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
                             color: const Color(0xFFFFE6CC),
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
                               horizontal: 8,
                               vertical: 2,
                             ),
                             child: Text(
                               'SSL',
-                              style: TextStyle(
-                                fontSize: 11,
+                              style: theme.textTheme.labelSmall!.copyWith(
                                 color: Color(0xFF7A3E00),
                               ),
                             ),
@@ -575,8 +575,7 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
                           _currentUrl,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
+                          style: theme.textTheme.bodySmall!.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
@@ -591,8 +590,7 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
                         _pageTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
+                        style: theme.textTheme.bodySmall!.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -650,8 +648,7 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 11,
+              style: theme.textTheme.labelSmall!.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),

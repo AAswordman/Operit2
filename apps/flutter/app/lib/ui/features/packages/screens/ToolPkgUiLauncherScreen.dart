@@ -2159,6 +2159,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       painter: _ComposeCanvasPainter(
         commands: _canvasCommands(node.props['commands']),
         colorScheme: Theme.of(context).colorScheme,
+        textTheme: Theme.of(context).textTheme,
       ),
     );
     final actionId = _actionId(node.props['onSizeChanged']);
@@ -2602,10 +2603,12 @@ class _ComposeCanvasPainter extends CustomPainter {
   const _ComposeCanvasPainter({
     required this.commands,
     required this.colorScheme,
+    required this.textTheme,
   });
 
   final List<Map<String, Object?>> commands;
   final ColorScheme colorScheme;
+  final TextTheme textTheme;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2708,15 +2711,14 @@ class _ComposeCanvasPainter extends CustomPainter {
         TextPainter(
           text: TextSpan(
             text: text,
-            style: TextStyle(
+            style: textTheme.bodyMedium!.copyWith(
               color: _canvasColor(command['color']) ?? colorScheme.onSurface,
-              fontSize: _canvasNumber(
-                command['fontSize'],
-                size.shortestSide,
-                base: 14,
-              ),
               fontWeight: _fontWeight(_string(command['fontWeight'])),
             ),
+          ),
+          textScaler: TextScaler.linear(
+            _canvasNumber(command['fontSize'], size.shortestSide, base: 14) /
+                textTheme.bodyMedium!.fontSize!,
           ),
           maxLines: _int(command['maxLines']),
           textDirection: TextDirection.ltr,
@@ -2749,12 +2751,12 @@ class _ComposeCanvasPainter extends CustomPainter {
         text: String.fromCharCode(icon.codePoint),
         style: TextStyle(
           fontFamily: icon.fontFamily,
-          fontSize: fontSize,
           color:
               _canvasColor(command['color'] ?? command['tint']) ??
               colorScheme.onSurface,
         ),
       ),
+      textScaler: TextScaler.linear(fontSize / textTheme.bodyMedium!.fontSize!),
       textDirection: TextDirection.ltr,
     )..layout();
     painter.paint(
@@ -2858,7 +2860,8 @@ class _ComposeCanvasPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ComposeCanvasPainter oldDelegate) =>
       oldDelegate.commands != commands ||
-      oldDelegate.colorScheme != colorScheme;
+      oldDelegate.colorScheme != colorScheme ||
+      oldDelegate.textTheme != textTheme;
 }
 
 class _SizeReportingBox extends StatefulWidget {
@@ -3588,9 +3591,8 @@ TextStyle? _textStyle(BuildContext context, Map<String, Object?> props) {
     'labelSmall' => theme.labelSmall,
     _ => theme.bodyMedium,
   };
-  return style?.copyWith(
+  return _scaledTextStyle(style!, _number(props['fontSize'])).copyWith(
     color: _color(context, props['color']),
-    fontSize: _number(props['fontSize']),
     fontWeight: _fontWeight(_string(props['fontWeight'])),
   );
 }
@@ -3599,14 +3601,21 @@ TextStyle? _textFieldStyle(BuildContext context, Object? raw) {
   if (raw is! Map<Object?, Object?>) {
     return null;
   }
-  return TextStyle(
+  final style = Theme.of(context).textTheme.bodyMedium!;
+  return _scaledTextStyle(style, _number(raw['fontSize'])).copyWith(
     color: _color(context, raw['color']),
-    fontSize: _number(raw['fontSize']),
     fontWeight: _fontWeight(_string(raw['fontWeight'])),
     fontFamily: _string(raw['fontFamily']).trim().isEmpty
         ? null
         : _string(raw['fontFamily']).trim(),
   );
+}
+
+TextStyle _scaledTextStyle(TextStyle style, double? size) {
+  if (size == null) {
+    return style;
+  }
+  return style.apply(fontSizeFactor: size / style.fontSize!);
 }
 
 FontWeight? _fontWeight(String value) {

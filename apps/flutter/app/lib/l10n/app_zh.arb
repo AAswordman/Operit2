@@ -76,7 +76,7 @@
   "toolApprovalAllowOnce": "允许本次",
   "toolApprovalAlwaysAllow": "始终允许",
   "createGroupTitle": "新建分组",
-  "groupNameLabel": "分组名称",
+  "groupNameLabel": "群组名称",
   "renameConversationTitle": "编辑标题",
   "newTitleLabel": "新标题",
   "deleteConversationTitle": "确认删除对话",
@@ -372,7 +372,7 @@
   "settingsCategoryModelDescription": "配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。",
   "settingsCategoryCharactersTitle": "角色与记忆",
   "settingsCategoryCharactersSubtitle": "角色卡、群组、绑定",
-  "settingsCategoryCharactersDescription": "管理角色卡、角色组、当前激活角色和角色级模型/记忆/工具绑定。",
+  "settingsCategoryCharactersDescription": "管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。",
   "settingsCategoryToolsTitle": "工具与扩展",
   "settingsCategoryToolsSubtitle": "权限、包、技能、MCP",
   "settingsCategoryToolsDescription": "控制 Operit 可以调用哪些工具，并管理插件、工具包、技能和 MCP 服务。",
@@ -391,6 +391,8 @@
   "settingsActivate": "设为当前",
   "settingsModelCurrentSection": "当前聊天模型",
   "settingsModelCurrentChatModel": "聊天使用",
+  "settingsModelCurrentActive": "当前激活",
+  "settingsModelSetCurrentActive": "设为当前",
   "settingsChatThinkingMode": "思考模式",
   "settingsChatThinkingModeDescription": "让支持的模型输出更稳的推理过程。",
   "settingsChatStreamOutput": "流式输出",
@@ -419,6 +421,45 @@
       }
     }
   },
+  "settingsModelFunctionMappingsMissing": "绑定的模型不存在：{providerId} · {modelId}",
+  "@settingsModelFunctionMappingsMissing": {
+    "placeholders": {
+      "providerId": {
+        "type": "String"
+      },
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteBlocked": "该模型正在被这些功能使用，请先更改功能模型分配：{functions}",
+  "@settingsModelDeleteBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderBlocked": "该供应商下的模型正在被这些功能使用，请先更改功能模型分配：{functions}",
+  "@settingsModelDeleteProviderBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirm": "确定删除供应商“{name}”吗？这会同时删除其中的 {count} 个模型。",
+  "@settingsModelDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirmAction": "删除供应商",
   "settingsModelChatAutoGlmWarning": "禁止使用 AutoGLM 作为对话主模型。对话模型和 UI 控制模型是分离的，请选择其他大模型。",
   "settingsModelFunctionChat": "聊天",
   "settingsModelFunctionChatDescription": "主对话回复使用的模型。",
@@ -433,7 +474,7 @@
   "settingsModelFunctionGrep": "文本检索",
   "settingsModelFunctionGrepDescription": "搜索结果筛选和文本匹配判断使用的模型。",
   "settingsModelFunctionRoleResponsePlanner": "群聊发言规划",
-  "settingsModelFunctionRoleResponsePlannerDescription": "角色组对话中规划发言角色和顺序使用的模型。",
+  "settingsModelFunctionRoleResponsePlannerDescription": "群组对话中规划发言角色和顺序使用的模型。",
   "settingsModelFunctionImageRecognition": "图片识别",
   "settingsModelFunctionImageRecognitionDescription": "图片理解和图片内容提取使用的模型。",
   "settingsModelFunctionAudioRecognition": "音频识别",
@@ -465,6 +506,60 @@
   "settingsModelApiKeyName": "Key 名称",
   "settingsModelApiKeyEnabled": "启用这个 Key",
   "settingsModelProviderId": "供应商 ID",
+  "settingsModelProvidersSection": "供应商",
+  "settingsModelProviderType": "供应商类型",
+  "settingsModelProviderTypeOption": "{name}（{original}）",
+  "@settingsModelProviderTypeOption": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "original": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelProviderTypeOpenai": "OpenAI",
+  "settingsModelProviderTypeOpenaiResponses": "OpenAI Responses",
+  "settingsModelProviderTypeOpenaiResponsesGeneric": "OpenAI Responses 兼容",
+  "settingsModelProviderTypeOpenaiGeneric": "OpenAI 兼容",
+  "settingsModelProviderTypeAnthropic": "Anthropic",
+  "settingsModelProviderTypeAnthropicGeneric": "Anthropic 兼容",
+  "settingsModelProviderTypeGoogle": "Google Gemini",
+  "settingsModelProviderTypeGeminiGeneric": "Gemini 兼容",
+  "settingsModelProviderTypeBaidu": "百度",
+  "settingsModelProviderTypeAliyun": "阿里云",
+  "settingsModelProviderTypeXunfei": "讯飞",
+  "settingsModelProviderTypeZhipu": "智谱",
+  "settingsModelProviderTypeBaichuan": "百川",
+  "settingsModelProviderTypeMoonshot": "月之暗面",
+  "settingsModelProviderTypeMimo": "小米 MiMo",
+  "settingsModelProviderTypeDeepseek": "DeepSeek",
+  "settingsModelProviderTypeMistral": "Mistral",
+  "settingsModelProviderTypeSiliconflow": "硅基流动",
+  "settingsModelProviderTypeIflow": "心流",
+  "settingsModelProviderTypeOpenrouter": "OpenRouter",
+  "settingsModelProviderTypeFourRouter": "4Router",
+  "settingsModelProviderTypeNousPortal": "Nous Portal",
+  "settingsModelProviderTypeInfiniai": "无问芯穹",
+  "settingsModelProviderTypeAlipayBailing": "支付宝百灵",
+  "settingsModelProviderTypeDoubao": "豆包",
+  "settingsModelProviderTypeNvidia": "NVIDIA",
+  "settingsModelProviderTypeLmstudio": "LM Studio",
+  "settingsModelProviderTypeOllama": "Ollama",
+  "settingsModelProviderTypeOpenaiLocal": "OpenAI 本地",
+  "settingsModelProviderTypeMnn": "MNN",
+  "settingsModelProviderTypeLlamaCpp": "llama.cpp",
+  "settingsModelProviderTypePpinfra": "PPInfra",
+  "settingsModelProviderTypeNovita": "Novita AI",
+  "settingsModelProviderTypeOther": "其他",
+  "settingsModelEditModelSettings": "模型设置",
+  "settingsModelCreateProvider": "创建供应商",
+  "settingsModelEditProvider": "编辑供应商",
+  "settingsModelAddModel": "添加模型",
+  "settingsModelAddModelShort": "添加",
+  "settingsModelCustomModel": "自定义模型",
+  "settingsModelModelId": "模型 ID",
   "settingsModelMaxTokens": "Max tokens",
   "settingsModelMaxTokensDescription": "限制一次回复最多生成多少 Token。",
   "settingsModelTemperature": "Temperature",
@@ -483,6 +578,7 @@
   "settingsModelMaxConcurrent": "最大并发请求",
   "settingsModelContextLength": "上下文长度",
   "settingsModelMaxContextLength": "最大上下文长度",
+  "settingsModelMaxContextLengthInvalid": "请输入大于 0 的最大上下文长度",
   "settingsModelMaxContextMode": "最大上下文模式",
   "settingsModelSummaryThreshold": "总结 Token 阈值",
   "settingsModelSummaryByMessageCount": "按消息数总结",
@@ -502,8 +598,12 @@
   "settingsModelContext": "上下文窗口",
   "settingsModelSummary": "自动总结",
   "settingsModelMediaHistory": "媒体历史",
+  "settingsModelCapabilities": "能力",
+  "settingsModelBuiltinTools": "内置工具",
+  "settingsModelBuiltinToolExclusive": "开启后会关闭外部工具调用",
   "settingsModelConnectionTestSection": "连接测试",
   "settingsModelRunConnectionTest": "测试当前模型",
+  "settingsModelTestModel": "测试模型",
   "settingsModelTestingConnection": "正在测试当前模型连接…",
   "settingsModelTestedModel": "测试模型",
   "settingsModelConnectionTestPassed": "全部通过",
@@ -527,9 +627,9 @@
   "settingsCharactersCreateCard": "新建角色卡",
   "settingsCharactersEditCard": "编辑角色卡",
   "settingsCharactersCardName": "角色名称",
-  "settingsCharactersCreateGroup": "新建角色组",
-  "settingsCharactersEditGroup": "编辑角色组",
-  "settingsCharactersGroupName": "角色组名称",
+  "settingsCharactersCreateGroup": "新建群组",
+  "settingsCharactersEditGroup": "编辑群组",
+  "settingsCharactersGroupName": "群组名称",
   "settingsCharactersDescription": "描述",
   "settingsCharactersCharacterSetting": "角色设定",
   "settingsCharactersOpeningStatement": "开场白",
@@ -539,6 +639,8 @@
   "settingsCharactersMarks": "备注",
   "settingsCharactersTags": "标签",
   "settingsCharactersNoTags": "当前没有可选标签。可在提示词/标签管理中创建后绑定到角色卡。",
+  "settingsCharactersImport": "导入",
+  "settingsCharactersExport": "导出",
   "settingsCharactersImportJson": "导入 JSON",
   "settingsCharactersCopyJson": "复制 JSON",
   "settingsCharactersImportTavernJson": "导入 Tavern JSON",
@@ -564,8 +666,8 @@
   "settingsCharactersImportCardJson": "导入角色卡 JSON",
   "settingsCharactersImportCardJsonDone": "已导入角色卡。",
   "settingsCharactersImportTavernJsonDone": "已导入 Tavern 角色卡。",
-  "settingsCharactersImportGroupJson": "导入角色组 JSON",
-  "settingsCharactersImportGroupJsonDone": "已导入角色组。",
+  "settingsCharactersImportGroupJson": "导入群组 JSON",
+  "settingsCharactersImportGroupJsonDone": "已导入群组。",
   "settingsCharactersImportJsonError": "导入 JSON 失败：{error}",
   "@settingsCharactersImportJsonError": {
     "placeholders": {
@@ -610,7 +712,7 @@
   "settingsCharactersChatModelIndex": "聊天模型序号",
   "settingsCharactersMemoryBindingMode": "记忆绑定模式",
   "settingsCharactersMemoryProfileId": "记忆配置 ID",
-  "settingsCharactersToolAccess": "启用角色工具白名单",
+  "settingsCharactersToolAccess": "工具权限模式",
   "settingsCharactersChatModelFollowGlobal": "跟随全局模型",
   "settingsCharactersChatModelFixedConfig": "固定模型配置",
   "settingsCharactersChatModelConfig": "模型配置",
@@ -618,6 +720,7 @@
   "settingsCharactersMemoryProfileFixedProfile": "固定记忆档案",
   "settingsCharactersMemoryProfile": "记忆档案",
   "settingsCharactersToolAccessFollowGlobal": "跟随全局工具权限",
+  "settingsCharactersToolAccessCustom": "自定义角色工具权限",
   "settingsCharactersToolAccessEmpty": "已启用，但未选择任何工具",
   "settingsCharactersToolAccessSummaryCounts": "内置 {builtinCount} · 工具包 {packageCount} · 技能 {skillCount} · MCP {mcpCount}",
   "@settingsCharactersToolAccessSummaryCounts": {
@@ -664,7 +767,7 @@
   "settingsCharactersPreferenceLocksSection": "偏好字段锁定",
   "settingsCharactersPreferenceLockDescription": "锁定后，自动记忆更新不会改写这个字段。",
   "settingsCharactersCardsSection": "角色卡",
-  "settingsCharactersGroupsSection": "角色组",
+  "settingsCharactersGroupsSection": "群组",
   "settingsCharactersGroupMembers": "{count} 个成员",
   "@settingsCharactersGroupMembers": {
     "placeholders": {
@@ -858,8 +961,8 @@
   "settingsDataChatHistoriesBackupDescription": "复制全部聊天和消息为 JSON；导入时会按聊天 ID 更新或新增。",
   "settingsDataCharacterCardsBackup": "角色卡备份",
   "settingsDataCharacterCardsBackupDescription": "复制全部角色卡和已引用标签为 JSON；导入时会按原 ID 更新或新增。",
-  "settingsDataCharacterGroupsBackup": "角色组备份",
-  "settingsDataCharacterGroupsBackupDescription": "复制全部角色组为 JSON；导入时会保留组内角色引用和顺序。",
+  "settingsDataCharacterGroupsBackup": "群组备份",
+  "settingsDataCharacterGroupsBackupDescription": "复制全部群组为 JSON；导入时会保留组内角色引用和顺序。",
   "settingsDataModelConfigsBackup": "模型配置备份",
   "settingsDataModelConfigsBackupDescription": "复制全部模型配置为 JSON；导入时会按配置 ID 更新或新增，包含模型参数和 API Key 池。",
   "settingsDataBackupCount": "当前 {count} 项",

@@ -11,6 +11,8 @@ use crate::core::tools::ToolResultDataClasses::{
     LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData,
     ToolResultData,
 };
+use crate::data::model::CharacterCard::CharacterCardMemoryProfileBindingMode;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::UserPreferencesManager::PreferencesManager;
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
@@ -81,7 +83,10 @@ impl ToolExecutor for MemoryToolExecutor {
 }
 
 fn executeQueryMemory(tool: &AITool) -> ToolResult {
-    let profileId = resolveActiveProfileId();
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
     let repository = MemoryRepository::new(profileId.clone());
     let query = parameterValue(tool, "query");
     if query.trim().is_empty() {
@@ -163,7 +168,11 @@ fn executeGetMemoryByTitle(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() {
         return errorResult(tool, "title parameter is required");
     }
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     match repository.findMemoryByTitle(&title) {
         Ok(Some(memory)) => successData(
             tool,
@@ -180,7 +189,11 @@ fn executeCreateMemory(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() || content.trim().is_empty() {
         return errorResult(tool, "Both title and content parameters are required");
     }
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let contentType =
         optionalParameterValue(tool, "content_type").unwrap_or_else(|| "text/plain".to_string());
     let source = optionalParameterValue(tool, "source").unwrap_or_else(|| "ai_created".to_string());
@@ -213,7 +226,11 @@ fn executeUpdateMemory(tool: &AITool) -> ToolResult {
             "old_title parameter is required to identify the memory",
         );
     }
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let memory = match repository.findMemoryByTitle(&oldTitle) {
         Ok(Some(memory)) => memory,
         Ok(None) => return errorResult(tool, &format!("Memory not found with title: {oldTitle}")),
@@ -258,7 +275,11 @@ fn executeDeleteMemory(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() {
         return errorResult(tool, "title parameter is required to identify the memory");
     }
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let memory = match repository.findMemoryByTitle(&title) {
         Ok(Some(memory)) => memory,
         Ok(None) => return errorResult(tool, &format!("Memory not found with title: {title}")),
@@ -291,7 +312,11 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
         );
     }
 
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let mut selected = Vec::new();
     if !titles.is_empty() {
         for title in titles {
@@ -344,7 +369,10 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
 
 fn executeUpdateUserPreferences(tool: &AITool) -> ToolResult {
     let manager = PreferencesManager::getInstance();
-    let profileId = resolveActiveProfileId();
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
     let birthDate =
         optionalParameterValue(tool, "birth_date").and_then(|value| value.parse::<i64>().ok());
     let gender = optionalParameterValue(tool, "gender");
@@ -402,7 +430,11 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
             "Both source_title and target_title parameters are required",
         );
     }
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let source = match repository.findMemoryByTitle(&sourceTitle) {
         Ok(Some(memory)) => memory,
         Ok(None) => {
@@ -452,7 +484,11 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
 }
 
 fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let linkId = match optionalParameterValue(tool, "link_id")
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.parse::<i64>())
@@ -516,7 +552,11 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
 }
 
 fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let newLinkType = optionalParameterValue(tool, "new_link_type");
     let newWeight =
         optionalParameterValue(tool, "weight").and_then(|value| value.parse::<f32>().ok());
@@ -550,7 +590,11 @@ fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
 }
 
 fn executeDeleteMemoryLink(tool: &AITool) -> ToolResult {
-    let repository = MemoryRepository::new(resolveActiveProfileId());
+    let profileId = match resolveActiveProfileId(tool) {
+        Ok(profileId) => profileId,
+        Err(error) => return errorResult(tool, &error),
+    };
+    let repository = MemoryRepository::new(profileId);
     let link = match resolveLink(tool, &repository) {
         Ok(link) => link,
         Err(error) => return errorResult(tool, &error),
@@ -604,17 +648,55 @@ fn resolveLink(tool: &AITool, repository: &MemoryRepository) -> Result<MemoryLin
     }
 }
 
-fn resolveActiveProfileId() -> String {
-    let context = ToolExecutionManager::currentToolRuntimeContext();
-    let callerProfile = context
+fn resolveGlobalActiveProfileId() -> Result<String, String> {
+    PreferencesManager::getInstance()
+        .activeProfileId()
+        .map_err(|error| error.to_string())
+}
+
+fn resolveCallerCardId(tool: &AITool) -> Option<String> {
+    let explicitCallerCardId = tool
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "caller_card_id")
+        .map(|parameter| parameter.value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if explicitCallerCardId.is_some() {
+        return explicitCallerCardId;
+    }
+    ToolExecutionManager::currentToolRuntimeContext()
         .and_then(|context| context.callerCardId)
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    callerProfile.unwrap_or_else(|| {
-        PreferencesManager::getInstance()
-            .activeProfileId()
-            .unwrap_or_else(|_| "default".to_string())
-    })
+        .filter(|value| !value.is_empty())
+}
+
+fn resolveRoleCardProfileId(callerCardId: Option<String>) -> Result<Option<String>, String> {
+    let Some(resolvedCardId) = callerCardId.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let characterCard = CharacterCardManager::getInstance()
+        .getCharacterCard(&resolvedCardId)
+        .map_err(|error| error.to_string())?;
+    let bindingMode = CharacterCardMemoryProfileBindingMode::normalize(Some(
+        &characterCard.memoryProfileBindingMode,
+    ));
+    let boundProfileId = characterCard
+        .memoryProfileId
+        .filter(|value| !value.trim().is_empty());
+    if bindingMode == CharacterCardMemoryProfileBindingMode::FIXED_PROFILE
+        && boundProfileId.is_some()
+    {
+        Ok(boundProfileId)
+    } else {
+        Ok(None)
+    }
+}
+
+fn resolveActiveProfileId(tool: &AITool) -> Result<String, String> {
+    match resolveRoleCardProfileId(resolveCallerCardId(tool))? {
+        Some(profileId) => Ok(profileId),
+        None => resolveGlobalActiveProfileId(),
+    }
 }
 
 fn parseTimeBoundary(value: Option<&str>, isEnd: bool) -> Result<Option<i64>, String> {

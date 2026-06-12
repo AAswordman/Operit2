@@ -382,7 +382,8 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     if (!_expanded || _isProgrammaticScroll || !_scrollController.hasClients) {
       return false;
     }
-    final isUserScroll = notification is UserScrollNotification ||
+    final isUserScroll =
+        notification is UserScrollNotification ||
         (notification is ScrollUpdateNotification &&
             notification.dragDetails != null);
     if (!isUserScroll) {
@@ -426,7 +427,8 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         widget.isStreaming && widget.markdownEventStream != null;
     final shouldRenderBody =
         _expanded && (contentText.isNotEmpty || hasStreamingMarkdown);
-    final renderFullHeight = (widget.fullHeight || _bodyFullHeight) && _expanded;
+    final renderFullHeight =
+        (widget.fullHeight || _bodyFullHeight) && _expanded;
     final switchDuration = _skipCollapseAnimationOnce
         ? Duration.zero
         : const Duration(milliseconds: 220);
@@ -498,7 +500,9 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                             ),
                           ),
                           Padding(
-                            padding: const EdgeInsetsDirectional.only(start: 24),
+                            padding: const EdgeInsetsDirectional.only(
+                              start: 24,
+                            ),
                             child: GestureDetector(
                               behavior: HitTestBehavior.translucent,
                               onTap: _handleBodyTap,
@@ -514,8 +518,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                                             : null,
                                         textColor: widget.textColor,
                                       )
-                                    : NotificationListener<
-                                        ScrollNotification>(
+                                    : NotificationListener<ScrollNotification>(
                                         onNotification:
                                             _handleScrollNotification,
                                         child: SingleChildScrollView(

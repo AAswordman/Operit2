@@ -193,7 +193,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
             color: Theme.of(context).colorScheme.onSurface,
-            fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
         ),

@@ -217,7 +217,7 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
     required Stream<Object>? Function(int index) xmlMarkdownEventStreamResolver,
     required void Function(String url)? onLinkClick,
     required bool fillMaxWidth,
-    required double fontSize,
+    required TextStyle textStyle,
   }) {
     return _ThinkToolsXmlGroup(
       key: ValueKey<String>('group-$rendererId-${group.stableKey}'),

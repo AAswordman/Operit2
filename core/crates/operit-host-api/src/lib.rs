@@ -6,13 +6,31 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub type HostResult<T> = Result<T, HostError>;
+
+type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
+static HOST_LOG_SINK: OnceLock<RwLock<Option<HostLogSink>>> = OnceLock::new();
+
+pub fn setHostLogSink(sink: HostLogSink) {
+    let holder = HOST_LOG_SINK.get_or_init(|| RwLock::new(None));
+    *holder.write().expect("host log sink lock poisoned") = Some(sink);
+}
+
+pub fn logHostError(tag: &str, message: &str) {
+    let sink = HOST_LOG_SINK
+        .get_or_init(|| RwLock::new(None))
+        .read()
+        .expect("host log sink lock poisoned")
+        .clone()
+        .expect("host log sink must be installed before host errors are logged");
+    sink(tag, message);
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostEnvironmentDescriptor {

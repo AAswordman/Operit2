@@ -186,6 +186,7 @@ class _ArtifactProjectTreeCanvasState
                     layout: layout,
                     metrics: metrics,
                     colorScheme: colorScheme,
+                    textTheme: Theme.of(context).textTheme,
                   ),
                 ),
               ),
@@ -241,12 +242,14 @@ class _ArtifactProjectTreePainter extends CustomPainter {
     required this.layout,
     required this.metrics,
     required this.colorScheme,
+    required this.textTheme,
   });
 
   final core_proxy.ArtifactProjectDetailResponse project;
   final _ArtifactProjectTreeLayout layout;
   final _ArtifactTreeMetrics metrics;
   final ColorScheme colorScheme;
+  final TextTheme textTheme;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -335,22 +338,23 @@ class _ArtifactProjectTreePainter extends CustomPainter {
     final lines = <_ArtifactTreeTextLine>[
       _ArtifactTreeTextLine(
         text: _compactArtifactDate(node.publishedAt ?? node.issue.createdAt),
-        style: TextStyle(fontSize: 10, color: palette.secondaryTextColor),
+        style: _artifactTextStyle(
+          textTheme.labelSmall!,
+          10,
+        ).copyWith(color: palette.secondaryTextColor),
       ),
       _ArtifactTreeTextLine(
         text: node.publisherLogin.trim().isEmpty
             ? node.issue.user.login
             : node.publisherLogin,
-        style: TextStyle(
-          fontSize: 11,
+        style: _artifactTextStyle(textTheme.labelSmall!, 11).copyWith(
           fontWeight: FontWeight.w700,
           color: palette.primaryTextColor,
         ),
       ),
       _ArtifactTreeTextLine(
         text: 'v${node.version.trim().isEmpty ? '-' : node.version}',
-        style: TextStyle(
-          fontSize: 11,
+        style: _artifactTextStyle(textTheme.labelSmall!, 11).copyWith(
           fontWeight: FontWeight.w700,
           color: palette.primaryTextColor,
         ),
@@ -410,8 +414,13 @@ class _ArtifactProjectTreePainter extends CustomPainter {
   bool shouldRepaint(covariant _ArtifactProjectTreePainter oldDelegate) {
     return oldDelegate.project != project ||
         oldDelegate.layout != layout ||
-        oldDelegate.colorScheme != colorScheme;
+        oldDelegate.colorScheme != colorScheme ||
+        oldDelegate.textTheme != textTheme;
   }
+}
+
+TextStyle _artifactTextStyle(TextStyle style, double size) {
+  return style.apply(fontSizeFactor: size / style.fontSize!);
 }
 
 class _ArtifactProjectTreeLayoutNode {

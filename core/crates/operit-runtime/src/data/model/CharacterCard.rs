@@ -53,8 +53,7 @@ pub struct CharacterCard {
     pub advancedCustomPrompt: String,
     pub marks: String,
     pub chatModelBindingMode: String,
-    pub chatModelConfigId: Option<String>,
-    pub chatModelIndex: i32,
+    pub chatModelId: Option<String>,
     pub memoryProfileBindingMode: String,
     pub memoryProfileId: Option<String>,
     pub toolAccessConfig: CharacterCardToolAccessConfig,
@@ -67,11 +66,11 @@ pub struct CharacterCardChatModelBindingMode;
 
 impl CharacterCardChatModelBindingMode {
     pub const FOLLOW_GLOBAL: &'static str = "FOLLOW_GLOBAL";
-    pub const FIXED_CONFIG: &'static str = "FIXED_CONFIG";
+    pub const FIXED_MODEL: &'static str = "FIXED_MODEL";
 
     pub fn normalize(mode: Option<&str>) -> String {
-        if mode == Some(Self::FIXED_CONFIG) {
-            Self::FIXED_CONFIG.to_string()
+        if mode == Some(Self::FIXED_MODEL) {
+            Self::FIXED_MODEL.to_string()
         } else {
             Self::FOLLOW_GLOBAL.to_string()
         }
@@ -186,9 +185,7 @@ pub struct OperitCharacterCardPayload {
     #[serde(default = "default_character_chat_model_binding_mode")]
     pub chatModelBindingMode: String,
     #[serde(default)]
-    pub chatModelConfigId: Option<String>,
-    #[serde(default)]
-    pub chatModelIndex: i32,
+    pub chatModelId: Option<String>,
     #[serde(default = "default_character_memory_profile_binding_mode")]
     pub memoryProfileBindingMode: String,
     #[serde(default)]

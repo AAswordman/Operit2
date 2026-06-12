@@ -409,6 +409,7 @@ class _MenuSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -422,7 +423,7 @@ class _MenuSection extends StatelessWidget {
                 children: <Widget>[
                   Icon(icon, size: 17, color: colorScheme.onSurfaceVariant),
                   const SizedBox(width: 12),
-                  Text(title, style: const TextStyle(fontSize: 13)),
+                  Text(title, style: textTheme.bodySmall),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -430,8 +431,7 @@ class _MenuSection extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: textTheme.bodySmall!.copyWith(
                         color: colorScheme.primary,
                         fontWeight: FontWeight.w600,
                       ),
@@ -485,6 +485,7 @@ class _SwitchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final iconColor = !enabled
         ? colorScheme.onSurfaceVariant.withValues(alpha: 0.45)
         : checked
@@ -512,8 +513,7 @@ class _SwitchRow extends StatelessWidget {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: textTheme.bodySmall!.copyWith(
                     color: enabled
                         ? colorScheme.onSurface
                         : colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
@@ -522,8 +522,7 @@ class _SwitchRow extends StatelessWidget {
               ),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 13,
+                style: textTheme.bodySmall!.copyWith(
                   color: enabled
                       ? colorScheme.primary
                       : colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
@@ -561,15 +560,17 @@ class _MaterialIconLigature extends StatelessWidget {
     return SizedBox.square(
       dimension: size,
       child: Center(
-        child: Text(
-          _materialIconLigatureName(iconName),
-          overflow: TextOverflow.clip,
-          softWrap: false,
-          style: TextStyle(
-            fontFamily: 'MaterialIcons',
-            fontSize: size,
-            height: 1,
-            color: color,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          child: Text(
+            _materialIconLigatureName(iconName),
+            overflow: TextOverflow.clip,
+            softWrap: false,
+            style: TextStyle(
+              fontFamily: 'MaterialIcons',
+              height: 1,
+              color: color,
+            ),
           ),
         ),
       ),
@@ -632,6 +633,7 @@ class _MemoryProfileRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: InkWell(
@@ -650,8 +652,7 @@ class _MemoryProfileRow extends StatelessWidget {
             profile.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 13,
+            style: textTheme.bodySmall!.copyWith(
               color: selected ? colorScheme.primary : colorScheme.onSurface,
               fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
             ),
@@ -674,6 +675,7 @@ class _PermissionModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Row(
       children: <Widget>[
         for (final mode in _ToolPermissionMode.values) ...[
@@ -697,8 +699,7 @@ class _PermissionModeSelector extends StatelessWidget {
                 ),
                 child: Text(
                   mode.label,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: textTheme.bodySmall!.copyWith(
                     color: mode == selectedMode
                         ? colorScheme.onPrimaryContainer
                         : colorScheme.onSurface,

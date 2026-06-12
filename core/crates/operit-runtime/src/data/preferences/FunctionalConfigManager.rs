@@ -13,28 +13,24 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FunctionConfigMapping {
-    #[serde(default = "FunctionalConfigManager::defaultConfigId")]
-    pub configId: String,
-    #[serde(default)]
-    pub modelIndex: i32,
+#[allow(non_snake_case)]
+pub struct FunctionModelBinding {
+    pub providerId: String,
+    pub modelId: String,
 }
 
-impl Default for FunctionConfigMapping {
+impl Default for FunctionModelBinding {
     fn default() -> Self {
         Self {
-            configId: FunctionalConfigManager::DEFAULT_CONFIG_ID.to_string(),
-            modelIndex: 0,
+            providerId: ModelConfigManager::DEFAULT_PROVIDER_ID.to_string(),
+            modelId: ModelConfigManager::DEFAULT_MODEL_ID.to_string(),
         }
     }
 }
 
-impl FunctionConfigMapping {
-    pub fn new(configId: String, modelIndex: i32) -> Self {
-        Self {
-            configId,
-            modelIndex,
-        }
+impl FunctionModelBinding {
+    pub fn new(providerId: String, modelId: String) -> Self {
+        Self { providerId, modelId }
     }
 }
 
@@ -56,18 +52,9 @@ pub struct FunctionalConfigManager {
     modelConfigManager: ModelConfigManager,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredFunctionConfigMapping {
-    WithIndex(FunctionConfigMapping),
-    ConfigId(String),
-}
-
 impl FunctionalConfigManager {
-    pub const DEFAULT_CONFIG_ID: &'static str = "default";
-
-    pub fn FUNCTION_CONFIG_MAPPING() -> operit_store::PreferencesDataStore::PreferencesKey {
-        stringPreferencesKey("function_config_mapping")
+    pub fn FUNCTION_MODEL_BINDING() -> operit_store::PreferencesDataStore::PreferencesKey {
+        stringPreferencesKey("function_model_binding")
     }
 
     pub fn new(root_dir: PathBuf) -> Self {
@@ -85,156 +72,114 @@ impl FunctionalConfigManager {
     }
 
     pub fn initializeIfNeeded(&self) -> Result<(), FunctionalConfigError> {
-        let mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
-        if mapping.is_empty() {
-            self.saveFunctionConfigMappingWithIndex(Self::defaultMapping())?;
-        }
-
         self.modelConfigManager
             .initializeIfNeeded()
             .map_err(|error| FunctionalConfigError::ModelConfigManager(error.to_string()))?;
+
+        let binding = self.functionModelBindingFlow()?.first()?;
+        if binding.is_empty() {
+            self.saveFunctionModelBinding(Self::defaultBinding())?;
+        }
         Ok(())
     }
 
-    pub fn functionConfigMappingFlow(
+    pub fn functionModelBindingFlow(
         &self,
-    ) -> Result<Flow<HashMap<FunctionType, String>>, FunctionalConfigError> {
-        let flow = self.functionConfigMappingWithIndexFlow()?;
-        Ok(flow.map(|mapping| {
-            mapping
-                .into_iter()
-                .map(|(functionType, mapping)| (functionType, mapping.configId))
-                .collect()
-        }))
-    }
-
-    pub fn functionConfigMappingWithIndexFlow(
-        &self,
-    ) -> Result<Flow<HashMap<FunctionType, FunctionConfigMapping>>, FunctionalConfigError> {
+    ) -> Result<Flow<HashMap<FunctionType, FunctionModelBinding>>, FunctionalConfigError> {
         Ok(self
             .functionalConfigDataStore
             .dataFlow()
-            .mapResult(|preferences| Self::readFunctionConfigMappingWithIndex(&preferences)))
+            .mapResult(|preferences| Self::readFunctionModelBinding(&preferences)))
     }
 
-    fn readFunctionConfigMappingWithIndex(
+    fn readFunctionModelBinding(
         preferences: &Preferences,
-    ) -> Result<HashMap<FunctionType, FunctionConfigMapping>, PreferencesDataStoreError> {
-        let mappingJson = preferences
-            .get(&Self::FUNCTION_CONFIG_MAPPING())
-            .cloned()
-            .unwrap_or_else(|| "{}".to_string());
-
-        if mappingJson == "{}" {
-            return Ok(Self::defaultMapping());
+    ) -> Result<HashMap<FunctionType, FunctionModelBinding>, PreferencesDataStoreError> {
+        let Some(bindingJson) = preferences.get(&Self::FUNCTION_MODEL_BINDING()) else {
+            return Ok(HashMap::new());
+        };
+        if bindingJson.is_empty() {
+            return Ok(HashMap::new());
         }
 
-        let rawMap: HashMap<String, StoredFunctionConfigMapping> =
-            serde_json::from_str(&mappingJson)?;
-        let mut mapping = HashMap::new();
-        for (key, storedMapping) in rawMap {
+        let rawMap: HashMap<String, FunctionModelBinding> = serde_json::from_str(bindingJson)?;
+        let mut binding = HashMap::new();
+        for (key, value) in rawMap {
             let functionType = Self::parseFunctionType(&key)
                 .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
-            let value = match storedMapping {
-                StoredFunctionConfigMapping::WithIndex(mapping) => mapping,
-                StoredFunctionConfigMapping::ConfigId(configId) => {
-                    FunctionConfigMapping::new(configId, 0)
-                }
-            };
-            mapping.insert(functionType, value);
+            binding.insert(functionType, value);
         }
-        Ok(mapping)
+        Ok(binding)
     }
 
-    pub fn saveFunctionConfigMapping(
+    pub fn saveFunctionModelBinding(
         &self,
-        mapping: HashMap<FunctionType, String>,
+        binding: HashMap<FunctionType, FunctionModelBinding>,
     ) -> Result<(), FunctionalConfigError> {
-        let mappingWithIndex = mapping
-            .into_iter()
-            .map(|(functionType, configId)| (functionType, FunctionConfigMapping::new(configId, 0)))
-            .collect();
-        self.saveFunctionConfigMappingWithIndex(mappingWithIndex)
-    }
-
-    pub fn saveFunctionConfigMappingWithIndex(
-        &self,
-        mapping: HashMap<FunctionType, FunctionConfigMapping>,
-    ) -> Result<(), FunctionalConfigError> {
-        let stringMapping: HashMap<String, FunctionConfigMapping> = mapping
+        let stringBinding: HashMap<String, FunctionModelBinding> = binding
             .into_iter()
             .map(|(functionType, value)| (Self::functionTypeName(functionType).to_string(), value))
             .collect();
-        let encoded = serde_json::to_string(&stringMapping)?;
+        let encoded = serde_json::to_string(&stringBinding)?;
         self.functionalConfigDataStore.edit(|preferences| {
-            preferences.set(&Self::FUNCTION_CONFIG_MAPPING(), encoded);
+            preferences.set(&Self::FUNCTION_MODEL_BINDING(), encoded);
         })?;
         Ok(())
     }
 
-    pub fn getConfigIdForFunction(
+    pub fn getModelBindingForFunction(
         &self,
         functionType: FunctionType,
-    ) -> Result<String, FunctionalConfigError> {
-        let mapping = self.functionConfigMappingFlow()?.first()?;
-        Ok(mapping
+    ) -> Result<FunctionModelBinding, FunctionalConfigError> {
+        let binding = self.functionModelBindingFlow()?.first()?;
+        binding
             .get(&functionType)
             .cloned()
-            .unwrap_or_else(|| Self::DEFAULT_CONFIG_ID.to_string()))
+            .ok_or_else(|| FunctionalConfigError::ModelConfigManager(format!(
+                "missing model binding: {}",
+                Self::functionTypeName(functionType)
+            )))
     }
 
-    pub fn getConfigMappingForFunction(
+    pub fn setModelForFunction(
         &self,
         functionType: FunctionType,
-    ) -> Result<FunctionConfigMapping, FunctionalConfigError> {
-        let mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
-        Ok(mapping.get(&functionType).cloned().unwrap_or_default())
-    }
-
-    pub fn setConfigForFunction(
-        &self,
-        functionType: FunctionType,
-        configId: String,
+        providerId: String,
+        modelId: String,
     ) -> Result<(), FunctionalConfigError> {
-        self.setConfigForFunctionWithIndex(functionType, configId, 0)
-    }
-
-    pub fn setConfigForFunctionWithIndex(
-        &self,
-        functionType: FunctionType,
-        configId: String,
-        modelIndex: i32,
-    ) -> Result<(), FunctionalConfigError> {
-        let mut mapping = self.functionConfigMappingWithIndexFlow()?.first()?;
-        mapping.insert(
-            functionType,
-            FunctionConfigMapping::new(configId, modelIndex),
-        );
-        self.saveFunctionConfigMappingWithIndex(mapping)
+        self.modelConfigManager
+            .getModelProfile(&providerId, &modelId)
+            .map_err(|error| FunctionalConfigError::ModelConfigManager(error.to_string()))?;
+        let mut binding = self.functionModelBindingFlow()?.first()?;
+        binding.insert(functionType, FunctionModelBinding::new(providerId, modelId));
+        self.saveFunctionModelBinding(binding)
     }
 
     pub fn resetFunctionConfig(
         &self,
         functionType: FunctionType,
     ) -> Result<(), FunctionalConfigError> {
-        self.setConfigForFunction(functionType, Self::DEFAULT_CONFIG_ID.to_string())
+        self.setModelForFunction(
+            functionType,
+            ModelConfigManager::DEFAULT_PROVIDER_ID.to_string(),
+            ModelConfigManager::DEFAULT_MODEL_ID.to_string(),
+        )
     }
 
     pub fn resetAllFunctionConfigs(&self) -> Result<(), FunctionalConfigError> {
-        self.saveFunctionConfigMappingWithIndex(Self::defaultMapping())
+        self.saveFunctionModelBinding(Self::defaultBinding())
     }
 
-    fn defaultConfigId() -> String {
-        Self::DEFAULT_CONFIG_ID.to_string()
-    }
-
-    fn defaultMapping() -> HashMap<FunctionType, FunctionConfigMapping> {
+    fn defaultBinding() -> HashMap<FunctionType, FunctionModelBinding> {
         Self::functionTypeValues()
             .into_iter()
             .map(|functionType| {
                 (
                     functionType,
-                    FunctionConfigMapping::new(Self::DEFAULT_CONFIG_ID.to_string(), 0),
+                    FunctionModelBinding::new(
+                        ModelConfigManager::DEFAULT_PROVIDER_ID.to_string(),
+                        ModelConfigManager::DEFAULT_MODEL_ID.to_string(),
+                    ),
                 )
             })
             .collect()
@@ -282,9 +227,7 @@ impl FunctionalConfigManager {
             "IMAGE_RECOGNITION" => Ok(FunctionType::IMAGE_RECOGNITION),
             "AUDIO_RECOGNITION" => Ok(FunctionType::AUDIO_RECOGNITION),
             "VIDEO_RECOGNITION" => Ok(FunctionType::VIDEO_RECOGNITION),
-            _ => Err(FunctionalConfigError::UnknownFunctionType(
-                value.to_string(),
-            )),
+            _ => Err(FunctionalConfigError::UnknownFunctionType(value.to_string())),
         }
     }
 }

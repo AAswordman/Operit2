@@ -2,7 +2,6 @@ package com.ai.assistance.operit2
 
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.Display
 import android.view.View
 import android.graphics.Color
@@ -335,7 +334,8 @@ class MainActivity : FlutterActivity() {
         }
         attributes.preferredDisplayModeId = preferredMode.modeId
         window.attributes = attributes
-        Log.i(
+        AndroidClientLogger.i(
+            applicationContext,
             "OperitMainActivity",
             "Requested display mode ${preferredMode.physicalWidth}x${preferredMode.physicalHeight}@${preferredMode.refreshRate}Hz",
         )
@@ -370,6 +370,20 @@ class MainActivity : FlutterActivity() {
                     0
                 }
         window.decorView.systemUiVisibility = flags
+    }
+}
+
+object AndroidClientLogger {
+    fun i(context: android.content.Context, tag: String, message: String) {
+        write(context, "I", tag, message)
+    }
+
+    @Synchronized
+    private fun write(context: android.content.Context, level: String, tag: String, message: String) {
+        val logsDir = File(context.filesDir, "logs")
+        logsDir.mkdirs()
+        val logFile = File(logsDir, "client.log")
+        logFile.appendText("${System.currentTimeMillis()} $level/$tag: $message\n", Charsets.UTF_8)
     }
 }
 

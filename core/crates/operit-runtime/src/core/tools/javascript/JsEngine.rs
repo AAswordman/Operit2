@@ -1031,6 +1031,67 @@ impl JsEngineState {
                     .set("__operitNativeGetPluginConfigDir", getPluginConfigDir)
                     .map_err(|error| error.to_string())?;
 
+                let isPackageImported = QuickJsFunction::new(ctx.clone(), |packageName: String| {
+                    nativeIsPackageImportedString(packageName)
+                })
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeIsPackageImported", isPackageImported)
+                    .map_err(|error| error.to_string())?;
+
+                let importPackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
+                    nativeImportPackageString(packageName)
+                })
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeImportPackage", importPackage)
+                    .map_err(|error| error.to_string())?;
+
+                let removePackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
+                    nativeRemovePackageString(packageName)
+                })
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeRemovePackage", removePackage)
+                    .map_err(|error| error.to_string())?;
+
+                let usePackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
+                    nativeUsePackageString(packageName)
+                })
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeUsePackage", usePackage)
+                    .map_err(|error| error.to_string())?;
+
+                let listImportedPackagesJson =
+                    QuickJsFunction::new(ctx.clone(), || nativeListImportedPackagesJsonString())
+                        .map_err(|error| error.to_string())?;
+                globals
+                    .set(
+                        "__operitNativeListImportedPackagesJson",
+                        listImportedPackagesJson,
+                    )
+                    .map_err(|error| error.to_string())?;
+
+                let resolveToolName = QuickJsFunction::new(
+                    ctx.clone(),
+                    |packageName: String,
+                     subpackageId: String,
+                     toolName: String,
+                     preferImported: String| {
+                        nativeResolveToolNameString(
+                            packageName,
+                            subpackageId,
+                            toolName,
+                            preferImported,
+                        )
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeResolveToolName", resolveToolName)
+                    .map_err(|error| error.to_string())?;
+
                 let invokeToolPkgIpc = QuickJsFunction::new(
                     ctx.clone(),
                     |packageTarget: String,
@@ -1285,6 +1346,84 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
             globals
                 .set_property("__operitNativeGetPluginConfigDir", getPluginConfigDir)
+                .map_err(|error| error.to_string())?;
+
+            let isPackageImported = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeIsPackageImportedString(
+                        wasmQuickJsArgString(args, 0),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeIsPackageImported", isPackageImported)
+                .map_err(|error| error.to_string())?;
+
+            let importPackage = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeImportPackageString(
+                        wasmQuickJsArgString(args, 0),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeImportPackage", importPackage)
+                .map_err(|error| error.to_string())?;
+
+            let removePackage = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeRemovePackageString(
+                        wasmQuickJsArgString(args, 0),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeRemovePackage", removePackage)
+                .map_err(|error| error.to_string())?;
+
+            let usePackage = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeUsePackageString(
+                        wasmQuickJsArgString(args, 0),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeUsePackage", usePackage)
+                .map_err(|error| error.to_string())?;
+
+            let listImportedPackagesJson = self
+                .context
+                .wrap_callback(|_, _, _args| {
+                    Ok(WasmQuickJsValue::String(
+                        nativeListImportedPackagesJsonString(),
+                    ))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property(
+                    "__operitNativeListImportedPackagesJson",
+                    listImportedPackagesJson,
+                )
+                .map_err(|error| error.to_string())?;
+
+            let resolveToolName = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeResolveToolNameString(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                        wasmQuickJsArgString(args, 2),
+                        wasmQuickJsArgString(args, 3),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeResolveToolName", resolveToolName)
                 .map_err(|error| error.to_string())?;
 
             let invokeToolPkgIpc = self
@@ -1823,7 +1962,7 @@ fn nativeReadToolPkgTextResourceStrings(
             .lock()
             .expect("package manager mutex poisoned");
         guard
-            .readToolPkgTextResource(&packageNameOrSubpackageId, &resourcePath)
+            .readToolPkgTextResource(&packageNameOrSubpackageId, &resourcePath, true)
             .unwrap_or_default()
     })
 }
@@ -1940,6 +2079,146 @@ fn nativeGetPluginConfigDirString(pluginId: String) -> String {
     let path = pluginConfigDirPath(&pluginId);
     let _ = std::fs::create_dir_all(&path);
     path.to_string_lossy().to_string()
+}
+
+#[allow(non_snake_case)]
+fn nativeIsPackageImportedString(packageName: String) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return "false".to_string();
+        };
+        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
+            return "false".to_string();
+        };
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        guard.isPackageEnabled(&normalizedPackageName).to_string()
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeImportPackageString(packageName: String) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return "package import failed".to_string();
+        };
+        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
+            return "Package name is required".to_string();
+        };
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let mut guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        guard.enablePackage(&normalizedPackageName)
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeRemovePackageString(packageName: String) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return "package removal failed".to_string();
+        };
+        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
+            return "Package name is required".to_string();
+        };
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let mut guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        guard.disablePackage(&normalizedPackageName)
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeUsePackageString(packageName: String) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return "package activation failed".to_string();
+        };
+        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
+            return "Package name is required".to_string();
+        };
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let mut guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        guard.usePackage(&normalizedPackageName)
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeListImportedPackagesJsonString() -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return "[]".to_string();
+        };
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        serde_json::to_string(&guard.getEnabledPackageNames()).unwrap_or_else(|_| "[]".to_string())
+    })
+}
+
+#[allow(non_snake_case)]
+fn nativeResolveToolNameString(
+    packageName: String,
+    subpackageId: String,
+    toolName: String,
+    preferImported: String,
+) -> String {
+    CURRENT_TOOL_HANDLER.with(|handler| {
+        let normalizedTool = match normalizeNonBlankString(&toolName) {
+            Some(value) => value,
+            None => return String::new(),
+        };
+        if normalizedTool.contains(':') {
+            return normalizedTool;
+        }
+        let borrowed = handler.borrow();
+        let Some(toolHandler) = borrowed.as_ref() else {
+            return toolName.trim().to_string();
+        };
+        let preferEnabled = !preferImported.eq_ignore_ascii_case("false");
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        let resolvedPackageName = if let Some(candidate) = normalizeNonBlankString(&packageName) {
+            guard
+                .findPreferredPackageNameForSubpackageId(&candidate, preferEnabled)
+                .unwrap_or(candidate)
+        } else if let Some(candidate) = normalizeNonBlankString(&subpackageId) {
+            guard
+                .findPreferredPackageNameForSubpackageId(&candidate, preferEnabled)
+                .unwrap_or(candidate)
+        } else {
+            String::new()
+        };
+        if resolvedPackageName.trim().is_empty() {
+            normalizedTool
+        } else {
+            format!("{resolvedPackageName}:{normalizedTool}")
+        }
+    })
+}
+
+#[allow(non_snake_case)]
+fn normalizeNonBlankString(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[allow(non_snake_case)]

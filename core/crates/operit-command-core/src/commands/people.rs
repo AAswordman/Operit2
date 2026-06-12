@@ -128,8 +128,7 @@ pub fn run_character_command(
                     marks: String::new(),
                     chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL
                         .to_string(),
-                    chatModelConfigId: None,
-                    chatModelIndex: 0,
+                    chatModelId: None,
                     memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL
                         .to_string(),
                     memoryProfileId: None,
@@ -167,19 +166,13 @@ pub fn run_character_command(
                 "marks" => card.marks = value,
                 "attachedTagIds" => card.attachedTagIds = parseCsvList(&value),
                 "chatModelBindingMode" => card.chatModelBindingMode = CharacterCardChatModelBindingMode::normalize(Some(&value)),
-                "chatModelConfigId" => card.chatModelConfigId = nonBlankString(value),
-                "chatModelIndex" => {
-                    card.chatModelIndex = value
-                        .parse::<i32>()
-                        .map_err(|error| format!("invalid chatModelIndex: {error}"))?
-                        .max(0)
-                }
+                "chatModelId" => card.chatModelId = nonBlankString(value),
                 "memoryProfileBindingMode" => {
                     card.memoryProfileBindingMode = CharacterCardMemoryProfileBindingMode::normalize(Some(&value))
                 }
                 "memoryProfileId" => card.memoryProfileId = nonBlankString(value),
                 _ => {
-                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelConfigId | chatModelIndex | memoryProfileBindingMode | memoryProfileId".to_string())
+                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId | memoryProfileBindingMode | memoryProfileId".to_string())
                 }
             }
             core.preferences_character_card_manager()
@@ -444,12 +437,11 @@ fn print_character_card(card: &CharacterCard) {
     println!("advancedCustomPrompt={}", card.advancedCustomPrompt);
     println!("marks={}", card.marks);
     println!("chatModelBindingMode={}", card.chatModelBindingMode);
-    let chatModelConfigId = match card.chatModelConfigId.clone() {
+    let chatModelId = match card.chatModelId.clone() {
         Some(value) => value,
         None => String::new(),
     };
-    println!("chatModelConfigId={chatModelConfigId}");
-    println!("chatModelIndex={}", card.chatModelIndex);
+    println!("chatModelId={chatModelId}");
     println!("memoryProfileBindingMode={}", card.memoryProfileBindingMode);
     let memoryProfileId = match card.memoryProfileId.clone() {
         Some(value) => value,

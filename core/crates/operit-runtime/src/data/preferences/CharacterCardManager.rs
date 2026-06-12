@@ -170,17 +170,11 @@ impl CharacterCardManager {
                 )))
                 .map(|value| CharacterCardChatModelBindingMode::normalize(Some(value)))
                 .unwrap_or_else(|| CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string()),
-            chatModelConfigId: preferences
+            chatModelId: preferences
                 .get(&stringPreferencesKey(&format!(
-                    "character_card_{id}_chat_model_config_id"
+                    "character_card_{id}_chat_model_id"
                 )))
                 .cloned(),
-            chatModelIndex: preferences
-                .get(&stringPreferencesKey(&format!(
-                    "character_card_{id}_chat_model_index"
-                )))
-                .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(0),
             memoryProfileBindingMode: preferences
                 .get(&stringPreferencesKey(&format!(
                     "character_card_{id}_memory_profile_binding_mode"
@@ -450,11 +444,10 @@ impl CharacterCardManager {
                 chatModelBindingMode: CharacterCardChatModelBindingMode::normalize(Some(
                     &card.chatModelBindingMode,
                 )),
-                chatModelConfigId: card
-                    .chatModelConfigId
+                chatModelId: card
+                    .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
-                chatModelIndex: card.chatModelIndex.max(0),
                 memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
                     &card.memoryProfileBindingMode,
                 )),
@@ -602,11 +595,10 @@ impl CharacterCardManager {
                 chatModelBindingMode: CharacterCardChatModelBindingMode::normalize(Some(
                     &card.chatModelBindingMode,
                 )),
-                chatModelConfigId: card
-                    .chatModelConfigId
+                chatModelId: card
+                    .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
-                chatModelIndex: card.chatModelIndex.max(0),
                 memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
                     &card.memoryProfileBindingMode,
                 )),
@@ -670,11 +662,10 @@ impl CharacterCardManager {
             chatModelBindingMode: CharacterCardChatModelBindingMode::normalize(Some(
                 &payload.chatModelBindingMode,
             )),
-            chatModelConfigId: payload
-                .chatModelConfigId
+            chatModelId: payload
+                .chatModelId
                 .clone()
                 .filter(|value| !value.trim().is_empty()),
-            chatModelIndex: payload.chatModelIndex.max(0),
             memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
                 &payload.memoryProfileBindingMode,
             )),
@@ -813,8 +804,7 @@ impl CharacterCardManager {
             advancedCustomPrompt,
             marks: marks.trim().to_string(),
             chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string(),
-            chatModelConfigId: None,
-            chatModelIndex: 0,
+            chatModelId: None,
             memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL
                 .to_string(),
             memoryProfileId: None,
@@ -963,20 +953,16 @@ impl CharacterCardManager {
             &stringPreferencesKey(&format!("character_card_{id}_chat_model_binding_mode")),
             card.chatModelBindingMode.clone(),
         );
-        if let Some(value) = &card.chatModelConfigId {
+        if let Some(value) = &card.chatModelId {
             preferences.set(
-                &stringPreferencesKey(&format!("character_card_{id}_chat_model_config_id")),
+                &stringPreferencesKey(&format!("character_card_{id}_chat_model_id")),
                 value.clone(),
             );
         } else {
             preferences.remove(&stringPreferencesKey(&format!(
-                "character_card_{id}_chat_model_config_id"
+                "character_card_{id}_chat_model_id"
             )));
         }
-        preferences.set(
-            &stringPreferencesKey(&format!("character_card_{id}_chat_model_index")),
-            card.chatModelIndex.max(0).to_string(),
-        );
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_memory_profile_binding_mode")),
             card.memoryProfileBindingMode.clone(),
@@ -1054,12 +1040,8 @@ impl CharacterCardManager {
             CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string(),
         );
         preferences.remove(&stringPreferencesKey(&format!(
-            "character_card_{id}_chat_model_config_id"
+            "character_card_{id}_chat_model_id"
         )));
-        preferences.set(
-            &stringPreferencesKey(&format!("character_card_{id}_chat_model_index")),
-            "0".to_string(),
-        );
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_memory_profile_binding_mode")),
             CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL.to_string(),
@@ -1097,8 +1079,7 @@ impl CharacterCardManager {
             "advanced_custom_prompt",
             "marks",
             "chat_model_binding_mode",
-            "chat_model_config_id",
-            "chat_model_index",
+            "chat_model_id",
             "memory_profile_binding_mode",
             "memory_profile_id",
             "tool_access_config_json",

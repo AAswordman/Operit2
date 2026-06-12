@@ -3,7 +3,7 @@
 This directory prepares the Android phone runtime binaries:
 
 - BusyBox 1.38.0
-- PRoot 5.4.0
+- Termux PRoot v5.1.107.78
 - talloc 2.4.3 for PRoot
 - Bash 5.3 source archive
 - Android NDK r29-beta4 for WSL builds
@@ -11,9 +11,21 @@ This directory prepares the Android phone runtime binaries:
 
 Build instructions are in [BUILDING.md](BUILDING.md).
 
-`build_android_tools_wsl.sh` applies `patches/proot-5.4.0-operit-android.patch`
-to a fresh PRoot 5.4.0 source copy before compiling. That patch contains the
-Android arm64 syscall and 16 KB page compatibility changes used by Operit.
+PRoot edits live in:
+
+```text
+tools/android-runtime/sources/termux-proot-operit
+```
+
+`build_android_tools_wsl.sh` keeps
+`patches/termux-proot-operit-android.patch` and that editable source tree in
+sync before compiling. When the patch exists and the editable source tree has
+not been created, the script creates the editable tree from clean Termux PRoot
+and applies the patch. When both exist, the script regenerates the patch from
+the editable tree. If the patch does not exist yet, the script creates the
+editable tree from clean Termux PRoot and then writes a new patch. After the
+editable tree exists, change PRoot by editing that tree, then run the normal
+PRoot build.
 
 Intermediate build files are written under Fedora WSL:
 

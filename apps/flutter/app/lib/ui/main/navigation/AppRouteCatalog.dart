@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../l10n/generated/app_localizations.dart';
 import '../../common/icons/MaterialIconNameResolver.dart';
-import '../../features/packages/utils/PackageDisplayUtils.dart';
 import '../screens/OperitScreens.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import 'AppNavigationModels.dart';
@@ -20,50 +19,52 @@ class AppRouteCatalog {
 
   static AppNavigationModel build(
     BuildContext context, {
-    List<core_proxy.ToolPkgContainerRuntime> toolPkgContainers =
-        const <core_proxy.ToolPkgContainerRuntime>[],
+    List<core_proxy.ToolPkgUiRoute> toolPkgUiRoutes =
+        const <core_proxy.ToolPkgUiRoute>[],
+    List<core_proxy.ToolPkgNavigationEntry> toolPkgNavigationEntries =
+        const <core_proxy.ToolPkgNavigationEntry>[],
   }) {
     final l10n = AppLocalizations.of(context)!;
-    final toolPkgRoutes = <RouteSpec>[
-      for (final container in toolPkgContainers)
-        for (final route in container.uiRoutes)
-          if (route.runtime.trim().toLowerCase() == _toolPkgRuntimeComposeDsl)
-            RouteSpec(
-              routeId: route.routeId,
-              runtime: RouteRuntime.toolPkgComposeDsl,
-              title: localizedText(route.title),
-              icon: Icons.extension_outlined,
-              ownerPackageName: container.packageName,
-              toolPkgUiModuleId: route.id,
-              keepAlive: route.keepAlive,
-            ),
+    final toolPkgRouteSpecs = <RouteSpec>[
+      for (final route in toolPkgUiRoutes)
+        if (route.runtime.trim().toLowerCase() == _toolPkgRuntimeComposeDsl)
+          RouteSpec(
+            routeId: route.routeId,
+            runtime: RouteRuntime.toolPkgComposeDsl,
+            title: route.title,
+            icon: Icons.extension_outlined,
+            ownerPackageName: route.containerPackageName,
+            toolPkgUiModuleId: route.uiModuleId,
+            keepAlive: route.keepAlive,
+          ),
     ];
-    final toolPkgNavigationEntries = <NavigationEntrySpec>[
-      for (final container in toolPkgContainers)
-        for (final entry in container.navigationEntries)
-          if (_navigationSurface(entry.surface) != null)
-            NavigationEntrySpec(
-              entryId: 'toolpkg:${container.packageName}:${entry.id}',
-              routeId: entry.routeId,
-              surface: _navigationSurface(entry.surface)!,
-              title: localizedText(entry.title),
-              icon: MaterialIconNameResolver.resolveOrDefault(
-                entry.icon,
-                Icons.extension_outlined,
-              ),
-              order: entry.order,
-              action: entry.action == null
-                  ? null
-                  : NavigationEntryActionSpec(
-                      functionName: entry.action!.function,
-                      functionSource: entry.action!.functionSource,
-                    ),
-              kind: NavigationEntryKind.plugin,
-              ownerPackageName: container.packageName,
+    final toolPkgNavigationEntrySpecs = <NavigationEntrySpec>[
+      for (final entry in toolPkgNavigationEntries)
+        if (_navigationSurface(entry.surface) != null)
+          NavigationEntrySpec(
+            entryId: 'toolpkg:${entry.containerPackageName}:${entry.entryId}',
+            routeId: entry.routeId,
+            surface: _navigationSurface(entry.surface)!,
+            title: entry.title,
+            description: entry.description,
+            icon: MaterialIconNameResolver.resolveOrDefault(
+              entry.icon,
+              Icons.extension_outlined,
             ),
+            order: entry.order,
+            action: entry.action == null
+                ? null
+                : NavigationEntryActionSpec(
+                    functionName: entry.action!.functionName,
+                    functionSource: entry.action!.functionSource,
+                  ),
+            kind: NavigationEntryKind.plugin,
+            ownerPackageName: entry.containerPackageName,
+          ),
     ];
     final navigationEntries =
-        ScreenRouteRegistry.mainSidebarEntries(l10n) + toolPkgNavigationEntries;
+        ScreenRouteRegistry.mainSidebarEntries(l10n) +
+        toolPkgNavigationEntrySpecs;
     final sortedNavigationEntries =
         List<NavigationEntrySpec>.of(navigationEntries)..sort((left, right) {
           final surfaceOrder = left.surface.index.compareTo(
@@ -79,7 +80,7 @@ class AppRouteCatalog {
           return left.title.compareTo(right.title);
         });
     return AppNavigationModel(
-      routes: ScreenRouteRegistry.hostRouteSpecs(l10n) + toolPkgRoutes,
+      routes: ScreenRouteRegistry.hostRouteSpecs(l10n) + toolPkgRouteSpecs,
       navigationEntries: sortedNavigationEntries,
     );
   }

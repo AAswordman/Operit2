@@ -12,6 +12,7 @@ import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/SettingsControlStyles.dart';
 
 class CharacterSettingsPanel extends StatefulWidget {
   const CharacterSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -107,7 +108,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       groups: await groupManager.getAllCharacterGroupCards(),
       preferenceProfiles: profiles,
       tags: await promptTagManager.getAllTags(),
-      modelSummaries: await modelManager.getAllConfigSummaries(),
+      modelSummaries: await modelManager.getAllModelSummaries(),
       builtinToolOptions: toolNames
           .map((toolName) => _ToolAccessOption(key: toolName, title: toolName))
           .toList(growable: false),
@@ -249,6 +250,19 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     }
   }
 
+  Future<void> _chooseCharacterCardImport() async {
+    final action = await _CharacterCardImportDialog.show(context: context);
+    if (action == null) {
+      return;
+    }
+    switch (action) {
+      case _CharacterCardImportAction.nativeJson:
+        await _importCharacterCardJson();
+      case _CharacterCardImportAction.tavernJson:
+        await _importTavernCharacterCardJson();
+    }
+  }
+
   Future<void> _copyCharacterGroupJson(
     core_proxy.CharacterGroupCard group,
   ) async {
@@ -322,8 +336,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       advancedCustomPrompt: '',
       marks: '',
       chatModelBindingMode: 'FOLLOW_GLOBAL',
-      chatModelConfigId: null,
-      chatModelIndex: 0,
+      chatModelId: null,
       memoryProfileBindingMode: 'FOLLOW_GLOBAL',
       memoryProfileId: null,
       toolAccessConfig: const core_proxy.CharacterCardToolAccessConfig(
@@ -337,10 +350,11 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       createdAt: now,
       updatedAt: now,
     );
-    final edited = await _CharacterCardEditorDialog.show(
+    final result = await _CharacterCardEditorDialog.show(
       context: context,
       title: l10n.settingsCharactersCreateCard,
       card: card,
+      showItemActions: false,
       modelSummaries: data.modelSummaries,
       preferenceProfiles: data.preferenceProfiles,
       builtinToolOptions: data.builtinToolOptions,
@@ -349,6 +363,15 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       mcpToolOptions: data.mcpToolOptions,
       tags: data.tags,
     );
+    if (result == null) {
+      return;
+    }
+    final edited = switch (result) {
+      _CharacterCardEditorSave(:final card) => card,
+      _CharacterCardEditorCopyJson() ||
+      _CharacterCardEditorCopyTavernJson() ||
+      _CharacterCardEditorDelete() => null,
+    };
     if (edited == null) {
       return;
     }
@@ -363,10 +386,11 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _CharacterSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final edited = await _CharacterCardEditorDialog.show(
+    final result = await _CharacterCardEditorDialog.show(
       context: context,
       title: l10n.settingsCharactersEditCard,
       card: card,
+      showItemActions: true,
       modelSummaries: data.modelSummaries,
       preferenceProfiles: data.preferenceProfiles,
       builtinToolOptions: data.builtinToolOptions,
@@ -375,13 +399,21 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       mcpToolOptions: data.mcpToolOptions,
       tags: data.tags,
     );
-    if (edited == null) {
+    if (result == null) {
       return;
     }
-    await widget.clients.preferencesCharacterCardManager.updateCharacterCard(
-      card: edited,
-    );
-    _reload();
+    switch (result) {
+      case _CharacterCardEditorSave(:final card):
+        await widget.clients.preferencesCharacterCardManager
+            .updateCharacterCard(card: card);
+        _reload();
+      case _CharacterCardEditorCopyJson():
+        await _copyCharacterCardJson(card);
+      case _CharacterCardEditorCopyTavernJson():
+        await _copyCharacterCardTavernJson(card);
+      case _CharacterCardEditorDelete():
+        await _deleteCard(card);
+    }
   }
 
   Future<void> _deleteCard(core_proxy.CharacterCard card) async {
@@ -482,12 +514,20 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       createdAt: now,
       updatedAt: now,
     );
-    final edited = await _CharacterGroupEditorDialog.show(
+    final result = await _CharacterGroupEditorDialog.show(
       context: context,
       title: l10n.settingsCharactersCreateGroup,
       group: group,
       cards: data.cards,
+      showItemActions: false,
     );
+    if (result == null) {
+      return;
+    }
+    final edited = switch (result) {
+      _CharacterGroupEditorSave(:final group) => group,
+      _CharacterGroupEditorCopyJson() || _CharacterGroupEditorDelete() => null,
+    };
     if (edited == null) {
       return;
     }
@@ -501,18 +541,26 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _CharacterSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final edited = await _CharacterGroupEditorDialog.show(
+    final result = await _CharacterGroupEditorDialog.show(
       context: context,
       title: l10n.settingsCharactersEditGroup,
       group: group,
       cards: data.cards,
+      showItemActions: true,
     );
-    if (edited == null) {
+    if (result == null) {
       return;
     }
-    await widget.clients.preferencesCharacterGroupCardManager
-        .updateCharacterGroupCard(group: edited);
-    _reload();
+    switch (result) {
+      case _CharacterGroupEditorSave(:final group):
+        await widget.clients.preferencesCharacterGroupCardManager
+            .updateCharacterGroupCard(group: group);
+        _reload();
+      case _CharacterGroupEditorCopyJson():
+        await _copyCharacterGroupJson(group);
+      case _CharacterGroupEditorDelete():
+        await _deleteGroup(group);
+    }
   }
 
   Future<void> _deleteGroup(core_proxy.CharacterGroupCard group) async {
@@ -613,8 +661,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final width = MediaQuery.sizeOf(context).width;
-    final horizontalPadding = width < 520 ? 16.0 : 28.0;
+    final horizontalPadding = 16.0;
     return FutureBuilder<_CharacterSettingsData>(
       future: _future,
       builder: (context, snapshot) {
@@ -625,31 +672,28 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         return ListView(
           padding: EdgeInsets.fromLTRB(
             horizontalPadding,
-            24,
+            12,
             horizontalPadding,
-            36,
+            20,
           ),
           children: <Widget>[
             _SectionCard(
               title: l10n.settingsCharactersCardsSection,
               action: Wrap(
                 spacing: 8,
-                runSpacing: 8,
+                runSpacing: 4,
                 alignment: WrapAlignment.end,
                 children: <Widget>[
                   TextButton.icon(
-                    onPressed: _importCharacterCardJson,
-                    icon: const Icon(Icons.upload_file_outlined),
-                    label: Text(l10n.settingsCharactersImportJson),
-                  ),
-                  TextButton.icon(
-                    onPressed: _importTavernCharacterCardJson,
-                    icon: const Icon(Icons.person_add_alt_1_outlined),
-                    label: Text(l10n.settingsCharactersImportTavernJson),
+                    onPressed: _chooseCharacterCardImport,
+                    style: SettingsControlStyles.sectionTextButton(),
+                    icon: const Icon(Icons.upload_file_outlined, size: 18),
+                    label: Text(l10n.settingsCharactersImport),
                   ),
                   FilledButton.icon(
                     onPressed: () => _createCard(data),
-                    icon: const Icon(Icons.add),
+                    style: SettingsControlStyles.sectionFilledButton(),
+                    icon: const Icon(Icons.add, size: 18),
                     label: Text(l10n.create),
                   ),
                 ],
@@ -662,9 +706,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     active: card.id == data.activeCardId,
                     onActivate: () => _activateCard(card),
                     onEdit: () => _editCard(card, data),
-                    onExport: () => _copyCharacterCardJson(card),
-                    onExportTavern: () => _copyCharacterCardTavernJson(card),
-                    onDelete: card.isDefault ? null : () => _deleteCard(card),
                   ),
               ],
             ),
@@ -672,7 +713,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               title: l10n.settingsCharactersTagsSection,
               action: FilledButton.icon(
                 onPressed: _createTag,
-                icon: const Icon(Icons.add),
+                style: SettingsControlStyles.sectionFilledButton(),
+                icon: const Icon(Icons.add, size: 18),
                 label: Text(l10n.create),
               ),
               children: <Widget>[
@@ -694,17 +736,19 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               title: l10n.settingsCharactersGroupsSection,
               action: Wrap(
                 spacing: 8,
-                runSpacing: 8,
+                runSpacing: 4,
                 alignment: WrapAlignment.end,
                 children: <Widget>[
                   TextButton.icon(
                     onPressed: _importCharacterGroupJson,
-                    icon: const Icon(Icons.upload_file_outlined),
+                    style: SettingsControlStyles.sectionTextButton(),
+                    icon: const Icon(Icons.upload_file_outlined, size: 18),
                     label: Text(l10n.settingsCharactersImportJson),
                   ),
                   FilledButton.icon(
                     onPressed: () => _createGroup(data),
-                    icon: const Icon(Icons.add),
+                    style: SettingsControlStyles.sectionFilledButton(),
+                    icon: const Icon(Icons.add, size: 18),
                     label: Text(l10n.create),
                   ),
                 ],
@@ -717,8 +761,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     cards: data.cards,
                     onActivate: () => _activateGroup(group),
                     onEdit: () => _editGroup(group, data),
-                    onExport: () => _copyCharacterGroupJson(group),
-                    onDelete: () => _deleteGroup(group),
                   ),
               ],
             ),
@@ -726,7 +768,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               title: l10n.settingsCharactersPreferenceProfilesSection,
               action: FilledButton.icon(
                 onPressed: _createPreferenceProfile,
-                icon: const Icon(Icons.add),
+                style: SettingsControlStyles.sectionFilledButton(),
+                icon: const Icon(Icons.add, size: 18),
                 label: Text(l10n.create),
               ),
               children: <Widget>[
@@ -797,7 +840,7 @@ class _CharacterSettingsData {
   final List<core_proxy.CharacterGroupCard> groups;
   final List<core_proxy.PreferenceProfile> preferenceProfiles;
   final List<core_proxy.PromptTag> tags;
-  final List<core_proxy.ModelConfigSummary> modelSummaries;
+  final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<_ToolAccessOption> builtinToolOptions;
   final List<_ToolAccessOption> packageToolOptions;
   final List<_ToolAccessOption> skillToolOptions;
@@ -817,9 +860,6 @@ class _CharacterCardTile extends StatelessWidget {
     required this.active,
     required this.onActivate,
     required this.onEdit,
-    required this.onExport,
-    required this.onExportTavern,
-    required this.onDelete,
   });
 
   final core_proxy.CharacterCard card;
@@ -827,9 +867,6 @@ class _CharacterCardTile extends StatelessWidget {
   final bool active;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
-  final VoidCallback onExport;
-  final VoidCallback onExportTavern;
-  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -846,52 +883,18 @@ class _CharacterCardTile extends StatelessWidget {
           card.memoryProfileBindingMode,
         ].join(' · '),
       ),
+      onTap: onEdit,
       actions: <Widget>[
-        TextButton(
-          onPressed: active ? null : onActivate,
-          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
-        ),
-        IconButton(
-          tooltip: l10n.edit,
-          onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined),
-        ),
-        PopupMenuButton<_CharacterCardExportAction>(
-          tooltip: l10n.settingsCharactersCopyJson,
-          icon: const Icon(Icons.copy_outlined),
-          onSelected: (action) {
-            switch (action) {
-              case _CharacterCardExportAction.nativeJson:
-                onExport();
-                break;
-              case _CharacterCardExportAction.tavernJson:
-                onExportTavern();
-                break;
-            }
-          },
-          itemBuilder: (context) =>
-              <PopupMenuEntry<_CharacterCardExportAction>>[
-                PopupMenuItem<_CharacterCardExportAction>(
-                  value: _CharacterCardExportAction.nativeJson,
-                  child: Text(l10n.settingsCharactersCopyJson),
-                ),
-                PopupMenuItem<_CharacterCardExportAction>(
-                  value: _CharacterCardExportAction.tavernJson,
-                  child: Text(l10n.settingsCharactersCopyTavernJson),
-                ),
-              ],
-        ),
-        IconButton(
-          tooltip: l10n.delete,
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline),
-        ),
+        active
+            ? SettingsActivePill(label: l10n.settingsActive)
+            : SettingsSetActiveButton(
+                label: l10n.settingsActivate,
+                onPressed: onActivate,
+              ),
       ],
     );
   }
 }
-
-enum _CharacterCardExportAction { nativeJson, tavernJson }
 
 class _PromptTagTile extends StatelessWidget {
   const _PromptTagTile({
@@ -916,16 +919,12 @@ class _PromptTagTile extends StatelessWidget {
           _tagTypeText(tag.tagType),
         ].join(' · '),
       ),
+      onTap: onEdit,
       actions: <Widget>[
-        IconButton(
-          tooltip: l10n.edit,
-          onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined),
-        ),
-        IconButton(
+        SettingsEntityIconButton(
           tooltip: l10n.delete,
+          icon: Icons.delete_outline,
           onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline),
         ),
       ],
     );
@@ -939,8 +938,6 @@ class _CharacterGroupTile extends StatelessWidget {
     required this.cards,
     required this.onActivate,
     required this.onEdit,
-    required this.onExport,
-    required this.onDelete,
   });
 
   final core_proxy.CharacterGroupCard group;
@@ -948,14 +945,13 @@ class _CharacterGroupTile extends StatelessWidget {
   final List<core_proxy.CharacterCard> cards;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
-  final VoidCallback onExport;
-  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final memberNames = group.members
         .map((member) => _cardNameFor(cards, member.characterCardId))
+        .nonNulls
         .join(', ');
     return _SettingsEntityTile(
       leading: Icon(active ? Icons.check_circle : Icons.groups_outlined),
@@ -966,26 +962,14 @@ class _CharacterGroupTile extends StatelessWidget {
           if (memberNames.isNotEmpty) memberNames,
         ].join(' · '),
       ),
+      onTap: onEdit,
       actions: <Widget>[
-        TextButton(
-          onPressed: active ? null : onActivate,
-          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
-        ),
-        IconButton(
-          tooltip: l10n.edit,
-          onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined),
-        ),
-        IconButton(
-          tooltip: l10n.settingsCharactersCopyJson,
-          onPressed: onExport,
-          icon: const Icon(Icons.copy_outlined),
-        ),
-        IconButton(
-          tooltip: l10n.delete,
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline),
-        ),
+        active
+            ? SettingsActivePill(label: l10n.settingsActive)
+            : SettingsSetActiveButton(
+                label: l10n.settingsActivate,
+                onPressed: onActivate,
+              ),
       ],
     );
   }
@@ -1017,16 +1001,14 @@ class _PreferenceProfileTile extends StatelessWidget {
           if (profile.aiStyle.trim().isNotEmpty) profile.aiStyle.trim(),
         ].join(' · '),
       ),
+      onTap: onEdit,
       actions: <Widget>[
-        TextButton(
-          onPressed: active ? null : onActivate,
-          child: Text(active ? l10n.settingsActive : l10n.settingsActivate),
-        ),
-        IconButton(
-          tooltip: l10n.edit,
-          onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined),
-        ),
+        active
+            ? SettingsActivePill(label: l10n.settingsActive)
+            : SettingsSetActiveButton(
+                label: l10n.settingsActivate,
+                onPressed: onActivate,
+              ),
       ],
     );
   }
@@ -1038,78 +1020,109 @@ class _SettingsEntityTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.actions,
+    this.onTap,
   });
 
   final Widget leading;
   final Widget title;
   final Widget subtitle;
   final List<Widget> actions;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              SizedBox(
-                width: 48,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: IconTheme.merge(
-                    data: IconThemeData(color: colorScheme.onSurfaceVariant),
-                    child: leading,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: DefaultTextStyle.merge(
-                  style: TextStyle(color: colorScheme.onSurface),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      DefaultTextStyle.merge(
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
-                        child: title,
-                      ),
-                      const SizedBox(height: 4),
-                      DefaultTextStyle.merge(
-                        style: TextStyle(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final content = Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    SizedBox(
+                      width: 34,
+                      child: IconTheme.merge(
+                        data: IconThemeData(
                           color: colorScheme.onSurfaceVariant,
-                          height: 1.35,
+                          size: 20,
                         ),
-                        child: subtitle,
+                        child: leading,
                       ),
-                    ],
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(color: colorScheme.onSurface),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            DefaultTextStyle.merge(
+                              style: Theme.of(context).textTheme.titleSmall!
+                                  .copyWith(fontWeight: FontWeight.w700),
+                              child: title,
+                            ),
+                            const SizedBox(height: 2),
+                            DefaultTextStyle.merge(
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall!
+                                  .copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    height: 1.25,
+                                  ),
+                              child: subtitle,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+                final actionBar = Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    spacing: 2,
+                    runSpacing: 2,
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: actions,
                   ),
-                ),
-              ),
-            ],
-          ),
-          if (actions.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.only(left: 48),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  alignment: WrapAlignment.end,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: actions,
-                ),
-              ),
+                );
+                if (actions.isEmpty) {
+                  return content;
+                }
+                if (constraints.maxWidth < 390) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      content,
+                      const SizedBox(height: 4),
+                      actionBar,
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    Expanded(child: content),
+                    const SizedBox(width: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 180),
+                      child: actionBar,
+                    ),
+                  ],
+                );
+              },
             ),
-          ],
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -1397,10 +1410,33 @@ class _PreferenceProfileEditorDialogState
   }
 }
 
+sealed class _CharacterCardEditorResult {
+  const _CharacterCardEditorResult();
+}
+
+class _CharacterCardEditorSave extends _CharacterCardEditorResult {
+  const _CharacterCardEditorSave(this.card);
+
+  final core_proxy.CharacterCard card;
+}
+
+class _CharacterCardEditorCopyJson extends _CharacterCardEditorResult {
+  const _CharacterCardEditorCopyJson();
+}
+
+class _CharacterCardEditorCopyTavernJson extends _CharacterCardEditorResult {
+  const _CharacterCardEditorCopyTavernJson();
+}
+
+class _CharacterCardEditorDelete extends _CharacterCardEditorResult {
+  const _CharacterCardEditorDelete();
+}
+
 class _CharacterCardEditorDialog extends StatefulWidget {
   const _CharacterCardEditorDialog({
     required this.title,
     required this.card,
+    required this.showItemActions,
     required this.modelSummaries,
     required this.preferenceProfiles,
     required this.builtinToolOptions,
@@ -1412,7 +1448,8 @@ class _CharacterCardEditorDialog extends StatefulWidget {
 
   final String title;
   final core_proxy.CharacterCard card;
-  final List<core_proxy.ModelConfigSummary> modelSummaries;
+  final bool showItemActions;
+  final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<core_proxy.PreferenceProfile> preferenceProfiles;
   final List<_ToolAccessOption> builtinToolOptions;
   final List<_ToolAccessOption> packageToolOptions;
@@ -1420,11 +1457,12 @@ class _CharacterCardEditorDialog extends StatefulWidget {
   final List<_ToolAccessOption> mcpToolOptions;
   final List<core_proxy.PromptTag> tags;
 
-  static Future<core_proxy.CharacterCard?> show({
+  static Future<_CharacterCardEditorResult?> show({
     required BuildContext context,
     required String title,
     required core_proxy.CharacterCard card,
-    required List<core_proxy.ModelConfigSummary> modelSummaries,
+    required bool showItemActions,
+    required List<core_proxy.ProviderModelSummary> modelSummaries,
     required List<core_proxy.PreferenceProfile> preferenceProfiles,
     required List<_ToolAccessOption> builtinToolOptions,
     required List<_ToolAccessOption> packageToolOptions,
@@ -1432,11 +1470,12 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required List<_ToolAccessOption> mcpToolOptions,
     required List<core_proxy.PromptTag> tags,
   }) {
-    return showDialog<core_proxy.CharacterCard>(
+    return showDialog<_CharacterCardEditorResult>(
       context: context,
       builder: (context) => _CharacterCardEditorDialog(
         title: title,
         card: card,
+        showItemActions: showItemActions,
         modelSummaries: modelSummaries,
         preferenceProfiles: preferenceProfiles,
         builtinToolOptions: builtinToolOptions,
@@ -1465,8 +1504,7 @@ class _CharacterCardEditorDialogState
   late final TextEditingController _advancedPromptController;
   late final TextEditingController _marksController;
   late String _chatModelBindingMode;
-  String? _chatModelConfigId;
-  late int _chatModelIndex;
+  String? _chatModelId;
   late String _memoryProfileBindingMode;
   String? _memoryProfileId;
   late List<String> _attachedTagIds;
@@ -1497,8 +1535,7 @@ class _CharacterCardEditorDialogState
     _chatModelBindingMode = _normalizeChatModelBindingMode(
       card.chatModelBindingMode,
     );
-    _chatModelConfigId = card.chatModelConfigId;
-    _chatModelIndex = card.chatModelIndex;
+    _chatModelId = card.chatModelId;
     _memoryProfileBindingMode = _normalizeMemoryProfileBindingMode(
       card.memoryProfileBindingMode,
     );
@@ -1525,18 +1562,6 @@ class _CharacterCardEditorDialogState
       return;
     }
     final l10n = AppLocalizations.of(context)!;
-    final selectedConfig = _modelSummaryById(
-      widget.modelSummaries,
-      _chatModelConfigId,
-    );
-    final selectedModelNames = selectedConfig == null
-        ? const <String>[]
-        : _modelNames(selectedConfig.modelName);
-    final normalizedModelIndex =
-        _chatModelBindingMode == _chatModelFixedConfig &&
-            selectedModelNames.isNotEmpty
-        ? _chatModelIndex.clamp(0, selectedModelNames.length - 1)
-        : 0;
     final normalizedToolAccessConfig = _normalizedToolAccessConfig(
       _toolAccessConfig,
     );
@@ -1554,30 +1579,31 @@ class _CharacterCardEditorDialogState
     }
     final card = widget.card;
     Navigator.of(context).pop(
-      core_proxy.CharacterCard(
-        id: card.id,
-        name: _nameController.text.trim(),
-        description: _descriptionController.text.trim(),
-        characterSetting: _characterSettingController.text,
-        openingStatement: _openingStatementController.text,
-        otherContentChat: _otherContentChatController.text,
-        otherContentVoice: _otherContentVoiceController.text,
-        attachedTagIds: List<String>.from(_attachedTagIds),
-        advancedCustomPrompt: _advancedPromptController.text,
-        marks: _marksController.text,
-        chatModelBindingMode: _chatModelBindingMode,
-        chatModelConfigId: _chatModelBindingMode == _chatModelFixedConfig
-            ? _chatModelConfigId
-            : null,
-        chatModelIndex: normalizedModelIndex,
-        memoryProfileBindingMode: _memoryProfileBindingMode,
-        memoryProfileId: _memoryProfileBindingMode == _memoryFixedProfile
-            ? _memoryProfileId
-            : null,
-        toolAccessConfig: normalizedToolAccessConfig,
-        isDefault: card.isDefault,
-        createdAt: card.createdAt,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      _CharacterCardEditorSave(
+        core_proxy.CharacterCard(
+          id: card.id,
+          name: _nameController.text.trim(),
+          description: _descriptionController.text.trim(),
+          characterSetting: _characterSettingController.text,
+          openingStatement: _openingStatementController.text,
+          otherContentChat: _otherContentChatController.text,
+          otherContentVoice: _otherContentVoiceController.text,
+          attachedTagIds: List<String>.from(_attachedTagIds),
+          advancedCustomPrompt: _advancedPromptController.text,
+          marks: _marksController.text,
+          chatModelBindingMode: _chatModelBindingMode,
+          chatModelId: _chatModelBindingMode == _chatModelFixedConfig
+              ? _chatModelId
+              : null,
+          memoryProfileBindingMode: _memoryProfileBindingMode,
+          memoryProfileId: _memoryProfileBindingMode == _memoryFixedProfile
+              ? _memoryProfileId
+              : null,
+          toolAccessConfig: normalizedToolAccessConfig,
+          isDefault: card.isDefault,
+          createdAt: card.createdAt,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
       ),
     );
   }
@@ -1599,250 +1625,305 @@ class _CharacterCardEditorDialogState
     });
   }
 
+  Future<void> _exportCard() async {
+    final action = await _CharacterCardExportDialog.show(context: context);
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case _CharacterCardExportAction.nativeJson:
+        Navigator.of(context).pop(const _CharacterCardEditorCopyJson());
+      case _CharacterCardExportAction.tavernJson:
+        Navigator.of(context).pop(const _CharacterCardEditorCopyTavernJson());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final selectedConfig = _modelSummaryById(
+    final selectedModel = _providerModelSummaryById(
       widget.modelSummaries,
-      _chatModelConfigId,
+      _chatModelId,
     );
-    final modelNames = selectedConfig == null
-        ? const <String>[]
-        : _modelNames(selectedConfig.modelName);
-    final modelIndexValue =
-        _chatModelIndex >= 0 && _chatModelIndex < modelNames.length
-        ? _chatModelIndex
-        : null;
     final memoryProfileValue =
         _preferenceProfileById(widget.preferenceProfiles, _memoryProfileId) ==
             null
         ? null
         : _memoryProfileId;
     final toolAccessSummary = _toolAccessSummary(l10n, _toolAccessConfig);
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 680,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _DialogTextField(
-                  controller: _nameController,
-                  label: l10n.settingsCharactersCardName,
-                  requiredField: true,
-                ),
-                _DialogTextField(
-                  controller: _descriptionController,
-                  label: l10n.settingsCharactersDescription,
-                ),
-                _DialogTextField(
-                  controller: _characterSettingController,
-                  label: l10n.settingsCharactersCharacterSetting,
-                  maxLines: 6,
-                ),
-                _DialogTextField(
-                  controller: _openingStatementController,
-                  label: l10n.settingsCharactersOpeningStatement,
-                  maxLines: 3,
-                ),
-                ExpansionTile(
-                  title: Text(l10n.settingsAdvanced),
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: EdgeInsets.zero,
-                  children: <Widget>[
-                    _DialogTextField(
-                      controller: _otherContentChatController,
-                      label: l10n.settingsCharactersOtherContentChat,
-                      maxLines: 4,
+    final colorScheme = Theme.of(context).colorScheme;
+    final dialogActions = <Widget>[
+      if (widget.showItemActions && !widget.card.isDefault)
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(const _CharacterCardEditorDelete()),
+          child: Text(l10n.delete),
+        ),
+      if (widget.showItemActions)
+        TextButton(
+          onPressed: _exportCard,
+          child: Text(l10n.settingsCharactersExport),
+        ),
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: Text(l10n.cancel),
+      ),
+      FilledButton(onPressed: _save, child: Text(l10n.save)),
+    ];
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 820),
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 22, 16, 14),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
-                    _DialogTextField(
-                      controller: _otherContentVoiceController,
-                      label: l10n.settingsCharactersOtherContentVoice,
-                      maxLines: 4,
-                    ),
-                    _DialogTextField(
-                      controller: _advancedPromptController,
-                      label: l10n.settingsCharactersAdvancedPrompt,
-                      maxLines: 4,
-                    ),
-                    _DialogTextField(
-                      controller: _marksController,
-                      label: l10n.settingsCharactersMarks,
-                      maxLines: 3,
-                    ),
-                    _CharacterTagPicker(
-                      tags: widget.tags,
-                      selectedTagIds: _attachedTagIds,
-                      onChanged: (tagId, selected) {
-                        setState(() {
-                          if (selected) {
-                            if (!_attachedTagIds.contains(tagId)) {
-                              _attachedTagIds.add(tagId);
-                            }
-                          } else {
-                            _attachedTagIds.remove(tagId);
-                          }
-                        });
-                      },
-                    ),
-                    _DialogDropdown<String>(
-                      label: l10n.settingsCharactersChatModelBindingMode,
-                      value: _chatModelBindingMode,
-                      items: <DropdownMenuItem<String>>[
-                        DropdownMenuItem<String>(
-                          value: _chatModelFollowGlobal,
-                          child: Text(
-                            l10n.settingsCharactersChatModelFollowGlobal,
-                          ),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: _chatModelFixedConfig,
-                          child: Text(
-                            l10n.settingsCharactersChatModelFixedConfig,
-                          ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setState(() {
-                          _chatModelBindingMode = value;
-                        });
-                      },
-                    ),
-                    if (_chatModelBindingMode == _chatModelFixedConfig) ...[
-                      _DialogDropdown<String>(
-                        label: l10n.settingsCharactersChatModelConfig,
-                        value: selectedConfig?.id,
-                        items: widget.modelSummaries
-                            .map(
-                              (summary) => DropdownMenuItem<String>(
-                                value: summary.id,
-                                child: Text(summary.name),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          setState(() {
-                            _chatModelConfigId = value;
-                            _chatModelIndex = 0;
-                          });
-                        },
+                  ),
+                  IconButton(
+                    tooltip: l10n.cancel,
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: colorScheme.outlineVariant),
+            Expanded(
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _DialogTextField(
+                        controller: _nameController,
+                        label: l10n.settingsCharactersCardName,
+                        requiredField: true,
                       ),
-                      _DialogDropdown<int>(
-                        label: l10n.settingsCharactersChatModelIndex,
-                        value: modelIndexValue,
-                        items: <DropdownMenuItem<int>>[
-                          for (
-                            var index = 0;
-                            index < modelNames.length;
-                            index++
-                          )
-                            DropdownMenuItem<int>(
-                              value: index,
-                              child: Text(modelNames[index]),
+                      _DialogTextField(
+                        controller: _descriptionController,
+                        label: l10n.settingsCharactersDescription,
+                      ),
+                      _DialogExpandableTextField(
+                        controller: _characterSettingController,
+                        label: l10n.settingsCharactersCharacterSetting,
+                        maxLines: 6,
+                      ),
+                      _DialogExpandableTextField(
+                        controller: _openingStatementController,
+                        label: l10n.settingsCharactersOpeningStatement,
+                        maxLines: 3,
+                      ),
+                      ExpansionTile(
+                        title: Text(l10n.settingsAdvanced),
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: EdgeInsets.zero,
+                        children: <Widget>[
+                          _DialogExpandableTextField(
+                            controller: _otherContentChatController,
+                            label: l10n.settingsCharactersOtherContentChat,
+                            maxLines: 4,
+                          ),
+                          _DialogExpandableTextField(
+                            controller: _otherContentVoiceController,
+                            label: l10n.settingsCharactersOtherContentVoice,
+                            maxLines: 4,
+                          ),
+                          _DialogExpandableTextField(
+                            controller: _advancedPromptController,
+                            label: l10n.settingsCharactersAdvancedPrompt,
+                            maxLines: 4,
+                          ),
+                          _DialogExpandableTextField(
+                            controller: _marksController,
+                            label: l10n.settingsCharactersMarks,
+                            maxLines: 3,
+                          ),
+                          _CharacterTagPicker(
+                            tags: widget.tags,
+                            selectedTagIds: _attachedTagIds,
+                            onChanged: (tagId, selected) {
+                              setState(() {
+                                if (selected) {
+                                  if (!_attachedTagIds.contains(tagId)) {
+                                    _attachedTagIds.add(tagId);
+                                  }
+                                } else {
+                                  _attachedTagIds.remove(tagId);
+                                }
+                              });
+                            },
+                          ),
+                          _DialogDropdown<String>(
+                            label: l10n.settingsCharactersChatModelBindingMode,
+                            value: _chatModelBindingMode,
+                            items: <DropdownMenuItem<String>>[
+                              DropdownMenuItem<String>(
+                                value: _chatModelFollowGlobal,
+                                child: Text(
+                                  l10n.settingsCharactersChatModelFollowGlobal,
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: _chatModelFixedConfig,
+                                child: Text(
+                                  l10n.settingsCharactersChatModelFixedConfig,
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _chatModelBindingMode = value;
+                              });
+                            },
+                          ),
+                          if (_chatModelBindingMode ==
+                              _chatModelFixedConfig) ...[
+                            _DialogDropdown<String>(
+                              label: l10n.settingsCharactersChatModelConfig,
+                              value: selectedModel?.modelId,
+                              items: widget.modelSummaries
+                                  .map(
+                                    (summary) => DropdownMenuItem<String>(
+                                      value: summary.modelId,
+                                      child: Text(
+                                        '${summary.providerName} · ${summary.modelId}',
+                                      ),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: (value) {
+                                setState(() {
+                                  _chatModelId = value;
+                                });
+                              },
+                            ),
+                          ],
+                          _DialogDropdown<String>(
+                            label: l10n.settingsCharactersMemoryBindingMode,
+                            value: _memoryProfileBindingMode,
+                            items: <DropdownMenuItem<String>>[
+                              DropdownMenuItem<String>(
+                                value: _memoryFollowGlobal,
+                                child: Text(
+                                  l10n.settingsCharactersMemoryProfileFollowGlobal,
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: _memoryFixedProfile,
+                                child: Text(
+                                  l10n.settingsCharactersMemoryProfileFixedProfile,
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _memoryProfileBindingMode = value;
+                              });
+                            },
+                          ),
+                          if (_memoryProfileBindingMode == _memoryFixedProfile)
+                            _DialogDropdown<String>(
+                              label: l10n.settingsCharactersMemoryProfile,
+                              value: memoryProfileValue,
+                              items: widget.preferenceProfiles
+                                  .map(
+                                    (profile) => DropdownMenuItem<String>(
+                                      value: profile.id,
+                                      child: Text(profile.name),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: (value) {
+                                setState(() {
+                                  _memoryProfileId = value;
+                                });
+                              },
+                            ),
+                          _DialogDropdown<bool>(
+                            label: l10n.settingsCharactersToolAccess,
+                            value: _toolAccessConfig.enabled,
+                            items: <DropdownMenuItem<bool>>[
+                              DropdownMenuItem<bool>(
+                                value: false,
+                                child: Text(
+                                  l10n.settingsCharactersToolAccessFollowGlobal,
+                                ),
+                              ),
+                              DropdownMenuItem<bool>(
+                                value: true,
+                                child: Text(
+                                  l10n.settingsCharactersToolAccessCustom,
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _toolAccessConfig =
+                                    core_proxy.CharacterCardToolAccessConfig(
+                                      enabled: value,
+                                      allowedBuiltinTools:
+                                          _toolAccessConfig.allowedBuiltinTools,
+                                      allowedPackages:
+                                          _toolAccessConfig.allowedPackages,
+                                      allowedSkills:
+                                          _toolAccessConfig.allowedSkills,
+                                      allowedMcpServers:
+                                          _toolAccessConfig.allowedMcpServers,
+                                    );
+                              });
+                            },
+                          ),
+                          if (_toolAccessConfig.enabled)
+                            _DialogToolAccessConfigureField(
+                              label: l10n.settingsCharactersToolAccessConfigure,
+                              valueText: toolAccessSummary,
+                              onConfigure: _openToolAccessDialog,
                             ),
                         ],
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setState(() {
-                            _chatModelIndex = value;
-                          });
-                        },
                       ),
                     ],
-                    _DialogDropdown<String>(
-                      label: l10n.settingsCharactersMemoryBindingMode,
-                      value: _memoryProfileBindingMode,
-                      items: <DropdownMenuItem<String>>[
-                        DropdownMenuItem<String>(
-                          value: _memoryFollowGlobal,
-                          child: Text(
-                            l10n.settingsCharactersMemoryProfileFollowGlobal,
-                          ),
-                        ),
-                        DropdownMenuItem<String>(
-                          value: _memoryFixedProfile,
-                          child: Text(
-                            l10n.settingsCharactersMemoryProfileFixedProfile,
-                          ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setState(() {
-                          _memoryProfileBindingMode = value;
-                        });
-                      },
-                    ),
-                    if (_memoryProfileBindingMode == _memoryFixedProfile)
-                      _DialogDropdown<String>(
-                        label: l10n.settingsCharactersMemoryProfile,
-                        value: memoryProfileValue,
-                        items: widget.preferenceProfiles
-                            .map(
-                              (profile) => DropdownMenuItem<String>(
-                                value: profile.id,
-                                child: Text(profile.name),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          setState(() {
-                            _memoryProfileId = value;
-                          });
-                        },
-                      ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsCharactersToolAccess),
-                      subtitle: Text(toolAccessSummary),
-                      value: _toolAccessConfig.enabled,
-                      onChanged: (value) {
-                        setState(() {
-                          _toolAccessConfig =
-                              core_proxy.CharacterCardToolAccessConfig(
-                                enabled: value,
-                                allowedBuiltinTools:
-                                    _toolAccessConfig.allowedBuiltinTools,
-                                allowedPackages:
-                                    _toolAccessConfig.allowedPackages,
-                                allowedSkills: _toolAccessConfig.allowedSkills,
-                                allowedMcpServers:
-                                    _toolAccessConfig.allowedMcpServers,
-                              );
-                        });
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.settingsCharactersToolAccessConfigure),
-                      subtitle: Text(toolAccessSummary),
-                      trailing: const Icon(Icons.tune_outlined),
-                      onTap: _openToolAccessDialog,
-                    ),
-                  ],
+                  ),
                 ),
-              ],
+              ),
             ),
-          ),
+            Divider(height: 1, color: colorScheme.outlineVariant),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: dialogActions,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(onPressed: _save, child: Text(l10n.save)),
-      ],
     );
   }
 }
@@ -2017,6 +2098,8 @@ class _ToolAccessOptionGroup extends StatelessWidget {
           for (final option in options)
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
+              dense: true,
+              visualDensity: VisualDensity.compact,
               title: Text(option.title),
               subtitle: option.subtitle.isEmpty ? null : Text(option.subtitle),
               value: selectedKeys.contains(option.key),
@@ -2081,9 +2164,8 @@ class _CharacterTagPicker extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               selectedNames.join(' · '),
-              style: TextStyle(
+              style: Theme.of(context).textTheme.bodySmall!.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 12,
               ),
             ),
           ],
@@ -2093,27 +2175,52 @@ class _CharacterTagPicker extends StatelessWidget {
   }
 }
 
+sealed class _CharacterGroupEditorResult {
+  const _CharacterGroupEditorResult();
+}
+
+class _CharacterGroupEditorSave extends _CharacterGroupEditorResult {
+  const _CharacterGroupEditorSave(this.group);
+
+  final core_proxy.CharacterGroupCard group;
+}
+
+class _CharacterGroupEditorCopyJson extends _CharacterGroupEditorResult {
+  const _CharacterGroupEditorCopyJson();
+}
+
+class _CharacterGroupEditorDelete extends _CharacterGroupEditorResult {
+  const _CharacterGroupEditorDelete();
+}
+
 class _CharacterGroupEditorDialog extends StatefulWidget {
   const _CharacterGroupEditorDialog({
     required this.title,
     required this.group,
     required this.cards,
+    required this.showItemActions,
   });
 
   final String title;
   final core_proxy.CharacterGroupCard group;
   final List<core_proxy.CharacterCard> cards;
+  final bool showItemActions;
 
-  static Future<core_proxy.CharacterGroupCard?> show({
+  static Future<_CharacterGroupEditorResult?> show({
     required BuildContext context,
     required String title,
     required core_proxy.CharacterGroupCard group,
     required List<core_proxy.CharacterCard> cards,
+    required bool showItemActions,
   }) {
-    return showDialog<core_proxy.CharacterGroupCard>(
+    return showDialog<_CharacterGroupEditorResult>(
       context: context,
-      builder: (context) =>
-          _CharacterGroupEditorDialog(title: title, group: group, cards: cards),
+      builder: (context) => _CharacterGroupEditorDialog(
+        title: title,
+        group: group,
+        cards: cards,
+        showItemActions: showItemActions,
+      ),
     );
   }
 
@@ -2164,13 +2271,15 @@ class _CharacterGroupEditorDialogState
       }
     }
     Navigator.of(context).pop(
-      core_proxy.CharacterGroupCard(
-        id: widget.group.id,
-        name: _nameController.text.trim(),
-        description: _descriptionController.text.trim(),
-        members: members,
-        createdAt: widget.group.createdAt,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      _CharacterGroupEditorSave(
+        core_proxy.CharacterGroupCard(
+          id: widget.group.id,
+          name: _nameController.text.trim(),
+          description: _descriptionController.text.trim(),
+          members: members,
+          createdAt: widget.group.createdAt,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
       ),
     );
   }
@@ -2210,6 +2319,8 @@ class _CharacterGroupEditorDialogState
                 for (final card in widget.cards)
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
                     title: Text(card.name),
                     subtitle: card.description.trim().isEmpty
                         ? null
@@ -2231,11 +2342,126 @@ class _CharacterGroupEditorDialogState
         ),
       ),
       actions: <Widget>[
+        if (widget.showItemActions)
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(const _CharacterGroupEditorDelete()),
+            child: Text(l10n.delete),
+          ),
+        if (widget.showItemActions)
+          TextButton(
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(const _CharacterGroupEditorCopyJson()),
+            child: Text(l10n.settingsCharactersCopyJson),
+          ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
         FilledButton(onPressed: _save, child: Text(l10n.save)),
+      ],
+    );
+  }
+}
+
+enum _CharacterCardImportAction { nativeJson, tavernJson }
+
+enum _CharacterCardExportAction { nativeJson, tavernJson }
+
+class _CharacterCardExportDialog extends StatelessWidget {
+  const _CharacterCardExportDialog();
+
+  static Future<_CharacterCardExportAction?> show({
+    required BuildContext context,
+  }) {
+    return showDialog<_CharacterCardExportAction>(
+      context: context,
+      builder: (context) => const _CharacterCardExportDialog(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsCharactersExport),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.data_object_outlined),
+              title: Text(l10n.settingsCharactersCopyJson),
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_CharacterCardExportAction.nativeJson),
+            ),
+            ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: Text(l10n.settingsCharactersCopyTavernJson),
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_CharacterCardExportAction.tavernJson),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
+    );
+  }
+}
+
+class _CharacterCardImportDialog extends StatelessWidget {
+  const _CharacterCardImportDialog();
+
+  static Future<_CharacterCardImportAction?> show({
+    required BuildContext context,
+  }) {
+    return showDialog<_CharacterCardImportAction>(
+      context: context,
+      builder: (context) => const _CharacterCardImportDialog(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsCharactersImport),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.data_object_outlined),
+              title: Text(l10n.settingsCharactersImportJson),
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_CharacterCardImportAction.nativeJson),
+            ),
+            ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: Text(l10n.settingsCharactersImportTavernJson),
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_CharacterCardImportAction.tavernJson),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
       ],
     );
   }
@@ -2360,6 +2586,131 @@ class _DialogTextField extends StatelessWidget {
   }
 }
 
+class _DialogExpandableTextField extends StatelessWidget {
+  const _DialogExpandableTextField({
+    required this.controller,
+    required this.label,
+    required this.maxLines,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final int maxLines;
+
+  Future<void> _openFullscreenEditor(BuildContext context) async {
+    final text = await _FullscreenTextEditDialog.show(
+      context: context,
+      title: label,
+      initialText: controller.text,
+    );
+    if (text == null) {
+      return;
+    }
+    controller.text = text;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: controller,
+        maxLines: maxLines,
+        decoration: InputDecoration(
+          labelText: label,
+          suffixIcon: IconButton(
+            tooltip: l10n.fullscreenInput,
+            icon: const Icon(Icons.fullscreen),
+            onPressed: () => _openFullscreenEditor(context),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FullscreenTextEditDialog extends StatefulWidget {
+  const _FullscreenTextEditDialog({
+    required this.title,
+    required this.initialText,
+  });
+
+  final String title;
+  final String initialText;
+
+  static Future<String?> show({
+    required BuildContext context,
+    required String title,
+    required String initialText,
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (context) =>
+          _FullscreenTextEditDialog(title: title, initialText: initialText),
+    );
+  }
+
+  @override
+  State<_FullscreenTextEditDialog> createState() =>
+      _FullscreenTextEditDialogState();
+}
+
+class _FullscreenTextEditDialogState extends State<_FullscreenTextEditDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+          leading: IconButton(
+            tooltip: l10n.cancel,
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+          ),
+          actions: <Widget>[
+            TextButton(onPressed: _save, child: Text(l10n.save)),
+          ],
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(20),
+          child: TextField(
+            controller: _controller,
+            autofocus: true,
+            expands: true,
+            minLines: null,
+            maxLines: null,
+            textAlignVertical: TextAlignVertical.top,
+            decoration: InputDecoration(
+              labelText: widget.title,
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DialogDropdown<T> extends StatelessWidget {
   const _DialogDropdown({
     required this.label,
@@ -2387,6 +2738,48 @@ class _DialogDropdown<T> extends StatelessWidget {
   }
 }
 
+class _DialogToolAccessConfigureField extends StatelessWidget {
+  const _DialogToolAccessConfigureField({
+    required this.label,
+    required this.valueText,
+    required this.onConfigure,
+  });
+
+  final String label;
+  final String valueText;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onConfigure,
+          child: InputDecorator(
+            decoration: InputDecoration(labelText: label),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    valueText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Icon(Icons.tune_outlined),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
@@ -2401,9 +2794,9 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(18);
+    final radius = BorderRadius.circular(12);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: OperitGlassSurface(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: radius,
@@ -2411,16 +2804,48 @@ class _SectionCard extends StatelessWidget {
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-              if (action != null) ...[
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: action!),
-              ],
-              const SizedBox(height: 8),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final titleText = Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  );
+                  if (action == null) {
+                    return titleText;
+                  }
+                  if (constraints.maxWidth < 420) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        titleText,
+                        const SizedBox(height: 6),
+                        Align(alignment: Alignment.centerRight, child: action!),
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: <Widget>[
+                      Expanded(child: titleText),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        flex: 0,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: action!,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 6),
               ...children,
             ],
           ),
@@ -2448,6 +2873,8 @@ class _SwitchLine extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
       title: Text(title),
       subtitle: Text(
         subtitle,
@@ -2459,21 +2886,13 @@ class _SwitchLine extends StatelessWidget {
   }
 }
 
-String _cardNameFor(List<core_proxy.CharacterCard> cards, String id) {
+String? _cardNameFor(List<core_proxy.CharacterCard> cards, String id) {
   for (final card in cards) {
     if (card.id == id) {
       return card.name;
     }
   }
-  return _shortIdentifier(id);
-}
-
-String _shortIdentifier(String value) {
-  final text = value.trim();
-  if (text.length <= 12) {
-    return text;
-  }
-  return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
+  return null;
 }
 
 List<String> _tagNamesFor(List<core_proxy.PromptTag> tags, List<String> ids) {
@@ -2532,20 +2951,12 @@ String _normalizeMemoryProfileBindingMode(String mode) {
       : _memoryFollowGlobal;
 }
 
-List<String> _modelNames(String raw) {
-  return raw
-      .split(',')
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toList(growable: false);
-}
-
-core_proxy.ModelConfigSummary? _modelSummaryById(
-  List<core_proxy.ModelConfigSummary> summaries,
+core_proxy.ProviderModelSummary? _providerModelSummaryById(
+  List<core_proxy.ProviderModelSummary> summaries,
   String? id,
 ) {
   for (final summary in summaries) {
-    if (summary.id == id) {
+    if (summary.modelId == id) {
       return summary;
     }
   }
@@ -2687,8 +3098,7 @@ core_proxy.CharacterCard _characterCardWith(
     advancedCustomPrompt: card.advancedCustomPrompt,
     marks: card.marks,
     chatModelBindingMode: card.chatModelBindingMode,
-    chatModelConfigId: card.chatModelConfigId,
-    chatModelIndex: card.chatModelIndex,
+    chatModelId: card.chatModelId,
     memoryProfileBindingMode: card.memoryProfileBindingMode,
     memoryProfileId: card.memoryProfileId,
     toolAccessConfig: card.toolAccessConfig,

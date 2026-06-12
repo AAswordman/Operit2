@@ -8,6 +8,9 @@ use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
 use crate::core::tools::ToolPackage::ToolPackage;
+use crate::util::AppLogger::AppLogger;
+
+const TAG: &str = "ToolPkg";
 
 pub struct ToolPkgLoader;
 
@@ -48,7 +51,7 @@ impl ToolPkgLoader {
                 )
             },
             |packageName, error| {
-                eprintln!("ToolPkg package load error [{packageName}]: {error}");
+                AppLogger::e(TAG, &format!("ToolPkg package load error [{packageName}]: {error}"));
             },
         )
     }
@@ -90,7 +93,10 @@ impl ToolPkgLoader {
                 )
             },
             |packageName, error| {
-                eprintln!("Built-in ToolPkg package load error [{packageName}]: {error}");
+                AppLogger::e(
+                    TAG,
+                    &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
+                );
             },
         )
     }
@@ -132,7 +138,10 @@ impl ToolPkgLoader {
                 )
             },
             |packageName, error| {
-                eprintln!("Built-in ToolPkg package load error [{packageName}]: {error}");
+                AppLogger::e(
+                    TAG,
+                    &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
+                );
             },
         )
     }

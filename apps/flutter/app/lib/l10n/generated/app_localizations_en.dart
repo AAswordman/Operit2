@@ -742,7 +742,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsCategoryCharactersDescription =>
-      'Manage character cards, character groups, active roles, and role-level model, memory, and tool bindings.';
+      'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.';
 
   @override
   String get settingsCategoryToolsTitle => 'Tools & Extensions';
@@ -805,6 +805,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelCurrentChatModel => 'Chat uses';
 
   @override
+  String get settingsModelCurrentActive => 'Active';
+
+  @override
+  String get settingsModelSetCurrentActive => 'Set active';
+
+  @override
   String get settingsChatThinkingMode => 'Thinking mode';
 
   @override
@@ -847,6 +853,32 @@ class AppLocalizationsEn extends AppLocalizations {
   ) {
     return '$configName · $modelName';
   }
+
+  @override
+  String settingsModelFunctionMappingsMissing(
+    String providerId,
+    String modelId,
+  ) {
+    return 'Bound model does not exist: $providerId · $modelId';
+  }
+
+  @override
+  String settingsModelDeleteBlocked(String functions) {
+    return 'This model is used by these functions. Change their model assignments first: $functions';
+  }
+
+  @override
+  String settingsModelDeleteProviderBlocked(String functions) {
+    return 'Models under this provider are used by these functions. Change their model assignments first: $functions';
+  }
+
+  @override
+  String settingsModelDeleteProviderConfirm(String name, int count) {
+    return 'Delete provider “$name”? This will also delete its $count models.';
+  }
+
+  @override
+  String get settingsModelDeleteProviderConfirmAction => 'Delete provider';
 
   @override
   String get settingsModelChatAutoGlmWarning =>
@@ -899,7 +931,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelFunctionRoleResponsePlannerDescription =>
-      'Model used to plan speaking roles and order in character group conversations.';
+      'Model used to plan speaking roles and order in group conversations.';
 
   @override
   String get settingsModelFunctionImageRecognition => 'Image recognition';
@@ -984,6 +1016,142 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderId => 'Provider ID';
 
   @override
+  String get settingsModelProvidersSection => 'Providers';
+
+  @override
+  String get settingsModelProviderType => 'Provider type';
+
+  @override
+  String settingsModelProviderTypeOption(String name, String original) {
+    return '$name ($original)';
+  }
+
+  @override
+  String get settingsModelProviderTypeOpenai => 'OpenAI';
+
+  @override
+  String get settingsModelProviderTypeOpenaiResponses => 'OpenAI Responses';
+
+  @override
+  String get settingsModelProviderTypeOpenaiResponsesGeneric =>
+      'OpenAI Responses compatible';
+
+  @override
+  String get settingsModelProviderTypeOpenaiGeneric => 'OpenAI compatible';
+
+  @override
+  String get settingsModelProviderTypeAnthropic => 'Anthropic';
+
+  @override
+  String get settingsModelProviderTypeAnthropicGeneric =>
+      'Anthropic compatible';
+
+  @override
+  String get settingsModelProviderTypeGoogle => 'Google Gemini';
+
+  @override
+  String get settingsModelProviderTypeGeminiGeneric => 'Gemini compatible';
+
+  @override
+  String get settingsModelProviderTypeBaidu => 'Baidu';
+
+  @override
+  String get settingsModelProviderTypeAliyun => 'Aliyun';
+
+  @override
+  String get settingsModelProviderTypeXunfei => 'Xunfei';
+
+  @override
+  String get settingsModelProviderTypeZhipu => 'Zhipu AI';
+
+  @override
+  String get settingsModelProviderTypeBaichuan => 'Baichuan';
+
+  @override
+  String get settingsModelProviderTypeMoonshot => 'Moonshot';
+
+  @override
+  String get settingsModelProviderTypeMimo => 'MiMo';
+
+  @override
+  String get settingsModelProviderTypeDeepseek => 'DeepSeek';
+
+  @override
+  String get settingsModelProviderTypeMistral => 'Mistral';
+
+  @override
+  String get settingsModelProviderTypeSiliconflow => 'SiliconFlow';
+
+  @override
+  String get settingsModelProviderTypeIflow => 'iFlow';
+
+  @override
+  String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
+
+  @override
+  String get settingsModelProviderTypeFourRouter => '4Router';
+
+  @override
+  String get settingsModelProviderTypeNousPortal => 'Nous Portal';
+
+  @override
+  String get settingsModelProviderTypeInfiniai => 'InfiniAI';
+
+  @override
+  String get settingsModelProviderTypeAlipayBailing => 'Alipay Bailing';
+
+  @override
+  String get settingsModelProviderTypeDoubao => 'Doubao';
+
+  @override
+  String get settingsModelProviderTypeNvidia => 'NVIDIA';
+
+  @override
+  String get settingsModelProviderTypeLmstudio => 'LM Studio';
+
+  @override
+  String get settingsModelProviderTypeOllama => 'Ollama';
+
+  @override
+  String get settingsModelProviderTypeOpenaiLocal => 'OpenAI Local';
+
+  @override
+  String get settingsModelProviderTypeMnn => 'MNN';
+
+  @override
+  String get settingsModelProviderTypeLlamaCpp => 'llama.cpp';
+
+  @override
+  String get settingsModelProviderTypePpinfra => 'PPInfra';
+
+  @override
+  String get settingsModelProviderTypeNovita => 'Novita AI';
+
+  @override
+  String get settingsModelProviderTypeOther => 'Other';
+
+  @override
+  String get settingsModelEditModelSettings => 'Model settings';
+
+  @override
+  String get settingsModelCreateProvider => 'Create provider';
+
+  @override
+  String get settingsModelEditProvider => 'Edit provider';
+
+  @override
+  String get settingsModelAddModel => 'Add model';
+
+  @override
+  String get settingsModelAddModelShort => 'Add';
+
+  @override
+  String get settingsModelCustomModel => 'Custom model';
+
+  @override
+  String get settingsModelModelId => 'Model ID';
+
+  @override
   String get settingsModelMaxTokens => 'Max tokens';
 
   @override
@@ -1043,6 +1211,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelMaxContextLength => 'Max context length';
+
+  @override
+  String get settingsModelMaxContextLengthInvalid =>
+      'Enter a max context length greater than 0';
 
   @override
   String get settingsModelMaxContextMode => 'Max context mode';
@@ -1107,10 +1279,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelMediaHistory => 'Media history';
 
   @override
+  String get settingsModelCapabilities => 'Capabilities';
+
+  @override
+  String get settingsModelBuiltinTools => 'Built-in tools';
+
+  @override
+  String get settingsModelBuiltinToolExclusive =>
+      'Turns off external tool calling when enabled';
+
+  @override
   String get settingsModelConnectionTestSection => 'Connection test';
 
   @override
   String get settingsModelRunConnectionTest => 'Test current model';
+
+  @override
+  String get settingsModelTestModel => 'Test model';
 
   @override
   String get settingsModelTestingConnection =>
@@ -1166,10 +1351,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersCardName => 'Character name';
 
   @override
-  String get settingsCharactersCreateGroup => 'New character group';
+  String get settingsCharactersCreateGroup => 'New group';
 
   @override
-  String get settingsCharactersEditGroup => 'Edit character group';
+  String get settingsCharactersEditGroup => 'Edit group';
 
   @override
   String get settingsCharactersGroupName => 'Group name';
@@ -1201,6 +1386,12 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCharactersNoTags =>
       'No tags available. Create tags in prompt/tag management, then bind them to character cards.';
+
+  @override
+  String get settingsCharactersImport => 'Import';
+
+  @override
+  String get settingsCharactersExport => 'Export';
 
   @override
   String get settingsCharactersImportJson => 'Import JSON';
@@ -1241,11 +1432,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Tavern character card imported.';
 
   @override
-  String get settingsCharactersImportGroupJson => 'Import character group JSON';
+  String get settingsCharactersImportGroupJson => 'Import group JSON';
 
   @override
-  String get settingsCharactersImportGroupJsonDone =>
-      'Character group imported.';
+  String get settingsCharactersImportGroupJsonDone => 'Group imported.';
 
   @override
   String settingsCharactersImportJsonError(String error) {
@@ -1305,7 +1495,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersMemoryProfileId => 'Memory profile ID';
 
   @override
-  String get settingsCharactersToolAccess => 'Enable character tool allowlist';
+  String get settingsCharactersToolAccess => 'Tool permission mode';
 
   @override
   String get settingsCharactersChatModelFollowGlobal => 'Follow global model';
@@ -1330,6 +1520,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCharactersToolAccessFollowGlobal =>
       'Follow global tool permissions';
+
+  @override
+  String get settingsCharactersToolAccessCustom =>
+      'Custom character tool permissions';
 
   @override
   String get settingsCharactersToolAccessEmpty =>
@@ -1444,7 +1638,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersCardsSection => 'Character cards';
 
   @override
-  String get settingsCharactersGroupsSection => 'Character groups';
+  String get settingsCharactersGroupsSection => 'Groups';
 
   @override
   String settingsCharactersGroupMembers(int count) {
@@ -1983,11 +2177,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.';
 
   @override
-  String get settingsDataCharacterGroupsBackup => 'Character group backup';
+  String get settingsDataCharacterGroupsBackup => 'Group backup';
 
   @override
   String get settingsDataCharacterGroupsBackupDescription =>
-      'Copy all character groups as JSON. Import keeps member references and ordering.';
+      'Copy all groups as JSON. Import keeps member references and ordering.';
 
   @override
   String get settingsDataModelConfigsBackup => 'Model config backup';

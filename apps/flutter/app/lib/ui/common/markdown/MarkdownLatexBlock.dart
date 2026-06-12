@@ -26,7 +26,9 @@ class MarkdownLatexBlock extends StatelessWidget {
         child: Math.tex(
           latexContent,
           mathStyle: MathStyle.display,
-          textStyle: TextStyle(color: textColor, fontSize: 14),
+          textStyle: Theme.of(
+            context,
+          ).textTheme.bodyMedium!.copyWith(color: textColor),
         ),
       ),
     );
@@ -65,7 +67,7 @@ class MarkdownInlineLatex extends StatelessWidget {
     return Math.tex(
       extractLatexContent(content.trim()),
       mathStyle: MathStyle.text,
-      textStyle: style.copyWith(color: textColor, fontSize: style.fontSize),
+      textStyle: style.copyWith(color: textColor),
     );
   }
 }

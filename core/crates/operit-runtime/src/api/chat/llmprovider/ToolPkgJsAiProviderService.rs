@@ -11,7 +11,7 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS, TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS,
     TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE, TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
 };
-use crate::data::model::ModelConfigData::ModelConfigData;
+use crate::data::model::ModelConfigData::ResolvedModelConfig;
 use crate::data::model::OpenAIModels::ModelOption;
 use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
@@ -24,7 +24,7 @@ use crate::util::stream::RevisableTextStream::{
 
 #[derive(Clone)]
 pub struct ToolPkgJsAiProviderService {
-    config: ModelConfigData,
+    config: ResolvedModelConfig,
     provider: ToolPkgAiProviderRegistration,
     tokenCounts: Arc<Mutex<ToolPkgProviderTokenCounts>>,
     executionChatId: String,
@@ -39,7 +39,7 @@ struct ToolPkgProviderTokenCounts {
 }
 
 impl ToolPkgJsAiProviderService {
-    pub fn new(config: ModelConfigData, provider: ToolPkgAiProviderRegistration) -> Self {
+    pub fn new(config: ResolvedModelConfig, provider: ToolPkgAiProviderRegistration) -> Self {
         let normalizedProviderId = provider.providerId.trim().to_ascii_lowercase();
         Self {
             executionChatId: format!(
@@ -110,20 +110,21 @@ impl ToolPkgJsAiProviderService {
     #[allow(non_snake_case)]
     fn serializeModelConfig(&self) -> Value {
         serde_json::json!({
-            "id": self.config.id,
-            "name": self.config.name,
+            "providerId": self.config.providerId,
+            "providerName": self.config.providerName,
+            "modelId": self.config.modelId,
             "apiProviderType": self.config.apiProviderTypeId,
             "apiProviderTypeId": self.config.apiProviderTypeId,
             "apiKey": self.config.apiKey,
             "apiEndpoint": self.config.apiEndpoint,
-            "modelName": self.config.modelName,
+            "modelId": self.config.modelId,
             "customHeaders": decodeJsonObjectString(&self.config.customHeaders),
-            "customParameters": decodeJsonArrayString(&self.config.customParameters),
-            "enableDirectImageProcessing": self.config.enableDirectImageProcessing,
-            "enableDirectAudioProcessing": self.config.enableDirectAudioProcessing,
-            "enableDirectVideoProcessing": self.config.enableDirectVideoProcessing,
-            "enableGoogleSearch": self.config.enableGoogleSearch,
-            "enableToolCall": self.config.enableToolCall,
+            "modelParameters": self.config.parameters,
+            "enableDirectImageProcessing": self.config.capabilities.directImage,
+            "enableDirectAudioProcessing": self.config.capabilities.directAudio,
+            "enableDirectVideoProcessing": self.config.capabilities.directVideo,
+            "builtinTools": self.config.builtinTools,
+            "enableToolCall": self.config.capabilities.toolCall,
             "requestLimitPerMinute": self.config.requestLimitPerMinute,
             "maxConcurrentRequests": self.config.maxConcurrentRequests,
             "locale": Value::Null,
@@ -186,7 +187,7 @@ impl AIService for ToolPkgJsAiProviderService {
     }
 
     fn provider_model(&self) -> String {
-        format!("{}:{}", self.provider.displayName, self.config.modelName)
+        format!("{}:{}", self.provider.displayName, self.config.modelId)
     }
 
     fn reset_token_counts(&mut self) {
@@ -583,15 +584,6 @@ fn decodeJsonObjectString(raw: &str) -> Value {
         return serde_json::json!({});
     }
     serde_json::from_str(trimmed).unwrap_or_else(|_| serde_json::json!({}))
-}
-
-#[allow(non_snake_case)]
-fn decodeJsonArrayString(raw: &str) -> Value {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed == "[]" {
-        return serde_json::json!([]);
-    }
-    serde_json::from_str(trimmed).unwrap_or_else(|_| serde_json::json!([]))
 }
 
 #[allow(non_snake_case)]

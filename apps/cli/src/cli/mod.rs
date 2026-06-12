@@ -78,6 +78,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "version" => run_version_core_command(&mut core).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
         "host" => run_core_command_and_print(&mut core, &args).await,
+        "log" => run_core_command_and_print(&mut core, &args).await,
         "memory" => run_core_command_and_print(&mut core, &args).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
@@ -120,6 +121,7 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         "version" => run_version_core_command(&mut core).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
         "host" => run_core_command_and_print(&mut core, &args).await,
+        "log" => run_core_command_and_print(&mut core, &args).await,
         "memory" => run_core_command_and_print(&mut core, &args).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
@@ -262,8 +264,8 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -273,6 +275,7 @@ fn print_cli_usage() {
     println!("operit2 cli version");
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
     println!("operit2 cli host <show|capabilities|paths>");
+    println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli memory <profile|kv|item>");
     println!("operit2 cli export <memory|chat|snapshot>");
     println!("operit2 cli import <memory|chat|snapshot>");
@@ -333,37 +336,33 @@ fn print_cli_usage() {
 }
 
 fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!("operit2 cli link run <session> <version|chat>");
 }
 
 fn print_model_usage() {
     println!("operit2 cli model init");
+    println!("operit2 cli model provider-type-list");
+    println!("operit2 cli model provider-list");
+    println!("operit2 cli model provider-show <provider-id>");
+    println!("operit2 cli model provider-create <name> <provider-type-id> <endpoint>");
+    println!("operit2 cli model provider-set-key <provider-id> <api-key>");
+    println!("operit2 cli model provider-set-endpoint <provider-id> <endpoint>");
+    println!("operit2 cli model provider-model-available-list <provider-id>");
+    println!("operit2 cli model provider-model-add <provider-id> <provider-model-id>");
+    println!("operit2 cli model provider-model-create <provider-id> <provider-model-id>");
     println!("operit2 cli model list");
-    println!("operit2 cli model show [config-id]");
-    println!("operit2 cli model set <endpoint> <model-name> [config-id]");
-    println!("operit2 cli model set-key <api-key> [config-id]");
-    println!("operit2 cli model api-settings-full <api-key> <endpoint> <model-name> <provider-type> <provider-type-id> <mnn-forward-type> <mnn-thread-count> <llama-thread-count> <llama-context-size> <llama-gpu-layers> <enable-direct-image-processing> <enable-direct-audio-processing> <enable-direct-video-processing> <enable-google-search> <enable-tool-call> [config-id]");
-    println!("operit2 cli model custom-headers <custom-headers-json> [config-id]");
-    println!("operit2 cli model request-queue <request-limit-per-minute> <max-concurrent-requests> [config-id]");
-    println!(
-        "operit2 cli model api-key-pool <use-multiple-api-keys> <api-key-pool-json> [config-id]"
-    );
-    println!("operit2 cli model custom-parameters <parameters-json> [config-id]");
-    println!("operit2 cli model parameters <parameters-json> [config-id]");
-    println!("operit2 cli model tool-call <enable-tool-call> [config-id]");
-    println!("operit2 cli model direct-image <enable-direct-image-processing> [config-id]");
-    println!("operit2 cli model direct-audio <enable-direct-audio-processing> [config-id]");
-    println!("operit2 cli model direct-video <enable-direct-video-processing> [config-id]");
-    println!("operit2 cli model google-search <enable-google-search> [config-id]");
-    println!("operit2 cli model params [config-id]");
-    println!("operit2 cli model context-show [config-id]");
-    println!("operit2 cli model context-set <context-length> <max-context-length> <enable-max-context-mode> [config-id]");
-    println!("operit2 cli model summary-show [config-id]");
-    println!("operit2 cli model summary-set <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold> [config-id]");
+    println!("operit2 cli model show [model-id]");
+    println!("operit2 cli model use <model-id>");
+    println!("operit2 cli model params [model-id]");
+    println!("operit2 cli model parameters <model-id> <parameters-json>");
+    println!("operit2 cli model context-show [model-id]");
+    println!("operit2 cli model context-set <model-id> <context-length> <max-context-length> <enable-max-context-mode>");
+    println!("operit2 cli model summary-show [model-id]");
+    println!("operit2 cli model summary-set <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
     println!("operit2 cli model function-list");
     println!("operit2 cli model function-show <function-type>");
-    println!("operit2 cli model function-set <function-type> <config-id> [model-index]");
+    println!("operit2 cli model function-set <function-type> <model-id>");
     println!("operit2 cli model function-reset [function-type]");
 }
 
@@ -646,11 +645,7 @@ fn print_character_card(card: &CharacterCard) {
     println!("advancedCustomPrompt={}", card.advancedCustomPrompt);
     println!("marks={}", card.marks);
     println!("chatModelBindingMode={}", card.chatModelBindingMode);
-    println!(
-        "chatModelConfigId={}",
-        card.chatModelConfigId.clone().unwrap_or_default()
-    );
-    println!("chatModelIndex={}", card.chatModelIndex);
+    println!("chatModelId={}", card.chatModelId.clone().unwrap_or_default());
     println!("memoryProfileBindingMode={}", card.memoryProfileBindingMode);
     println!(
         "memoryProfileId={}",

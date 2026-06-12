@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+
 pub trait OperitPlugin: Send + Sync {
     fn id(&self) -> &str;
     fn register(&self);
@@ -17,10 +19,16 @@ pub struct PluginRegistry;
 
 impl PluginRegistry {
     pub fn register(plugin: Arc<dyn OperitPlugin>) {
+        let pluginId = plugin.id().to_string();
         let plugins = PLUGINS.get_or_init(|| Mutex::new(Vec::new()));
         let mut guard = plugins.lock().expect("plugin registry mutex poisoned");
         guard.retain(|registered| registered.id() != plugin.id());
         guard.push(plugin);
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.registry.register",
+            &[("pluginId", pluginId)],
+        );
     }
 
     #[allow(non_snake_case)]
@@ -55,14 +63,30 @@ impl PluginRegistry {
             .lock()
             .expect("plugin registry mutex poisoned")
             .clone();
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.registry.install.scan",
+            &[("pluginCount", plugins.len().to_string())],
+        );
         let installedPluginIds = INSTALLED_PLUGIN_IDS.get_or_init(|| Mutex::new(BTreeSet::new()));
         for plugin in plugins {
             let mut installed = installedPluginIds
                 .lock()
                 .expect("plugin registry installed ids mutex poisoned");
             if installed.insert(plugin.id().to_string()) {
+                let pluginId = plugin.id().to_string();
                 drop(installed);
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.registry.install.start",
+                    &[("pluginId", pluginId.clone())],
+                );
                 plugin.register();
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.registry.install.done",
+                    &[("pluginId", pluginId)],
+                );
             }
         }
     }

@@ -18,23 +18,27 @@ class FontTagRenderer extends StatelessWidget {
   Widget build(BuildContext context) {
     final innerText = _extractContentFromXml(xmlContent, 'font');
     final base = Theme.of(context).textTheme.bodyMedium!;
-    final style = base.copyWith(
-      fontSize:
-          _parseFontSize(_extractXmlAttribute(xmlContent, 'size')) ??
-          base.fontSize,
-      fontFamily:
-          _parseFontFamily(_extractXmlAttribute(xmlContent, 'face')) ??
-          base.fontFamily,
-      fontWeight:
-          _parseFontWeight(_extractXmlAttribute(xmlContent, 'style')) ??
-          base.fontWeight,
-      fontStyle:
-          _parseFontItalic(_extractXmlAttribute(xmlContent, 'style')) ??
-          base.fontStyle,
-      decoration:
-          _parseTextDecoration(_extractXmlAttribute(xmlContent, 'style')) ??
-          base.decoration,
-    );
+    final parsedSize = _parseFontSize(_extractXmlAttribute(xmlContent, 'size'));
+    final style =
+        (parsedSize == null
+                ? base
+                : base.apply(fontSizeFactor: parsedSize / base.fontSize!))
+            .copyWith(
+              fontFamily:
+                  _parseFontFamily(_extractXmlAttribute(xmlContent, 'face')) ??
+                  base.fontFamily,
+              fontWeight:
+                  _parseFontWeight(_extractXmlAttribute(xmlContent, 'style')) ??
+                  base.fontWeight,
+              fontStyle:
+                  _parseFontItalic(_extractXmlAttribute(xmlContent, 'style')) ??
+                  base.fontStyle,
+              decoration:
+                  _parseTextDecoration(
+                    _extractXmlAttribute(xmlContent, 'style'),
+                  ) ??
+                  base.decoration,
+            );
     return CanvasFontTextBlock(
       text: innerText,
       style: style,

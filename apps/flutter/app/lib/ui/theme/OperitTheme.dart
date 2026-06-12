@@ -647,11 +647,10 @@ ThemeData _themeData(
       scrolledUnderElevation: 0,
       centerTitle: false,
       toolbarHeight: 64,
-      titleTextStyle: TextStyle(
+      titleTextStyle: textTheme.titleSmall?.copyWith(
         color: colorScheme.onSurface,
         fontFamily: fontFamily,
         fontFamilyFallback: fontFamilyFallback,
-        fontSize: 14,
         fontWeight: FontWeight.w600,
       ),
     ),

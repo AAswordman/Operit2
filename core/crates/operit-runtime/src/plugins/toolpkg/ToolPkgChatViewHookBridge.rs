@@ -6,8 +6,9 @@ use serde_json::Value;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, ToolPkgChatViewHookRegistration,
+    ToolPkgChatViewHookRegistration, toolPkgPackageManager,
 };
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_VIEW_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatViewHookRegistration>>> = OnceLock::new();
 static REPLAYABLE_OPEN_VIEW_PARAMS: OnceLock<Mutex<Vec<ChatViewHookParams>>> = OnceLock::new();
@@ -68,6 +69,16 @@ impl ToolPkgChatViewHookBridge {
             return;
         }
 
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.chat_view.scan",
+            &[
+                ("event", event.wireName().to_string()),
+                ("chatId", params.chatId.clone()),
+                ("viewId", params.viewId.clone()),
+                ("hookCount", activeHooks.len().to_string()),
+            ],
+        );
         let eventPayload = buildChatViewEventPayload(&params);
         for hook in activeHooks {
             runChatViewHook(&hook, event.wireName(), eventPayload.clone());
@@ -166,7 +177,17 @@ fn replayOpenViews(
 #[allow(non_snake_case)]
 fn runChatViewHook(hook: &ToolPkgChatViewHookRegistration, eventName: &str, eventPayload: Value) {
     let manager = toolPkgPackageManager();
-    let _ = manager.runToolPkgMainHook(
+    ChainLogger::info(
+        PLUGIN_CHAIN,
+        "plugin.toolpkg.chat_view.run.start",
+        &[
+            ("event", eventName.to_string()),
+            ("package", hook.containerPackageName.clone()),
+            ("hookId", hook.hookId.clone()),
+            ("function", hook.functionName.clone()),
+        ],
+    );
+    match manager.runToolPkgMainHook(
         &hook.containerPackageName,
         &hook.functionName,
         TOOLPKG_EVENT_CHAT_VIEW,
@@ -177,7 +198,28 @@ fn runChatViewHook(hook: &ToolPkgChatViewHookRegistration, eventName: &str, even
         None,
         None,
         None,
-    );
+    ) {
+        Ok(_) => ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.chat_view.run.done",
+            &[
+                ("event", eventName.to_string()),
+                ("package", hook.containerPackageName.clone()),
+                ("hookId", hook.hookId.clone()),
+            ],
+        ),
+        Err(error) => ChainLogger::error(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.chat_view.run.error",
+            &[
+                ("event", eventName.to_string()),
+                ("package", hook.containerPackageName.clone()),
+                ("hookId", hook.hookId.clone()),
+                ("function", hook.functionName.clone()),
+                ("error", error),
+            ],
+        ),
+    }
 }
 
 #[allow(non_snake_case)]

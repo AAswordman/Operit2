@@ -138,10 +138,11 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     return ChoiceChip(
       selected: selected,
       onSelected: (_) => onTap(),
-      label: Text(label, style: const TextStyle(fontSize: 12)),
+      label: Text(label, style: textTheme.bodySmall),
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );

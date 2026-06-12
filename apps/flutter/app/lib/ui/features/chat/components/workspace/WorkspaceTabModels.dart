@@ -3,7 +3,15 @@
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
-enum WorkspaceTabKind { home, setup, files, terminal, browser, webVisit, filePreview }
+enum WorkspaceTabKind {
+  home,
+  setup,
+  files,
+  terminal,
+  browser,
+  webVisit,
+  filePreview,
+}
 
 enum WorkspaceFilePreviewKind {
   image,

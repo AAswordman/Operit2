@@ -170,8 +170,7 @@ class MarkdownEventNodeBuilder {
       return;
     }
 
-    if (type == MarkdownNodeType.horizontalRule &&
-        _pendingHtmlBreakCount > 0) {
+    if (type == MarkdownNodeType.horizontalRule && _pendingHtmlBreakCount > 0) {
       _appendHtmlBreakNodes(_pendingHtmlBreakCount);
       _pendingHtmlBreakCount = 0;
     }
@@ -179,7 +178,8 @@ class MarkdownEventNodeBuilder {
     final nodeType = type == MarkdownNodeType.blockLatex
         ? MarkdownNodeType.plainText
         : type;
-    final mergeWithPrevious = _pendingHtmlBreakCount > 0 &&
+    final mergeWithPrevious =
+        _pendingHtmlBreakCount > 0 &&
         nodeType == MarkdownNodeType.plainText &&
         _canMergeWithHtmlBreak(nodes.isEmpty ? null : nodes.last);
     if (_pendingHtmlBreakCount > 0 && !mergeWithPrevious) {
@@ -220,10 +220,7 @@ class MarkdownEventNodeBuilder {
     _pendingHtmlBreakCount = 0;
   }
 
-  void appendBlock({
-    required int blockId,
-    required String content,
-  }) {
+  void appendBlock({required int blockId, required String content}) {
     if (_htmlBreakBlocks.contains(blockId)) {
       return;
     }
@@ -291,7 +288,8 @@ class MarkdownEventNodeBuilder {
     if (pending == null) {
       throw StateError('Missing markdown inline start $blockId/$inlineId');
     }
-    var state = _pendingInlineBreaks[blockId] ??
+    var state =
+        _pendingInlineBreaks[blockId] ??
         _PendingLineBreakState(count: _pendingBlockBreaks.remove(blockId) ?? 0);
     MutableMarkdownNode? node = _inlines[key];
     for (final codePoint in content.runes) {
@@ -345,13 +343,15 @@ class MarkdownEventNodeBuilder {
     _PendingInlineStart pending,
     String key,
   ) {
-    final existing = _mergedBlocks.contains(pending.blockId) &&
+    final existing =
+        _mergedBlocks.contains(pending.blockId) &&
             pending.type == MarkdownNodeType.plainText &&
             block.children.isNotEmpty &&
             block.children.last.type == MarkdownNodeType.plainText
         ? block.children.last
         : null;
-    final node = existing ??
+    final node =
+        existing ??
         MutableMarkdownNode(
           type: pending.type,
           stableKey: 'block-${pending.blockId}-inline-${pending.inlineId}',
@@ -364,7 +364,9 @@ class MarkdownEventNodeBuilder {
   }
 
   void _finalizeOpenInlineNodes() {
-    final blockIds = <int>{..._pendingInlines.values.map((item) => item.blockId)};
+    final blockIds = <int>{
+      ..._pendingInlines.values.map((item) => item.blockId),
+    };
     for (final blockId in blockIds) {
       _finalizeInlineForBlock(blockId);
     }
@@ -636,9 +638,7 @@ class _MarkdownEventNodeBuilderSnapshot {
         for (final entry in builder._inlines.entries)
           entry.key: entry.value.stableKey,
       },
-      pendingInlines: <String, _PendingInlineStart>{
-        ...builder._pendingInlines,
-      },
+      pendingInlines: <String, _PendingInlineStart>{...builder._pendingInlines},
       htmlBreakBlocks: <int>{...builder._htmlBreakBlocks},
       mergedBlocks: <int>{...builder._mergedBlocks},
       latexBlocks: <int>{...builder._latexBlocks},
@@ -663,8 +663,7 @@ class _MarkdownEventNodeBuilderSnapshot {
       },
       xmlMarkdownStreamIndexes: <int, int>{
         for (final streamEntry in builder.xmlMarkdownEventStreams.entries)
-          for (final controllerEntry
-              in builder._xmlMarkdownControllers.entries)
+          for (final controllerEntry in builder._xmlMarkdownControllers.entries)
             if (identical(streamEntry.value, controllerEntry.value.stream))
               controllerEntry.key: streamEntry.key,
       },
@@ -691,9 +690,7 @@ class _MarkdownEventNodeBuilderSnapshot {
   void restore(MarkdownEventNodeBuilder builder) {
     builder.nodes
       ..clear()
-      ..addAll(<MutableMarkdownNode>[
-        for (final node in nodes) node.copy(),
-      ]);
+      ..addAll(<MutableMarkdownNode>[for (final node in nodes) node.copy()]);
     builder._blocks
       ..clear()
       ..addEntries(<MapEntry<int, MutableMarkdownNode>>[

@@ -68,6 +68,8 @@ pub mod MessageEntity;
 pub mod MessageVariantEntity;
 #[path = "ModelConfigData.rs"]
 pub mod ModelConfigData;
+#[path = "ModelCatalog.rs"]
+pub mod ModelCatalog;
 #[path = "ModelParameter.rs"]
 pub mod ModelParameter;
 #[path = "OpenAIModels.rs"]
@@ -131,6 +133,7 @@ pub use MemorySearchDebugInfo::*;
 pub use MessageEntity::*;
 pub use MessageVariantEntity::*;
 pub use ModelConfigData::*;
+pub use ModelCatalog::*;
 pub use ModelParameter::*;
 pub use OpenAIModels::*;
 pub use OperitChatArchive::*;

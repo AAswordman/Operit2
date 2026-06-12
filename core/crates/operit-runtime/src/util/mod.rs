@@ -5,6 +5,7 @@ pub mod ArchiveUtil;
 pub mod AssetCopyUtils;
 pub mod ChatMarkupRegex;
 pub mod ChatUtils;
+pub mod ChainLogger;
 pub mod ColorQrCodeUtil;
 pub mod CrashRecoveryState;
 pub mod DocumentConversionUtil;

@@ -717,7 +717,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
             widget.xmlMarkdownEventStreams[index],
         onLinkClick: widget.onLinkClick,
         fillMaxWidth: true,
-        fontSize: 14,
+        textStyle: Theme.of(context).textTheme.bodyMedium!,
       );
       _groupCache[cacheKey] = _CachedMarkdownGroup(
         group: group,

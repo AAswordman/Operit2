@@ -501,15 +501,11 @@ class _InputBody extends StatelessWidget {
             maxLines: 6,
             enabled: true,
             textInputAction: TextInputAction.newline,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontSize: 14,
-              height: 20 / 14,
-            ),
+            style: theme.textTheme.bodyMedium?.copyWith(height: 20 / 14),
             decoration: InputDecoration(
               hintText: l10n.askOperitHint,
               hintStyle: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
               ),
               suffixIcon: IconButton(
                 onPressed: () {},

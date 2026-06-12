@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::api::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
@@ -16,6 +16,7 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use crate::util::stream::HotStream::StreamStart;
 use crate::util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
 use operit_store::PreferencesDataStore::FlowLike;
@@ -65,8 +66,8 @@ pub struct SendMessageRequest<'a> {
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
     pub notifyReplyOverride: Option<bool>,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
     pub disableWarning: bool,
     pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
@@ -87,8 +88,8 @@ pub struct StableContextWindowRequest<'a> {
     pub groupOrchestrationMode: bool,
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
     pub publishEstimate: bool,
     pub runtime: SendMessageRuntime,
@@ -196,6 +197,18 @@ impl AIMessageManager {
         Self::rememberActiveChatKey(chatKey.clone());
         Self::setLastActiveChatKey(chatKey.clone());
         Self::rememberActiveEnhancedAiService(chatKey.clone(), request.enhancedAiService.clone());
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.ai_manager.start",
+            &[
+                ("chatKey", chatKey.clone()),
+                (
+                    "messageChars",
+                    ChainLogger::lenField(&request.messageContent),
+                ),
+                ("historyCount", request.chatHistory.len().to_string()),
+            ],
+        );
 
         let memory = Self::getMemoryFromMessages(
             request.chatHistory.clone(),
@@ -229,6 +242,17 @@ impl AIMessageManager {
             },
         );
         if let Some(pluginExecution) = pluginExecution {
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.message_processing.matched",
+                &[
+                    ("chatKey", chatKey.clone()),
+                    (
+                        "messageChars",
+                        ChainLogger::lenField(&request.messageContent),
+                    ),
+                ],
+            );
             Self::forgetActiveChatKey(&chatKey);
             Self::forgetActiveEnhancedAiService(&chatKey);
             return Ok(with_event_channel_shared(
@@ -261,14 +285,36 @@ impl AIMessageManager {
         options.groupParticipantNamesText = request.groupParticipantNamesText;
         options.proxySenderName = request.proxySenderName;
         options.notifyReplyOverride = request.notifyReplyOverride;
-        options.chatModelConfigIdOverride = request.chatModelConfigIdOverride;
-        options.chatModelIndexOverride = request.chatModelIndexOverride;
+        options.chatProviderIdOverride = request.chatProviderIdOverride;
+        options.chatModelIdOverride = request.chatModelIdOverride;
         options.preferenceProfileIdOverride = request.preferenceProfileIdOverride;
         options.disableWarning = request.disableWarning;
         options.callbacks = request.callbacks;
         options.onToolInvocation = request.onToolInvocation;
         options.stream = enableStream;
 
+        let providerOverrideSet = match options.chatProviderIdOverride.as_ref() {
+            Some(value) => !value.trim().is_empty(),
+            None => false,
+        };
+        let modelOverrideSet = match options.chatModelIdOverride.as_ref() {
+            Some(value) => !value.trim().is_empty(),
+            None => false,
+        };
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.provider.request",
+            &[
+                ("chatKey", chatKey.clone()),
+                ("stream", ChainLogger::boolField(enableStream)),
+                ("historyCount", options.chatHistory.len().to_string()),
+                (
+                    "providerOverrideSet",
+                    ChainLogger::boolField(providerOverrideSet),
+                ),
+                ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
+            ],
+        );
         let result = request
             .enhancedAiService
             .sendMessage(options)
@@ -286,9 +332,20 @@ impl AIMessageManager {
                 shared
             });
         if result.is_err() {
+            ChainLogger::error(
+                SEND_CHAIN,
+                "send.provider.error",
+                &[("chatKey", chatKey.clone())],
+            );
             Self::forgetActiveChatKey(&chatKey);
             Self::forgetActiveEnhancedAiService(&chatKey);
             Self::forgetActiveResponseStream(&chatKey);
+        } else {
+            ChainLogger::info(
+                RECEIVE_CHAIN,
+                "receive.provider.stream.ready",
+                &[("chatKey", chatKey.clone())],
+            );
         }
         result
     }
@@ -435,8 +492,8 @@ impl AIMessageManager {
                 request.groupOrchestrationMode,
                 request.groupParticipantNamesText,
                 request.proxySenderName,
-                request.chatModelConfigIdOverride,
-                request.chatModelIndexOverride,
+                request.chatProviderIdOverride,
+                request.chatModelIdOverride,
                 request.preferenceProfileIdOverride,
                 request.publishEstimate,
                 request.runtime,

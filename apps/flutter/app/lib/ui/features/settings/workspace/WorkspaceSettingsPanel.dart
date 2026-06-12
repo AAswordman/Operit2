@@ -7,6 +7,7 @@ import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/screens/OperitScreens.dart';
 import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/SettingsControlStyles.dart';
 
 class WorkspaceSettingsPanel extends StatelessWidget {
   const WorkspaceSettingsPanel({super.key});
@@ -26,7 +27,7 @@ class WorkspaceSettingsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       children: <Widget>[
         _SectionCard(
           title: l10n.settingsWorkspaceCurrentDesign,
@@ -68,9 +69,9 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(18);
+    final radius = BorderRadius.circular(12);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: OperitGlassSurface(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: radius,
@@ -78,12 +79,15 @@ class _SectionCard extends StatelessWidget {
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
+              Text(
+                title,
+                style: SettingsControlStyles.sectionTitleTextStyle(context),
+              ),
+              const SizedBox(height: 6),
               ...children,
             ],
           ),
@@ -155,6 +159,8 @@ class _ActionLine extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),

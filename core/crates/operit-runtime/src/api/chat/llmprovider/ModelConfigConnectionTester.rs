@@ -7,7 +7,7 @@ use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::api::chat::llmprovider::AIService::{collect_stream_chunks, SendMessageRequest};
 use crate::api::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use crate::core::chat::hooks::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
-use crate::data::model::ModelConfigData::{getModelByIndex, getValidModelIndex};
+use crate::data::model::ModelConfigData::ResolvedModelConfig;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
@@ -31,13 +31,12 @@ pub struct ModelConnectionTestItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
 pub struct ModelConnectionTestReport {
-    pub configId: String,
-    pub configName: String,
+    pub providerId: String,
+    pub modelId: String,
+    pub providerName: String,
     pub providerType: String,
-    pub requestedModelIndex: i32,
-    pub actualModelIndex: i32,
-    pub testedModelName: String,
     pub success: bool,
     pub items: Vec<ModelConnectionTestItem>,
 }
@@ -47,29 +46,23 @@ pub struct ModelConfigConnectionTester;
 impl ModelConfigConnectionTester {
     pub async fn run(
         rootDir: PathBuf,
-        configId: &str,
-        requestedModelIndex: i32,
+        providerId: &str,
+        modelId: &str,
     ) -> Result<ModelConnectionTestReport, String> {
         let modelConfigManager = ModelConfigManager::new(rootDir.clone());
         modelConfigManager
             .initializeIfNeeded()
             .map_err(|error| error.to_string())?;
         let config = modelConfigManager
-            .getModelConfig(configId)
+            .getResolvedModelConfig(providerId, modelId)
             .map_err(|error| error.to_string())?;
-        let actualModelIndex = getValidModelIndex(&config.modelName, requestedModelIndex);
-        let testedModelName = getModelByIndex(&config.modelName, actualModelIndex);
         let mut items = Vec::new();
 
-        let mut probeConfig = config.clone();
-        probeConfig.enableToolCall = true;
-        probeConfig.enableDirectImageProcessing = true;
-        probeConfig.enableDirectAudioProcessing = true;
-        probeConfig.enableDirectVideoProcessing = true;
-
         let mut serviceManager = MultiServiceManager::new(rootDir.clone());
-        let bundleResult = serviceManager
-            .createTransientServiceBundleForConfigData(probeConfig, requestedModelIndex);
+        let bundleResult = serviceManager.createTransientServiceBundleForModel(
+            providerId.to_string(),
+            modelId.to_string(),
+        );
         let (configForTest, parameters, serviceHandle) = match bundleResult {
             Ok(bundle) => bundle,
             Err(error) => {
@@ -78,13 +71,7 @@ impl ModelConfigConnectionTester {
                     success: false,
                     error: Some(error.to_string()),
                 });
-                return Ok(Self::report(
-                    config,
-                    requestedModelIndex,
-                    actualModelIndex,
-                    testedModelName,
-                    items,
-                ));
+                return Ok(Self::report(config, items));
             }
         };
 
@@ -110,173 +97,175 @@ impl ModelConfigConnectionTester {
             })
             .await;
 
-            Self::runCase(&mut items, ModelConnectionTestType::TOOL_CALL, || async {
-                let toolTagName = ChatMarkupRegex::generate_random_tool_tag_name();
-                let toolResultTagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
-                let history = vec![
-                    ("system".to_string(), "You are a helpful assistant.".to_string()),
-                    (
-                        "assistant".to_string(),
-                        format!(
-                            "<{toolTagName} name=\"echo\"><param name=\"text\">ping</param></{toolTagName}>"
+            if configForTest.capabilities.toolCall {
+                Self::runCase(&mut items, ModelConnectionTestType::TOOL_CALL, || async {
+                    let toolTagName = ChatMarkupRegex::generate_random_tool_tag_name();
+                    let toolResultTagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
+                    let history = vec![
+                        ("system".to_string(), "You are a helpful assistant.".to_string()),
+                        (
+                            "assistant".to_string(),
+                            format!(
+                                "<{toolTagName} name=\"echo\"><param name=\"text\">ping</param></{toolTagName}>"
+                            ),
                         ),
-                    ),
-                    (
-                        "user".to_string(),
-                        format!(
-                            "<{toolResultTagName} name=\"echo\" status=\"success\"><content>pong</content></{toolResultTagName}>"
+                        (
+                            "user".to_string(),
+                            format!(
+                                "<{toolResultTagName} name=\"echo\" status=\"success\"><content>pong</content></{toolResultTagName}>"
+                            ),
                         ),
-                    ),
-                ];
-                let stream = service
-                    .send_message(SendMessageRequest {
-                        chat_history: toPromptTurns(&history),
-                        model_parameters: parameters.clone(),
-                        enable_thinking: false,
-                        stream: false,
-                        available_tools: vec![Self::echoToolPrompt()],
-                        preserve_think_in_history: false,
-                        enable_retry: false,
-                        on_non_fatal_error: None,
-                        on_tool_invocation: None,
-                    })
-                    .await
+                    ];
+                    let stream = service
+                        .send_message(SendMessageRequest {
+                            chat_history: toPromptTurns(&history),
+                            model_parameters: parameters.clone(),
+                            enable_thinking: false,
+                            stream: false,
+                            available_tools: vec![Self::echoToolPrompt()],
+                            preserve_think_in_history: false,
+                            enable_retry: false,
+                            on_non_fatal_error: None,
+                            on_tool_invocation: None,
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let _ = collect_stream_chunks(stream);
+                    Ok(())
+                })
+                .await;
+            }
+
+            if configForTest.capabilities.directImage {
+                Self::runCase(&mut items, ModelConnectionTestType::IMAGE, || async {
+                    let imagePath = Self::copyAssetToCache(
+                        &rootDir,
+                        "1.jpg",
+                        include_bytes!("../../../../assets/test/1.jpg"),
+                    )
                     .map_err(|error| error.to_string())?;
-                let _ = collect_stream_chunks(stream);
-                Ok(())
-            })
-            .await;
-
-            Self::runCase(&mut items, ModelConnectionTestType::IMAGE, || async {
-                let imagePath = Self::copyAssetToCache(
-                    &rootDir,
-                    "1.jpg",
-                    include_bytes!("../../../../assets/test/1.jpg"),
-                )
-                .map_err(|error| error.to_string())?;
-                let imageId = ImagePoolManager::add_image(&imagePath.to_string_lossy(), None);
-                if imageId == "error" {
+                    let imageId = ImagePoolManager::add_image(&imagePath.to_string_lossy(), None);
+                    if imageId == "error" {
+                        let _ = std::fs::remove_file(&imagePath);
+                        return Err("Failed to create test image".to_string());
+                    }
+                    let prompt = format!(
+                        "{}\nPlease analyze this image briefly.",
+                        MediaLinkBuilder::image(&imageId)
+                    );
+                    let result = service
+                        .send_message(SendMessageRequest {
+                            chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
+                            model_parameters: parameters.clone(),
+                            enable_thinking: false,
+                            stream: false,
+                            available_tools: Vec::new(),
+                            preserve_think_in_history: false,
+                            enable_retry: false,
+                            on_non_fatal_error: None,
+                            on_tool_invocation: None,
+                        })
+                        .await
+                        .map(|stream| {
+                            let _ = collect_stream_chunks(stream);
+                        })
+                        .map_err(|error| error.to_string());
+                    ImagePoolManager::remove_image(&imageId);
                     let _ = std::fs::remove_file(&imagePath);
-                    return Err("Failed to create test image".to_string());
-                }
-                let prompt = format!(
-                    "{}\nPlease analyze this image briefly.",
-                    MediaLinkBuilder::image(&imageId)
-                );
-                let result = service
-                    .send_message(SendMessageRequest {
-                        chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
-                        model_parameters: parameters.clone(),
-                        enable_thinking: false,
-                        stream: false,
-                        available_tools: Vec::new(),
-                        preserve_think_in_history: false,
-                        enable_retry: false,
-                        on_non_fatal_error: None,
-                        on_tool_invocation: None,
-                    })
-                    .await
-                    .map(|stream| {
-                        let _ = collect_stream_chunks(stream);
-                    })
-                    .map_err(|error| error.to_string());
-                ImagePoolManager::remove_image(&imageId);
-                let _ = std::fs::remove_file(&imagePath);
-                result
-            })
-            .await;
+                    result
+                })
+                .await;
+            }
 
-            Self::runCase(&mut items, ModelConnectionTestType::AUDIO, || async {
-                let audioPath = Self::copyAssetToCache(
-                    &rootDir,
-                    "1.mp3",
-                    include_bytes!("../../../../assets/test/1.mp3"),
-                )
-                .map_err(|error| error.to_string())?;
-                let audioId =
-                    MediaPoolManager::add_media(&audioPath.to_string_lossy(), "audio/mpeg");
-                if audioId == "error" {
+            if configForTest.capabilities.directAudio {
+                Self::runCase(&mut items, ModelConnectionTestType::AUDIO, || async {
+                    let audioPath = Self::copyAssetToCache(
+                        &rootDir,
+                        "1.mp3",
+                        include_bytes!("../../../../assets/test/1.mp3"),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let audioId =
+                        MediaPoolManager::add_media(&audioPath.to_string_lossy(), "audio/mpeg");
+                    if audioId == "error" {
+                        let _ = std::fs::remove_file(&audioPath);
+                        return Err("Failed to create test audio".to_string());
+                    }
+                    let prompt = format!(
+                        "{}\nPlease analyze this audio briefly.",
+                        MediaLinkBuilder::audio(&audioId)
+                    );
+                    let result = service
+                        .send_message(SendMessageRequest {
+                            chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
+                            model_parameters: parameters.clone(),
+                            enable_thinking: false,
+                            stream: false,
+                            available_tools: Vec::new(),
+                            preserve_think_in_history: false,
+                            enable_retry: false,
+                            on_non_fatal_error: None,
+                            on_tool_invocation: None,
+                        })
+                        .await
+                        .map(|stream| {
+                            let _ = collect_stream_chunks(stream);
+                        })
+                        .map_err(|error| error.to_string());
+                    MediaPoolManager::remove_media(&audioId);
                     let _ = std::fs::remove_file(&audioPath);
-                    return Err("Failed to create test audio".to_string());
-                }
-                let prompt = format!(
-                    "{}\nPlease analyze this audio briefly.",
-                    MediaLinkBuilder::audio(&audioId)
-                );
-                let result = service
-                    .send_message(SendMessageRequest {
-                        chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
-                        model_parameters: parameters.clone(),
-                        enable_thinking: false,
-                        stream: false,
-                        available_tools: Vec::new(),
-                        preserve_think_in_history: false,
-                        enable_retry: false,
-                        on_non_fatal_error: None,
-                        on_tool_invocation: None,
-                    })
-                    .await
-                    .map(|stream| {
-                        let _ = collect_stream_chunks(stream);
-                    })
-                    .map_err(|error| error.to_string());
-                MediaPoolManager::remove_media(&audioId);
-                let _ = std::fs::remove_file(&audioPath);
-                result
-            })
-            .await;
+                    result
+                })
+                .await;
+            }
 
-            Self::runCase(&mut items, ModelConnectionTestType::VIDEO, || async {
-                let videoPath = Self::copyAssetToCache(
-                    &rootDir,
-                    "1.mp4",
-                    include_bytes!("../../../../assets/test/1.mp4"),
-                )
-                .map_err(|error| error.to_string())?;
-                let videoId =
-                    MediaPoolManager::add_media(&videoPath.to_string_lossy(), "video/mp4");
-                if videoId == "error" {
+            if configForTest.capabilities.directVideo {
+                Self::runCase(&mut items, ModelConnectionTestType::VIDEO, || async {
+                    let videoPath = Self::copyAssetToCache(
+                        &rootDir,
+                        "1.mp4",
+                        include_bytes!("../../../../assets/test/1.mp4"),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let videoId =
+                        MediaPoolManager::add_media(&videoPath.to_string_lossy(), "video/mp4");
+                    if videoId == "error" {
+                        let _ = std::fs::remove_file(&videoPath);
+                        return Err("Failed to create test video".to_string());
+                    }
+                    let prompt = format!(
+                        "{}\nPlease analyze this video briefly.",
+                        MediaLinkBuilder::video(&videoId)
+                    );
+                    let result = service
+                        .send_message(SendMessageRequest {
+                            chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
+                            model_parameters: parameters.clone(),
+                            enable_thinking: false,
+                            stream: false,
+                            available_tools: Vec::new(),
+                            preserve_think_in_history: false,
+                            enable_retry: false,
+                            on_non_fatal_error: None,
+                            on_tool_invocation: None,
+                        })
+                        .await
+                        .map(|stream| {
+                            let _ = collect_stream_chunks(stream);
+                        })
+                        .map_err(|error| error.to_string());
+                    MediaPoolManager::remove_media(&videoId);
                     let _ = std::fs::remove_file(&videoPath);
-                    return Err("Failed to create test video".to_string());
-                }
-                let prompt = format!(
-                    "{}\nPlease analyze this video briefly.",
-                    MediaLinkBuilder::video(&videoId)
-                );
-                let result = service
-                    .send_message(SendMessageRequest {
-                        chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
-                        model_parameters: parameters.clone(),
-                        enable_thinking: false,
-                        stream: false,
-                        available_tools: Vec::new(),
-                        preserve_think_in_history: false,
-                        enable_retry: false,
-                        on_non_fatal_error: None,
-                        on_tool_invocation: None,
-                    })
-                    .await
-                    .map(|stream| {
-                        let _ = collect_stream_chunks(stream);
-                    })
-                    .map_err(|error| error.to_string());
-                MediaPoolManager::remove_media(&videoId);
-                let _ = std::fs::remove_file(&videoPath);
-                result
-            })
-            .await;
+                    result
+                })
+                .await;
+            }
 
             service.cancel_streaming();
             service.release();
         }
 
-        Ok(Self::report(
-            configForTest,
-            requestedModelIndex,
-            actualModelIndex,
-            testedModelName,
-            items,
-        ))
+        Ok(Self::report(configForTest, items))
     }
 
     async fn runCase<F, Fut>(
@@ -302,19 +291,14 @@ impl ModelConfigConnectionTester {
     }
 
     fn report(
-        config: crate::data::model::ModelConfigData::ModelConfigData,
-        requestedModelIndex: i32,
-        actualModelIndex: i32,
-        testedModelName: String,
+        config: ResolvedModelConfig,
         items: Vec<ModelConnectionTestItem>,
     ) -> ModelConnectionTestReport {
         ModelConnectionTestReport {
-            configId: config.id,
-            configName: config.name,
+            providerId: config.providerId,
+            modelId: config.modelId,
+            providerName: config.providerName,
             providerType: config.apiProviderTypeId,
-            requestedModelIndex,
-            actualModelIndex,
-            testedModelName,
             success: items.iter().all(|item| item.success),
             items,
         }

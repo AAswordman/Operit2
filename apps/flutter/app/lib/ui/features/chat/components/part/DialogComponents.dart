@@ -123,7 +123,6 @@ class _DiffContent extends StatelessWidget {
               style: theme.textTheme.bodySmall?.copyWith(
                 color: _diffTextColor(theme, line),
                 fontFamily: 'monospace',
-                fontSize: 11,
               ),
             ),
           ),

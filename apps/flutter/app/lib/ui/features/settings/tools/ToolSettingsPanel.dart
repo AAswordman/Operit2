@@ -8,6 +8,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/SettingsControlStyles.dart';
 
 class ToolSettingsPanel extends StatefulWidget {
   const ToolSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -126,7 +127,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
           return const M3LoadingPane();
         }
         return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 36),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _SectionCard(
               title: l10n.settingsToolsPermissionMode,
@@ -174,6 +175,8 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
               children: <Widget>[
                 ListTile(
                   contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
                   leading: const Icon(Icons.timer_outlined),
                   title: Text(l10n.settingsToolsMcpStartupTimeout),
                   subtitle: Text(
@@ -200,6 +203,8 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                 for (final entry in data.overrides.entries)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
                     title: Text(entry.key),
                     subtitle: Text(_permissionLevelName(entry.value)),
                     trailing: TextButton(
@@ -470,6 +475,8 @@ class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
                   final isSelected = selected.contains(toolName);
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
                     leading: Icon(
                       isSelected
                           ? Icons.check_circle
@@ -597,9 +604,9 @@ class _SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(18);
+    final radius = BorderRadius.circular(12);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: OperitGlassSurface(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: radius,
@@ -609,13 +616,14 @@ class _SectionCard extends StatelessWidget {
         material: true,
         child: ExpansionTile(
           initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
           shape: RoundedRectangleBorder(borderRadius: radius),
           collapsedShape: RoundedRectangleBorder(borderRadius: radius),
           title: Text(
             title,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+            style: SettingsControlStyles.sectionTitleTextStyle(context),
           ),
-          childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
           children: children,
         ),
       ),

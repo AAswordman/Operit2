@@ -21,6 +21,9 @@ class TerminalGestureHandler extends StatefulWidget {
     this.onSecondaryTapUp,
     this.onTertiaryTapDown,
     this.onTertiaryTapUp,
+    this.onMagnifierShow,
+    this.onMagnifierMove,
+    this.onMagnifierHide,
     this.readOnly = false,
   });
 
@@ -43,6 +46,12 @@ class TerminalGestureHandler extends StatefulWidget {
   final GestureTapDownCallback? onTertiaryTapDown;
 
   final GestureTapUpCallback? onTertiaryTapUp;
+
+  final ValueChanged<Offset>? onMagnifierShow;
+
+  final ValueChanged<Offset>? onMagnifierMove;
+
+  final VoidCallback? onMagnifierHide;
 
   final bool readOnly;
 
@@ -72,7 +81,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onTertiaryTapUp: onSecondaryTapUp,
       onLongPressStart: onLongPressStart,
       onLongPressMoveUpdate: onLongPressMoveUpdate,
-      // onLongPressUp: onLongPressUp,
+      onLongPressUp: onLongPressUp,
       onDragStart: onDragStart,
       onDragUpdate: onDragUpdate,
       onDoubleTapDown: onDoubleTapDown,
@@ -162,17 +171,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void onLongPressStart(LongPressStartDetails details) {
     _lastLongPressStartDetails = details;
+    widget.onMagnifierShow?.call(details.globalPosition);
     renderTerminal.selectWord(details.localPosition);
   }
 
   void onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    widget.onMagnifierMove?.call(details.globalPosition);
     renderTerminal.selectWord(
       _lastLongPressStartDetails!.localPosition,
       details.localPosition,
     );
   }
 
-  // void onLongPressUp() {}
+  void onLongPressUp() {
+    widget.onMagnifierHide?.call();
+  }
 
   void onDragStart(DragStartDetails details) {
     _lastDragStartDetails = details;

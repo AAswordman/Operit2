@@ -2,13 +2,14 @@
 
 import 'package:flutter/material.dart';
 
-typedef XmlRenderPlugin = Widget? Function({
-  required String tagName,
-  required String xmlContent,
-  required Color textColor,
-  required bool isStreaming,
-  required Stream<String>? xmlStream,
-});
+typedef XmlRenderPlugin =
+    Widget? Function({
+      required String tagName,
+      required String xmlContent,
+      required Color textColor,
+      required bool isStreaming,
+      required Stream<String>? xmlStream,
+    });
 
 class XmlRenderPluginRegistry {
   XmlRenderPluginRegistry._();

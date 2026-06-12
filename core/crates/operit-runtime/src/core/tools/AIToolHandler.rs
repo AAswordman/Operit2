@@ -4,13 +4,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::mcp::MCPManager::MCPManager;
-use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
-use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
+use crate::core::tools::mcp::MCPManager::MCPManager;
+use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
+use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::util::ChainLogger::{self, TOOL_CHAIN};
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
@@ -421,7 +422,20 @@ impl AIToolHandler {
         &mut self,
         tool: &AITool,
     ) -> Option<Vec<ToolResult>> {
+        ChainLogger::info(
+            TOOL_CHAIN,
+            "tool.stream.request",
+            &[
+                ("tool", tool.name.clone()),
+                ("parameterCount", tool.parameters.len().to_string()),
+            ],
+        );
         if !self.getToolExecutorOrActivate(&tool.name) {
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.stream.not_found",
+                &[("tool", tool.name.clone())],
+            );
             return None;
         }
 
@@ -432,13 +446,31 @@ impl AIToolHandler {
                 .availableTools
                 .remove(&tool.name)
         }) else {
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.stream.not_registered",
+                &[("tool", tool.name.clone())],
+            );
             return None;
         };
 
         let validationResult = executor.validateParameters(tool);
         let collected = if validationResult.valid {
+            ChainLogger::info(
+                TOOL_CHAIN,
+                "tool.stream.start",
+                &[("tool", tool.name.clone())],
+            );
             executor.invokeAndStream(tool)
         } else {
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.stream.validation_failed",
+                &[
+                    ("tool", tool.name.clone()),
+                    ("error", validationResult.errorMessage.clone()),
+                ],
+            );
             vec![ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
@@ -455,11 +487,27 @@ impl AIToolHandler {
             .expect("AIToolHandler mutex poisoned")
             .availableTools
             .insert(tool.name.clone(), executor);
+        ChainLogger::info(
+            TOOL_CHAIN,
+            "tool.stream.done",
+            &[
+                ("tool", tool.name.clone()),
+                ("resultCount", collected.len().to_string()),
+            ],
+        );
         Some(collected)
     }
 
     #[allow(non_snake_case)]
     pub fn executeTool(&mut self, tool: AITool) -> ToolResult {
+        ChainLogger::info(
+            TOOL_CHAIN,
+            "tool.execute.request",
+            &[
+                ("tool", tool.name.clone()),
+                ("parameterCount", tool.parameters.len().to_string()),
+            ],
+        );
         self.notifyToolCallRequested(&tool);
         self.getToolExecutorOrActivate(&tool.name);
         let Some(mut executor) = ({
@@ -477,19 +525,30 @@ impl AIToolHandler {
             };
             self.notifyToolExecutionResult(&tool, &notFoundResult);
             self.notifyToolExecutionFinished(&tool);
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.execute.not_found",
+                &[("tool", tool.name.clone())],
+            );
             return notFoundResult;
         };
 
         let validationResult = executor.validateParameters(&tool);
         if !validationResult.valid {
+            let validationError = validationResult.errorMessage;
             let validationFailedResult = ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
                 result: String::new(),
-                error: Some(validationResult.errorMessage),
+                error: Some(validationError.clone()),
             };
             self.notifyToolExecutionResult(&tool, &validationFailedResult);
             self.notifyToolExecutionFinished(&tool);
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.execute.validation_failed",
+                &[("tool", tool.name.clone()), ("error", validationError)],
+            );
             self.inner
                 .lock()
                 .expect("AIToolHandler mutex poisoned")
@@ -499,15 +558,56 @@ impl AIToolHandler {
         }
 
         self.notifyToolExecutionStarted(&tool);
+        ChainLogger::info(
+            TOOL_CHAIN,
+            "tool.execute.start",
+            &[("tool", tool.name.clone())],
+        );
         let collected = executor.invokeAndStream(&tool);
-        let result = collected.last().cloned().unwrap_or_else(|| ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: String::new(),
-            error: Some("The tool execution returned no results.".to_string()),
-        });
+        if collected.is_empty() {
+            ChainLogger::error(
+                TOOL_CHAIN,
+                "tool.execute.empty_result",
+                &[("tool", tool.name.clone())],
+            );
+        }
+        let result = collected
+            .last()
+            .cloned()
+            .expect("ToolExecutor.invokeAndStream must return at least one ToolResult");
         self.notifyToolExecutionResult(&tool, &result);
         self.notifyToolExecutionFinished(&tool);
+        if result.success {
+            ChainLogger::info(
+                TOOL_CHAIN,
+                "tool.execute.done",
+                &[
+                    ("tool", tool.name.clone()),
+                    ("resultChars", ChainLogger::lenField(&result.result)),
+                ],
+            );
+        } else {
+            if let Some(error) = result.error.as_ref() {
+                ChainLogger::error(
+                    TOOL_CHAIN,
+                    "tool.execute.error",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("error", error.clone()),
+                        ("resultChars", ChainLogger::lenField(&result.result)),
+                    ],
+                );
+            } else {
+                ChainLogger::error(
+                    TOOL_CHAIN,
+                    "tool.execute.error",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultChars", ChainLogger::lenField(&result.result)),
+                    ],
+                );
+            }
+        }
         self.inner
             .lock()
             .expect("AIToolHandler mutex poisoned")

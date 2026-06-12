@@ -15,9 +15,10 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
 };
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
+    ToolPkgPromptHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
 };
 use crate::util::AppLogger::AppLogger;
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
 const TAG: &str = "ToolPkgPromptHookBridge";
 
@@ -220,11 +221,31 @@ fn dispatch_prompt_hooks(
         .lock()
         .expect("toolpkg prompt hook mutex poisoned")
         .clone();
+    ChainLogger::info(
+        PLUGIN_CHAIN,
+        "plugin.toolpkg.prompt.scan",
+        &[
+            ("event", event.to_string()),
+            ("stage", context.stage.clone()),
+            ("hookCount", snapshot.len().to_string()),
+        ],
+    );
     let mut current = context.clone();
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;
     let package_manager = toolPkgPackageManager();
     for hook in snapshot {
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.prompt.run.start",
+            &[
+                ("event", event.to_string()),
+                ("stage", current.stage.clone()),
+                ("package", hook.containerPackageName.clone()),
+                ("hookId", hook.hookId.clone()),
+                ("function", hook.functionName.clone()),
+            ],
+        );
         let result = match package_manager.runToolPkgMainHook(
             &hook.containerPackageName,
             &hook.functionName,
@@ -239,6 +260,18 @@ fn dispatch_prompt_hooks(
         ) {
             Ok(raw) => decodeToolPkgHookResult(raw),
             Err(error) => {
+                ChainLogger::error(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.prompt.run.error",
+                    &[
+                        ("event", event.to_string()),
+                        ("stage", current.stage.clone()),
+                        ("package", hook.containerPackageName.clone()),
+                        ("hookId", hook.hookId.clone()),
+                        ("function", hook.functionName.clone()),
+                        ("error", error.clone()),
+                    ],
+                );
                 AppLogger::e(
                     TAG,
                     &format!(
@@ -253,13 +286,31 @@ fn dispatch_prompt_hooks(
             apply_prompt_mutation(&mut current, next_mutation.clone());
             merge_prompt_mutation(&mut mutation, next_mutation);
             changed = true;
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.prompt.run.changed",
+                &[
+                    ("event", event.to_string()),
+                    ("stage", current.stage.clone()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                ],
+            );
+        } else {
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.prompt.run.done",
+                &[
+                    ("event", event.to_string()),
+                    ("stage", current.stage.clone()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                    ("changed", ChainLogger::boolField(false)),
+                ],
+            );
         }
     }
-    if changed {
-        Some(mutation)
-    } else {
-        None
-    }
+    if changed { Some(mutation) } else { None }
 }
 
 fn prompt_context_to_value(context: &PromptHookContext) -> Value {

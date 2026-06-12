@@ -298,6 +298,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
   }
 
+  void setSelectionRange(CellOffset begin, CellOffset end) {
+    _controller.setSelection(
+      _terminal.buffer.createAnchorFromOffset(begin),
+      _terminal.buffer.createAnchorFromOffset(end),
+      mode: _controller.selectionMode,
+    );
+  }
+
   /// Send a mouse event at [offset] with [button] being currently in [buttonState].
   bool mouseEvent(
     TerminalMouseButton button,

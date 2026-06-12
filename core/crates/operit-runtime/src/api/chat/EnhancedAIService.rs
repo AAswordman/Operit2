@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 
-use operit_store::PreferencesDataStore::mutableStateFlow;
 use operit_store::PreferencesDataStore::MutableStateFlow;
+use operit_store::PreferencesDataStore::mutableStateFlow;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ConversationMarkupManager;
 use crate::api::chat::enhance::ConversationService::{
@@ -17,10 +17,10 @@ use crate::api::chat::enhance::MultiServiceManager::{MultiServiceManager, Shared
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
-use crate::api::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
+use crate::api::chat::library::MemoryLibrary::{MemoryLibrary, promptTurnsToMemoryPairs};
 use crate::api::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
-    TokenCounts,
+    AiServiceError, SendMessageRequest, SharedAiResponseStream, TokenCounts,
+    response_stream_from_chunks,
 };
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -29,24 +29,24 @@ use crate::core::config::SystemPromptConfig::{
     ToolExposureMode as SystemToolExposureMode,
 };
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
-use crate::data::model::ModelConfigData::ModelConfigData;
+use crate::data::model::ModelConfigData::ResolvedModelConfig;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::skill::SkillRepository::SkillRepository;
-use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
-use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
-use crate::util::stream::Stream::{FnStream, Stream};
 use crate::util::AppLogger::AppLogger;
-use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+use crate::util::ChatMarkupRegex::{ChatMarkupRegex, attr_value};
 use crate::util::ChatUtils::ChatUtils;
+use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
+use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, with_event_channel_shared};
+use crate::util::stream::Stream::{FnStream, Stream};
 
 const TAG: &str = "EnhancedAIService";
 
@@ -129,8 +129,8 @@ pub struct SendMessageOptions {
     pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub notifyReplyOverride: Option<bool>,
-    pub chatModelConfigIdOverride: Option<String>,
-    pub chatModelIndexOverride: Option<i32>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
     pub preferenceProfileIdOverride: Option<String>,
     pub stream: bool,
     pub disableWarning: bool,
@@ -163,8 +163,8 @@ impl SendMessageOptions {
             callbacks: None,
             onToolInvocation: None,
             notifyReplyOverride: None,
-            chatModelConfigIdOverride: None,
-            chatModelIndexOverride: None,
+            chatProviderIdOverride: None,
+            chatModelIdOverride: None,
             preferenceProfileIdOverride: None,
             stream: true,
             disableWarning: false,
@@ -257,7 +257,7 @@ pub struct SendMessageRuntime {
     pub chatModelHasDirectImage: bool,
     pub useToolCallApi: bool,
     pub toolExposureMode: ToolExposureMode,
-    pub modelConfig: ModelConfigData,
+    pub modelConfig: ResolvedModelConfig,
     pub modelParameters: Vec<ModelParameter<Value>>,
     pub availableTools: Vec<ToolPrompt>,
     pub aiService: SharedAIServiceHandle,
@@ -523,8 +523,8 @@ impl EnhancedAIService {
     pub fn getAIServiceForFunction(
         &mut self,
         _functionType: FunctionType,
-        _chatModelConfigIdOverride: Option<String>,
-        _chatModelIndexOverride: Option<i32>,
+        _chatProviderIdOverride: Option<String>,
+        _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> SharedAIServiceHandle {
         self.ensureInitialized();
@@ -544,10 +544,10 @@ impl EnhancedAIService {
     pub fn getModelConfigForFunction(
         &mut self,
         _functionType: FunctionType,
-        _chatModelConfigIdOverride: Option<String>,
-        _chatModelIndexOverride: Option<i32>,
+        _chatProviderIdOverride: Option<String>,
+        _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
-    ) -> ModelConfigData {
+    ) -> ResolvedModelConfig {
         self.ensureInitialized();
         runtime.modelConfig.clone()
     }
@@ -569,8 +569,8 @@ impl EnhancedAIService {
     pub fn getModelParametersForFunction(
         &mut self,
         _functionType: FunctionType,
-        _chatModelConfigIdOverride: Option<String>,
-        _chatModelIndexOverride: Option<i32>,
+        _chatProviderIdOverride: Option<String>,
+        _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> Vec<ModelParameter<Value>> {
         self.ensureInitialized();
@@ -663,21 +663,21 @@ impl EnhancedAIService {
         proxySenderName: Option<String>,
         isSubTask: bool,
         functionType: FunctionType,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> Vec<PromptTurn> {
         let config = self.getModelConfigForFunction(
             functionType,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride,
+            chatModelIdOverride,
             runtime,
         );
-        let useToolCallApi = config.enableToolCall;
-        let chatModelHasDirectImage = config.enableDirectImageProcessing;
-        let chatModelHasDirectAudio = config.enableDirectAudioProcessing;
-        let chatModelHasDirectVideo = config.enableDirectVideoProcessing;
+        let useToolCallApi = config.capabilities.toolCall;
+        let chatModelHasDirectImage = config.capabilities.directImage;
+        let chatModelHasDirectAudio = config.capabilities.directAudio;
+        let chatModelHasDirectVideo = config.capabilities.directVideo;
 
         let history_hooks = RuntimePromptHistoryHooks;
         let system_prompt_composer = RuntimeSystemPromptComposer;
@@ -747,14 +747,14 @@ impl EnhancedAIService {
         _chatId: Option<String>,
         _promptFunctionType: Option<PromptFunctionType>,
         _roleCardId: Option<String>,
-        _chatModelConfigIdOverride: Option<String>,
-        _chatModelIndexOverride: Option<i32>,
+        _chatProviderIdOverride: Option<String>,
+        _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> Vec<ToolPrompt> {
         if !runtime.availableTools.is_empty() {
             return runtime.availableTools.clone();
         }
-        if functionType != FunctionType::CHAT || !runtime.modelConfig.enableToolCall {
+        if functionType != FunctionType::CHAT || !runtime.modelConfig.capabilities.toolCall {
             return Vec::new();
         }
         self.tool_handler.registerDefaultTools();
@@ -809,8 +809,8 @@ impl EnhancedAIService {
         enableGroupOrchestrationHint: bool,
         groupParticipantNamesText: Option<String>,
         proxySenderName: Option<String>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         publishEstimate: bool,
         mut runtime: SendMessageRuntime,
@@ -830,8 +830,8 @@ impl EnhancedAIService {
             proxySenderName,
             false,
             FunctionType::CHAT,
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             preferenceProfileIdOverride.clone(),
             &runtime,
         );
@@ -840,12 +840,16 @@ impl EnhancedAIService {
             chatId.clone(),
             Some(promptFunctionType.clone()),
             roleCardId,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             &runtime,
         );
-        let serviceForFunction =
-            self.getAIServiceForFunction(FunctionType::CHAT, None, None, &mut runtime);
+        let serviceForFunction = self.getAIServiceForFunction(
+            FunctionType::CHAT,
+            chatProviderIdOverride,
+            chatModelIdOverride,
+            &mut runtime,
+        );
         self.estimatePreparedRequestWindow(
             serviceForFunction,
             &preparedHistory,
@@ -952,20 +956,25 @@ impl EnhancedAIService {
         options: &SendMessageOptions,
     ) -> Result<SendMessageRuntime, AiServiceError> {
         self.ensureInitialized();
-        let (modelConfig, modelParameters, selectedService) =
-            match &options.chatModelConfigIdOverride {
-                Some(configId) if !configId.trim().is_empty() => {
-                    let index = match options.chatModelIndexOverride {
-                        Some(value) => value,
-                        None => 0,
-                    };
-                    self.multi_service_manager
-                        .getServiceBundleForConfig(configId.clone(), index)?
-                }
-                _ => self
-                    .multi_service_manager
-                    .getServiceBundleForFunction(options.functionType.clone())?,
-            };
+        let (modelConfig, modelParameters, selectedService) = match (
+            options.chatProviderIdOverride.as_ref(),
+            options.chatModelIdOverride.as_ref(),
+        ) {
+            (Some(providerId), Some(modelId))
+                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
+            {
+                self.multi_service_manager
+                    .getServiceBundleForModel(providerId.clone(), modelId.clone())?
+            }
+            (None, None) => self
+                .multi_service_manager
+                .getServiceBundleForFunction(options.functionType.clone())?,
+            _ => {
+                return Err(AiServiceError::RequestFailed(
+                    "chat provider and model override must be set together".to_string(),
+                ));
+            }
+        };
         let characterCardManager = CharacterCardManager::getInstance();
         let activeCard = options
             .roleCardId
@@ -994,13 +1003,13 @@ impl EnhancedAIService {
             avatarMoodRulesText: String::new(),
             disableUserPreferenceDescription: false,
             aiName,
-            hasImageRecognition: modelConfig.enableDirectImageProcessing,
-            hasAudioRecognition: modelConfig.enableDirectAudioProcessing,
-            hasVideoRecognition: modelConfig.enableDirectVideoProcessing,
-            chatModelHasDirectAudio: modelConfig.enableDirectAudioProcessing,
-            chatModelHasDirectVideo: modelConfig.enableDirectVideoProcessing,
-            chatModelHasDirectImage: modelConfig.enableDirectImageProcessing,
-            useToolCallApi: modelConfig.enableToolCall,
+            hasImageRecognition: modelConfig.capabilities.directImage,
+            hasAudioRecognition: modelConfig.capabilities.directAudio,
+            hasVideoRecognition: modelConfig.capabilities.directVideo,
+            chatModelHasDirectAudio: modelConfig.capabilities.directAudio,
+            chatModelHasDirectVideo: modelConfig.capabilities.directVideo,
+            chatModelHasDirectImage: modelConfig.capabilities.directImage,
+            useToolCallApi: modelConfig.capabilities.toolCall,
             toolExposureMode: match ResolvedToolExposureMode::resolve(
                 modelConfig.apiProviderType.clone(),
             ) {
@@ -1094,8 +1103,8 @@ impl EnhancedAIService {
         let proxySenderName = options.proxySenderName.clone();
         let callbacks = options.callbacks;
         let notifyReplyOverride = options.notifyReplyOverride;
-        let chatModelConfigIdOverride = options.chatModelConfigIdOverride.clone();
-        let chatModelIndexOverride = options.chatModelIndexOverride;
+        let chatProviderIdOverride = options.chatProviderIdOverride.clone();
+        let chatModelIdOverride = options.chatModelIdOverride.clone();
         let preferenceProfileIdOverride = options.preferenceProfileIdOverride.clone();
         let stream = options.stream;
         let disableWarning = options.disableWarning;
@@ -1152,8 +1161,8 @@ impl EnhancedAIService {
             proxySenderName.clone(),
             isSubTask,
             functionType.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             preferenceProfileIdOverride.clone(),
             &runtime,
         );
@@ -1173,8 +1182,8 @@ impl EnhancedAIService {
         lifecycle.push(SendMessageLifecycleStage::GetModelParametersForFunction);
         let modelParameters = self.getModelParametersForFunction(
             functionType.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             &runtime,
         );
         lifecycle.push(SendMessageLifecycleStage::ClearPerRequestTokenCounts);
@@ -1191,15 +1200,15 @@ impl EnhancedAIService {
             chatId.clone(),
             Some(promptFunctionType.clone()),
             roleCardId.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             &runtime,
         );
         lifecycle.push(SendMessageLifecycleStage::GetAIServiceForFunction);
         let serviceForFunction = self.getAIServiceForFunction(
             functionType.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             &mut runtime,
         );
         let mut finalProcessedInput = message.clone();
@@ -1393,8 +1402,8 @@ impl EnhancedAIService {
             chatId.clone(),
             onToolInvocation,
             notifyReplyOverride,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride,
             preferenceProfileIdOverride.clone(),
             stream,
             enableGroupOrchestrationHint,
@@ -1463,8 +1472,8 @@ impl EnhancedAIService {
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
@@ -1529,8 +1538,8 @@ impl EnhancedAIService {
 
         let modelParameters = self.getModelParametersForFunction(
             functionType.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             runtime,
         );
 
@@ -1539,8 +1548,8 @@ impl EnhancedAIService {
             chatId.clone(),
             Some(promptFunctionType.clone()),
             roleCardId.clone(),
-            chatModelConfigIdOverride.clone(),
-            chatModelIndexOverride,
+            chatProviderIdOverride.clone(),
+            chatModelIdOverride.clone(),
             runtime,
         );
 
@@ -1639,8 +1648,8 @@ impl EnhancedAIService {
             chatId,
             onToolInvocation,
             notifyReplyOverride,
-            chatModelConfigIdOverride,
-            chatModelIndexOverride,
+            chatProviderIdOverride,
+            chatModelIdOverride,
             preferenceProfileIdOverride,
             stream,
             enableGroupOrchestrationHint,
@@ -1672,8 +1681,8 @@ impl EnhancedAIService {
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
@@ -1754,8 +1763,8 @@ impl EnhancedAIService {
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride.clone(),
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
@@ -1851,8 +1860,8 @@ impl EnhancedAIService {
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride.clone(),
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
@@ -1883,8 +1892,8 @@ impl EnhancedAIService {
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride,
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
@@ -1932,8 +1941,8 @@ impl EnhancedAIService {
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
-        chatModelConfigIdOverride: Option<String>,
-        chatModelIndexOverride: Option<i32>,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
@@ -2007,8 +2016,8 @@ impl EnhancedAIService {
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride.clone(),
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
@@ -2017,11 +2026,10 @@ impl EnhancedAIService {
                 runtime,
             ))
             .await?;
-        } else if toolResultOverrideMessage
-            .as_ref()
-            .map(|value| !value.is_empty())
-            .unwrap_or(false)
-        {
+        } else if match toolResultOverrideMessage.as_ref() {
+            Some(value) => !value.is_empty(),
+            None => false,
+        } {
             Box::pin(self.processToolResults(
                 collector,
                 Vec::new(),
@@ -2041,8 +2049,8 @@ impl EnhancedAIService {
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
-                chatModelConfigIdOverride,
-                chatModelIndexOverride,
+                chatProviderIdOverride,
+                chatModelIdOverride,
                 preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,

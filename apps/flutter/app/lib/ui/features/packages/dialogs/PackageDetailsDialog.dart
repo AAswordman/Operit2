@@ -1,16 +1,20 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../utils/PackageDisplayUtils.dart';
 
-class PluginDetailsDialog extends StatelessWidget {
+class PluginDetailsDialog extends StatefulWidget {
   const PluginDetailsDialog({
     super.key,
     required this.plugin,
     required this.enabled,
+    required this.packageManager,
     required this.onEnabledChanged,
     required this.onOpenUi,
     required this.onDeletePackage,
@@ -18,16 +22,106 @@ class PluginDetailsDialog extends StatelessWidget {
 
   final core_proxy.ToolPkgContainerRuntime plugin;
   final bool enabled;
+  final GeneratedPermissionsPackToolPackageManagerCoreProxy packageManager;
   final ValueChanged<bool> onEnabledChanged;
   final ValueChanged<String?> onOpenUi;
   final VoidCallback? onDeletePackage;
 
   @override
+  State<PluginDetailsDialog> createState() => _PluginDetailsDialogState();
+}
+
+class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
+  core_proxy.ToolPkgContainerDetails? _details;
+  bool _loadingDetails = true;
+  String? _toggleError;
+  final Set<String> _togglingSubpackages = <String>{};
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_loadingDetails && _details == null) {
+      unawaited(_loadDetails());
+    }
+  }
+
+  Future<void> _loadDetails() async {
+    final useEnglish = _useEnglishForToolPkgText(context);
+    try {
+      final details = await widget.packageManager.getToolPkgContainerDetails(
+        packageName: widget.plugin.packageName,
+        useEnglish: useEnglish,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _details = details;
+        _loadingDetails = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load ToolPkg details: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingDetails = false;
+      });
+    }
+  }
+
+  Future<void> _setSubpackageEnabled(
+    core_proxy.ToolPkgSubpackageInfo subpackage,
+    bool enabled,
+  ) async {
+    setState(() {
+      _toggleError = null;
+      _togglingSubpackages.add(subpackage.packageName);
+    });
+    try {
+      final success = await widget.packageManager.setToolPkgSubpackageEnabled(
+        subpackagePackageName: subpackage.packageName,
+        enabled: enabled,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!success) {
+        setState(() {
+          _toggleError = '子包状态切换失败：${subpackage.packageName}';
+        });
+      }
+      await _loadDetails();
+    } catch (error, stackTrace) {
+      debugPrint('Failed to toggle ToolPkg subpackage: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _toggleError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _togglingSubpackages.remove(subpackage.packageName);
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final details = _details;
+    final displayName = details?.displayName.trim().isNotEmpty == true
+        ? details!.displayName
+        : toolPkgContainerDisplayName(widget.plugin);
+    final description = details?.description.trim().isNotEmpty == true
+        ? details!.description
+        : localizedText(widget.plugin.description);
     return AlertDialog(
       icon: const Icon(Icons.extension_outlined),
-      title: Text(toolPkgContainerDisplayName(plugin)),
+      title: Text(displayName),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620, maxHeight: 620),
         child: SingleChildScrollView(
@@ -35,44 +129,61 @@ class PluginDetailsDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              _DetailLine(label: 'ID', value: plugin.packageName),
-              _DetailLine(label: l10n.version, value: plugin.version),
-              _DetailLine(label: l10n.author, value: plugin.author.join(', ')),
-              _DetailLine(label: l10n.entry, value: plugin.mainEntry),
-              _DetailLine(label: l10n.source, value: plugin.sourcePath),
+              _DetailLine(label: 'ID', value: widget.plugin.packageName),
+              _DetailLine(
+                label: l10n.version,
+                value: details?.version ?? widget.plugin.version,
+              ),
+              _DetailLine(
+                label: l10n.author,
+                value: (details?.author ?? widget.plugin.author).join(', '),
+              ),
+              _DetailLine(label: l10n.entry, value: widget.plugin.mainEntry),
+              _DetailLine(label: l10n.source, value: widget.plugin.sourcePath),
               const SizedBox(height: 12),
-              _DescriptionText(localizedText(plugin.description)),
+              _DescriptionText(description),
               const SizedBox(height: 16),
               _SectionTitle(text: l10n.toolPkgResources),
               const SizedBox(height: 8),
               _SummaryCard(
                 rows: <String>[
-                  l10n.resourcesCount(plugin.resources.length),
-                  l10n.uiModulesCount(plugin.uiModules.length),
-                  l10n.navigationEntriesCount(plugin.navigationEntries.length),
-                  l10n.desktopWidgetsCount(plugin.desktopWidgets.length),
-                  l10n.workflowTemplatesCount(plugin.workflowTemplates.length),
-                  l10n.workspaceTemplatesCount(
-                    plugin.workspaceTemplates.length,
+                  l10n.resourcesCount(
+                    details?.resourceCount ?? widget.plugin.resources.length,
                   ),
-                  'AI Provider ${plugin.aiProviders.length}',
+                  l10n.uiModulesCount(
+                    details?.uiModuleCount ?? widget.plugin.uiModules.length,
+                  ),
+                  l10n.navigationEntriesCount(
+                    widget.plugin.navigationEntries.length,
+                  ),
+                  l10n.desktopWidgetsCount(widget.plugin.desktopWidgets.length),
+                  l10n.workspaceTemplatesCount(
+                    details?.workspaceTemplateCount ??
+                        widget.plugin.workspaceTemplates.length,
+                  ),
+                  'AI Provider ${widget.plugin.aiProviders.length}',
                 ],
               ),
-              if (plugin.uiModules.isNotEmpty) ...<Widget>[
+              if (_loadingDetails) ...<Widget>[
+                const SizedBox(height: 14),
+                const Center(child: CircularProgressIndicator()),
+              ],
+              if (details != null &&
+                  details.toolboxUiModules.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 14),
                 _SectionTitle(text: l10n.pluginConfiguration),
                 const SizedBox(height: 8),
-                for (final module in plugin.uiModules)
+                for (final module in details.toolboxUiModules)
                   _ModuleTile(
-                    title: localizedText(module.title),
-                    subtitle: '${module.id} · ${module.runtime}',
+                    title: module.title,
+                    subtitle: '${module.uiModuleId} · ${module.runtime}',
                     icon: Icons.tune_outlined,
                     trailing: FilledButton.tonalIcon(
-                      onPressed: enabled
-                          ? () => onOpenUi(_routeIdForModule(plugin, module.id))
+                      onPressed: widget.enabled
+                          ? () => widget.onOpenUi(module.routeId)
                           : null,
                       icon: const Icon(Icons.open_in_new, size: 18),
-                      label: Text(enabled ? '打开' : '启用后打开'),
+                      label: Text(widget.enabled ? '打开' : '启用后打开'),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -83,41 +194,49 @@ class PluginDetailsDialog extends StatelessWidget {
               const SizedBox(height: 14),
               _SectionTitle(text: l10n.subpackages),
               const SizedBox(height: 8),
-              if (plugin.subpackages.isEmpty)
-                _EmptyCard(message: l10n.toolPkgNoSubpackages)
-              else
-                for (final subpackage in plugin.subpackages)
-                  _ModuleTile(
-                    title: toolPkgSubpackageDisplayName(subpackage),
-                    subtitle: l10n.subpackageToolCount(
-                      subpackage.packageName,
-                      subpackage.toolCount,
-                    ),
-                    icon: Icons.inventory_2_outlined,
-                    trailing: subpackage.enabledByDefault
-                        ? _SmallBadge(text: l10n.enabledByDefault)
-                        : null,
-                  ),
-              if (plugin.workflowTemplates.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 14),
-                _SectionTitle(text: l10n.workflowTemplates),
+              if (_toggleError != null) ...<Widget>[
+                Text(
+                  _toggleError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
                 const SizedBox(height: 8),
-                for (final template in plugin.workflowTemplates)
-                  _ModuleTile(
-                    title: localizedText(template.displayName),
-                    subtitle: localizedText(template.description),
-                    icon: Icons.account_tree_outlined,
-                    trailing: _SmallBadge(text: template.id),
-                  ),
               ],
-              if (plugin.workspaceTemplates.isNotEmpty) ...<Widget>[
+              if (details == null && !_loadingDetails)
+                _EmptyCard(message: l10n.toolPkgNoSubpackages)
+              else if (details != null && details.subpackages.isEmpty)
+                _EmptyCard(message: l10n.toolPkgNoSubpackages)
+              else if (details != null)
+                for (final subpackage in details.subpackages)
+                  _ModuleTile(
+                    title: subpackage.displayName,
+                    subtitle: subpackage.description.trim().isNotEmpty
+                        ? subpackage.description
+                        : l10n.subpackageToolCount(
+                            subpackage.packageName,
+                            subpackage.toolCount,
+                          ),
+                    icon: Icons.inventory_2_outlined,
+                    trailing: Switch(
+                      value: subpackage.enabled,
+                      onChanged:
+                          widget.enabled &&
+                              !_togglingSubpackages.contains(
+                                subpackage.packageName,
+                              )
+                          ? (enabled) =>
+                                _setSubpackageEnabled(subpackage, enabled)
+                          : null,
+                    ),
+                  ),
+              if (details != null &&
+                  details.workspaceTemplates.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 14),
                 _SectionTitle(text: l10n.workspaceTemplates),
                 const SizedBox(height: 8),
-                for (final template in plugin.workspaceTemplates)
+                for (final template in details.workspaceTemplates)
                   _ModuleTile(
-                    title: localizedText(template.displayName),
-                    subtitle: localizedText(template.description),
+                    title: template.displayName,
+                    subtitle: template.description,
                     icon: Icons.folder_copy_outlined,
                     trailing: _SmallBadge(text: template.projectType),
                   ),
@@ -131,42 +250,35 @@ class PluginDetailsDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.close),
         ),
-        if (onDeletePackage != null)
+        if (widget.onDeletePackage != null)
           OutlinedButton.icon(
-            onPressed: onDeletePackage,
+            onPressed: widget.onDeletePackage,
             icon: const Icon(Icons.delete_outline),
             label: const Text('删除'),
             style: OutlinedButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
           ),
-        if (toolPkgHasUi(plugin))
+        if (toolPkgHasUi(widget.plugin))
           OutlinedButton.icon(
-            onPressed: enabled ? () => onOpenUi(null) : null,
+            onPressed: widget.enabled ? () => widget.onOpenUi(null) : null,
             icon: const Icon(Icons.open_in_new_outlined),
-            label: Text(enabled ? '打开' : '启用后打开'),
+            label: Text(widget.enabled ? '打开' : '启用后打开'),
           ),
         FilledButton.icon(
-          onPressed: () => onEnabledChanged(!enabled),
-          icon: Icon(enabled ? Icons.toggle_off_outlined : Icons.toggle_on),
-          label: Text(enabled ? l10n.disable : l10n.enable),
+          onPressed: () => widget.onEnabledChanged(!widget.enabled),
+          icon: Icon(
+            widget.enabled ? Icons.toggle_off_outlined : Icons.toggle_on,
+          ),
+          label: Text(widget.enabled ? l10n.disable : l10n.enable),
         ),
       ],
     );
   }
 }
 
-String? _routeIdForModule(
-  core_proxy.ToolPkgContainerRuntime plugin,
-  String moduleId,
-) {
-  final normalizedModuleId = moduleId.trim();
-  for (final route in plugin.uiRoutes) {
-    if (route.id.trim() == normalizedModuleId) {
-      return route.routeId;
-    }
-  }
-  return null;
+bool _useEnglishForToolPkgText(BuildContext context) {
+  return Localizations.localeOf(context).languageCode.toLowerCase() != 'zh';
 }
 
 class PackageDetailsDialog extends StatelessWidget {

@@ -93,7 +93,9 @@ class _ChatToastHostState extends State<ChatToastHost> {
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
                           minHeight: 28,
-                          maxHeight: compact ? double.infinity : widget.maxHeight,
+                          maxHeight: compact
+                              ? double.infinity
+                              : widget.maxHeight,
                         ),
                         child: SingleChildScrollView(
                           controller: _scrollController,
@@ -101,8 +103,9 @@ class _ChatToastHostState extends State<ChatToastHost> {
                               ? const NeverScrollableScrollPhysics()
                               : const BouncingScrollPhysics(),
                           child: Align(
-                            alignment:
-                                compact ? Alignment.centerLeft : Alignment.topLeft,
+                            alignment: compact
+                                ? Alignment.centerLeft
+                                : Alignment.topLeft,
                             child: Text(
                               message ?? '',
                               style: Theme.of(context).textTheme.bodyMedium,
@@ -121,7 +124,9 @@ class _ChatToastHostState extends State<ChatToastHost> {
                         height: 28,
                       ),
                       padding: EdgeInsets.zero,
-                      tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+                      tooltip: MaterialLocalizations.of(
+                        context,
+                      ).closeButtonTooltip,
                     ),
                   ],
                 ),

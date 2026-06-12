@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::ApiKeyInfo::ApiKeyInfo;
+use super::BillingMode::BillingMode;
+use super::ModelParameter::ModelParameter;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
@@ -44,12 +46,7 @@ pub enum ApiProviderType {
 impl ApiProviderType {
     #[allow(non_snake_case)]
     pub fn fromProviderTypeId(providerTypeId: &str) -> Option<Self> {
-        let normalized = providerTypeId.trim();
-        if normalized.is_empty() {
-            return None;
-        }
-
-        match normalized.to_ascii_uppercase().as_str() {
+        match providerTypeId.trim().to_ascii_uppercase().as_str() {
             "OPENAI" => Some(Self::OPENAI),
             "OPENAI_RESPONSES" => Some(Self::OPENAI_RESPONSES),
             "OPENAI_RESPONSES_GENERIC" => Some(Self::OPENAI_RESPONSES_GENERIC),
@@ -137,7 +134,6 @@ impl Default for ApiProviderType {
 pub struct ModelConfigDefaults;
 
 impl ModelConfigDefaults {
-    pub const DEFAULT_CONTEXT_LENGTH: f32 = 64.0;
     pub const DEFAULT_MAX_CONTEXT_LENGTH: f32 = 200.0;
     pub const DEFAULT_ENABLE_MAX_CONTEXT_MODE: bool = false;
     pub const DEFAULT_SUMMARY_TOKEN_THRESHOLD: f32 = 0.70;
@@ -147,180 +143,178 @@ impl ModelConfigDefaults {
     pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str =
         "https://api.deepseek.com/v1/chat/completions";
     pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-v4-flash";
+    pub const DEFAULT_PROVIDER_ID: &'static str = "DEEPSEEK";
+    pub const DEFAULT_MODEL_ID: &'static str = "deepseek-v4-flash";
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct ModelConfigData {
-    pub id: String,
-    pub name: String,
-
-    #[serde(default)]
-    pub apiKey: String,
-    #[serde(default = "default_deepseek_endpoint")]
-    pub apiEndpoint: String,
-    #[serde(default = "default_deepseek_model")]
-    pub modelName: String,
-    #[serde(default)]
-    pub apiProviderType: ApiProviderType,
-    #[serde(default = "default_api_provider_type_id")]
-    pub apiProviderTypeId: String,
-
-    #[serde(default)]
-    pub useMultipleApiKeys: bool,
-    #[serde(default)]
-    pub apiKeyPool: Vec<ApiKeyInfo>,
-    #[serde(default)]
-    pub currentKeyIndex: i32,
-    #[serde(default = "default_key_rotation_mode")]
-    pub keyRotationMode: String,
-
-    #[serde(default)]
-    pub hasCustomParameters: bool,
-
-    #[serde(default)]
-    pub maxTokensEnabled: bool,
-    #[serde(default)]
-    pub temperatureEnabled: bool,
-    #[serde(default)]
-    pub topPEnabled: bool,
-    #[serde(default)]
-    pub topKEnabled: bool,
-    #[serde(default)]
-    pub presencePenaltyEnabled: bool,
-    #[serde(default)]
-    pub frequencyPenaltyEnabled: bool,
-    #[serde(default)]
-    pub repetitionPenaltyEnabled: bool,
-
-    #[serde(default = "default_max_tokens")]
-    pub maxTokens: i32,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
-    #[serde(default = "default_top_p")]
-    pub topP: f32,
-    #[serde(default)]
-    pub topK: i32,
-    #[serde(default)]
-    pub presencePenalty: f32,
-    #[serde(default)]
-    pub frequencyPenalty: f32,
-    #[serde(default = "default_repetition_penalty")]
-    pub repetitionPenalty: f32,
-
-    #[serde(default = "default_custom_parameters")]
-    pub customParameters: String,
-    #[serde(default = "default_custom_headers")]
-    pub customHeaders: String,
-
-    #[serde(default = "default_context_length")]
-    pub contextLength: f32,
-    #[serde(default = "default_max_context_length")]
-    pub maxContextLength: f32,
-    #[serde(default)]
-    pub enableMaxContextMode: bool,
-    #[serde(default = "default_summary_token_threshold")]
-    pub summaryTokenThreshold: f32,
-    #[serde(default = "default_true")]
-    pub enableSummary: bool,
-    #[serde(default = "default_true")]
-    pub enableSummaryByMessageCount: bool,
-    #[serde(default = "default_summary_message_count_threshold")]
-    pub summaryMessageCountThreshold: i32,
-
-    #[serde(default)]
-    pub mnnForwardType: i32,
-    #[serde(default = "default_thread_count")]
-    pub mnnThreadCount: i32,
-
-    #[serde(default = "default_thread_count")]
-    pub llamaThreadCount: i32,
-    #[serde(default = "default_llama_context_size")]
-    pub llamaContextSize: i32,
-    #[serde(default = "default_llama_batch_size")]
-    pub llamaBatchSize: i32,
-    #[serde(default = "default_llama_batch_size")]
-    pub llamaUBatchSize: i32,
-    #[serde(default)]
-    pub llamaGpuLayers: i32,
-    #[serde(default)]
-    pub llamaUseMmap: bool,
-    #[serde(default)]
-    pub llamaFlashAttention: bool,
-    #[serde(default = "default_true")]
-    pub llamaKvUnified: bool,
-    #[serde(default)]
-    pub llamaOffloadKqv: bool,
-
-    #[serde(default)]
-    pub enableDirectImageProcessing: bool,
-    #[serde(default)]
-    pub enableDirectAudioProcessing: bool,
-    #[serde(default)]
-    pub enableDirectVideoProcessing: bool,
-
-    #[serde(default)]
-    pub enableGoogleSearch: bool,
-    #[serde(default)]
-    pub enableToolCall: bool,
-
-    #[serde(default)]
-    pub requestLimitPerMinute: i32,
-    #[serde(default)]
-    pub maxConcurrentRequests: i32,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PricingCurrency {
+    CNY,
+    USD,
 }
 
-impl ModelConfigData {
-    pub fn new(id: String, name: String) -> Self {
-        Self {
-            id,
-            name,
-            ..Self::default()
+impl PricingCurrency {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::CNY => "CNY",
+            Self::USD => "USD",
         }
     }
 }
 
-impl Default for ModelConfigData {
-    fn default() -> Self {
-        let apiProviderType = ApiProviderType::DEEPSEEK;
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelPricing {
+    pub billingMode: BillingMode,
+    pub inputPricePerMillion: f64,
+    pub cachedInputPricePerMillion: Option<f64>,
+    pub outputPricePerMillion: f64,
+    pub pricePerRequest: f64,
+    pub currency: PricingCurrency,
+}
+
+impl ModelPricing {
+    pub fn token(
+        inputPricePerMillion: f64,
+        cachedInputPricePerMillion: Option<f64>,
+        outputPricePerMillion: f64,
+        currency: PricingCurrency,
+    ) -> Self {
         Self {
-            id: String::new(),
-            name: String::new(),
-            apiKey: String::new(),
-            apiEndpoint: ModelConfigDefaults::DEFAULT_DEEPSEEK_ENDPOINT.to_string(),
-            modelName: ModelConfigDefaults::DEFAULT_DEEPSEEK_MODEL.to_string(),
-            apiProviderTypeId: apiProviderType.name().to_string(),
-            apiProviderType,
-            useMultipleApiKeys: false,
-            apiKeyPool: Vec::new(),
-            currentKeyIndex: 0,
-            keyRotationMode: "ROUND_ROBIN".to_string(),
-            hasCustomParameters: false,
-            maxTokensEnabled: false,
-            temperatureEnabled: false,
-            topPEnabled: false,
-            topKEnabled: false,
-            presencePenaltyEnabled: false,
-            frequencyPenaltyEnabled: false,
-            repetitionPenaltyEnabled: false,
-            maxTokens: 4096,
-            temperature: 1.0,
-            topP: 1.0,
-            topK: 0,
-            presencePenalty: 0.0,
-            frequencyPenalty: 0.0,
-            repetitionPenalty: 1.0,
-            customParameters: "[]".to_string(),
-            customHeaders: "{}".to_string(),
-            contextLength: ModelConfigDefaults::DEFAULT_CONTEXT_LENGTH,
+            billingMode: BillingMode::TOKEN,
+            inputPricePerMillion,
+            cachedInputPricePerMillion,
+            outputPricePerMillion,
+            pricePerRequest: 0.0,
+            currency,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelCapabilities {
+    pub directImage: bool,
+    pub directAudio: bool,
+    pub directVideo: bool,
+    pub toolCall: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            directImage: false,
+            directAudio: false,
+            directVideo: false,
+            toolCall: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuiltinToolType {
+    WebSearch,
+    CodeExecution,
+    UrlContext,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuiltinToolRequestFormat {
+    GeminiGoogleSearch,
+    AnthropicWebSearch,
+    OpenAiWebSearch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuiltinToolExclusivity {
+    CanMixWithExternalTools,
+    ExclusiveWithExternalTools,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelBuiltinTool {
+    pub toolType: BuiltinToolType,
+    pub displayName: String,
+    pub enabled: bool,
+    pub requestFormat: BuiltinToolRequestFormat,
+    pub exclusivity: BuiltinToolExclusivity,
+    pub config: serde_json::Value,
+}
+
+impl ModelBuiltinTool {
+    pub fn disabled(
+        toolType: BuiltinToolType,
+        displayName: String,
+        requestFormat: BuiltinToolRequestFormat,
+        exclusivity: BuiltinToolExclusivity,
+    ) -> Self {
+        Self {
+            toolType,
+            displayName,
+            enabled: false,
+            requestFormat,
+            exclusivity,
+            config: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelContextSpec {
+    pub maxContextLength: f32,
+    pub enableMaxContextMode: bool,
+}
+
+impl Default for ModelContextSpec {
+    fn default() -> Self {
+        Self {
             maxContextLength: ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH,
             enableMaxContextMode: ModelConfigDefaults::DEFAULT_ENABLE_MAX_CONTEXT_MODE,
-            summaryTokenThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelSummarySettings {
+    pub enableSummary: bool,
+    pub summaryTokenThreshold: f32,
+    pub enableSummaryByMessageCount: bool,
+    pub summaryMessageCountThreshold: i32,
+}
+
+impl Default for ModelSummarySettings {
+    fn default() -> Self {
+        Self {
             enableSummary: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY,
-            enableSummaryByMessageCount:
-                ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
-            summaryMessageCountThreshold:
-                ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
+            summaryTokenThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD,
+            enableSummaryByMessageCount: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
+            summaryMessageCountThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct LocalModelRuntimeSettings {
+    pub mnnForwardType: i32,
+    pub mnnThreadCount: i32,
+    pub llamaThreadCount: i32,
+    pub llamaContextSize: i32,
+    pub llamaBatchSize: i32,
+    pub llamaUBatchSize: i32,
+    pub llamaGpuLayers: i32,
+    pub llamaUseMmap: bool,
+    pub llamaFlashAttention: bool,
+    pub llamaKvUnified: bool,
+    pub llamaOffloadKqv: bool,
+}
+
+impl Default for LocalModelRuntimeSettings {
+    fn default() -> Self {
+        Self {
             mnnForwardType: 0,
             mnnThreadCount: 4,
             llamaThreadCount: 4,
@@ -332,149 +326,252 @@ impl Default for ModelConfigData {
             llamaFlashAttention: false,
             llamaKvUnified: true,
             llamaOffloadKqv: false,
-            enableDirectImageProcessing: false,
-            enableDirectAudioProcessing: false,
-            enableDirectVideoProcessing: false,
-            enableGoogleSearch: false,
-            enableToolCall: false,
-            requestLimitPerMinute: 0,
-            maxConcurrentRequests: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelRequestSpec {
+    pub supportsStructuredTools: bool,
+}
+
+impl Default for ModelRequestSpec {
+    fn default() -> Self {
+        Self {
+            supportsStructuredTools: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ProviderOperationResultSpec {
+    pub itemsJsonPath: Option<String>,
+    pub itemIdJsonPath: Option<String>,
+    pub inputPricePerTokenJsonPath: Option<String>,
+    pub cachedInputPricePerTokenJsonPath: Option<String>,
+    pub outputPricePerTokenJsonPath: Option<String>,
+    pub pricePerRequestJsonPath: Option<String>,
+    pub currencyJsonPath: Option<String>,
+    pub maxContextLengthJsonPath: Option<String>,
+    pub directImageJsonPath: Option<String>,
+    pub directAudioJsonPath: Option<String>,
+    pub directVideoJsonPath: Option<String>,
+    pub toolCallJsonPath: Option<String>,
+    pub supportsStructuredToolsJsonPath: Option<String>,
+    pub amountJsonPath: Option<String>,
+    pub amountCurrencyJsonPath: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ProviderOperationSpec {
+    pub operationType: String,
+    pub handlerId: String,
+    pub method: String,
+    pub path: String,
+    pub requiresApiKey: bool,
+    pub result: ProviderOperationResultSpec,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelCatalogKey {
+    pub providerTypeId: String,
+    pub modelId: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelCatalogEntry {
+    pub providerTypeId: String,
+    pub modelId: String,
+    pub aliases: Vec<String>,
+    pub pricing: Option<ModelPricing>,
+    pub context: Option<ModelContextSpec>,
+    pub capabilities: Option<ModelCapabilities>,
+    pub builtinTools: Vec<ModelBuiltinTool>,
+    pub request: Option<ModelRequestSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ProviderCatalogEntry {
+    pub providerTypeId: String,
+    pub displayName: String,
+    pub defaultEndpoint: String,
+    pub operations: Vec<ProviderOperationSpec>,
+    pub models: Vec<ModelCatalogEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AvailableProviderModelSource {
+    Catalog,
+    Remote,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct AvailableProviderModel {
+    pub modelId: String,
+    pub source: AvailableProviderModelSource,
+    pub pricing: Option<ModelPricing>,
+    pub context: Option<ModelContextSpec>,
+    pub capabilities: Option<ModelCapabilities>,
+    pub builtinTools: Vec<ModelBuiltinTool>,
+    pub request: Option<ModelRequestSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ModelProfile {
+    pub id: String,
+    pub catalogKey: Option<ModelCatalogKey>,
+    pub pricingOverride: Option<ModelPricing>,
+    pub contextOverride: Option<ModelContextSpec>,
+    pub capabilitiesOverride: Option<ModelCapabilities>,
+    pub builtinToolsOverride: Option<Vec<ModelBuiltinTool>>,
+    pub requestOverride: Option<ModelRequestSpec>,
+    pub parameters: Vec<ModelParameter<serde_json::Value>>,
+    pub summary: ModelSummarySettings,
+    pub localRuntime: LocalModelRuntimeSettings,
+}
+
+impl ModelProfile {
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            catalogKey: None,
+            pricingOverride: None,
+            contextOverride: None,
+            capabilitiesOverride: None,
+            builtinToolsOverride: None,
+            requestOverride: None,
+            parameters: Vec::new(),
+            summary: ModelSummarySettings::default(),
+            localRuntime: LocalModelRuntimeSettings::default(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
-pub struct ModelConfigSummary {
+pub struct ProviderProfile {
     pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub modelName: String,
-    #[serde(default)]
-    pub apiEndpoint: String,
-    #[serde(default)]
-    pub apiProviderType: ApiProviderType,
-    #[serde(default)]
-    pub modelIndex: i32,
+    pub providerTypeId: String,
+    pub providerType: ApiProviderType,
+    pub endpoint: String,
+    pub apiKey: String,
+    pub useMultipleApiKeys: bool,
+    pub apiKeyPool: Vec<ApiKeyInfo>,
+    pub currentKeyIndex: i32,
+    pub keyRotationMode: String,
+    pub customHeaders: String,
+    pub requestLimitPerMinute: i32,
+    pub maxConcurrentRequests: i32,
+    pub models: Vec<ModelProfile>,
 }
 
-impl ModelConfigSummary {
-    pub fn new(id: String, name: String) -> Self {
+impl ProviderProfile {
+    pub fn new(id: String, name: String, providerType: ApiProviderType, endpoint: String) -> Self {
         Self {
             id,
             name,
-            modelName: String::new(),
-            apiEndpoint: String::new(),
-            apiProviderType: ApiProviderType::DEEPSEEK,
-            modelIndex: 0,
+            providerTypeId: providerType.name().to_string(),
+            providerType,
+            endpoint,
+            apiKey: String::new(),
+            useMultipleApiKeys: false,
+            apiKeyPool: Vec::new(),
+            currentKeyIndex: 0,
+            keyRotationMode: "ROUND_ROBIN".to_string(),
+            customHeaders: "{}".to_string(),
+            requestLimitPerMinute: 0,
+            maxConcurrentRequests: 0,
+            models: Vec::new(),
         }
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
-pub fn getModelByIndex(modelName: &str, index: i32) -> String {
-    if modelName.is_empty() {
-        return String::new();
-    }
-    let models = getModelList(modelName);
-    if index >= 0 && (index as usize) < models.len() {
-        models[index as usize].clone()
-    } else {
-        models.get(0).cloned().unwrap_or_default()
+pub struct ResolvedModelConfig {
+    pub providerId: String,
+    pub providerName: String,
+    pub modelId: String,
+    pub apiKey: String,
+    pub apiEndpoint: String,
+    pub apiProviderType: ApiProviderType,
+    pub apiProviderTypeId: String,
+    pub useMultipleApiKeys: bool,
+    pub apiKeyPool: Vec<ApiKeyInfo>,
+    pub currentKeyIndex: i32,
+    pub keyRotationMode: String,
+    pub customHeaders: String,
+    pub requestLimitPerMinute: i32,
+    pub maxConcurrentRequests: i32,
+    pub pricing: Option<ModelPricing>,
+    pub context: ModelContextSpec,
+    pub capabilities: ModelCapabilities,
+    pub builtinTools: Vec<ModelBuiltinTool>,
+    pub request: ModelRequestSpec,
+    pub parameters: Vec<ModelParameter<serde_json::Value>>,
+    pub summary: ModelSummarySettings,
+    pub localRuntime: LocalModelRuntimeSettings,
+}
+
+impl ResolvedModelConfig {
+    pub fn providerModelLabel(&self) -> String {
+        format!("{}:{}", self.apiProviderTypeId, self.modelId)
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
-pub fn getModelList(modelName: &str) -> Vec<String> {
-    if modelName.is_empty() {
-        return Vec::new();
-    }
-    modelName
-        .split(',')
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+pub struct ProviderModelSummary {
+    pub providerId: String,
+    pub providerName: String,
+    pub providerTypeId: String,
+    pub endpoint: String,
+    pub modelId: String,
+    pub capabilities: ModelCapabilities,
+    pub pricing: Option<ModelPricing>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
-pub fn getValidModelIndex(modelName: &str, requestedIndex: i32) -> i32 {
-    let modelList = getModelList(modelName);
-    if requestedIndex >= 0 && (requestedIndex as usize) < modelList.len() {
-        requestedIndex
-    } else {
-        0
-    }
+pub struct ModelConnectionTestItem {
+    pub r#type: String,
+    pub success: bool,
+    pub error: Option<String>,
 }
 
-fn default_true() -> bool {
-    true
+pub fn default_deepseek_provider() -> ProviderProfile {
+    let mut provider = ProviderProfile::new(
+        ModelConfigDefaults::DEFAULT_PROVIDER_ID.to_string(),
+        "DeepSeek".to_string(),
+        ApiProviderType::DEEPSEEK,
+        ModelConfigDefaults::DEFAULT_DEEPSEEK_ENDPOINT.to_string(),
+    );
+    provider.models.push(default_deepseek_model());
+    provider
 }
 
-fn default_deepseek_endpoint() -> String {
-    ModelConfigDefaults::DEFAULT_DEEPSEEK_ENDPOINT.to_string()
-}
-
-fn default_deepseek_model() -> String {
-    ModelConfigDefaults::DEFAULT_DEEPSEEK_MODEL.to_string()
-}
-
-fn default_api_provider_type_id() -> String {
-    ApiProviderType::DEEPSEEK.name().to_string()
-}
-
-fn default_key_rotation_mode() -> String {
-    "ROUND_ROBIN".to_string()
-}
-
-fn default_max_tokens() -> i32 {
-    4096
-}
-
-fn default_temperature() -> f32 {
-    1.0
-}
-
-fn default_top_p() -> f32 {
-    1.0
-}
-
-fn default_repetition_penalty() -> f32 {
-    1.0
-}
-
-fn default_custom_parameters() -> String {
-    "[]".to_string()
-}
-
-fn default_custom_headers() -> String {
-    "{}".to_string()
-}
-
-fn default_context_length() -> f32 {
-    ModelConfigDefaults::DEFAULT_CONTEXT_LENGTH
-}
-
-fn default_max_context_length() -> f32 {
-    ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH
-}
-
-fn default_summary_token_threshold() -> f32 {
-    ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD
-}
-
-fn default_summary_message_count_threshold() -> i32 {
-    ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD
-}
-
-fn default_thread_count() -> i32 {
-    4
-}
-
-fn default_llama_context_size() -> i32 {
-    2048
-}
-
-fn default_llama_batch_size() -> i32 {
-    512
+pub fn default_deepseek_model() -> ModelProfile {
+    let mut model = ModelProfile::new(ModelConfigDefaults::DEFAULT_MODEL_ID.to_string());
+    model.catalogKey = Some(ModelCatalogKey {
+        providerTypeId: ApiProviderType::DEEPSEEK.name().to_string(),
+        modelId: ModelConfigDefaults::DEFAULT_MODEL_ID.to_string(),
+    });
+    model.contextOverride = Some(ModelContextSpec::default());
+    model.capabilitiesOverride = Some(ModelCapabilities {
+        toolCall: true,
+        ..ModelCapabilities::default()
+    });
+    model.requestOverride = Some(ModelRequestSpec {
+        supportsStructuredTools: true,
+    });
+    model
 }

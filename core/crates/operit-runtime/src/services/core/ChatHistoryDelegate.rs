@@ -6,7 +6,8 @@ use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
 
@@ -253,11 +254,7 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn currentDisplayPageCount(&self) -> i32 {
-        if self.chatHistory.is_empty() {
-            1
-        } else {
-            1
-        }
+        if self.chatHistory.is_empty() { 1 } else { 1 }
     }
 
     #[allow(non_snake_case)]
@@ -973,6 +970,15 @@ impl ChatHistoryDelegate {
             .chatHistoryManager
             .addMessageVariant(chatId.clone(), timestamp, message)
             .expect("ChatHistoryManager.addMessageVariant must succeed");
+        ChainLogger::info(
+            MESSAGE_STORE_CHAIN,
+            "message.store.variant",
+            &[
+                ("chatId", chatId.clone()),
+                ("timestamp", timestamp.to_string()),
+                ("selectedVariantIndex", selectedVariantIndex.to_string()),
+            ],
+        );
         if self.currentChatId.as_ref() == Some(&chatId) {
             self.reloadCurrentChatDisplayHistory(chatId);
         }
@@ -1023,6 +1029,19 @@ impl ChatHistoryDelegate {
                         actualContextWindowSize,
                     )
                     .expect("ChatHistoryManager.updateChatTokenCounts must succeed");
+                ChainLogger::info(
+                    MESSAGE_STORE_CHAIN,
+                    "chat.store.metrics",
+                    &[
+                        ("chatId", chatId.clone()),
+                        ("inputTokens", inputTokens.to_string()),
+                        ("outputTokens", outputTokens.to_string()),
+                        (
+                            "actualContextWindowSize",
+                            actualContextWindowSize.to_string(),
+                        ),
+                    ],
+                );
             }
         }
     }
@@ -1143,25 +1162,58 @@ impl ChatHistoryDelegate {
         let Some(targetChatId) = chatIdOverride.or_else(|| self.currentChatIdFlow.value()) else {
             return;
         };
+        let messageSender = message.sender.clone();
+        let messageTimestamp = message.timestamp;
+        let messageChars = ChainLogger::lenField(&message.content);
         let isCurrentChat = self.currentChatIdFlow.value().as_ref() == Some(&targetChatId);
         if message.isVariantPreview {
             if isCurrentChat {
                 self.upsertCurrentChatMessageInMemory(message);
+                ChainLogger::info(
+                    MESSAGE_STORE_CHAIN,
+                    "message.store.preview.memory",
+                    &[
+                        ("chatId", targetChatId.clone()),
+                        ("sender", messageSender),
+                        ("timestamp", messageTimestamp.to_string()),
+                        ("messageChars", messageChars),
+                    ],
+                );
             }
             return;
         }
 
         if isCurrentChat && !self.allowAddMessage {
             self.chatHistoryManager
-                .updateMessage(targetChatId, message)
+                .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.hidden.update",
+                &[
+                    ("chatId", targetChatId),
+                    ("sender", messageSender),
+                    ("timestamp", messageTimestamp.to_string()),
+                    ("messageChars", messageChars),
+                ],
+            );
             return;
         }
 
         if !isCurrentChat {
             self.chatHistoryManager
-                .updateMessage(targetChatId, message)
+                .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.background.update",
+                &[
+                    ("chatId", targetChatId),
+                    ("sender", messageSender),
+                    ("timestamp", messageTimestamp.to_string()),
+                    ("messageChars", messageChars),
+                ],
+            );
             return;
         }
 
@@ -1176,15 +1228,45 @@ impl ChatHistoryDelegate {
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.visible.update",
+                &[
+                    ("chatId", targetChatId.clone()),
+                    ("sender", messageSender),
+                    ("timestamp", messageTimestamp.to_string()),
+                    ("messageChars", messageChars),
+                ],
+            );
         } else if isVisibleNewMessage {
             self.chatHistoryManager
                 .addMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.addMessage must succeed");
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.visible.insert",
+                &[
+                    ("chatId", targetChatId.clone()),
+                    ("sender", messageSender),
+                    ("timestamp", messageTimestamp.to_string()),
+                    ("messageChars", messageChars),
+                ],
+            );
             self.refreshCurrentChatDisplayFlags(targetChatId.clone(), self.chatHistory.clone());
         } else {
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ChainLogger::info(
+                MESSAGE_STORE_CHAIN,
+                "message.store.window.update",
+                &[
+                    ("chatId", targetChatId.clone()),
+                    ("sender", messageSender),
+                    ("timestamp", messageTimestamp.to_string()),
+                    ("messageChars", messageChars),
+                ],
+            );
         }
     }
 

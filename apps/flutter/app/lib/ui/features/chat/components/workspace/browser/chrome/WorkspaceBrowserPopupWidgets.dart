@@ -71,6 +71,7 @@ class WorkspaceBrowserPopupEmpty extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: Column(
@@ -81,7 +82,9 @@ class WorkspaceBrowserPopupEmpty extends StatelessWidget {
           Text(
             text,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -114,6 +117,7 @@ class WorkspaceBrowserPopupRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return InkWell(
       onTap: onTap,
       child: ColoredBox(
@@ -141,8 +145,7 @@ class WorkspaceBrowserPopupRow extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
+                        style: textTheme.bodySmall!.copyWith(
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -153,8 +156,7 @@ class WorkspaceBrowserPopupRow extends StatelessWidget {
                             subtitle!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
+                            style: textTheme.bodySmall!.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),
@@ -166,8 +168,7 @@ class WorkspaceBrowserPopupRow extends StatelessWidget {
                             detail!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
+                            style: textTheme.labelSmall!.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),

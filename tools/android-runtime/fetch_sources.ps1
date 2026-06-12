@@ -16,11 +16,11 @@ $items = @(
         Extracted = "busybox-1.38.0"
     },
     @{
-        Name = "proot-v5.4.0"
-        Url = "https://github.com/proot-me/proot/archive/refs/tags/v5.4.0.tar.gz"
-        Archive = "proot-v5.4.0.tar.gz"
-        Sha256 = "29248AAC2A7CE10C3BD5EE5602742EC33B2532310FF9CF73B79F3C133E5A5F68"
-        Extracted = "proot-5.4.0"
+        Name = "termux-proot-v5.1.107.78"
+        Url = "https://github.com/termux/proot/archive/refs/tags/v5.1.107.78.tar.gz"
+        Archive = "termux-proot-v5.1.107.78.tar.gz"
+        Sha256 = "F3377BA49DCD833370420C34C5081B4C243ECBB85B2A9881A4F4586012599AFA"
+        Extracted = "proot-5.1.107.78"
     },
     @{
         Name = "talloc-2.4.3"

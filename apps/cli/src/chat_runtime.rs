@@ -1146,8 +1146,8 @@ pub(crate) async fn dispatch_chat_message_with_application(
     functionalConfigManager
         .initializeIfNeeded()
         .map_err(|error| error.to_string())?;
-    let chatMapping = functionalConfigManager
-        .getConfigMappingForFunction(FunctionType::CHAT)
+    let chatBinding = functionalConfigManager
+        .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let turnOptions = ChatTurnOptions::default();
     let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
@@ -1190,8 +1190,8 @@ pub(crate) async fn dispatch_chat_message_with_application(
         None,
         None,
         None,
-        Some(chatMapping.configId),
-        Some(chatMapping.modelIndex),
+        Some(chatBinding.providerId),
+        Some(chatBinding.modelId),
         attachments,
         replyToMessage,
         turnOptions,
@@ -1224,8 +1224,8 @@ pub(crate) fn launch_chat_message_with_application(
     functionalConfigManager
         .initializeIfNeeded()
         .map_err(|error| error.to_string())?;
-    let chatMapping = functionalConfigManager
-        .getConfigMappingForFunction(FunctionType::CHAT)
+    let chatBinding = functionalConfigManager
+        .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
     core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
@@ -1303,8 +1303,8 @@ pub(crate) fn launch_chat_message_with_application(
                     Some(threadChatId),
                     None,
                     None,
-                    Some(chatMapping.configId),
-                    Some(chatMapping.modelIndex),
+                    Some(chatBinding.providerId),
+                    Some(chatBinding.modelId),
                     attachments,
                     replyToMessage,
                     ChatTurnOptions::default(),

@@ -31,9 +31,7 @@ class WorkspaceBrowserSessionInfo {
 }
 
 class _WorkspaceBrowserControls {
-  const _WorkspaceBrowserControls({
-    required this.openBrowserTab,
-  });
+  const _WorkspaceBrowserControls({required this.openBrowserTab});
 
   final void Function({
     String? url,
@@ -103,9 +101,7 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
     })
     openBrowserTab,
   }) {
-    final controls = _WorkspaceBrowserControls(
-      openBrowserTab: openBrowserTab,
-    );
+    final controls = _WorkspaceBrowserControls(openBrowserTab: openBrowserTab);
     _browserControls = controls;
     _drainPendingOpenRequests(controls);
   }
@@ -119,9 +115,7 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
   }
 
   List<Map<String, Object?>> listTabs() {
-    return sessions
-        .map((session) => session.toJson())
-        .toList(growable: false);
+    return sessions.map((session) => session.toJson()).toList(growable: false);
   }
 
   void openBrowserTab({String? url}) {
@@ -310,9 +304,7 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
     SchedulerBinding.instance.ensureVisualUpdate();
   }
 
-  void _drainPendingOpenRequests(
-    _WorkspaceBrowserControls controls,
-  ) {
+  void _drainPendingOpenRequests(_WorkspaceBrowserControls controls) {
     final requests = List<_WorkspaceBrowserOpenRequest>.of(
       _pendingOpenRequests,
     );

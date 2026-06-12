@@ -1,10 +1,11 @@
 // ignore_for_file: file_names
 
-import 'dart:typed_data';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
@@ -295,11 +296,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   Future<void> _createAndOpenTerminalSession() async {
-    final workingDirectory = widget.workspacePath?.trim();
-    if (workingDirectory == null || workingDirectory.isEmpty) {
-      _openWorkspaceSetupTab();
-      return;
-    }
+    final workingDirectory = await _manualTerminalWorkingDirectory();
     final sessionId = await _terminalSessions.startPtySession(
       sessionName: _nextManualTerminalSessionName(),
       workingDirectory: workingDirectory,
@@ -313,6 +310,19 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
     _updateTerminalSessionEntries(sessions);
     _openTerminalSessionTab(session);
+  }
+
+  Future<String> _manualTerminalWorkingDirectory() async {
+    if (!widget.hasBoundWorkspace) {
+      final supportDirectory = await getApplicationSupportDirectory();
+      await supportDirectory.create(recursive: true);
+      return supportDirectory.path;
+    }
+    final workspaceDirectory = widget.workspacePath?.trim();
+    if (workspaceDirectory == null || workspaceDirectory.isEmpty) {
+      throw StateError('工作区路径为空');
+    }
+    return workspaceDirectory;
   }
 
   String _nextManualTerminalSessionName() {

@@ -8,8 +8,9 @@ use crate::core::chat::hooks::SummaryHookRegistry::{
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
+    ToolPkgPromptHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
 };
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static SUMMARY_GENERATE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> =
     OnceLock::new();
@@ -57,34 +58,83 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
             .lock()
             .expect("toolpkg summary hook mutex poisoned")
             .clone();
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.summary.scan",
+            &[
+                ("stage", context.stage.clone()),
+                ("hookCount", snapshot.len().to_string()),
+            ],
+        );
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
         let manager = toolPkgPackageManager();
         for hook in snapshot {
-            let result = manager
-                .runToolPkgMainHook(
-                    &hook.containerPackageName,
-                    &hook.functionName,
-                    TOOLPKG_EVENT_SUMMARY_GENERATE,
-                    None,
-                    Some(&hook.hookId),
-                    hook.functionSource.as_deref(),
-                    summary_context_to_value(context),
-                    None,
-                    None,
-                    None,
-                )
-                .ok()
-                .and_then(decodeToolPkgHookResult);
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.summary.run.start",
+                &[
+                    ("stage", context.stage.clone()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                    ("function", hook.functionName.clone()),
+                ],
+            );
+            let result = match manager.runToolPkgMainHook(
+                &hook.containerPackageName,
+                &hook.functionName,
+                TOOLPKG_EVENT_SUMMARY_GENERATE,
+                None,
+                Some(&hook.hookId),
+                hook.functionSource.as_deref(),
+                summary_context_to_value(context),
+                None,
+                None,
+                None,
+            ) {
+                Ok(raw) => decodeToolPkgHookResult(raw),
+                Err(error) => {
+                    ChainLogger::error(
+                        PLUGIN_CHAIN,
+                        "plugin.toolpkg.summary.run.error",
+                        &[
+                            ("stage", context.stage.clone()),
+                            ("package", hook.containerPackageName.clone()),
+                            ("hookId", hook.hookId.clone()),
+                            ("function", hook.functionName.clone()),
+                            ("error", error),
+                        ],
+                    );
+                    None
+                }
+            };
             if let Some(Value::Object(object)) = result {
-                changed |= apply_summary_object_result(&mut mutation, object);
+                let hookChanged = apply_summary_object_result(&mut mutation, object);
+                changed |= hookChanged;
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.summary.run.done",
+                    &[
+                        ("stage", context.stage.clone()),
+                        ("package", hook.containerPackageName.clone()),
+                        ("hookId", hook.hookId.clone()),
+                        ("changed", ChainLogger::boolField(hookChanged)),
+                    ],
+                );
+            } else {
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.summary.run.done",
+                    &[
+                        ("stage", context.stage.clone()),
+                        ("package", hook.containerPackageName.clone()),
+                        ("hookId", hook.hookId.clone()),
+                        ("changed", ChainLogger::boolField(false)),
+                    ],
+                );
             }
         }
-        if changed {
-            Some(mutation)
-        } else {
-            None
-        }
+        if changed { Some(mutation) } else { None }
     }
 }
 

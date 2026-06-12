@@ -6,8 +6,9 @@ use serde_json::Value;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgChatInputHookRegistration,
+    ToolPkgChatInputHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
 };
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatInputHookRegistration>>> = OnceLock::new();
 
@@ -94,25 +95,68 @@ impl ToolPkgChatInputHookBridge {
         }
 
         let mut current = context;
+        ChainLogger::info(
+            PLUGIN_CHAIN,
+            "plugin.toolpkg.chat_input.scan",
+            &[
+                ("event", current.eventName.clone()),
+                ("chatId", current.chatId.clone()),
+                ("hookCount", activeHooks.len().to_string()),
+                ("textChars", ChainLogger::lenField(&current.text)),
+            ],
+        );
         let manager = toolPkgPackageManager();
         for hook in activeHooks {
-            let result = manager
-                .runToolPkgMainHook(
-                    &hook.containerPackageName,
-                    &hook.functionName,
-                    TOOLPKG_EVENT_CHAT_INPUT,
-                    Some(&current.eventName),
-                    Some(&hook.hookId),
-                    hook.functionSource.as_deref(),
-                    buildChatInputEventPayload(&current),
-                    None,
-                    None,
-                    None,
-                )
-                .ok()
-                .and_then(decodeToolPkgHookResult);
+            ChainLogger::info(
+                PLUGIN_CHAIN,
+                "plugin.toolpkg.chat_input.run.start",
+                &[
+                    ("event", current.eventName.clone()),
+                    ("package", hook.containerPackageName.clone()),
+                    ("hookId", hook.hookId.clone()),
+                    ("function", hook.functionName.clone()),
+                ],
+            );
+            let result = match manager.runToolPkgMainHook(
+                &hook.containerPackageName,
+                &hook.functionName,
+                TOOLPKG_EVENT_CHAT_INPUT,
+                Some(&current.eventName),
+                Some(&hook.hookId),
+                hook.functionSource.as_deref(),
+                buildChatInputEventPayload(&current),
+                None,
+                None,
+                None,
+            ) {
+                Ok(raw) => decodeToolPkgHookResult(raw),
+                Err(error) => {
+                    ChainLogger::error(
+                        PLUGIN_CHAIN,
+                        "plugin.toolpkg.chat_input.run.error",
+                        &[
+                            ("event", current.eventName.clone()),
+                            ("package", hook.containerPackageName.clone()),
+                            ("hookId", hook.hookId.clone()),
+                            ("function", hook.functionName.clone()),
+                            ("error", error),
+                        ],
+                    );
+                    None
+                }
+            };
 
             let Some(parsed) = parseChatInputHookResult(result.as_ref()) else {
+                ChainLogger::info(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.chat_input.run.done",
+                    &[
+                        ("event", current.eventName.clone()),
+                        ("package", hook.containerPackageName.clone()),
+                        ("hookId", hook.hookId.clone()),
+                        ("matched", ChainLogger::boolField(false)),
+                    ],
+                );
                 continue;
             };
             if current.eventName != CHAT_INPUT_EVENT_SUBMIT_REQUESTED {
@@ -120,13 +164,37 @@ impl ToolPkgChatInputHookBridge {
             }
             match parsed.action.as_str() {
                 CHAT_INPUT_SUBMIT_ACTION_BLOCK | CHAT_INPUT_SUBMIT_ACTION_CONSUME => {
-                    return Some(parsed)
+                    ChainLogger::info(
+                        PLUGIN_CHAIN,
+                        "plugin.toolpkg.chat_input.run.decision",
+                        &[
+                            ("event", current.eventName.clone()),
+                            ("package", hook.containerPackageName.clone()),
+                            ("hookId", hook.hookId.clone()),
+                            ("action", parsed.action.clone()),
+                        ],
+                    );
+                    return Some(parsed);
                 }
                 CHAT_INPUT_SUBMIT_ACTION_REPLACE => {
-                    let replacement = parsed.text.clone().unwrap_or_else(|| current.text.clone());
+                    let replacement = parsed
+                        .text
+                        .clone()
+                        .expect("ToolPkg chat input replace action must include text");
                     current.text = replacement;
                     current.selectionStart = current.text.len() as i32;
                     current.selectionEnd = current.text.len() as i32;
+                    ChainLogger::info(
+                        PLUGIN_CHAIN,
+                        "plugin.toolpkg.chat_input.run.decision",
+                        &[
+                            ("event", current.eventName.clone()),
+                            ("package", hook.containerPackageName.clone()),
+                            ("hookId", hook.hookId.clone()),
+                            ("action", parsed.action.clone()),
+                            ("textChars", ChainLogger::lenField(&current.text)),
+                        ],
+                    );
                 }
                 _ => {}
             }
