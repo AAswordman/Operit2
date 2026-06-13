@@ -57,9 +57,7 @@ pub struct ToolPermissionSystem {
 impl ToolPermissionSystem {
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                paths.root_dir().join("tool_permissions.preferences.json"),
-            ),
+            dataStore: PreferencesDataStore::new(paths.tool_permissions_preferences_path()),
             operationDescriptionRegistry: Arc::new(Mutex::new(BTreeMap::new())),
             permissionRequester: Arc::new(Mutex::new(None)),
         }

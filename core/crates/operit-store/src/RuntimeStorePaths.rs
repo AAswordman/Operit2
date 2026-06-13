@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use crate::RuntimeStorageLayout::*;
+
 #[derive(Clone, Debug)]
 pub struct RuntimeStorePaths {
     root_dir: PathBuf,
@@ -22,64 +24,91 @@ impl RuntimeStorePaths {
     }
 
     pub fn model_configs_preferences_path(&self) -> PathBuf {
-        self.root_dir.join("model_configs.preferences.json")
+        self.root_dir.join(MODEL_CONFIGS_PREFERENCES_PATH)
     }
 
     pub fn functional_configs_preferences_path(&self) -> PathBuf {
-        self.root_dir.join("functional_configs.preferences.json")
-    }
-
-    pub fn chats_dir(&self) -> PathBuf {
-        self.root_dir.join("chats")
+        self.root_dir.join(FUNCTIONAL_CONFIGS_PREFERENCES_PATH)
     }
 
     pub fn skills_dir(&self) -> PathBuf {
-        self.root_dir.join("skills")
+        self.root_dir.join(EXTENSIONS_SKILLS_DIR_PATH)
     }
 
     pub fn packages_dir(&self) -> PathBuf {
-        self.root_dir.join("packages")
+        self.root_dir.join(EXTENSIONS_PACKAGES_DIR_PATH)
     }
 
     pub fn mcp_plugins_dir(&self) -> PathBuf {
-        self.root_dir.join("mcp_plugins")
+        self.root_dir.join(EXTENSIONS_MCP_DIR_PATH)
     }
 
     pub fn mcp_config_path(&self) -> PathBuf {
-        self.mcp_plugins_dir().join("mcp_config.json")
+        self.root_dir.join(MCP_CONFIG_PATH)
     }
 
     pub fn mcp_server_status_path(&self) -> PathBuf {
-        self.mcp_plugins_dir().join("server_status.json")
+        self.root_dir.join(MCP_SERVER_STATUS_PATH)
+    }
+
+    pub fn character_cards_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(CHARACTER_CARDS_PREFERENCES_PATH)
+    }
+
+    pub fn character_groups_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(CHARACTER_GROUPS_PREFERENCES_PATH)
+    }
+
+    pub fn prompt_tags_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(PROMPT_TAGS_PREFERENCES_PATH)
+    }
+
+    pub fn shared_memory_stores_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(SHARED_MEMORY_STORES_PREFERENCES_PATH)
+    }
+
+    pub fn tool_permissions_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(TOOL_PERMISSIONS_PREFERENCES_PATH)
+    }
+
+    pub fn skill_visibility_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(SKILL_VISIBILITY_PREFERENCES_PATH)
     }
 
     pub fn package_manager_preferences_path(&self) -> PathBuf {
-        self.root_dir
-            .join("com.ai.assistance.operit.core.tools.PackageManager.preferences.json")
-    }
-
-    pub fn chat_path(&self, chat_id: &str) -> PathBuf {
-        self.chats_dir().join(format!("{chat_id}.json"))
+        self.root_dir.join(PACKAGE_MANAGER_PREFERENCES_PATH)
     }
 
     pub fn current_chat_id_preferences_path(&self) -> PathBuf {
-        self.root_dir.join("current_chat_id.preferences.json")
+        self.root_dir.join(CURRENT_CHAT_ID_PREFERENCES_PATH)
     }
 
     pub fn sqlite_database_path(&self) -> PathBuf {
-        self.root_dir.join("operit2.sqlite")
+        self.root_dir.join(SQLITE_DATABASE_PATH)
     }
 
-    pub fn ensure_root(&self) -> std::io::Result<()> {
-        ensureRuntimeDirectory(self.root_dir.clone())
+    pub fn workspace_dir(&self) -> PathBuf {
+        self.root_dir.join(WORKSPACE_DIR_PATH)
     }
 
-    pub fn ensure_chats_dir(&self) -> std::io::Result<()> {
-        ensureRuntimeDirectory(self.chats_dir())
+    pub fn workspace_path(&self, chat_id: &str) -> PathBuf {
+        self.workspace_dir().join(chat_id)
     }
 
-    pub fn ensure_skills_dir(&self) -> std::io::Result<()> {
-        ensureRuntimeDirectory(self.skills_dir())
+    pub fn sync_dir(&self) -> PathBuf {
+        self.root_dir.join(RUNTIME_SYNC_DIR_PATH)
+    }
+
+    pub fn adjacent_sync_dir(&self) -> PathBuf {
+        self.root_dir.join("sync")
+    }
+
+    pub fn model_connection_test_cache_dir(&self) -> PathBuf {
+        self.root_dir.join(RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH)
+    }
+
+    pub fn toolpkg_cache_dir(&self) -> PathBuf {
+        self.root_dir.join(RUNTIME_TOOLPKG_CACHE_DIR_PATH)
     }
 
     pub fn ensure_packages_dir(&self) -> std::io::Result<()> {

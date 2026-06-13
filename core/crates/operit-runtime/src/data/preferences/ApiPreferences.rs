@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
-use operit_store::RuntimeStorePaths::default_data_dir;
+use crate::util::OperitPaths;
 
 pub struct ApiPreferences {
     apiDataStore: PreferencesDataStore,
@@ -28,7 +28,7 @@ impl ApiPreferences {
     pub const DEFAULT_FEATURE_TOGGLES_JSON: &'static str = "{}";
 
     pub fn data_dir() -> PathBuf {
-        default_data_dir()
+        OperitPaths::operitRootDir().expect("Operit root dir must be available")
     }
 
     pub fn getInstance() -> Self {
@@ -36,7 +36,7 @@ impl ApiPreferences {
     }
 
     pub fn new(root_dir: PathBuf) -> Self {
-        let path = root_dir.join("api_settings.json");
+        let path = root_dir.join(OperitPaths::API_PREFERENCES_PATH);
         Self {
             apiDataStore: PreferencesDataStore::new(path),
         }

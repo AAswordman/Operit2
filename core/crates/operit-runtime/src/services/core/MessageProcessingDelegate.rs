@@ -126,7 +126,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
     pub isGroupOrchestrationTurn: bool,
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderNameOverride: Option<String>,
@@ -160,7 +159,6 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
 }
 
 pub struct MessageProcessingDelegate {
@@ -626,12 +624,12 @@ impl MessageProcessingDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelMessageInternal(&mut self, chatId: String, keepPartialResponse: bool) {
+    pub async fn cancelMessageInternal(&mut self, chatId: String, keepPartialResponse: bool) {
         if !keepPartialResponse {
             self.detachStreamingAiMessage(chatId.clone());
         }
         self.clearCurrentTurnToolInvocationCount(chatId.clone());
-        AIMessageManager::cancelOperation(chatId.clone());
+        AIMessageManager::cancelOperation(chatId.clone()).await;
         self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             if let Some(responseStream) = runtime.responseStream.as_ref() {
                 responseStream.upstream.close();
@@ -652,13 +650,13 @@ impl MessageProcessingDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelMessage(&mut self, chatId: String) {
-        self.cancelMessageInternal(chatId, true);
+    pub async fn cancelMessage(&mut self, chatId: String) {
+        self.cancelMessageInternal(chatId, true).await;
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelMessageForDestructiveMutation(&mut self, chatId: String) {
-        self.cancelMessageInternal(chatId, false);
+    pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) {
+        self.cancelMessageInternal(chatId, false).await;
     }
 
     #[allow(non_snake_case)]
@@ -953,7 +951,6 @@ impl MessageProcessingDelegate {
             let proxySenderName = request.proxySenderNameOverride.clone();
             let chatProviderIdOverride = request.chatProviderIdOverride.clone();
             let chatModelIdOverride = request.chatModelIdOverride.clone();
-            let preferenceProfileIdOverride = request.preferenceProfileIdOverride.clone();
             move |service: &mut EnhancedAIService,
                   chatHistoryDelegate: &ChatHistoryDelegate,
                   chatId: String|
@@ -963,7 +960,6 @@ impl MessageProcessingDelegate {
                     promptFunctionType: promptFunctionType.clone(),
                     chatProviderIdOverride: chatProviderIdOverride.clone(),
                     chatModelIdOverride: chatModelIdOverride.clone(),
-                    preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
                     ..SendMessageOptions::new()
                 };
                 let runtime = service.createSendMessageRuntime(&runtimeOptions).ok()?;
@@ -989,7 +985,6 @@ impl MessageProcessingDelegate {
                             proxySenderName,
                             chatProviderIdOverride,
                             chatModelIdOverride,
-                            preferenceProfileIdOverride,
                             publishEstimate: true,
                             runtime,
                         },
@@ -1021,7 +1016,6 @@ impl MessageProcessingDelegate {
             notifyReplyOverride: request.turnOptions.notifyReply,
             chatProviderIdOverride: request.chatProviderIdOverride.clone(),
             chatModelIdOverride: request.chatModelIdOverride.clone(),
-            preferenceProfileIdOverride: request.preferenceProfileIdOverride.clone(),
             disableWarning: request.turnOptions.disableWarning,
             callbacks: Some(Arc::new(MessageProcessingCallbacks {
                 nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
@@ -1281,7 +1275,6 @@ impl MessageProcessingDelegate {
                 tokenUsageThreshold: request.tokenUsageThreshold,
                 chatProviderIdOverride: request.chatProviderIdOverride,
                 chatModelIdOverride: request.chatModelIdOverride,
-                preferenceProfileIdOverride: request.preferenceProfileIdOverride,
                 isGroupOrchestrationTurn: false,
                 groupParticipantNamesText: None,
                 proxySenderNameOverride: None,

@@ -1489,12 +1489,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersChatModelIndex => 'Chat model index';
 
   @override
-  String get settingsCharactersMemoryBindingMode => 'Memory binding mode';
-
-  @override
-  String get settingsCharactersMemoryProfileId => 'Memory profile ID';
-
-  @override
   String get settingsCharactersToolAccess => 'Tool permission mode';
 
   @override
@@ -1505,17 +1499,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsCharactersChatModelConfig => 'Model config';
-
-  @override
-  String get settingsCharactersMemoryProfileFollowGlobal =>
-      'Follow global memory';
-
-  @override
-  String get settingsCharactersMemoryProfileFixedProfile =>
-      'Use fixed memory profile';
-
-  @override
-  String get settingsCharactersMemoryProfile => 'Memory profile';
 
   @override
   String get settingsCharactersToolAccessFollowGlobal =>
@@ -1578,37 +1561,34 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersGroupMembersTitle => 'Group characters';
 
   @override
-  String get settingsCharactersPreferenceProfilesSection =>
-      'User preferences & memory';
+  String get settingsCharactersOpenMemoryGraph => 'View memory graph';
 
   @override
-  String get settingsCharactersCreatePreferenceProfile =>
-      'New user preference profile';
+  String settingsCharactersMemoryGraphTitle(String profileName) {
+    return '$profileName\'s memory graph';
+  }
 
   @override
-  String get settingsCharactersEditPreferenceProfile =>
-      'Edit user preference profile';
+  String get settingsCharactersMemoryGraphEmpty => 'No memory nodes yet';
 
   @override
-  String get settingsCharactersPreferenceProfileName => 'Profile name';
+  String settingsCharactersMemoryGraphStats(int nodes, int edges) {
+    return '$nodes nodes · $edges links';
+  }
 
   @override
-  String get settingsCharactersPreferenceBirthDate => 'Birth date timestamp';
+  String get settingsCharactersMemoryGraphLink => 'Memory link';
 
   @override
-  String get settingsCharactersPreferenceGender => 'Gender';
+  String get settingsCharactersEditUserMarkdown => 'Edit USER.md';
 
   @override
-  String get settingsCharactersPreferencePersonality => 'Personality';
+  String settingsCharactersUserMarkdownTitle(String profileName) {
+    return '$profileName\'s USER.md';
+  }
 
   @override
-  String get settingsCharactersPreferenceIdentity => 'Identity';
-
-  @override
-  String get settingsCharactersPreferenceOccupation => 'Occupation';
-
-  @override
-  String get settingsCharactersPreferenceAiStyle => 'AI interaction style';
+  String get settingsCharactersUserMarkdownSaved => 'USER.md saved';
 
   @override
   String get settingsCharactersMemoryAutoUpdate =>
@@ -1625,14 +1605,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCharactersPreferenceDescriptionSubtitle =>
       'Include the active preference profile in chat prompts.';
-
-  @override
-  String get settingsCharactersPreferenceLocksSection =>
-      'Preference field locks';
-
-  @override
-  String get settingsCharactersPreferenceLockDescription =>
-      'When locked, automatic memory updates will not rewrite this field.';
 
   @override
   String get settingsCharactersCardsSection => 'Character cards';

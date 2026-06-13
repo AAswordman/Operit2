@@ -16,11 +16,7 @@ impl SkillVisibilityPreferences {
 
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                paths
-                    .root_dir()
-                    .join("com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences.preferences.json"),
-            ),
+            dataStore: PreferencesDataStore::new(paths.skill_visibility_preferences_path()),
         }
     }
 

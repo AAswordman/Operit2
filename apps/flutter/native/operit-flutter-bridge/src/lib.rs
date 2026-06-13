@@ -1932,7 +1932,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_create(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
         mut env: JNIEnv,
         _class: JClass,
         storage_root: JString,
@@ -1974,7 +1974,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_createError(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_createError(
         env: JNIEnv,
         _class: JClass,
     ) -> jstring {
@@ -1988,7 +1988,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_destroy(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_destroy(
         _env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -1997,7 +1997,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_call(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_call(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2025,7 +2025,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_watchSnapshot(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_watchSnapshot(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2056,7 +2056,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_watchStream(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_watchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2087,7 +2087,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_pollWatchStream(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pollWatchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2122,7 +2122,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_closeWatchStream(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_closeWatchStream(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2137,7 +2137,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_hostDescriptor(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_hostDescriptor(
         env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2149,7 +2149,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_currentPermissionRequest(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_currentPermissionRequest(
         env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2161,7 +2161,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_handlePermissionResult(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_handlePermissionResult(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2180,7 +2180,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_startTerminalPty(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_startTerminalPty(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2232,7 +2232,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_listTerminalSessions(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_listTerminalSessions(
         env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2251,7 +2251,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_readTerminalPty(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_readTerminalPty(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2284,7 +2284,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_writeTerminalPty(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_writeTerminalPty(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2331,7 +2331,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_resizeTerminalPty(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_resizeTerminalPty(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2369,7 +2369,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_pollTerminalPtyExit(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pollTerminalPtyExit(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2402,7 +2402,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_closeTerminalPty(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_closeTerminalPty(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2435,7 +2435,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_getTerminalSessionScreen(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_getTerminalSessionScreen(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2468,7 +2468,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_inputTerminalSession(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_inputTerminalSession(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
@@ -2515,7 +2515,7 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_com_ai_assistance_operit2_OperitRuntimeNative_terminalDebugInfo(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_terminalDebugInfo(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,

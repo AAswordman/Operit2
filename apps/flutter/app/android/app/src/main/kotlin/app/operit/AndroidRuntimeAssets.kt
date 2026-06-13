@@ -1,4 +1,4 @@
-package com.ai.assistance.operit2
+package app.operit
 
 import android.content.Context
 import android.os.Build
@@ -382,6 +382,7 @@ $prootBindSetup
                     TERM=xterm-256color \
                     LANG=en_US.UTF-8 \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    OPERIT_WORKING_DIR="${'$'}OPERIT_WORKING_DIR" \
                     COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                     /bin/bash -lc 'eval "${'$'}COMMAND_TO_EXEC"'
               else
@@ -395,12 +396,13 @@ $prootBindSetup
                     TERM=xterm-256color \
                     LANG=en_US.UTF-8 \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    OPERIT_WORKING_DIR="${'$'}OPERIT_WORKING_DIR" \
                     COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                     /bin/bash -lc 'eval "${'$'}COMMAND_TO_EXEC"'
               fi
             }
             start_shell(){
-              login_ubuntu
+              login_ubuntu 'cd "${'$'}OPERIT_WORKING_DIR" && /bin/bash -il'
             }
         """.trimIndent()
         target.writeText(content.replace("\r\n", "\n").replace("\r", "\n"))

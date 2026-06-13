@@ -48,23 +48,40 @@ impl StreamLogger {
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static VERBOSE_ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Pull-style runtime stream.
+///
+/// A `Stream` represents a producer of ordered items. Unlike DataStore `Flow`,
+/// cancellation is normally owned by the producer: a provider/service stops
+/// producing, closes a shared stream, or returns from `collect`. Dropping a UI
+/// watch subscription should not by itself be interpreted as cancelling the
+/// upstream operation.
 pub trait Stream {
     type Item;
 
+    /// Returns whether this stream is currently buffering emitted items.
     fn is_locked(&self) -> bool {
         false
     }
 
+    /// Returns the number of items held in this stream's local buffer.
     fn buffered_count(&self) -> usize {
         0
     }
 
+    /// Starts local buffering for stream implementations that support it.
     fn lock(&mut self) {}
 
+    /// Stops local buffering and allows later collection to emit normally.
     fn unlock(&mut self) {}
 
+    /// Drops locally buffered items without affecting the upstream producer.
     fn clear_buffer(&mut self) {}
 
+    /// Collects items from this stream until the producer finishes or closes.
+    ///
+    /// Implementations may block while waiting for producer events. A caller that
+    /// needs cancellation must cancel/close the producer-side object rather than
+    /// assuming the collector can be interrupted externally.
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item));
 }
 
@@ -99,7 +116,9 @@ where
     }
 }
 
+/// Minimal emitter interface used by stream builders and adapters.
 pub trait StreamCollector<T> {
+    /// Emits one item into the downstream collector.
     fn emit(&mut self, value: T);
 }
 
@@ -112,6 +131,7 @@ where
     }
 }
 
+/// Finite stream backed by an in-memory queue.
 pub struct VecStream<T> {
     values: VecDeque<T>,
     locked: bool,
@@ -120,6 +140,7 @@ pub struct VecStream<T> {
 }
 
 impl<T> VecStream<T> {
+    /// Creates a finite stream that emits `values` in iteration order.
     pub fn new(values: impl IntoIterator<Item = T>) -> Self {
         Self {
             values: values.into_iter().collect(),
@@ -178,6 +199,7 @@ impl<T> Stream for VecStream<T> {
     }
 }
 
+/// Stream implemented by a callback that synchronously emits values.
 pub struct FnStream<T> {
     block: Box<dyn FnMut(&mut dyn FnMut(T)) + Send>,
     locked: bool,
@@ -186,6 +208,7 @@ pub struct FnStream<T> {
 }
 
 impl<T> FnStream<T> {
+    /// Creates a stream from a callback invoked during `collect`.
     pub fn new(block: impl FnMut(&mut dyn FnMut(T)) + Send + 'static) -> Self {
         Self {
             block: Box::new(block),

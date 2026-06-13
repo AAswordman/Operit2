@@ -11,13 +11,15 @@ use crate::core::tools::ToolResultDataClasses::{
     LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData,
     ToolResultData,
 };
-use crate::data::model::CharacterCard::CharacterCardMemoryProfileBindingMode;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
-use crate::data::preferences::UserPreferencesManager::PreferencesManager;
+use crate::util::OperitPaths::{
+    characterMemoryOwnerKey, parseMemoryOwnerKey, sharedMemoryOwnerKey,
+};
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
+use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 
-const MAX_QUERY_SNAPSHOTS_PER_PROFILE: usize = 32;
+const MAX_QUERY_SNAPSHOTS_PER_OWNER: usize = 32;
 const DEFAULT_RELEVANCE_THRESHOLD: f64 = 0.0;
 
 #[derive(Clone, Debug)]
@@ -42,8 +44,14 @@ pub struct MemoryToolExecutor {
 
 #[derive(Clone, Debug)]
 struct QuerySnapshotState {
-    seenMemoryIds: HashSet<i64>,
+    seenMemoryKeys: HashSet<String>,
     lastAccessAtMs: i64,
+}
+
+#[derive(Clone, Debug)]
+struct OwnedMemoryResult {
+    ownerKey: String,
+    memory: crate::data::model::Memory::Memory,
 }
 
 impl ToolExecutor for MemoryToolExecutor {
@@ -83,11 +91,10 @@ impl ToolExecutor for MemoryToolExecutor {
 }
 
 fn executeQueryMemory(tool: &AITool) -> ToolResult {
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKeys = match resolveReadableOwnerKeys(tool) {
+        Ok(ownerKeys) => ownerKeys,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId.clone());
     let query = parameterValue(tool, "query");
     if query.trim().is_empty() {
         return errorResult(tool, "Query parameter cannot be empty.");
@@ -128,8 +135,9 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
     let snapshotIdParam = optionalParameterValue(tool, "snapshot_id")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let (snapshotId, snapshotCreated) = resolveSnapshot(&profileId, snapshotIdParam);
-    let _settings = match MemorySearchSettingsPreferences::new(&profileId).load() {
+    let snapshotScope = ownerKeys.join("|");
+    let (snapshotId, snapshotCreated) = resolveSnapshot(&snapshotScope, snapshotIdParam);
+    let _settings = match MemorySearchSettingsPreferences::new(&snapshotScope).load() {
         Ok(settings) => settings,
         Err(error) => {
             return errorResult(
@@ -138,20 +146,30 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
             )
         }
     };
-    let results = match repository.searchMemories(
-        &query,
-        folderPath.as_deref(),
-        threshold,
-        startTime,
-        endTime,
-    ) {
-        Ok(results) => results,
-        Err(error) => {
-            return errorResult(tool, &format!("Failed to execute memory query: {error}"))
+    let mut results = Vec::new();
+    for ownerKey in &ownerKeys {
+        match MemoryRepository::new(ownerKey.clone()).searchMemories(
+            &query,
+            folderPath.as_deref(),
+            threshold,
+            startTime,
+            endTime,
+        ) {
+            Ok(ownerResults) => results.extend(
+                ownerResults
+                    .into_iter()
+                    .map(|memory| OwnedMemoryResult {
+                        ownerKey: ownerKey.clone(),
+                        memory,
+                    }),
+            ),
+            Err(error) => {
+                return errorResult(tool, &format!("Failed to execute memory query: {error}"))
+            }
         }
-    };
+    }
 
-    let (excluded, returned) = selectSnapshotResults(&profileId, &snapshotId, results, limit);
+    let (excluded, returned) = selectSnapshotResults(&snapshotScope, &snapshotId, results, limit);
     successData(
         tool,
         ToolResultData::MemoryQueryResultData(memoryQueryResultData(
@@ -168,15 +186,20 @@ fn executeGetMemoryByTitle(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() {
         return errorResult(tool, "title parameter is required");
     }
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey.clone());
     match repository.findMemoryByTitle(&title) {
         Ok(Some(memory)) => successData(
             tool,
-            ToolResultData::MemoryQueryResultData(memoryQueryResultData(&[memory], None, false, 0)),
+            ToolResultData::MemoryQueryResultData(memoryQueryResultData(
+                &[OwnedMemoryResult { ownerKey, memory }],
+                None,
+                false,
+                0,
+            )),
         ),
         Ok(None) => errorResult(tool, &format!("Memory not found with title: {title}")),
         Err(error) => errorResult(tool, &format!("Failed to get memory by title: {error}")),
@@ -189,11 +212,11 @@ fn executeCreateMemory(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() || content.trim().is_empty() {
         return errorResult(tool, "Both title and content parameters are required");
     }
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let contentType =
         optionalParameterValue(tool, "content_type").unwrap_or_else(|| "text/plain".to_string());
     let source = optionalParameterValue(tool, "source").unwrap_or_else(|| "ai_created".to_string());
@@ -226,11 +249,11 @@ fn executeUpdateMemory(tool: &AITool) -> ToolResult {
             "old_title parameter is required to identify the memory",
         );
     }
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let memory = match repository.findMemoryByTitle(&oldTitle) {
         Ok(Some(memory)) => memory,
         Ok(None) => return errorResult(tool, &format!("Memory not found with title: {oldTitle}")),
@@ -275,11 +298,11 @@ fn executeDeleteMemory(tool: &AITool) -> ToolResult {
     if title.trim().is_empty() {
         return errorResult(tool, "title parameter is required to identify the memory");
     }
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let memory = match repository.findMemoryByTitle(&title) {
         Ok(Some(memory)) => memory,
         Ok(None) => return errorResult(tool, &format!("Memory not found with title: {title}")),
@@ -312,11 +335,11 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
         );
     }
 
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let mut selected = Vec::new();
     if !titles.is_empty() {
         for title in titles {
@@ -368,56 +391,17 @@ fn executeMoveMemory(tool: &AITool) -> ToolResult {
 }
 
 fn executeUpdateUserPreferences(tool: &AITool) -> ToolResult {
-    let manager = PreferencesManager::getInstance();
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let birthDate =
-        optionalParameterValue(tool, "birth_date").and_then(|value| value.parse::<i64>().ok());
-    let gender = optionalParameterValue(tool, "gender");
-    let personality = optionalParameterValue(tool, "personality");
-    let identity = optionalParameterValue(tool, "identity");
-    let occupation = optionalParameterValue(tool, "occupation");
-    let aiStyle = optionalParameterValue(tool, "ai_style");
-    if birthDate.is_none()
-        && gender.is_none()
-        && personality.is_none()
-        && identity.is_none()
-        && occupation.is_none()
-        && aiStyle.is_none()
-    {
-        return errorResult(tool, "At least one preference parameter must be provided");
+    let content = parameterValue(tool, "content");
+    if content.trim().is_empty() {
+        return errorResult(tool, "content parameter is required");
     }
-    let updatedFields = [
-        ("birth_date", birthDate.is_some()),
-        ("gender", gender.is_some()),
-        ("personality", personality.is_some()),
-        ("identity", identity.is_some()),
-        ("occupation", occupation.is_some()),
-        ("ai_style", aiStyle.is_some()),
-    ]
-    .into_iter()
-    .filter(|(_, enabled)| *enabled)
-    .map(|(name, _)| name)
-    .collect::<Vec<_>>();
-    match manager.updateProfileCategory(
-        profileId,
-        birthDate,
-        gender,
-        personality,
-        identity,
-        occupation,
-        aiStyle,
-    ) {
-        Ok(_) => success(
-            tool,
-            format!(
-                "Successfully updated user preferences: {}",
-                updatedFields.join(", ")
-            ),
-        ),
-        Err(error) => errorResult(tool, &format!("Failed to update user preferences: {error}")),
+    match UserMarkdownRepository::new(ownerKey).writeUserMarkdown(content) {
+        Ok(_) => success(tool, "Successfully updated USER.md".to_string()),
+        Err(error) => errorResult(tool, &format!("Failed to update USER.md: {error}")),
     }
 }
 
@@ -430,11 +414,11 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
             "Both source_title and target_title parameters are required",
         );
     }
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let source = match repository.findMemoryByTitle(&sourceTitle) {
         Ok(Some(memory)) => memory,
         Ok(None) => {
@@ -484,11 +468,11 @@ fn executeLinkMemories(tool: &AITool) -> ToolResult {
 }
 
 fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let linkId = match optionalParameterValue(tool, "link_id")
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.parse::<i64>())
@@ -552,11 +536,11 @@ fn executeQueryMemoryLinks(tool: &AITool) -> ToolResult {
 }
 
 fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let newLinkType = optionalParameterValue(tool, "new_link_type");
     let newWeight =
         optionalParameterValue(tool, "weight").and_then(|value| value.parse::<f32>().ok());
@@ -590,11 +574,11 @@ fn executeUpdateMemoryLink(tool: &AITool) -> ToolResult {
 }
 
 fn executeDeleteMemoryLink(tool: &AITool) -> ToolResult {
-    let profileId = match resolveActiveProfileId(tool) {
-        Ok(profileId) => profileId,
+    let ownerKey = match resolveTargetOwnerKey(tool) {
+        Ok(ownerKey) => ownerKey,
         Err(error) => return errorResult(tool, &error),
     };
-    let repository = MemoryRepository::new(profileId);
+    let repository = MemoryRepository::new(ownerKey);
     let link = match resolveLink(tool, &repository) {
         Ok(link) => link,
         Err(error) => return errorResult(tool, &error),
@@ -648,12 +632,6 @@ fn resolveLink(tool: &AITool, repository: &MemoryRepository) -> Result<MemoryLin
     }
 }
 
-fn resolveGlobalActiveProfileId() -> Result<String, String> {
-    PreferencesManager::getInstance()
-        .activeProfileId()
-        .map_err(|error| error.to_string())
-}
-
 fn resolveCallerCardId(tool: &AITool) -> Option<String> {
     let explicitCallerCardId = tool
         .parameters
@@ -670,33 +648,36 @@ fn resolveCallerCardId(tool: &AITool) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn resolveRoleCardProfileId(callerCardId: Option<String>) -> Result<Option<String>, String> {
-    let Some(resolvedCardId) = callerCardId.filter(|value| !value.trim().is_empty()) else {
-        return Ok(None);
-    };
-    let characterCard = CharacterCardManager::getInstance()
-        .getCharacterCard(&resolvedCardId)
-        .map_err(|error| error.to_string())?;
-    let bindingMode = CharacterCardMemoryProfileBindingMode::normalize(Some(
-        &characterCard.memoryProfileBindingMode,
-    ));
-    let boundProfileId = characterCard
-        .memoryProfileId
-        .filter(|value| !value.trim().is_empty());
-    if bindingMode == CharacterCardMemoryProfileBindingMode::FIXED_PROFILE
-        && boundProfileId.is_some()
-    {
-        Ok(boundProfileId)
-    } else {
-        Ok(None)
-    }
+fn explicitTargetOwnerKey(tool: &AITool) -> Option<String> {
+    optionalParameterValue(tool, "target_owner_key")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
-fn resolveActiveProfileId(tool: &AITool) -> Result<String, String> {
-    match resolveRoleCardProfileId(resolveCallerCardId(tool))? {
-        Some(profileId) => Ok(profileId),
-        None => resolveGlobalActiveProfileId(),
+fn resolveTargetOwnerKey(tool: &AITool) -> Result<String, String> {
+    let ownerKey = explicitTargetOwnerKey(tool)
+        .ok_or_else(|| "target_owner_key parameter is required".to_string())?;
+    parseMemoryOwnerKey(&ownerKey)?;
+    Ok(ownerKey)
+}
+
+fn resolveReadableOwnerKeys(tool: &AITool) -> Result<Vec<String>, String> {
+    if let Some(ownerKey) = explicitTargetOwnerKey(tool) {
+        parseMemoryOwnerKey(&ownerKey)?;
+        return Ok(vec![ownerKey]);
     }
+    let callerCardId = resolveCallerCardId(tool)
+        .ok_or_else(|| "caller_card_id or target_owner_key parameter is required".to_string())?;
+    let characterCard = CharacterCardManager::getInstance()
+        .getCharacterCard(&callerCardId)
+        .map_err(|error| error.to_string())?;
+    let mut ownerKeys = vec![characterMemoryOwnerKey(&characterCard.id)?];
+    for mount in characterCard.sharedMemoryMounts {
+        if mount.readable {
+            ownerKeys.push(sharedMemoryOwnerKey(&mount.sharedMemoryId)?);
+        }
+    }
+    Ok(ownerKeys)
 }
 
 fn parseTimeBoundary(value: Option<&str>, isEnd: bool) -> Result<Option<i64>, String> {
@@ -735,69 +716,73 @@ fn localTimestampMillis(value: NaiveDateTime) -> Result<Option<i64>, String> {
     Ok(Some(local.timestamp_millis()))
 }
 
-fn resolveSnapshot(profileId: &str, requestedSnapshotId: Option<String>) -> (String, bool) {
+fn resolveSnapshot(ownerScope: &str, requestedSnapshotId: Option<String>) -> (String, bool) {
     let mut snapshots = snapshotStore()
         .lock()
         .expect("memory query snapshot store mutex poisoned");
-    let profileSnapshots = snapshots.entry(profileId.to_string()).or_default();
-    trimOldSnapshots(profileSnapshots);
+    let ownerSnapshots = snapshots.entry(ownerScope.to_string()).or_default();
+    trimOldSnapshots(ownerSnapshots);
     let id = requestedSnapshotId.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let created = !profileSnapshots.contains_key(&id);
-    profileSnapshots
+    let created = !ownerSnapshots.contains_key(&id);
+    ownerSnapshots
         .entry(id.clone())
         .or_insert(QuerySnapshotState {
-            seenMemoryIds: HashSet::new(),
+            seenMemoryKeys: HashSet::new(),
             lastAccessAtMs: operit_host_api::TimeUtils::currentTimeMillis(),
         });
     (id, created)
 }
 
 fn selectSnapshotResults(
-    profileId: &str,
+    ownerScope: &str,
     snapshotId: &str,
-    results: Vec<crate::data::model::Memory::Memory>,
+    results: Vec<OwnedMemoryResult>,
     limit: usize,
-) -> (usize, Vec<crate::data::model::Memory::Memory>) {
+) -> (usize, Vec<OwnedMemoryResult>) {
     let mut snapshots = snapshotStore()
         .lock()
         .expect("memory query snapshot store mutex poisoned");
     let snapshot = snapshots
-        .entry(profileId.to_string())
+        .entry(ownerScope.to_string())
         .or_default()
         .entry(snapshotId.to_string())
         .or_insert(QuerySnapshotState {
-            seenMemoryIds: HashSet::new(),
+            seenMemoryKeys: HashSet::new(),
             lastAccessAtMs: operit_host_api::TimeUtils::currentTimeMillis(),
         });
     let excluded = results
         .iter()
-        .filter(|memory| snapshot.seenMemoryIds.contains(&memory.id))
+        .filter(|entry| snapshot.seenMemoryKeys.contains(&memorySnapshotKey(entry)))
         .count();
     let selected = results
         .into_iter()
-        .filter(|memory| !snapshot.seenMemoryIds.contains(&memory.id))
+        .filter(|entry| !snapshot.seenMemoryKeys.contains(&memorySnapshotKey(entry)))
         .take(limit)
         .collect::<Vec<_>>();
-    for memory in &selected {
-        snapshot.seenMemoryIds.insert(memory.id);
+    for entry in &selected {
+        snapshot.seenMemoryKeys.insert(memorySnapshotKey(entry));
     }
     snapshot.lastAccessAtMs = operit_host_api::TimeUtils::currentTimeMillis();
     (excluded, selected)
 }
 
-fn trimOldSnapshots(profileSnapshots: &mut HashMap<String, QuerySnapshotState>) {
-    if profileSnapshots.len() <= MAX_QUERY_SNAPSHOTS_PER_PROFILE {
+fn trimOldSnapshots(ownerSnapshots: &mut HashMap<String, QuerySnapshotState>) {
+    if ownerSnapshots.len() <= MAX_QUERY_SNAPSHOTS_PER_OWNER {
         return;
     }
-    let overflow = profileSnapshots.len() - MAX_QUERY_SNAPSHOTS_PER_PROFILE;
-    let mut entries = profileSnapshots
+    let overflow = ownerSnapshots.len() - MAX_QUERY_SNAPSHOTS_PER_OWNER;
+    let mut entries = ownerSnapshots
         .iter()
         .map(|(id, state)| (id.clone(), state.lastAccessAtMs))
         .collect::<Vec<_>>();
     entries.sort_by_key(|(_, lastAccessAtMs)| *lastAccessAtMs);
     for (id, _) in entries.into_iter().take(overflow) {
-        profileSnapshots.remove(&id);
+        ownerSnapshots.remove(&id);
     }
+}
+
+fn memorySnapshotKey(entry: &OwnedMemoryResult) -> String {
+    format!("{}:{}", entry.ownerKey, entry.memory.id)
 }
 
 fn snapshotStore() -> &'static Mutex<HashMap<String, HashMap<String, QuerySnapshotState>>> {
@@ -807,7 +792,7 @@ fn snapshotStore() -> &'static Mutex<HashMap<String, HashMap<String, QuerySnapsh
 }
 
 fn memoryQueryResultData(
-    memories: &[crate::data::model::Memory::Memory],
+    memories: &[OwnedMemoryResult],
     snapshotId: Option<String>,
     snapshotCreated: bool,
     excludedBySnapshotCount: usize,
@@ -820,8 +805,10 @@ fn memoryQueryResultData(
     }
 }
 
-fn memoryInfo(memory: &crate::data::model::Memory::Memory) -> MemoryInfo {
+fn memoryInfo(entry: &OwnedMemoryResult) -> MemoryInfo {
+    let memory = &entry.memory;
     MemoryInfo {
+        ownerKey: entry.ownerKey.clone(),
         title: memory.title.clone(),
         content: memory.content.clone(),
         source: memory.source.clone(),

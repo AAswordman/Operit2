@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/components/OperitDialog.dart';
 import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../viewmodel/ChatViewModel.dart';
 
@@ -525,15 +526,90 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
         .fold<int>(1, (max, value) => math.max(max, value));
     final dialogIsLoading = widget.isLoading || _isLoadingSearchEntries;
     final useTabletLayout = useTabletLayoutForContext(context);
+    final bodyContent = Column(
+      mainAxisSize: MainAxisSize.max,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          l10n.messageLocatorCurrent(
+            (currentMessageIndex + 1).clamp(0, widget.locatorEntries.length),
+            widget.locatorEntries.length,
+          ),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                maxLines: 1,
+                decoration: InputDecoration(
+                  labelText: l10n.search,
+                  hintText: l10n.messageLocatorSearchHint,
+                ),
+                onChanged: _onSearchChanged,
+              ),
+            ),
+            const SizedBox(width: 10),
+            _FavoriteFilterButton(
+              selected: _favoritesOnly,
+              onPressed: () {
+                setState(() {
+                  _favoritesOnly = !_favoritesOnly;
+                });
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (normalizedSearchQuery.isEmpty && !_favoritesOnly)
+          Text(
+            l10n.messageLocatorInstruction,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          )
+        else if (filteredEntries.isNotEmpty)
+          Text(
+            l10n.messageLocatorResultCount(filteredEntries.length),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        const SizedBox(height: 8),
+        Flexible(
+          child: useTabletLayout
+              ? SizedBox(
+                  height: 420,
+                  child: _buildEntryList(
+                    context,
+                    dialogIsLoading,
+                    filteredEntries,
+                    currentMessageIndex,
+                    maxMessageLength,
+                  ),
+                )
+              : _buildEntryList(
+                  context,
+                  dialogIsLoading,
+                  filteredEntries,
+                  currentMessageIndex,
+                  maxMessageLength,
+                ),
+        ),
+      ],
+    );
     final dialogContent = Material(
       color: theme.colorScheme.surface.withValues(alpha: 0.95),
-      borderRadius: useTabletLayout ? BorderRadius.circular(24) : null,
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           child: Column(
-            mainAxisSize: useTabletLayout ? MainAxisSize.min : MainAxisSize.max,
+            mainAxisSize: MainAxisSize.max,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
@@ -567,67 +643,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      maxLines: 1,
-                      decoration: InputDecoration(
-                        labelText: l10n.search,
-                        hintText: l10n.messageLocatorSearchHint,
-                        border: const OutlineInputBorder(),
-                      ),
-                      onChanged: _onSearchChanged,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  _FavoriteFilterButton(
-                    selected: _favoritesOnly,
-                    onPressed: () {
-                      setState(() {
-                        _favoritesOnly = !_favoritesOnly;
-                      });
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (normalizedSearchQuery.isEmpty && !_favoritesOnly)
-                Text(
-                  l10n.messageLocatorInstruction,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                )
-              else if (filteredEntries.isNotEmpty)
-                Text(
-                  l10n.messageLocatorResultCount(filteredEntries.length),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Flexible(
-                child: useTabletLayout
-                    ? SizedBox(
-                        height: 420,
-                        child: _buildEntryList(
-                          context,
-                          dialogIsLoading,
-                          filteredEntries,
-                          currentMessageIndex,
-                          maxMessageLength,
-                        ),
-                      )
-                    : _buildEntryList(
-                        context,
-                        dialogIsLoading,
-                        filteredEntries,
-                        currentMessageIndex,
-                        maxMessageLength,
-                      ),
-              ),
+              Expanded(child: bodyContent),
             ],
           ),
         ),
@@ -638,12 +654,14 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
       return Dialog.fullscreen(child: dialogContent);
     }
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
-        child: dialogContent,
-      ),
+    return OperitDialogScaffold(
+      title: l10n.messageLocatorTitle,
+      maxWidth: 720,
+      maxHeight: 560,
+      actions: <Widget>[
+        TextButton(onPressed: widget.onDismiss, child: Text(l10n.close)),
+      ],
+      child: bodyContent,
     );
   }
 

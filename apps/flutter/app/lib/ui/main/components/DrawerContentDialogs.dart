@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../l10n/generated/app_localizations.dart';
+import '../../common/components/OperitDialog.dart';
 
 enum ConversationAction {
   rename,
@@ -145,99 +146,69 @@ class ConversationActionDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    children: <Widget>[
-                      Text(
-                        l10n.chatHistory,
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        history.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _ConversationActionTile(
-                  icon: Icons.edit,
-                  label: l10n.editTitle,
-                  onTap: () =>
-                      Navigator.of(context).pop(ConversationAction.rename),
-                ),
-                _ConversationActionTile(
-                  icon: Icons.keyboard_arrow_up,
-                  label: l10n.moveUp,
-                  onTap: canMoveUp
-                      ? () =>
-                            Navigator.of(context).pop(ConversationAction.moveUp)
-                      : null,
-                ),
-                _ConversationActionTile(
-                  icon: Icons.keyboard_arrow_down,
-                  label: l10n.moveDown,
-                  onTap: canMoveDown
-                      ? () => Navigator.of(
-                          context,
-                        ).pop(ConversationAction.moveDown)
-                      : null,
-                ),
-                _ConversationActionTile(
-                  icon: Icons.push_pin,
-                  label: history.pinned ? l10n.unpin : l10n.pin,
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pop(ConversationAction.togglePinned),
-                ),
-                _ConversationActionTile(
-                  icon: history.locked ? Icons.lock_open : Icons.lock,
-                  label: history.locked ? l10n.unlock : l10n.lock,
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pop(ConversationAction.toggleLocked),
-                ),
-                _ConversationActionTile(
-                  icon: Icons.delete_outline,
-                  label: l10n.delete,
-                  danger: true,
-                  onTap: () =>
-                      Navigator.of(context).pop(ConversationAction.delete),
-                ),
-                Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(l10n.cancel),
-                    ),
-                  ),
-                ),
-              ],
+    return OperitDialogScaffold(
+      title: l10n.chatHistory,
+      maxWidth: 420,
+      contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              history.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
-        ),
+          _ConversationActionTile(
+            icon: Icons.edit,
+            label: l10n.editTitle,
+            onTap: () => Navigator.of(context).pop(ConversationAction.rename),
+          ),
+          _ConversationActionTile(
+            icon: Icons.keyboard_arrow_up,
+            label: l10n.moveUp,
+            onTap: canMoveUp
+                ? () => Navigator.of(context).pop(ConversationAction.moveUp)
+                : null,
+          ),
+          _ConversationActionTile(
+            icon: Icons.keyboard_arrow_down,
+            label: l10n.moveDown,
+            onTap: canMoveDown
+                ? () => Navigator.of(context).pop(ConversationAction.moveDown)
+                : null,
+          ),
+          _ConversationActionTile(
+            icon: Icons.push_pin,
+            label: history.pinned ? l10n.unpin : l10n.pin,
+            onTap: () =>
+                Navigator.of(context).pop(ConversationAction.togglePinned),
+          ),
+          _ConversationActionTile(
+            icon: history.locked ? Icons.lock_open : Icons.lock,
+            label: history.locked ? l10n.unlock : l10n.lock,
+            onTap: () =>
+                Navigator.of(context).pop(ConversationAction.toggleLocked),
+          ),
+          _ConversationActionTile(
+            icon: Icons.delete_outline,
+            label: l10n.delete,
+            danger: true,
+            onTap: () => Navigator.of(context).pop(ConversationAction.delete),
+          ),
+        ],
       ),
     );
   }

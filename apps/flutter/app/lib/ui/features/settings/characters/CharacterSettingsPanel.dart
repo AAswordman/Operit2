@@ -6,13 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../common/components/OperitDialog.dart';
+import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'MemoryGraphScreen.dart';
 
 class CharacterSettingsPanel extends StatefulWidget {
   const CharacterSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -27,8 +30,19 @@ class CharacterSettingsPanel extends StatefulWidget {
 
 class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   Future<_CharacterSettingsData>? _future;
-  UserPreferencesManager get _userPreferencesManager =>
-      UserPreferencesManager(clients: widget.clients);
+
+  GeneratedRepositoryUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
+    String ownerKey,
+  ) {
+    return GeneratedRepositoryUserMarkdownRepositoryCoreProxy(
+      widget.clients.bridge,
+      CoreObjectPath(<String>[
+        'repository',
+        'userMarkdownRepository',
+        ownerKey,
+      ]),
+    );
+  }
 
   @override
   void initState() {
@@ -39,7 +53,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   Future<_CharacterSettingsData> _load() async {
     final cardManager = widget.clients.preferencesCharacterCardManager;
     final groupManager = widget.clients.preferencesCharacterGroupCardManager;
-    final userPreferencesManager = _userPreferencesManager;
+    final sharedMemoryManager =
+        widget.clients.preferencesSharedMemoryStoreManager;
     final apiPreferences = widget.clients.preferencesApiPreferences;
     final modelManager = widget.clients.preferencesModelConfigManager;
     final toolHandler = widget.clients.permissionsAiToolHandler;
@@ -49,18 +64,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     final promptTagManager = widget.clients.preferencesPromptTagManager;
     await cardManager.initializeIfNeeded();
     await groupManager.initializeIfNeeded();
-    await userPreferencesManager.initializeIfNeeded(
-      defaultProfileName: 'Default',
-    );
     await modelManager.initializeIfNeeded();
     await toolHandler.registerDefaultTools();
-    final profileIds = await userPreferencesManager.profileListFlowSnapshot();
-    final profiles = <core_proxy.PreferenceProfile>[];
-    for (final profileId in profileIds) {
-      profiles.add(
-        await userPreferencesManager.getProfile(profileId: profileId),
-      );
-    }
     final toolNames =
         (await toolHandler.getAllToolNames())
             .where((toolName) => !_hiddenToolNames.contains(toolName))
@@ -106,7 +111,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     return _CharacterSettingsData(
       cards: await cardManager.getAllCharacterCards(),
       groups: await groupManager.getAllCharacterGroupCards(),
-      preferenceProfiles: profiles,
+      sharedMemoryStores: await sharedMemoryManager.getAllSharedMemoryStores(),
       tags: await promptTagManager.getAllTags(),
       modelSummaries: await modelManager.getAllModelSummaries(),
       builtinToolOptions: toolNames
@@ -117,10 +122,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       mcpToolOptions: mcpOptions,
       activeCardId: await cardManager.observeActiveCharacterCardIdSnapshot(),
       activeGroupId: await groupManager.observeActiveCharacterGroupIdSnapshot(),
-      activePreferenceProfileId: await userPreferencesManager
-          .activeProfileIdFlowSnapshot(),
-      categoryLocks: await userPreferencesManager
-          .categoryLockStatusFlowSnapshot(),
       enableMemoryAutoUpdate: await apiPreferences
           .enableMemoryAutoUpdateFlowSnapshot(),
       disableUserPreferenceDescription: await apiPreferences
@@ -337,8 +338,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       marks: '',
       chatModelBindingMode: 'FOLLOW_GLOBAL',
       chatModelId: null,
-      memoryProfileBindingMode: 'FOLLOW_GLOBAL',
-      memoryProfileId: null,
+      sharedMemoryMounts: const <core_proxy.CharacterSharedMemoryMount>[],
       toolAccessConfig: const core_proxy.CharacterCardToolAccessConfig(
         enabled: false,
         allowedBuiltinTools: <String>[],
@@ -356,7 +356,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       card: card,
       showItemActions: false,
       modelSummaries: data.modelSummaries,
-      preferenceProfiles: data.preferenceProfiles,
+      sharedMemoryStores: data.sharedMemoryStores,
       builtinToolOptions: data.builtinToolOptions,
       packageToolOptions: data.packageToolOptions,
       skillToolOptions: data.skillToolOptions,
@@ -392,7 +392,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       card: card,
       showItemActions: true,
       modelSummaries: data.modelSummaries,
-      preferenceProfiles: data.preferenceProfiles,
+      sharedMemoryStores: data.sharedMemoryStores,
       builtinToolOptions: data.builtinToolOptions,
       packageToolOptions: data.packageToolOptions,
       skillToolOptions: data.skillToolOptions,
@@ -569,70 +569,80 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _reload();
   }
 
-  Future<void> _createPreferenceProfile() async {
-    final l10n = AppLocalizations.of(context)!;
-    final edited = await _PreferenceProfileEditorDialog.show(
+  Future<void> _createSharedMemoryStore() async {
+    final edited = await _SharedMemoryStoreEditorDialog.show(
       context: context,
-      title: l10n.settingsCharactersCreatePreferenceProfile,
+      title: '新建共享记忆库',
     );
     if (edited == null) {
       return;
     }
-    final createdProfileId = await _userPreferencesManager.createProfile(
-      name: edited.name,
-      isDefault: false,
-    );
-    final created = await _userPreferencesManager.getProfile(
-      profileId: createdProfileId,
-    );
-    await _userPreferencesManager.updateProfile(
-      _preferenceProfileWith(
-        created,
-        birthDate: edited.birthDate,
-        gender: edited.gender,
-        personality: edited.personality,
-        identity: edited.identity,
-        occupation: edited.occupation,
-        aiStyle: edited.aiStyle,
-        isInitialized: true,
-      ),
-    );
+    await widget.clients.preferencesSharedMemoryStoreManager
+        .createSharedMemoryStore(name: edited.name);
     _reload();
   }
 
-  Future<void> _editPreferenceProfile(
-    core_proxy.PreferenceProfile profile,
+  Future<void> _renameSharedMemoryStore(
+    core_proxy.SharedMemoryStore store,
   ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final edited = await _PreferenceProfileEditorDialog.show(
+    final edited = await _SharedMemoryStoreEditorDialog.show(
       context: context,
-      title: l10n.settingsCharactersEditPreferenceProfile,
-      profile: profile,
+      title: '编辑共享记忆库',
+      store: store,
     );
     if (edited == null) {
       return;
     }
-    await _userPreferencesManager.updateProfile(
-      _preferenceProfileWith(
-        profile,
-        name: edited.name,
-        birthDate: edited.birthDate,
-        gender: edited.gender,
-        personality: edited.personality,
-        identity: edited.identity,
-        occupation: edited.occupation,
-        aiStyle: edited.aiStyle,
-        isInitialized: true,
-      ),
-    );
+    await widget.clients.preferencesSharedMemoryStoreManager
+        .renameSharedMemoryStore(id: store.id, name: edited.name);
     _reload();
   }
 
-  Future<void> _activatePreferenceProfile(
-    core_proxy.PreferenceProfile profile,
+  Future<void> _deleteSharedMemoryStore(
+    core_proxy.SharedMemoryStore store,
   ) async {
-    await _userPreferencesManager.setActiveProfile(profileId: profile.id);
+    await widget.clients.preferencesSharedMemoryStoreManager
+        .deleteSharedMemoryStore(id: store.id);
     _reload();
+  }
+
+  Future<void> _editOwnerUserMarkdown({
+    required String ownerKey,
+    required String titleName,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final repository = _userMarkdownRepository(ownerKey);
+    final content = await repository.readUserMarkdown();
+    if (!mounted) {
+      return;
+    }
+    final edited = await _UserMarkdownEditorDialog.show(
+      context: context,
+      title: l10n.settingsCharactersUserMarkdownTitle(titleName),
+      initialText: content,
+    );
+    if (edited == null) {
+      return;
+    }
+    await repository.writeUserMarkdown(content: edited);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.settingsCharactersUserMarkdownSaved)),
+    );
+  }
+
+  Future<void> _openMemoryGraph({
+    required String ownerKey,
+    required String titleName,
+  }) async {
+    await MemoryGraphScreen.open(
+      context: context,
+      bridge: widget.clients.bridge,
+      ownerKey: ownerKey,
+      ownerName: titleName,
+    );
   }
 
   Future<void> _toggleMemoryAutoUpdate(_CharacterSettingsData data) async {
@@ -647,14 +657,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         .saveDisableUserPreferenceDescription(
           isDisabled: !data.disableUserPreferenceDescription,
         );
-    _reload();
-  }
-
-  Future<void> _togglePreferenceLock(String category, bool locked) async {
-    await _userPreferencesManager.setCategoryLocked(
-      category: category,
-      locked: !locked,
-    );
     _reload();
   }
 
@@ -706,6 +708,14 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     active: card.id == data.activeCardId,
                     onActivate: () => _activateCard(card),
                     onEdit: () => _editCard(card, data),
+                    onEditUserMarkdown: () => _editOwnerUserMarkdown(
+                      ownerKey: _characterOwnerKey(card.id),
+                      titleName: card.name,
+                    ),
+                    onOpenMemoryGraph: () => _openMemoryGraph(
+                      ownerKey: _characterOwnerKey(card.id),
+                      titleName: card.name,
+                    ),
                   ),
               ],
             ),
@@ -765,12 +775,12 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               ],
             ),
             _SectionCard(
-              title: l10n.settingsCharactersPreferenceProfilesSection,
+              title: '记忆',
               action: FilledButton.icon(
-                onPressed: _createPreferenceProfile,
+                onPressed: _createSharedMemoryStore,
                 style: SettingsControlStyles.sectionFilledButton(),
                 icon: const Icon(Icons.add, size: 18),
-                label: Text(l10n.create),
+                label: const Text('共享记忆库'),
               ),
               children: <Widget>[
                 _SwitchLine(
@@ -786,26 +796,18 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                   value: !data.disableUserPreferenceDescription,
                   onChanged: (_) => _togglePreferenceDescription(data),
                 ),
-                for (final profile in data.preferenceProfiles)
-                  _PreferenceProfileTile(
-                    profile: profile,
-                    active: profile.id == data.activePreferenceProfileId,
-                    onActivate: () => _activatePreferenceProfile(profile),
-                    onEdit: () => _editPreferenceProfile(profile),
-                  ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsCharactersPreferenceLocksSection,
-              children: <Widget>[
-                for (final entry in _preferenceLockLabels(l10n).entries)
-                  _SwitchLine(
-                    title: entry.value,
-                    subtitle: l10n.settingsCharactersPreferenceLockDescription,
-                    value: data.categoryLocks[entry.key] == true,
-                    onChanged: (_) => _togglePreferenceLock(
-                      entry.key,
-                      data.categoryLocks[entry.key] == true,
+                for (final store in data.sharedMemoryStores)
+                  _SharedMemoryStoreTile(
+                    store: store,
+                    onEdit: () => _renameSharedMemoryStore(store),
+                    onDelete: () => _deleteSharedMemoryStore(store),
+                    onEditUserMarkdown: () => _editOwnerUserMarkdown(
+                      ownerKey: _sharedOwnerKey(store.id),
+                      titleName: store.name,
+                    ),
+                    onOpenMemoryGraph: () => _openMemoryGraph(
+                      ownerKey: _sharedOwnerKey(store.id),
+                      titleName: store.name,
                     ),
                   ),
               ],
@@ -821,7 +823,7 @@ class _CharacterSettingsData {
   const _CharacterSettingsData({
     required this.cards,
     required this.groups,
-    required this.preferenceProfiles,
+    required this.sharedMemoryStores,
     required this.tags,
     required this.modelSummaries,
     required this.builtinToolOptions,
@@ -830,15 +832,13 @@ class _CharacterSettingsData {
     required this.mcpToolOptions,
     required this.activeCardId,
     required this.activeGroupId,
-    required this.activePreferenceProfileId,
-    required this.categoryLocks,
     required this.enableMemoryAutoUpdate,
     required this.disableUserPreferenceDescription,
   });
 
   final List<core_proxy.CharacterCard> cards;
   final List<core_proxy.CharacterGroupCard> groups;
-  final List<core_proxy.PreferenceProfile> preferenceProfiles;
+  final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<core_proxy.PromptTag> tags;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<_ToolAccessOption> builtinToolOptions;
@@ -847,8 +847,6 @@ class _CharacterSettingsData {
   final List<_ToolAccessOption> mcpToolOptions;
   final String? activeCardId;
   final String? activeGroupId;
-  final String activePreferenceProfileId;
-  final Map<String, bool> categoryLocks;
   final bool enableMemoryAutoUpdate;
   final bool disableUserPreferenceDescription;
 }
@@ -860,6 +858,8 @@ class _CharacterCardTile extends StatelessWidget {
     required this.active,
     required this.onActivate,
     required this.onEdit,
+    required this.onEditUserMarkdown,
+    required this.onOpenMemoryGraph,
   });
 
   final core_proxy.CharacterCard card;
@@ -867,6 +867,8 @@ class _CharacterCardTile extends StatelessWidget {
   final bool active;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
+  final VoidCallback onEditUserMarkdown;
+  final VoidCallback onOpenMemoryGraph;
 
   @override
   Widget build(BuildContext context) {
@@ -880,11 +882,21 @@ class _CharacterCardTile extends StatelessWidget {
           if (card.description.trim().isNotEmpty) card.description.trim(),
           if (tagNames.isNotEmpty) tagNames.join(', '),
           card.chatModelBindingMode,
-          card.memoryProfileBindingMode,
+          '共享记忆 ${card.sharedMemoryMounts.length}',
         ].join(' · '),
       ),
       onTap: onEdit,
       actions: <Widget>[
+        SettingsEntityIconButton(
+          tooltip: l10n.settingsCharactersOpenMemoryGraph,
+          icon: Icons.account_tree_outlined,
+          onPressed: onOpenMemoryGraph,
+        ),
+        SettingsEntityIconButton(
+          tooltip: l10n.settingsCharactersEditUserMarkdown,
+          icon: Icons.description_outlined,
+          onPressed: onEditUserMarkdown,
+        ),
         active
             ? SettingsActivePill(label: l10n.settingsActive)
             : SettingsSetActiveButton(
@@ -975,40 +987,45 @@ class _CharacterGroupTile extends StatelessWidget {
   }
 }
 
-class _PreferenceProfileTile extends StatelessWidget {
-  const _PreferenceProfileTile({
-    required this.profile,
-    required this.active,
-    required this.onActivate,
+class _SharedMemoryStoreTile extends StatelessWidget {
+  const _SharedMemoryStoreTile({
+    required this.store,
     required this.onEdit,
+    required this.onDelete,
+    required this.onEditUserMarkdown,
+    required this.onOpenMemoryGraph,
   });
 
-  final core_proxy.PreferenceProfile profile;
-  final bool active;
-  final VoidCallback onActivate;
+  final core_proxy.SharedMemoryStore store;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onEditUserMarkdown;
+  final VoidCallback onOpenMemoryGraph;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return _SettingsEntityTile(
-      leading: Icon(active ? Icons.check_circle : Icons.psychology_outlined),
-      title: Text(profile.name),
-      subtitle: Text(
-        [
-          if (profile.identity.trim().isNotEmpty) profile.identity.trim(),
-          if (profile.personality.trim().isNotEmpty) profile.personality.trim(),
-          if (profile.aiStyle.trim().isNotEmpty) profile.aiStyle.trim(),
-        ].join(' · '),
-      ),
+      leading: const Icon(Icons.hub_outlined),
+      title: Text(store.name),
+      subtitle: Text(_sharedOwnerKey(store.id)),
       onTap: onEdit,
       actions: <Widget>[
-        active
-            ? SettingsActivePill(label: l10n.settingsActive)
-            : SettingsSetActiveButton(
-                label: l10n.settingsActivate,
-                onPressed: onActivate,
-              ),
+        SettingsEntityIconButton(
+          tooltip: l10n.settingsCharactersOpenMemoryGraph,
+          icon: Icons.account_tree_outlined,
+          onPressed: onOpenMemoryGraph,
+        ),
+        SettingsEntityIconButton(
+          tooltip: l10n.settingsCharactersEditUserMarkdown,
+          icon: Icons.description_outlined,
+          onPressed: onEditUserMarkdown,
+        ),
+        SettingsEntityIconButton(
+          tooltip: l10n.delete,
+          icon: Icons.delete_outline,
+          onPressed: onDelete,
+        ),
       ],
     );
   }
@@ -1128,24 +1145,12 @@ class _SettingsEntityTile extends StatelessWidget {
   }
 }
 
-class _PreferenceProfileEditResult {
-  const _PreferenceProfileEditResult({
+class _SharedMemoryStoreEditResult {
+  const _SharedMemoryStoreEditResult({
     required this.name,
-    required this.birthDate,
-    required this.gender,
-    required this.personality,
-    required this.identity,
-    required this.occupation,
-    required this.aiStyle,
   });
 
   final String name;
-  final int birthDate;
-  final String gender;
-  final String personality;
-  final String identity;
-  final String occupation;
-  final String aiStyle;
 }
 
 class _PromptTagEditResult {
@@ -1266,68 +1271,44 @@ class _PromptTagEditorDialogState extends State<_PromptTagEditorDialog> {
   }
 }
 
-class _PreferenceProfileEditorDialog extends StatefulWidget {
-  const _PreferenceProfileEditorDialog({required this.title, this.profile});
+class _SharedMemoryStoreEditorDialog extends StatefulWidget {
+  const _SharedMemoryStoreEditorDialog({required this.title, this.store});
 
   final String title;
-  final core_proxy.PreferenceProfile? profile;
+  final core_proxy.SharedMemoryStore? store;
 
-  static Future<_PreferenceProfileEditResult?> show({
+  static Future<_SharedMemoryStoreEditResult?> show({
     required BuildContext context,
     required String title,
-    core_proxy.PreferenceProfile? profile,
+    core_proxy.SharedMemoryStore? store,
   }) {
-    return showDialog<_PreferenceProfileEditResult>(
+    return showDialog<_SharedMemoryStoreEditResult>(
       context: context,
       builder: (context) =>
-          _PreferenceProfileEditorDialog(title: title, profile: profile),
+          _SharedMemoryStoreEditorDialog(title: title, store: store),
     );
   }
 
   @override
-  State<_PreferenceProfileEditorDialog> createState() =>
-      _PreferenceProfileEditorDialogState();
+  State<_SharedMemoryStoreEditorDialog> createState() =>
+      _SharedMemoryStoreEditorDialogState();
 }
 
-class _PreferenceProfileEditorDialogState
-    extends State<_PreferenceProfileEditorDialog> {
+class _SharedMemoryStoreEditorDialogState
+    extends State<_SharedMemoryStoreEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
-  late final TextEditingController _birthDateController;
-  late final TextEditingController _genderController;
-  late final TextEditingController _personalityController;
-  late final TextEditingController _identityController;
-  late final TextEditingController _occupationController;
-  late final TextEditingController _aiStyleController;
 
   @override
   void initState() {
     super.initState();
-    final profile = widget.profile;
-    _nameController = TextEditingController(text: profile?.name ?? '');
-    _birthDateController = TextEditingController(
-      text: (profile?.birthDate ?? 0).toString(),
-    );
-    _genderController = TextEditingController(text: profile?.gender ?? '');
-    _personalityController = TextEditingController(
-      text: profile?.personality ?? '',
-    );
-    _identityController = TextEditingController(text: profile?.identity ?? '');
-    _occupationController = TextEditingController(
-      text: profile?.occupation ?? '',
-    );
-    _aiStyleController = TextEditingController(text: profile?.aiStyle ?? '');
+    final store = widget.store;
+    _nameController = TextEditingController(text: store?.name ?? '');
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _birthDateController.dispose();
-    _genderController.dispose();
-    _personalityController.dispose();
-    _identityController.dispose();
-    _occupationController.dispose();
-    _aiStyleController.dispose();
     super.dispose();
   }
 
@@ -1336,14 +1317,8 @@ class _PreferenceProfileEditorDialogState
       return;
     }
     Navigator.of(context).pop(
-      _PreferenceProfileEditResult(
+      _SharedMemoryStoreEditResult(
         name: _nameController.text.trim(),
-        birthDate: int.parse(_birthDateController.text.trim()),
-        gender: _genderController.text.trim(),
-        personality: _personalityController.text.trim(),
-        identity: _identityController.text.trim(),
-        occupation: _occupationController.text.trim(),
-        aiStyle: _aiStyleController.text.trim(),
       ),
     );
   }
@@ -1363,36 +1338,8 @@ class _PreferenceProfileEditorDialogState
               children: <Widget>[
                 _DialogTextField(
                   controller: _nameController,
-                  label: l10n.settingsCharactersPreferenceProfileName,
+                  label: '名称',
                   requiredField: true,
-                ),
-                _DialogTextField(
-                  controller: _birthDateController,
-                  label: l10n.settingsCharactersPreferenceBirthDate,
-                  numberOnly: true,
-                ),
-                _DialogTextField(
-                  controller: _genderController,
-                  label: l10n.settingsCharactersPreferenceGender,
-                ),
-                _DialogTextField(
-                  controller: _personalityController,
-                  label: l10n.settingsCharactersPreferencePersonality,
-                  maxLines: 3,
-                ),
-                _DialogTextField(
-                  controller: _identityController,
-                  label: l10n.settingsCharactersPreferenceIdentity,
-                  maxLines: 3,
-                ),
-                _DialogTextField(
-                  controller: _occupationController,
-                  label: l10n.settingsCharactersPreferenceOccupation,
-                ),
-                _DialogTextField(
-                  controller: _aiStyleController,
-                  label: l10n.settingsCharactersPreferenceAiStyle,
-                  maxLines: 3,
                 ),
               ],
             ),
@@ -1406,6 +1353,92 @@ class _PreferenceProfileEditorDialogState
         ),
         FilledButton(onPressed: _save, child: Text(l10n.save)),
       ],
+    );
+  }
+}
+
+class _UserMarkdownEditorDialog extends StatefulWidget {
+  const _UserMarkdownEditorDialog({
+    required this.title,
+    required this.initialText,
+  });
+
+  final String title;
+  final String initialText;
+
+  static Future<String?> show({
+    required BuildContext context,
+    required String title,
+    required String initialText,
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (context) =>
+          _UserMarkdownEditorDialog(title: title, initialText: initialText),
+    );
+  }
+
+  @override
+  State<_UserMarkdownEditorDialog> createState() =>
+      _UserMarkdownEditorDialogState();
+}
+
+class _UserMarkdownEditorDialogState extends State<_UserMarkdownEditorDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final textTheme = Theme.of(context).textTheme;
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+          leading: IconButton(
+            tooltip: l10n.cancel,
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+          ),
+          actions: <Widget>[
+            TextButton(onPressed: _save, child: Text(l10n.save)),
+          ],
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: TextField(
+            controller: _controller,
+            autofocus: true,
+            expands: true,
+            minLines: null,
+            maxLines: null,
+            textAlignVertical: TextAlignVertical.top,
+            style: textTheme.bodyMedium?.copyWith(
+              fontFamily: 'monospace',
+              height: 1.35,
+            ),
+            decoration: const InputDecoration(
+              labelText: 'USER.md',
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1438,7 +1471,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required this.card,
     required this.showItemActions,
     required this.modelSummaries,
-    required this.preferenceProfiles,
+    required this.sharedMemoryStores,
     required this.builtinToolOptions,
     required this.packageToolOptions,
     required this.skillToolOptions,
@@ -1450,7 +1483,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
   final core_proxy.CharacterCard card;
   final bool showItemActions;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
-  final List<core_proxy.PreferenceProfile> preferenceProfiles;
+  final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<_ToolAccessOption> builtinToolOptions;
   final List<_ToolAccessOption> packageToolOptions;
   final List<_ToolAccessOption> skillToolOptions;
@@ -1463,7 +1496,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required core_proxy.CharacterCard card,
     required bool showItemActions,
     required List<core_proxy.ProviderModelSummary> modelSummaries,
-    required List<core_proxy.PreferenceProfile> preferenceProfiles,
+    required List<core_proxy.SharedMemoryStore> sharedMemoryStores,
     required List<_ToolAccessOption> builtinToolOptions,
     required List<_ToolAccessOption> packageToolOptions,
     required List<_ToolAccessOption> skillToolOptions,
@@ -1477,7 +1510,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
         card: card,
         showItemActions: showItemActions,
         modelSummaries: modelSummaries,
-        preferenceProfiles: preferenceProfiles,
+        sharedMemoryStores: sharedMemoryStores,
         builtinToolOptions: builtinToolOptions,
         packageToolOptions: packageToolOptions,
         skillToolOptions: skillToolOptions,
@@ -1505,8 +1538,7 @@ class _CharacterCardEditorDialogState
   late final TextEditingController _marksController;
   late String _chatModelBindingMode;
   String? _chatModelId;
-  late String _memoryProfileBindingMode;
-  String? _memoryProfileId;
+  late List<core_proxy.CharacterSharedMemoryMount> _sharedMemoryMounts;
   late List<String> _attachedTagIds;
   late core_proxy.CharacterCardToolAccessConfig _toolAccessConfig;
 
@@ -1536,10 +1568,9 @@ class _CharacterCardEditorDialogState
       card.chatModelBindingMode,
     );
     _chatModelId = card.chatModelId;
-    _memoryProfileBindingMode = _normalizeMemoryProfileBindingMode(
-      card.memoryProfileBindingMode,
+    _sharedMemoryMounts = List<core_proxy.CharacterSharedMemoryMount>.from(
+      card.sharedMemoryMounts,
     );
-    _memoryProfileId = card.memoryProfileId;
     _attachedTagIds = List<String>.from(card.attachedTagIds);
     _toolAccessConfig = _normalizedToolAccessConfig(card.toolAccessConfig);
   }
@@ -1595,10 +1626,9 @@ class _CharacterCardEditorDialogState
           chatModelId: _chatModelBindingMode == _chatModelFixedConfig
               ? _chatModelId
               : null,
-          memoryProfileBindingMode: _memoryProfileBindingMode,
-          memoryProfileId: _memoryProfileBindingMode == _memoryFixedProfile
-              ? _memoryProfileId
-              : null,
+          sharedMemoryMounts: _normalizedSharedMemoryMounts(
+            _sharedMemoryMounts,
+          ),
           toolAccessConfig: normalizedToolAccessConfig,
           isDefault: card.isDefault,
           createdAt: card.createdAt,
@@ -1625,6 +1655,32 @@ class _CharacterCardEditorDialogState
     });
   }
 
+  void _setSharedMemoryMount(
+    core_proxy.SharedMemoryStore store, {
+    required bool? readable,
+    required bool? writable,
+  }) {
+    final next = <core_proxy.CharacterSharedMemoryMount>[
+      for (final mount in _sharedMemoryMounts)
+        if (mount.sharedMemoryId != store.id) mount,
+    ];
+    final current = _sharedMemoryMountById(_sharedMemoryMounts, store.id);
+    final nextReadable = readable ?? current?.readable ?? false;
+    final nextWritable = writable ?? current?.writable ?? false;
+    if (nextReadable || nextWritable) {
+      next.add(
+        core_proxy.CharacterSharedMemoryMount(
+          sharedMemoryId: store.id,
+          readable: nextReadable,
+          writable: nextWritable,
+        ),
+      );
+    }
+    setState(() {
+      _sharedMemoryMounts = next;
+    });
+  }
+
   Future<void> _exportCard() async {
     final action = await _CharacterCardExportDialog.show(context: context);
     if (!mounted || action == null) {
@@ -1645,13 +1701,7 @@ class _CharacterCardEditorDialogState
       widget.modelSummaries,
       _chatModelId,
     );
-    final memoryProfileValue =
-        _preferenceProfileById(widget.preferenceProfiles, _memoryProfileId) ==
-            null
-        ? null
-        : _memoryProfileId;
     final toolAccessSummary = _toolAccessSummary(l10n, _toolAccessConfig);
-    final colorScheme = Theme.of(context).colorScheme;
     final dialogActions = <Widget>[
       if (widget.showItemActions && !widget.card.isDefault)
         TextButton(
@@ -1670,258 +1720,203 @@ class _CharacterCardEditorDialogState
       ),
       FilledButton(onPressed: _save, child: Text(l10n.save)),
     ];
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 820),
-        child: Column(
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 22, 16, 14),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      widget.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w700),
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 760,
+      maxHeight: 820,
+      showCloseButton: true,
+      onClose: () => Navigator.of(context).pop(),
+      actions: dialogActions,
+      contentPadding: EdgeInsets.zero,
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _DialogTextField(
+                controller: _nameController,
+                label: l10n.settingsCharactersCardName,
+                requiredField: true,
+              ),
+              _DialogTextField(
+                controller: _descriptionController,
+                label: l10n.settingsCharactersDescription,
+              ),
+              _DialogExpandableTextField(
+                controller: _characterSettingController,
+                label: l10n.settingsCharactersCharacterSetting,
+                maxLines: 6,
+              ),
+              _DialogExpandableTextField(
+                controller: _openingStatementController,
+                label: l10n.settingsCharactersOpeningStatement,
+                maxLines: 3,
+              ),
+              Theme(
+                data: Theme.of(context).copyWith(
+                  dividerColor: Colors.transparent,
+                  dividerTheme: const DividerThemeData(
+                    color: Colors.transparent,
+                  ),
+                ),
+                child: ExpansionTile(
+                  title: Text(
+                    l10n.settingsAdvanced,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  IconButton(
-                    tooltip: l10n.cancel,
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: colorScheme.outlineVariant),
-            Expanded(
-              child: Form(
-                key: _formKey,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      _DialogTextField(
-                        controller: _nameController,
-                        label: l10n.settingsCharactersCardName,
-                        requiredField: true,
-                      ),
-                      _DialogTextField(
-                        controller: _descriptionController,
-                        label: l10n.settingsCharactersDescription,
-                      ),
-                      _DialogExpandableTextField(
-                        controller: _characterSettingController,
-                        label: l10n.settingsCharactersCharacterSetting,
-                        maxLines: 6,
-                      ),
-                      _DialogExpandableTextField(
-                        controller: _openingStatementController,
-                        label: l10n.settingsCharactersOpeningStatement,
-                        maxLines: 3,
-                      ),
-                      ExpansionTile(
-                        title: Text(l10n.settingsAdvanced),
-                        tilePadding: EdgeInsets.zero,
-                        childrenPadding: EdgeInsets.zero,
-                        children: <Widget>[
-                          _DialogExpandableTextField(
-                            controller: _otherContentChatController,
-                            label: l10n.settingsCharactersOtherContentChat,
-                            maxLines: 4,
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(top: 8),
+                  shape: const Border(),
+                  collapsedShape: const Border(),
+                  children: <Widget>[
+                    _DialogExpandableTextField(
+                      controller: _otherContentChatController,
+                      label: l10n.settingsCharactersOtherContentChat,
+                      maxLines: 4,
+                    ),
+                    _DialogExpandableTextField(
+                      controller: _otherContentVoiceController,
+                      label: l10n.settingsCharactersOtherContentVoice,
+                      maxLines: 4,
+                    ),
+                    _DialogExpandableTextField(
+                      controller: _advancedPromptController,
+                      label: l10n.settingsCharactersAdvancedPrompt,
+                      maxLines: 4,
+                    ),
+                    _DialogExpandableTextField(
+                      controller: _marksController,
+                      label: l10n.settingsCharactersMarks,
+                      maxLines: 3,
+                    ),
+                    _CharacterTagPicker(
+                      tags: widget.tags,
+                      selectedTagIds: _attachedTagIds,
+                      onChanged: (tagId, selected) {
+                        setState(() {
+                          if (selected) {
+                            if (!_attachedTagIds.contains(tagId)) {
+                              _attachedTagIds.add(tagId);
+                            }
+                          } else {
+                            _attachedTagIds.remove(tagId);
+                          }
+                        });
+                      },
+                    ),
+                    _DialogDropdown<String>(
+                      label: l10n.settingsCharactersChatModelBindingMode,
+                      value: _chatModelBindingMode,
+                      items: <DropdownMenuItem<String>>[
+                        DropdownMenuItem<String>(
+                          value: _chatModelFollowGlobal,
+                          child: Text(
+                            l10n.settingsCharactersChatModelFollowGlobal,
                           ),
-                          _DialogExpandableTextField(
-                            controller: _otherContentVoiceController,
-                            label: l10n.settingsCharactersOtherContentVoice,
-                            maxLines: 4,
+                        ),
+                        DropdownMenuItem<String>(
+                          value: _chatModelFixedConfig,
+                          child: Text(
+                            l10n.settingsCharactersChatModelFixedConfig,
                           ),
-                          _DialogExpandableTextField(
-                            controller: _advancedPromptController,
-                            label: l10n.settingsCharactersAdvancedPrompt,
-                            maxLines: 4,
-                          ),
-                          _DialogExpandableTextField(
-                            controller: _marksController,
-                            label: l10n.settingsCharactersMarks,
-                            maxLines: 3,
-                          ),
-                          _CharacterTagPicker(
-                            tags: widget.tags,
-                            selectedTagIds: _attachedTagIds,
-                            onChanged: (tagId, selected) {
-                              setState(() {
-                                if (selected) {
-                                  if (!_attachedTagIds.contains(tagId)) {
-                                    _attachedTagIds.add(tagId);
-                                  }
-                                } else {
-                                  _attachedTagIds.remove(tagId);
-                                }
-                              });
-                            },
-                          ),
-                          _DialogDropdown<String>(
-                            label: l10n.settingsCharactersChatModelBindingMode,
-                            value: _chatModelBindingMode,
-                            items: <DropdownMenuItem<String>>[
-                              DropdownMenuItem<String>(
-                                value: _chatModelFollowGlobal,
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _chatModelBindingMode = value;
+                        });
+                      },
+                    ),
+                    if (_chatModelBindingMode == _chatModelFixedConfig) ...[
+                      _DialogDropdown<String>(
+                        label: l10n.settingsCharactersChatModelConfig,
+                        value: selectedModel?.modelId,
+                        items: widget.modelSummaries
+                            .map(
+                              (summary) => DropdownMenuItem<String>(
+                                value: summary.modelId,
                                 child: Text(
-                                  l10n.settingsCharactersChatModelFollowGlobal,
+                                  '${summary.providerName} · ${summary.modelId}',
                                 ),
                               ),
-                              DropdownMenuItem<String>(
-                                value: _chatModelFixedConfig,
-                                child: Text(
-                                  l10n.settingsCharactersChatModelFixedConfig,
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _chatModelBindingMode = value;
-                              });
-                            },
-                          ),
-                          if (_chatModelBindingMode ==
-                              _chatModelFixedConfig) ...[
-                            _DialogDropdown<String>(
-                              label: l10n.settingsCharactersChatModelConfig,
-                              value: selectedModel?.modelId,
-                              items: widget.modelSummaries
-                                  .map(
-                                    (summary) => DropdownMenuItem<String>(
-                                      value: summary.modelId,
-                                      child: Text(
-                                        '${summary.providerName} · ${summary.modelId}',
-                                      ),
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                              onChanged: (value) {
-                                setState(() {
-                                  _chatModelId = value;
-                                });
-                              },
-                            ),
-                          ],
-                          _DialogDropdown<String>(
-                            label: l10n.settingsCharactersMemoryBindingMode,
-                            value: _memoryProfileBindingMode,
-                            items: <DropdownMenuItem<String>>[
-                              DropdownMenuItem<String>(
-                                value: _memoryFollowGlobal,
-                                child: Text(
-                                  l10n.settingsCharactersMemoryProfileFollowGlobal,
-                                ),
-                              ),
-                              DropdownMenuItem<String>(
-                                value: _memoryFixedProfile,
-                                child: Text(
-                                  l10n.settingsCharactersMemoryProfileFixedProfile,
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _memoryProfileBindingMode = value;
-                              });
-                            },
-                          ),
-                          if (_memoryProfileBindingMode == _memoryFixedProfile)
-                            _DialogDropdown<String>(
-                              label: l10n.settingsCharactersMemoryProfile,
-                              value: memoryProfileValue,
-                              items: widget.preferenceProfiles
-                                  .map(
-                                    (profile) => DropdownMenuItem<String>(
-                                      value: profile.id,
-                                      child: Text(profile.name),
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                              onChanged: (value) {
-                                setState(() {
-                                  _memoryProfileId = value;
-                                });
-                              },
-                            ),
-                          _DialogDropdown<bool>(
-                            label: l10n.settingsCharactersToolAccess,
-                            value: _toolAccessConfig.enabled,
-                            items: <DropdownMenuItem<bool>>[
-                              DropdownMenuItem<bool>(
-                                value: false,
-                                child: Text(
-                                  l10n.settingsCharactersToolAccessFollowGlobal,
-                                ),
-                              ),
-                              DropdownMenuItem<bool>(
-                                value: true,
-                                child: Text(
-                                  l10n.settingsCharactersToolAccessCustom,
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _toolAccessConfig =
-                                    core_proxy.CharacterCardToolAccessConfig(
-                                      enabled: value,
-                                      allowedBuiltinTools:
-                                          _toolAccessConfig.allowedBuiltinTools,
-                                      allowedPackages:
-                                          _toolAccessConfig.allowedPackages,
-                                      allowedSkills:
-                                          _toolAccessConfig.allowedSkills,
-                                      allowedMcpServers:
-                                          _toolAccessConfig.allowedMcpServers,
-                                    );
-                              });
-                            },
-                          ),
-                          if (_toolAccessConfig.enabled)
-                            _DialogToolAccessConfigureField(
-                              label: l10n.settingsCharactersToolAccessConfigure,
-                              valueText: toolAccessSummary,
-                              onConfigure: _openToolAccessDialog,
-                            ),
-                        ],
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          setState(() {
+                            _chatModelId = value;
+                          });
+                        },
                       ),
                     ],
-                  ),
+                    _CharacterSharedMemoryMountPicker(
+                      stores: widget.sharedMemoryStores,
+                      mounts: _sharedMemoryMounts,
+                      onReadableChanged: (store, value) =>
+                          _setSharedMemoryMount(
+                            store,
+                            readable: value,
+                            writable: null,
+                          ),
+                      onWritableChanged: (store, value) =>
+                          _setSharedMemoryMount(
+                            store,
+                            readable: null,
+                            writable: value,
+                          ),
+                    ),
+                    _DialogDropdown<bool>(
+                      label: l10n.settingsCharactersToolAccess,
+                      value: _toolAccessConfig.enabled,
+                      items: <DropdownMenuItem<bool>>[
+                        DropdownMenuItem<bool>(
+                          value: false,
+                          child: Text(
+                            l10n.settingsCharactersToolAccessFollowGlobal,
+                          ),
+                        ),
+                        DropdownMenuItem<bool>(
+                          value: true,
+                          child: Text(l10n.settingsCharactersToolAccessCustom),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _toolAccessConfig =
+                              core_proxy.CharacterCardToolAccessConfig(
+                                enabled: value,
+                                allowedBuiltinTools:
+                                    _toolAccessConfig.allowedBuiltinTools,
+                                allowedPackages:
+                                    _toolAccessConfig.allowedPackages,
+                                allowedSkills: _toolAccessConfig.allowedSkills,
+                                allowedMcpServers:
+                                    _toolAccessConfig.allowedMcpServers,
+                              );
+                        });
+                      },
+                    ),
+                    if (_toolAccessConfig.enabled)
+                      _DialogToolAccessConfigureField(
+                        label: l10n.settingsCharactersToolAccessConfigure,
+                        valueText: toolAccessSummary,
+                        onConfigure: _openToolAccessDialog,
+                      ),
+                  ],
                 ),
               ),
-            ),
-            Divider(height: 1, color: colorScheme.outlineVariant),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.end,
-                  children: dialogActions,
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2169,6 +2164,105 @@ class _CharacterTagPicker extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CharacterSharedMemoryMountPicker extends StatelessWidget {
+  const _CharacterSharedMemoryMountPicker({
+    required this.stores,
+    required this.mounts,
+    required this.onReadableChanged,
+    required this.onWritableChanged,
+  });
+
+  final List<core_proxy.SharedMemoryStore> stores;
+  final List<core_proxy.CharacterSharedMemoryMount> mounts;
+  final void Function(core_proxy.SharedMemoryStore store, bool value)
+  onReadableChanged;
+  final void Function(core_proxy.SharedMemoryStore store, bool value)
+  onWritableChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('共享记忆挂载', style: textTheme.titleSmall),
+          const SizedBox(height: 6),
+          if (stores.isEmpty)
+            Text(
+              '还没有共享记忆库',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            Column(
+              children: <Widget>[
+                for (final store in stores)
+                  _SharedMemoryMountRow(
+                    store: store,
+                    mount: _sharedMemoryMountById(mounts, store.id),
+                    onReadableChanged: onReadableChanged,
+                    onWritableChanged: onWritableChanged,
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SharedMemoryMountRow extends StatelessWidget {
+  const _SharedMemoryMountRow({
+    required this.store,
+    required this.mount,
+    required this.onReadableChanged,
+    required this.onWritableChanged,
+  });
+
+  final core_proxy.SharedMemoryStore store;
+  final core_proxy.CharacterSharedMemoryMount? mount;
+  final void Function(core_proxy.SharedMemoryStore store, bool value)
+  onReadableChanged;
+  final void Function(core_proxy.SharedMemoryStore store, bool value)
+  onWritableChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              store.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodyMedium,
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilterChip(
+            selected: mount?.readable ?? false,
+            onSelected: (value) => onReadableChanged(store, value),
+            label: const Text('读取'),
+          ),
+          const SizedBox(width: 6),
+          FilterChip(
+            selected: mount?.writable ?? false,
+            onSelected: (value) => onWritableChanged(store, value),
+            label: const Text('写入'),
+          ),
         ],
       ),
     );
@@ -2549,34 +2643,28 @@ class _DialogTextField extends StatelessWidget {
     required this.controller,
     required this.label,
     this.requiredField = false,
-    this.numberOnly = false,
     this.maxLines = 1,
   });
 
   final TextEditingController controller;
   final String label;
   final bool requiredField;
-  final bool numberOnly;
   final int maxLines;
 
   @override
   Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodyMedium;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: controller,
+        style: textStyle,
         maxLines: maxLines,
-        keyboardType: numberOnly ? TextInputType.number : TextInputType.text,
-        inputFormatters: numberOnly
-            ? <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly]
-            : null,
+        keyboardType: TextInputType.text,
         decoration: InputDecoration(labelText: label),
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
-            return label;
-          }
-          if (numberOnly && text.isEmpty) {
             return label;
           }
           return null;
@@ -2612,15 +2700,25 @@ class _DialogExpandableTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final textStyle = Theme.of(context).textTheme.bodyMedium;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: controller,
+        style: textStyle,
         maxLines: maxLines,
         decoration: InputDecoration(
           labelText: label,
+          suffixIconConstraints: const BoxConstraints.tightFor(
+            width: 36,
+            height: 36,
+          ),
           suffixIcon: IconButton(
             tooltip: l10n.fullscreenInput,
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 28),
             icon: const Icon(Icons.fullscreen),
             onPressed: () => _openFullscreenEditor(context),
           ),
@@ -2695,6 +2793,7 @@ class _FullscreenTextEditDialogState extends State<_FullscreenTextEditDialog> {
           padding: const EdgeInsets.all(20),
           child: TextField(
             controller: _controller,
+            style: Theme.of(context).textTheme.bodyMedium,
             autofocus: true,
             expands: true,
             minLines: null,
@@ -2732,6 +2831,7 @@ class _DialogDropdown<T> extends StatelessWidget {
         initialValue: value,
         items: items,
         onChanged: items.isEmpty ? null : onChanged,
+        style: OperitFormStyles.dropdownTextStyle(context),
         decoration: InputDecoration(labelText: label),
       ),
     );
@@ -2766,7 +2866,7 @@ class _DialogToolAccessConfigureField extends StatelessWidget {
                     valueText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge,
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2909,14 +3009,22 @@ List<String> _tagNamesFor(List<core_proxy.PromptTag> tags, List<String> ids) {
 
 String _tagTypeText(Object? tagType) {
   final value = '$tagType';
-  final match = RegExp(r'[A-Z_]+').firstMatch(value);
-  return match?.group(0) ?? value;
+  final buffer = StringBuffer();
+  for (final codeUnit in value.codeUnits) {
+    final isUppercase = codeUnit >= 65 && codeUnit <= 90;
+    final isUnderscore = codeUnit == 95;
+    if (isUppercase || isUnderscore) {
+      buffer.writeCharCode(codeUnit);
+    } else if (buffer.isNotEmpty) {
+      break;
+    }
+  }
+  final text = buffer.toString();
+  return text.isEmpty ? value : text;
 }
 
 const String _chatModelFollowGlobal = 'FOLLOW_GLOBAL';
 const String _chatModelFixedConfig = 'FIXED_CONFIG';
-const String _memoryFollowGlobal = 'FOLLOW_GLOBAL';
-const String _memoryFixedProfile = 'FIXED_PROFILE';
 const Set<String> _hiddenToolNames = <String>{
   'package_proxy',
   'proxy',
@@ -2945,12 +3053,6 @@ String _normalizeChatModelBindingMode(String mode) {
       : _chatModelFollowGlobal;
 }
 
-String _normalizeMemoryProfileBindingMode(String mode) {
-  return mode == _memoryFixedProfile
-      ? _memoryFixedProfile
-      : _memoryFollowGlobal;
-}
-
 core_proxy.ProviderModelSummary? _providerModelSummaryById(
   List<core_proxy.ProviderModelSummary> summaries,
   String? id,
@@ -2963,16 +3065,48 @@ core_proxy.ProviderModelSummary? _providerModelSummaryById(
   return null;
 }
 
-core_proxy.PreferenceProfile? _preferenceProfileById(
-  List<core_proxy.PreferenceProfile> profiles,
+core_proxy.CharacterSharedMemoryMount? _sharedMemoryMountById(
+  List<core_proxy.CharacterSharedMemoryMount> mounts,
   String? id,
 ) {
-  for (final profile in profiles) {
-    if (profile.id == id) {
-      return profile;
+  for (final mount in mounts) {
+    if (mount.sharedMemoryId == id) {
+      return mount;
     }
   }
   return null;
+}
+
+List<core_proxy.CharacterSharedMemoryMount> _normalizedSharedMemoryMounts(
+  List<core_proxy.CharacterSharedMemoryMount> mounts,
+) {
+  final seen = <String>{};
+  final normalized = <core_proxy.CharacterSharedMemoryMount>[];
+  for (final mount in mounts) {
+    final id = mount.sharedMemoryId.trim();
+    if (id.isEmpty || !seen.add(id)) {
+      continue;
+    }
+    if (!mount.readable && !mount.writable) {
+      continue;
+    }
+    normalized.add(
+      core_proxy.CharacterSharedMemoryMount(
+        sharedMemoryId: id,
+        readable: mount.readable,
+        writable: mount.writable,
+      ),
+    );
+  }
+  return normalized;
+}
+
+String _characterOwnerKey(String characterCardId) {
+  return 'character:$characterCardId';
+}
+
+String _sharedOwnerKey(String sharedMemoryId) {
+  return 'shared:$sharedMemoryId';
 }
 
 core_proxy.CharacterCardToolAccessConfig _normalizedToolAccessConfig(
@@ -3046,17 +3180,6 @@ void _setSelection(Set<String> values, String key, bool selected) {
   }
 }
 
-Map<String, String> _preferenceLockLabels(AppLocalizations l10n) {
-  return <String, String>{
-    'birthDate': l10n.settingsCharactersPreferenceBirthDate,
-    'gender': l10n.settingsCharactersPreferenceGender,
-    'personality': l10n.settingsCharactersPreferencePersonality,
-    'identity': l10n.settingsCharactersPreferenceIdentity,
-    'occupation': l10n.settingsCharactersPreferenceOccupation,
-    'aiStyle': l10n.settingsCharactersPreferenceAiStyle,
-  };
-}
-
 Map<String, Object?> _jsonObjectFromText(String text) {
   final decoded = jsonDecode(text);
   final converted = _convertJsonNode(decoded);
@@ -3099,35 +3222,12 @@ core_proxy.CharacterCard _characterCardWith(
     marks: card.marks,
     chatModelBindingMode: card.chatModelBindingMode,
     chatModelId: card.chatModelId,
-    memoryProfileBindingMode: card.memoryProfileBindingMode,
-    memoryProfileId: card.memoryProfileId,
+    sharedMemoryMounts: _normalizedSharedMemoryMounts(
+      card.sharedMemoryMounts,
+    ),
     toolAccessConfig: card.toolAccessConfig,
     isDefault: isDefault ?? card.isDefault,
     createdAt: createdAt ?? card.createdAt,
     updatedAt: updatedAt ?? card.updatedAt,
-  );
-}
-
-core_proxy.PreferenceProfile _preferenceProfileWith(
-  core_proxy.PreferenceProfile profile, {
-  String? name,
-  int? birthDate,
-  String? gender,
-  String? personality,
-  String? identity,
-  String? occupation,
-  String? aiStyle,
-  bool? isInitialized,
-}) {
-  return core_proxy.PreferenceProfile(
-    id: profile.id,
-    name: name ?? profile.name,
-    birthDate: birthDate ?? profile.birthDate,
-    gender: gender ?? profile.gender,
-    personality: personality ?? profile.personality,
-    identity: identity ?? profile.identity,
-    occupation: occupation ?? profile.occupation,
-    aiStyle: aiStyle ?? profile.aiStyle,
-    isInitialized: isInitialized ?? profile.isInitialized,
   );
 }

@@ -2774,18 +2774,6 @@ abstract class AppLocalizations {
   /// **'Chat model index'**
   String get settingsCharactersChatModelIndex;
 
-  /// No description provided for @settingsCharactersMemoryBindingMode.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory binding mode'**
-  String get settingsCharactersMemoryBindingMode;
-
-  /// No description provided for @settingsCharactersMemoryProfileId.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory profile ID'**
-  String get settingsCharactersMemoryProfileId;
-
   /// No description provided for @settingsCharactersToolAccess.
   ///
   /// In en, this message translates to:
@@ -2809,24 +2797,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Model config'**
   String get settingsCharactersChatModelConfig;
-
-  /// No description provided for @settingsCharactersMemoryProfileFollowGlobal.
-  ///
-  /// In en, this message translates to:
-  /// **'Follow global memory'**
-  String get settingsCharactersMemoryProfileFollowGlobal;
-
-  /// No description provided for @settingsCharactersMemoryProfileFixedProfile.
-  ///
-  /// In en, this message translates to:
-  /// **'Use fixed memory profile'**
-  String get settingsCharactersMemoryProfileFixedProfile;
-
-  /// No description provided for @settingsCharactersMemoryProfile.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory profile'**
-  String get settingsCharactersMemoryProfile;
 
   /// No description provided for @settingsCharactersToolAccessFollowGlobal.
   ///
@@ -2923,65 +2893,53 @@ abstract class AppLocalizations {
   /// **'Group characters'**
   String get settingsCharactersGroupMembersTitle;
 
-  /// No description provided for @settingsCharactersPreferenceProfilesSection.
+  /// No description provided for @settingsCharactersOpenMemoryGraph.
   ///
   /// In en, this message translates to:
-  /// **'User preferences & memory'**
-  String get settingsCharactersPreferenceProfilesSection;
+  /// **'View memory graph'**
+  String get settingsCharactersOpenMemoryGraph;
 
-  /// No description provided for @settingsCharactersCreatePreferenceProfile.
+  /// No description provided for @settingsCharactersMemoryGraphTitle.
   ///
   /// In en, this message translates to:
-  /// **'New user preference profile'**
-  String get settingsCharactersCreatePreferenceProfile;
+  /// **'{profileName}\'s memory graph'**
+  String settingsCharactersMemoryGraphTitle(String profileName);
 
-  /// No description provided for @settingsCharactersEditPreferenceProfile.
+  /// No description provided for @settingsCharactersMemoryGraphEmpty.
   ///
   /// In en, this message translates to:
-  /// **'Edit user preference profile'**
-  String get settingsCharactersEditPreferenceProfile;
+  /// **'No memory nodes yet'**
+  String get settingsCharactersMemoryGraphEmpty;
 
-  /// No description provided for @settingsCharactersPreferenceProfileName.
+  /// No description provided for @settingsCharactersMemoryGraphStats.
   ///
   /// In en, this message translates to:
-  /// **'Profile name'**
-  String get settingsCharactersPreferenceProfileName;
+  /// **'{nodes} nodes · {edges} links'**
+  String settingsCharactersMemoryGraphStats(int nodes, int edges);
 
-  /// No description provided for @settingsCharactersPreferenceBirthDate.
+  /// No description provided for @settingsCharactersMemoryGraphLink.
   ///
   /// In en, this message translates to:
-  /// **'Birth date timestamp'**
-  String get settingsCharactersPreferenceBirthDate;
+  /// **'Memory link'**
+  String get settingsCharactersMemoryGraphLink;
 
-  /// No description provided for @settingsCharactersPreferenceGender.
+  /// No description provided for @settingsCharactersEditUserMarkdown.
   ///
   /// In en, this message translates to:
-  /// **'Gender'**
-  String get settingsCharactersPreferenceGender;
+  /// **'Edit USER.md'**
+  String get settingsCharactersEditUserMarkdown;
 
-  /// No description provided for @settingsCharactersPreferencePersonality.
+  /// No description provided for @settingsCharactersUserMarkdownTitle.
   ///
   /// In en, this message translates to:
-  /// **'Personality'**
-  String get settingsCharactersPreferencePersonality;
+  /// **'{profileName}\'s USER.md'**
+  String settingsCharactersUserMarkdownTitle(String profileName);
 
-  /// No description provided for @settingsCharactersPreferenceIdentity.
+  /// No description provided for @settingsCharactersUserMarkdownSaved.
   ///
   /// In en, this message translates to:
-  /// **'Identity'**
-  String get settingsCharactersPreferenceIdentity;
-
-  /// No description provided for @settingsCharactersPreferenceOccupation.
-  ///
-  /// In en, this message translates to:
-  /// **'Occupation'**
-  String get settingsCharactersPreferenceOccupation;
-
-  /// No description provided for @settingsCharactersPreferenceAiStyle.
-  ///
-  /// In en, this message translates to:
-  /// **'AI interaction style'**
-  String get settingsCharactersPreferenceAiStyle;
+  /// **'USER.md saved'**
+  String get settingsCharactersUserMarkdownSaved;
 
   /// No description provided for @settingsCharactersMemoryAutoUpdate.
   ///
@@ -3006,18 +2964,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Include the active preference profile in chat prompts.'**
   String get settingsCharactersPreferenceDescriptionSubtitle;
-
-  /// No description provided for @settingsCharactersPreferenceLocksSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Preference field locks'**
-  String get settingsCharactersPreferenceLocksSection;
-
-  /// No description provided for @settingsCharactersPreferenceLockDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'When locked, automatic memory updates will not rewrite this field.'**
-  String get settingsCharactersPreferenceLockDescription;
 
   /// No description provided for @settingsCharactersCardsSection.
   ///

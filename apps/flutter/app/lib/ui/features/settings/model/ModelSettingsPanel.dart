@@ -7,6 +7,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
 
@@ -24,7 +25,8 @@ class ModelSettingsPanel extends StatefulWidget {
 class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   Future<_ModelSettingsData>? _future;
   String? _testingModelKey;
-  String? _selectedProviderId;
+  final Set<String> _expandedProviderIds = <String>{};
+  bool _providerExpansionInitialized = false;
 
   @override
   void initState() {
@@ -41,7 +43,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     final chatBinding = await functionManager.getModelBindingForFunction(
       functionType: 'CHAT',
     );
-    return _ModelSettingsData(
+    final data = _ModelSettingsData(
       providers: await modelManager.getProviderProfiles(),
       summaries: await modelManager.getAllModelSummaries(),
       chatBinding: chatBinding,
@@ -56,6 +58,16 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
       maxMediaHistoryUserTurns: await apiPreferences
           .maxMediaHistoryUserTurnsFlowSnapshot(),
     );
+    if (!_providerExpansionInitialized) {
+      _providerExpansionInitialized = true;
+      for (final provider in data.providers) {
+        if (provider.id == data.chatBinding.providerId) {
+          _expandedProviderIds.add(provider.id);
+          break;
+        }
+      }
+    }
+    return data;
   }
 
   void _reload() {
@@ -122,7 +134,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
       context: context,
       catalogEntries: catalogEntries,
     );
-    if (result == null) {
+    if (result == null || result is! _ProviderEditSaveResult) {
       return;
     }
     final providerId = await widget.clients.preferencesModelConfigManager
@@ -151,7 +163,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
         models: provider.models,
       ),
     );
-    _selectedProviderId = providerId;
+    _expandedProviderIds.add(providerId);
     _reload();
   }
 
@@ -169,21 +181,26 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     if (result == null) {
       return;
     }
+    if (result is _ProviderEditDeleteResult) {
+      await _deleteProvider(provider);
+      return;
+    }
+    final saveResult = result as _ProviderEditSaveResult;
     await widget.clients.preferencesModelConfigManager.updateProviderProfile(
       provider: core_proxy.ProviderProfile(
         id: provider.id,
-        name: result.name,
+        name: saveResult.name,
         providerTypeId: provider.providerTypeId,
         providerType: provider.providerType,
-        endpoint: result.endpoint,
-        apiKey: result.apiKey,
+        endpoint: saveResult.endpoint,
+        apiKey: saveResult.apiKey,
         useMultipleApiKeys: provider.useMultipleApiKeys,
         apiKeyPool: provider.apiKeyPool,
         currentKeyIndex: provider.currentKeyIndex,
         keyRotationMode: provider.keyRotationMode,
-        customHeaders: result.customHeaders,
-        requestLimitPerMinute: result.requestLimitPerMinute,
-        maxConcurrentRequests: result.maxConcurrentRequests,
+        customHeaders: saveResult.customHeaders,
+        requestLimitPerMinute: saveResult.requestLimitPerMinute,
+        maxConcurrentRequests: saveResult.maxConcurrentRequests,
         models: provider.models,
       ),
     );
@@ -221,10 +238,18 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     await widget.clients.preferencesModelConfigManager.deleteProvider(
       providerId: provider.id,
     );
-    if (_selectedProviderId == provider.id) {
-      _selectedProviderId = null;
-    }
+    _expandedProviderIds.remove(provider.id);
     _reload();
+  }
+
+  void _toggleProviderExpanded(String providerId) {
+    setState(() {
+      if (_expandedProviderIds.contains(providerId)) {
+        _expandedProviderIds.remove(providerId);
+      } else {
+        _expandedProviderIds.add(providerId);
+      }
+    });
   }
 
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
@@ -469,14 +494,9 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
                   providers: data.providers,
                   summaries: data.summaries,
                   chatBinding: data.chatBinding,
-                  selectedProviderId: _selectedProviderId,
-                  onSelectedProviderChanged: (providerId) {
-                    setState(() {
-                      _selectedProviderId = providerId;
-                    });
-                  },
+                  expandedProviderIds: _expandedProviderIds,
+                  onToggleProviderExpanded: _toggleProviderExpanded,
                   onEditProvider: _editProvider,
-                  onDeleteProvider: _deleteProvider,
                   onAddModel: _addProviderModel,
                   onSelectModel: _selectChatModel,
                   testingModelKey: _testingModelKey,
@@ -548,8 +568,12 @@ class _ModelSettingsData {
   }
 }
 
-class _ProviderEditResult {
-  const _ProviderEditResult({
+sealed class _ProviderEditResult {
+  const _ProviderEditResult();
+}
+
+class _ProviderEditSaveResult extends _ProviderEditResult {
+  const _ProviderEditSaveResult({
     required this.name,
     required this.providerTypeId,
     required this.endpoint,
@@ -566,6 +590,10 @@ class _ProviderEditResult {
   final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
+}
+
+class _ProviderEditDeleteResult extends _ProviderEditResult {
+  const _ProviderEditDeleteResult();
 }
 
 class _ProviderEditorDialog extends StatefulWidget {
@@ -682,7 +710,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
       return;
     }
     Navigator.of(context).pop(
-      _ProviderEditResult(
+      _ProviderEditSaveResult(
         name: _nameController.text.trim(),
         providerTypeId: _selectedProviderTypeId!,
         endpoint: _endpointController.text.trim(),
@@ -721,7 +749,9 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: _selectedProviderTypeId,
+                    style: OperitFormStyles.dropdownTextStyle(context),
                     decoration: InputDecoration(
                       labelText: l10n.settingsModelProviderType,
                     ),
@@ -753,35 +783,52 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                   label: l10n.settingsModelApiKey,
                   obscureText: true,
                 ),
-                ExpansionTile(
-                  title: Text(l10n.settingsAdvanced),
-                  initiallyExpanded: false,
-                  children: <Widget>[
-                    _DialogTextField(
-                      controller: _customHeadersController,
-                      label: l10n.settingsModelCustomHeaders,
-                      maxLines: 4,
+                Theme(
+                  data: Theme.of(context).copyWith(
+                    dividerColor: Colors.transparent,
+                    dividerTheme: const DividerThemeData(
+                      color: Colors.transparent,
                     ),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _requestLimitController,
-                            label: l10n.settingsModelRequestLimit,
-                            numberOnly: true,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DialogTextField(
-                            controller: _maxConcurrentController,
-                            label: l10n.settingsModelMaxConcurrent,
-                            numberOnly: true,
-                          ),
-                        ),
-                      ],
+                  ),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: const EdgeInsets.only(top: 8),
+                    shape: const Border(),
+                    collapsedShape: const Border(),
+                    title: Text(
+                      l10n.settingsAdvanced,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ],
+                    initiallyExpanded: false,
+                    children: <Widget>[
+                      _DialogTextField(
+                        controller: _customHeadersController,
+                        label: l10n.settingsModelCustomHeaders,
+                        maxLines: 4,
+                      ),
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: _DialogTextField(
+                              controller: _requestLimitController,
+                              label: l10n.settingsModelRequestLimit,
+                              numberOnly: true,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _DialogTextField(
+                              controller: _maxConcurrentController,
+                              label: l10n.settingsModelMaxConcurrent,
+                              numberOnly: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -789,6 +836,13 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         ),
       ),
       actions: <Widget>[
+        if (editing)
+          TextButton.icon(
+            onPressed: () =>
+                Navigator.of(context).pop(const _ProviderEditDeleteResult()),
+            icon: const Icon(Icons.delete_outline),
+            label: Text(l10n.delete),
+          ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
@@ -866,55 +920,51 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
       title: Text(l10n.settingsModelAddModel),
       content: SizedBox(
         width: 520,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 520),
-          child: Column(
-            children: <Widget>[
-              TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search),
-                  labelText: l10n.search,
-                ),
-                onChanged: (_) => setState(() {}),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                labelText: l10n.search,
               ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: ListView(
-                  children: <Widget>[
-                    for (final model in filteredModels)
-                      Material(
-                        type: MaterialType.transparency,
-                        child: ListTile(
-                          dense: true,
-                          visualDensity: VisualDensity.compact,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(model.modelId),
-                          subtitle: Text(_availableModelSubtitle(l10n, model)),
-                          onTap: () => Navigator.of(
-                            context,
-                          ).pop(_AvailableModelPicked(model)),
-                        ),
-                      ),
-                    Material(
-                      type: MaterialType.transparency,
-                      child: ListTile(
-                        dense: true,
-                        visualDensity: VisualDensity.compact,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.add),
-                        title: Text(l10n.settingsModelCustomModel),
-                        subtitle: Text(l10n.settingsModelModelId),
-                        onTap: () => Navigator.of(
-                          context,
-                        ).pop(const _AvailableModelCustom()),
-                      ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            ListView(
+              shrinkWrap: true,
+              children: <Widget>[
+                for (final model in filteredModels)
+                  Material(
+                    type: MaterialType.transparency,
+                    child: ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(model.modelId),
+                      subtitle: Text(_availableModelSubtitle(l10n, model)),
+                      onTap: () => Navigator.of(
+                        context,
+                      ).pop(_AvailableModelPicked(model)),
                     ),
-                  ],
+                  ),
+                Material(
+                  type: MaterialType.transparency,
+                  child: ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.add),
+                    title: Text(l10n.settingsModelCustomModel),
+                    subtitle: Text(l10n.settingsModelModelId),
+                    onTap: () =>
+                        Navigator.of(context).pop(const _AvailableModelCustom()),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ),
       ),
       actions: <Widget>[
@@ -994,10 +1044,9 @@ class _ProviderModelManager extends StatelessWidget {
     required this.providers,
     required this.summaries,
     required this.chatBinding,
-    required this.selectedProviderId,
-    required this.onSelectedProviderChanged,
+    required this.expandedProviderIds,
+    required this.onToggleProviderExpanded,
     required this.onEditProvider,
-    required this.onDeleteProvider,
     required this.onAddModel,
     required this.onSelectModel,
     required this.testingModelKey,
@@ -1007,10 +1056,9 @@ class _ProviderModelManager extends StatelessWidget {
   final List<core_proxy.ProviderProfile> providers;
   final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding chatBinding;
-  final String? selectedProviderId;
-  final ValueChanged<String> onSelectedProviderChanged;
+  final Set<String> expandedProviderIds;
+  final ValueChanged<String> onToggleProviderExpanded;
   final void Function(core_proxy.ProviderProfile provider) onEditProvider;
-  final void Function(core_proxy.ProviderProfile provider) onDeleteProvider;
   final void Function(core_proxy.ProviderProfile provider) onAddModel;
   final void Function(String providerId, String modelId) onSelectModel;
   final String? testingModelKey;
@@ -1020,27 +1068,11 @@ class _ProviderModelManager extends StatelessWidget {
   )
   onEditModelSettings;
 
-  String get _selectedProviderId {
-    final selectedId = selectedProviderId ?? chatBinding.providerId;
-    for (final provider in providers) {
-      if (provider.id == selectedId) {
-        return provider.id;
-      }
-    }
-    for (final provider in providers) {
-      if (provider.id == chatBinding.providerId) {
-        return provider.id;
-      }
-    }
-    return providers.first.id;
-  }
-
   @override
   Widget build(BuildContext context) {
     if (providers.isEmpty) {
       return const SizedBox.shrink();
     }
-    final selectedProviderId = _selectedProviderId;
     return Column(
       children: <Widget>[
         for (final provider in providers)
@@ -1048,11 +1080,9 @@ class _ProviderModelManager extends StatelessWidget {
             provider: provider,
             summaries: summaries,
             chatBinding: chatBinding,
-            selected: provider.id == selectedProviderId,
-            onSelectedProviderChanged: () =>
-                onSelectedProviderChanged(provider.id),
+            expanded: expandedProviderIds.contains(provider.id),
+            onToggleExpanded: () => onToggleProviderExpanded(provider.id),
             onEditProvider: () => onEditProvider(provider),
-            onDeleteProvider: () => onDeleteProvider(provider),
             onAddModel: () => onAddModel(provider),
             onSelectModel: onSelectModel,
             testingModelKey: testingModelKey,
@@ -1068,10 +1098,9 @@ class _ProviderModelGroup extends StatelessWidget {
     required this.provider,
     required this.summaries,
     required this.chatBinding,
-    required this.selected,
-    required this.onSelectedProviderChanged,
+    required this.expanded,
+    required this.onToggleExpanded,
     required this.onEditProvider,
-    required this.onDeleteProvider,
     required this.onAddModel,
     required this.onSelectModel,
     required this.testingModelKey,
@@ -1081,10 +1110,9 @@ class _ProviderModelGroup extends StatelessWidget {
   final core_proxy.ProviderProfile provider;
   final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding chatBinding;
-  final bool selected;
-  final VoidCallback onSelectedProviderChanged;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
   final VoidCallback onEditProvider;
-  final VoidCallback onDeleteProvider;
   final VoidCallback onAddModel;
   final void Function(String providerId, String modelId) onSelectModel;
   final String? testingModelKey;
@@ -1101,18 +1129,18 @@ class _ProviderModelGroup extends StatelessWidget {
     final chatProvider = provider.id == chatBinding.providerId;
     final radius = BorderRadius.circular(8);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Material(
-            color: selected
-                ? colorScheme.primaryContainer.withValues(alpha: 0.56)
+            color: expanded
+                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.34)
                 : Colors.transparent,
             borderRadius: radius,
             child: InkWell(
               borderRadius: radius,
-              onTap: onSelectedProviderChanged,
+              onTap: onToggleExpanded,
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -1121,17 +1149,22 @@ class _ProviderModelGroup extends StatelessWidget {
                 child: Row(
                   children: <Widget>[
                     Icon(
-                      chatProvider
-                          ? Icons.check_circle
-                          : selected
-                          ? Icons.expand_more
-                          : Icons.chevron_right,
+                      expanded ? Icons.keyboard_arrow_down : Icons.chevron_right,
                       size: 18,
-                      color: chatProvider
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
+                      color: colorScheme.onSurfaceVariant,
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: chatProvider
+                            ? colorScheme.primary
+                            : colorScheme.outlineVariant.withValues(alpha: 0.7),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1140,7 +1173,8 @@ class _ProviderModelGroup extends StatelessWidget {
                             provider.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 2),
                           Text(
@@ -1153,7 +1187,7 @@ class _ProviderModelGroup extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (selected) ...<Widget>[
+                    if (expanded) ...<Widget>[
                       TextButton.icon(
                         onPressed: onAddModel,
                         style: SettingsControlStyles.sectionTextButton(),
@@ -1165,41 +1199,53 @@ class _ProviderModelGroup extends StatelessWidget {
                         icon: Icons.edit_outlined,
                         onPressed: onEditProvider,
                       ),
-                      SettingsEntityIconButton(
-                        tooltip: l10n.delete,
-                        icon: Icons.delete_outline,
-                        onPressed: onDeleteProvider,
-                      ),
                     ],
                   ],
                 ),
               ),
             ),
           ),
-          if (selected)
+          if (expanded)
             Padding(
-              padding: const EdgeInsets.only(left: 14, top: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  if (provider.models.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text(
-                        l10n.settingsModelAddModel,
-                        style: TextStyle(color: colorScheme.onSurfaceVariant),
-                      ),
-                    )
-                  else
-                    _ProviderModelGrid(
-                      provider: provider,
-                      summaries: summaries,
-                      chatBinding: chatBinding,
-                      onSelectModel: onSelectModel,
-                      testingModelKey: testingModelKey,
-                      onEditModelSettings: onEditModelSettings,
+              padding: const EdgeInsets.only(left: 24, top: 6),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Container(
+                      width: 1,
+                      margin: const EdgeInsets.only(top: 2, bottom: 8),
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.34),
                     ),
-                ],
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          if (provider.models.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: Text(
+                                l10n.settingsModelAddModel,
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            )
+                          else
+                            _ProviderModelList(
+                              provider: provider,
+                              summaries: summaries,
+                              chatBinding: chatBinding,
+                              onSelectModel: onSelectModel,
+                              testingModelKey: testingModelKey,
+                              onEditModelSettings: onEditModelSettings,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -1208,8 +1254,8 @@ class _ProviderModelGroup extends StatelessWidget {
   }
 }
 
-class _ProviderModelGrid extends StatelessWidget {
-  const _ProviderModelGrid({
+class _ProviderModelList extends StatelessWidget {
+  const _ProviderModelList({
     required this.provider,
     required this.summaries,
     required this.chatBinding,
@@ -1250,18 +1296,14 @@ class _ProviderModelGrid extends StatelessWidget {
     if (tiles.isEmpty) {
       return const SizedBox.shrink();
     }
-    return GridView.builder(
-      padding: EdgeInsets.zero,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 320,
-        mainAxisExtent: 54,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 4,
-      ),
-      itemCount: tiles.length,
-      itemBuilder: (context, index) => tiles[index],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (var index = 0; index < tiles.length; index++) ...<Widget>[
+          if (index > 0) const SizedBox(height: 4),
+          tiles[index],
+        ],
+      ],
     );
   }
 }
@@ -1288,33 +1330,65 @@ class _ProviderModelTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      type: MaterialType.transparency,
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        contentPadding: EdgeInsets.zero,
-        title: Text(model.id),
-        subtitle: _ModelCapabilityIcons(capabilities: summary.capabilities),
+      color: selected
+          ? colorScheme.primaryContainer.withValues(alpha: 0.24)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
         onTap: onEditSettings,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (selected)
-              SettingsActivePill(label: l10n.settingsModelCurrentActive)
-            else
-              SettingsSetActiveButton(
-                label: l10n.settingsModelSetCurrentActive,
-                onPressed: () => onSelect(provider.id, model.id),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: Icon(
+                  Icons.memory_outlined,
+                  size: 16,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
               ),
-            if (testing) ...<Widget>[
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      model.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    _ModelCapabilityIcons(capabilities: summary.capabilities),
+                  ],
+                ),
+              ),
               const SizedBox(width: 8),
-              const SizedBox.square(
-                dimension: 24,
-                child: Center(child: M3LoadingIndicator(size: 24)),
-              ),
+              if (selected)
+                SettingsActivePill(label: l10n.settingsModelCurrentActive)
+              else
+                SettingsSetActiveButton(
+                  label: l10n.settingsModelSetCurrentActive,
+                  onPressed: () => onSelect(provider.id, model.id),
+                ),
+              if (testing) ...<Widget>[
+                const SizedBox(width: 8),
+                const SizedBox.square(
+                  dimension: 24,
+                  child: Center(child: M3LoadingIndicator(size: 24)),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1890,11 +1964,14 @@ class _ModelSettingsEditorDialogState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final textStyle = Theme.of(context).textTheme.bodyMedium;
     return AlertDialog(
       title: Text(l10n.settingsModelEditModelSettings),
+      contentPadding: EdgeInsets.zero,
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1969,9 +2046,10 @@ class _ModelSettingsEditorDialogState
                 l10n.settingsModelContext,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 10),
               TextField(
                 controller: _maxContextLengthController,
+                style: textStyle,
                 decoration: InputDecoration(
                   labelText: l10n.settingsModelMaxContextLength,
                   errorText: _maxContextLengthError,
@@ -1994,7 +2072,7 @@ class _ModelSettingsEditorDialogState
                 l10n.settingsModelSummary,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 10),
               _ModelSettingsSwitch(
                 title: l10n.enable,
                 subtitle: '',
@@ -2004,6 +2082,7 @@ class _ModelSettingsEditorDialogState
               if (_enableSummary) ...<Widget>[
                 TextField(
                   controller: _summaryThresholdController,
+                  style: textStyle,
                   decoration: InputDecoration(
                     labelText: l10n.settingsModelSummaryThreshold,
                   ),
@@ -2022,6 +2101,7 @@ class _ModelSettingsEditorDialogState
                 if (_enableSummaryByMessageCount)
                   TextField(
                     controller: _summaryMessageCountController,
+                    style: textStyle,
                     decoration: InputDecoration(
                       labelText: l10n.settingsModelSummaryMessageCount,
                     ),
@@ -2383,10 +2463,12 @@ class _DialogTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodyMedium;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: controller,
+        style: textStyle,
         obscureText: obscureText,
         maxLines: obscureText ? 1 : maxLines,
         keyboardType: numberOnly ? TextInputType.number : TextInputType.text,

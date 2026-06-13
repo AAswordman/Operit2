@@ -6,8 +6,7 @@ use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryProfileBindingMode,
-    CharacterCardToolAccessConfig,
+    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
 };
 use operit_runtime::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
@@ -129,9 +128,7 @@ pub fn run_character_command(
                     chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL
                         .to_string(),
                     chatModelId: None,
-                    memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL
-                        .to_string(),
-                    memoryProfileId: None,
+                    sharedMemoryMounts: Vec::new(),
                     toolAccessConfig: CharacterCardToolAccessConfig::default(),
                     isDefault: false,
                     createdAt: now,
@@ -167,12 +164,8 @@ pub fn run_character_command(
                 "attachedTagIds" => card.attachedTagIds = parseCsvList(&value),
                 "chatModelBindingMode" => card.chatModelBindingMode = CharacterCardChatModelBindingMode::normalize(Some(&value)),
                 "chatModelId" => card.chatModelId = nonBlankString(value),
-                "memoryProfileBindingMode" => {
-                    card.memoryProfileBindingMode = CharacterCardMemoryProfileBindingMode::normalize(Some(&value))
-                }
-                "memoryProfileId" => card.memoryProfileId = nonBlankString(value),
                 _ => {
-                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId | memoryProfileBindingMode | memoryProfileId".to_string())
+                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId".to_string())
                 }
             }
             core.preferences_character_card_manager()
@@ -442,12 +435,11 @@ fn print_character_card(card: &CharacterCard) {
         None => String::new(),
     };
     println!("chatModelId={chatModelId}");
-    println!("memoryProfileBindingMode={}", card.memoryProfileBindingMode);
-    let memoryProfileId = match card.memoryProfileId.clone() {
-        Some(value) => value,
-        None => String::new(),
-    };
-    println!("memoryProfileId={memoryProfileId}");
+    println!(
+        "sharedMemoryMounts={}",
+        serde_json::to_string(&card.sharedMemoryMounts)
+            .expect("sharedMemoryMounts must serialize")
+    );
     println!(
         "toolAccessConfig={}",
         serde_json::to_string(&card.toolAccessConfig).expect("toolAccessConfig must serialize")

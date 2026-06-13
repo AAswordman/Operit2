@@ -1439,12 +1439,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersChatModelIndex => '聊天模型序号';
 
   @override
-  String get settingsCharactersMemoryBindingMode => '记忆绑定模式';
-
-  @override
-  String get settingsCharactersMemoryProfileId => '记忆配置 ID';
-
-  @override
   String get settingsCharactersToolAccess => '工具权限模式';
 
   @override
@@ -1455,15 +1449,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsCharactersChatModelConfig => '模型配置';
-
-  @override
-  String get settingsCharactersMemoryProfileFollowGlobal => '跟随全局记忆';
-
-  @override
-  String get settingsCharactersMemoryProfileFixedProfile => '固定记忆档案';
-
-  @override
-  String get settingsCharactersMemoryProfile => '记忆档案';
 
   @override
   String get settingsCharactersToolAccessFollowGlobal => '跟随全局工具权限';
@@ -1519,34 +1504,34 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersGroupMembersTitle => '组内角色';
 
   @override
-  String get settingsCharactersPreferenceProfilesSection => '用户偏好与记忆';
+  String get settingsCharactersOpenMemoryGraph => '查看记忆图谱';
 
   @override
-  String get settingsCharactersCreatePreferenceProfile => '新建用户偏好档案';
+  String settingsCharactersMemoryGraphTitle(String profileName) {
+    return '$profileName 的记忆图谱';
+  }
 
   @override
-  String get settingsCharactersEditPreferenceProfile => '编辑用户偏好档案';
+  String get settingsCharactersMemoryGraphEmpty => '当前记忆库还没有节点';
 
   @override
-  String get settingsCharactersPreferenceProfileName => '档案名称';
+  String settingsCharactersMemoryGraphStats(int nodes, int edges) {
+    return '$nodes 个节点 · $edges 条关系';
+  }
 
   @override
-  String get settingsCharactersPreferenceBirthDate => '出生日期时间戳';
+  String get settingsCharactersMemoryGraphLink => '记忆关系';
 
   @override
-  String get settingsCharactersPreferenceGender => '性别';
+  String get settingsCharactersEditUserMarkdown => '编辑 USER.md';
 
   @override
-  String get settingsCharactersPreferencePersonality => '性格';
+  String settingsCharactersUserMarkdownTitle(String profileName) {
+    return '$profileName 的 USER.md';
+  }
 
   @override
-  String get settingsCharactersPreferenceIdentity => '身份';
-
-  @override
-  String get settingsCharactersPreferenceOccupation => '职业';
-
-  @override
-  String get settingsCharactersPreferenceAiStyle => 'AI 互动风格';
+  String get settingsCharactersUserMarkdownSaved => 'USER.md 已保存';
 
   @override
   String get settingsCharactersMemoryAutoUpdate => '自动更新记忆偏好';
@@ -1561,13 +1546,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsCharactersPreferenceDescriptionSubtitle =>
       '聊天时把当前偏好档案写入提示词。';
-
-  @override
-  String get settingsCharactersPreferenceLocksSection => '偏好字段锁定';
-
-  @override
-  String get settingsCharactersPreferenceLockDescription =>
-      '锁定后，自动记忆更新不会改写这个字段。';
 
   @override
   String get settingsCharactersCardsSection => '角色卡';

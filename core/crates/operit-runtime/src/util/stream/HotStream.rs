@@ -6,44 +6,68 @@ use std::time::Duration;
 
 use crate::util::stream::Stream::Stream;
 
+/// Stream that can have multiple collectors and optional replayed items.
 pub trait SharedStream<T>: Stream<Item = T>
 where
     T: Clone,
 {
+    /// Returns the number of active collectors currently subscribed.
     fn subscription_count(&self) -> usize;
+
+    /// Returns the items retained for replay to new collectors.
     fn replay_cache(&self) -> Vec<T>;
 }
 
+/// Mutable shared stream whose producer can emit items.
 pub trait MutableSharedStream<T>: SharedStream<T>
 where
     T: Clone,
 {
+    /// Emits one item to active collectors and stores it in replay when configured.
     fn emit(&mut self, value: T);
+
+    /// Attempts to emit one item, returning false when the stream is closed.
     fn try_emit(&mut self, value: T) -> bool;
+
+    /// Clears retained replay items without closing the stream.
     fn reset_replay_cache(&mut self);
 }
 
+/// Shared stream with a current value.
 pub trait StateStream<T>: SharedStream<T>
 where
     T: Clone,
 {
+    /// Returns the latest value.
     fn value(&self) -> T;
 }
 
+/// Mutable state stream.
 pub trait MutableStateStream<T>: StateStream<T> + MutableSharedStream<T>
 where
     T: Clone + PartialEq,
 {
+    /// Replaces the latest value and emits it when it changed.
     fn set_value(&mut self, value: T);
+
+    /// Replaces the latest value only when it currently equals `expect`.
     fn compare_and_set(&mut self, expect: T, update: T) -> bool;
 }
 
+/// Controls when a shared stream starts collecting from its upstream source.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StreamStart {
+    /// Start upstream collection immediately.
     Eagerly,
+    /// Start upstream collection when the runtime explicitly decides to do so.
     Lazily,
 }
 
+/// Hot shared stream implementation used by AI response streams and event channels.
+///
+/// Collection blocks until `close` is called or all senders disconnect. Closing
+/// this stream is a producer-side action: it ends every active collector and
+/// rejects later emits.
 #[derive(Debug, Clone)]
 pub struct MutableSharedStreamImpl<T>
 where
@@ -78,6 +102,7 @@ impl<T> MutableSharedStreamImpl<T>
 where
     T: Clone,
 {
+    /// Creates a shared stream retaining at most `replay` emitted items.
     pub fn new(replay: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MutableSharedStreamState {
@@ -91,6 +116,10 @@ where
         }
     }
 
+    /// Closes the producer side of this stream.
+    ///
+    /// All active collectors receive a close event and return from `collect`.
+    /// Later calls to `emit` are ignored and `try_emit` returns false.
     pub fn close(&self) {
         if let Ok(mut guard) = self.inner.lock() {
             if guard.closed {
@@ -115,6 +144,7 @@ where
         }
     }
 
+    /// Emits one value to active collectors.
     pub fn emit(&self, value: T) {
         if let Ok(mut guard) = self.inner.lock() {
             if guard.closed {
@@ -129,6 +159,7 @@ where
         }
     }
 
+    /// Attempts to emit one value unless the stream is already closed.
     pub fn try_emit(&self, value: T) -> bool {
         if let Ok(guard) = self.inner.lock() {
             if guard.closed {
@@ -139,12 +170,14 @@ where
         true
     }
 
+    /// Clears retained replay items without notifying collectors.
     pub fn reset_replay_cache(&self) {
         if let Ok(mut guard) = self.inner.lock() {
             guard.replay_buffer.clear();
         }
     }
 
+    /// Returns a snapshot of the replay buffer.
     pub fn replay_cache(&self) -> Vec<T> {
         self.inner
             .lock()
@@ -152,6 +185,7 @@ where
             .unwrap_or_default()
     }
 
+    /// Returns the number of active collectors.
     pub fn subscription_count(&self) -> usize {
         self.inner
             .lock()
@@ -166,6 +200,11 @@ where
 {
     type Item = T;
 
+    /// Subscribes to this shared stream and blocks until `close` is observed.
+    ///
+    /// The collector first receives a replay snapshot, then live values. When the
+    /// producer closes the stream, this collector is removed from the subscriber
+    /// list and the method returns.
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
         let (subscriber_id, receiver, replay_snapshot, closed_immediately) = match self.inner.lock()
         {

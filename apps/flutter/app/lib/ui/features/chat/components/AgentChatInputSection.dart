@@ -507,6 +507,8 @@ class _InputBody extends StatelessWidget {
               hintStyle: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
+              filled: false,
+              fillColor: Colors.transparent,
               suffixIcon: IconButton(
                 onPressed: () {},
                 icon: const Icon(Icons.fullscreen),

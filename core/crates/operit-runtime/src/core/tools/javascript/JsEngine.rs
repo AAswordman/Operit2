@@ -9,7 +9,6 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use operit_store::RuntimeStorePaths::default_data_dir;
 #[cfg(target_arch = "wasm32")]
 use quickjs_wasm_rs::{
     JSContextRef as WasmQuickJsContext, JSValue as WasmQuickJsValue,
@@ -42,6 +41,7 @@ use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::util::stream::Stream::Stream;
 use crate::util::AppLogger::AppLogger;
 use crate::util::LocaleUtils::LocaleUtils;
+use crate::util::OperitPaths;
 
 const TAG: &str = "OperitQuickJsEngine";
 const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;
@@ -2076,9 +2076,10 @@ fn nativeGetEnvForCallStrings(key: String) -> String {
 
 #[allow(non_snake_case)]
 fn nativeGetPluginConfigDirString(pluginId: String) -> String {
-    let path = pluginConfigDirPath(&pluginId);
-    let _ = std::fs::create_dir_all(&path);
-    path.to_string_lossy().to_string()
+    OperitPaths::pluginConfigDir(&pluginId)
+        .expect("plugin config dir must be available")
+        .to_string_lossy()
+        .to_string()
 }
 
 #[allow(non_snake_case)]
@@ -2280,12 +2281,8 @@ fn toolPkgResourceOutputFileName(resourceKey: &str, outputFileName: &str) -> Str
 
 #[allow(non_snake_case)]
 fn toolPkgResourceOutputDir(internal: bool) -> std::path::PathBuf {
-    let root = default_data_dir().join("toolpkg_resource_exports");
-    if internal {
-        root.join("internal")
-    } else {
-        root
-    }
+    OperitPaths::toolPkgResourceExportsDir(internal)
+        .expect("toolpkg resource export path must be available")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2294,48 +2291,6 @@ fn wasmQuickJsArgString(args: &[WasmQuickJsValueRef], index: usize) -> String {
     args.get(index)
         .map(|value| value.to_string())
         .unwrap_or_default()
-}
-
-#[allow(non_snake_case)]
-fn pluginConfigDirPath(pluginId: &str) -> std::path::PathBuf {
-    let trimmed = pluginId.trim();
-    let safeBaseName = sanitizePluginConfigDirName(trimmed);
-    let safeName = if safeBaseName == trimmed {
-        safeBaseName
-    } else {
-        format!("{safeBaseName}-{:x}", javaStringHashCode(trimmed))
-    };
-    default_data_dir().join("plugins").join(safeName)
-}
-
-#[allow(non_snake_case)]
-fn sanitizePluginConfigDirName(pluginId: &str) -> String {
-    let replaced = pluginId
-        .chars()
-        .map(|ch| {
-            if matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || ch <= '\u{1f}'
-            {
-                '_'
-            } else {
-                ch
-            }
-        })
-        .collect::<String>();
-    let trimmed = replaced
-        .trim_matches(|ch| ch == '.' || ch == ' ')
-        .to_string();
-    if trimmed.is_empty() {
-        "plugin".to_string()
-    } else {
-        trimmed
-    }
-}
-
-#[allow(non_snake_case)]
-fn javaStringHashCode(value: &str) -> i32 {
-    value.encode_utf16().fold(0_i32, |hash, unit| {
-        hash.wrapping_mul(31).wrapping_add(unit as i32)
-    })
 }
 
 #[allow(non_snake_case)]

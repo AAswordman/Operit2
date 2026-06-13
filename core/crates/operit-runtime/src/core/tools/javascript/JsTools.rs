@@ -584,13 +584,18 @@ pub fn getJsToolsDefinition() -> &'static str {
                 }
             },
             Memory: {
-                _normalizeCallerCardId: function(callerCardId) {
-                    if (callerCardId === undefined || callerCardId === null) return undefined;
-                    var normalized = String(callerCardId).trim();
+                _normalizeOwnerKey: function(targetOwnerKey) {
+                    if (targetOwnerKey === undefined || targetOwnerKey === null) return undefined;
+                    var normalized = String(targetOwnerKey).trim();
                     return normalized.length > 0 ? normalized : undefined;
                 },
-                query: function(query, folderPath, limit, startTime, endTime, snapshotId, threshold, callerCardId) {
-                    var options = query && typeof query === 'object' && !Array.isArray(query) ? query : { query: query, folderPath: folderPath, limit: limit, startTime: startTime, endTime: endTime, snapshotId: snapshotId, threshold: threshold, callerCardId: callerCardId };
+                _assignTargetOwnerKey: function(params, options) {
+                    var normalizedOwnerKey = Tools.Memory._normalizeOwnerKey(options.targetOwnerKey);
+                    if (normalizedOwnerKey !== undefined) params.target_owner_key = normalizedOwnerKey;
+                    return params;
+                },
+                query: function(query, folderPath, limit, startTime, endTime, snapshotId, threshold, targetOwnerKey) {
+                    var options = query && typeof query === 'object' && !Array.isArray(query) ? query : { query: query, folderPath: folderPath, limit: limit, startTime: startTime, endTime: endTime, snapshotId: snapshotId, threshold: threshold, targetOwnerKey: targetOwnerKey };
                     var params = { query: options.query };
                     if (options.folderPath) params.folder_path = options.folderPath;
                     if (options.startTime !== undefined) params.start_time = options.startTime;
@@ -598,34 +603,31 @@ pub fn getJsToolsDefinition() -> &'static str {
                     if (options.limit !== undefined) params.limit = options.limit;
                     if (options.snapshotId !== undefined && options.snapshotId !== null) params.snapshot_id = String(options.snapshotId);
                     if (options.threshold !== undefined) params.threshold = options.threshold;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("query_memory", params);
                 },
-                getByTitle: function(title, chunkIndex, chunkRange, query, limit, callerCardId) {
-                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, chunkIndex: chunkIndex, chunkRange: chunkRange, query: query, limit: limit, callerCardId: callerCardId };
+                getByTitle: function(title, targetOwnerKey, chunkIndex, chunkRange, query, limit) {
+                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, targetOwnerKey: targetOwnerKey, chunkIndex: chunkIndex, chunkRange: chunkRange, query: query, limit: limit };
                     var params = { title: options.title };
                     if (options.chunkIndex !== undefined) params.chunk_index = options.chunkIndex;
                     if (options.chunkRange) params.chunk_range = options.chunkRange;
                     if (options.query) params.query = options.query;
                     if (options.limit !== undefined) params.limit = options.limit;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("get_memory_by_title", params);
                 },
-                create: function(title, content, contentType, source, folderPath, tags, callerCardId) {
-                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, content: content, contentType: contentType, source: source, folderPath: folderPath, tags: tags, callerCardId: callerCardId };
+                create: function(title, content, targetOwnerKey, contentType, source, folderPath, tags) {
+                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, content: content, targetOwnerKey: targetOwnerKey, contentType: contentType, source: source, folderPath: folderPath, tags: tags };
                     var params = { title: options.title, content: options.content };
                     if (options.contentType) params.content_type = options.contentType;
                     if (options.source) params.source = options.source;
                     if (options.folderPath) params.folder_path = options.folderPath;
                     if (options.tags) params.tags = options.tags;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("create_memory", params);
                 },
-                update: function(oldTitle, updates, callerCardId) {
-                    var options = oldTitle && typeof oldTitle === 'object' && !Array.isArray(oldTitle) ? oldTitle : Object.assign({ oldTitle: oldTitle }, updates || {}, { callerCardId: callerCardId });
+                update: function(oldTitle, targetOwnerKey, updates) {
+                    var options = oldTitle && typeof oldTitle === 'object' && !Array.isArray(oldTitle) ? oldTitle : Object.assign({ oldTitle: oldTitle, targetOwnerKey: targetOwnerKey }, updates || {});
                     var params = { old_title: options.oldTitle };
                     if (options.newTitle) params.new_title = options.newTitle;
                     if (options.content) params.content = options.content;
@@ -635,63 +637,51 @@ pub fn getJsToolsDefinition() -> &'static str {
                     if (options.importance !== undefined) params.importance = options.importance;
                     if (options.folderPath) params.folder_path = options.folderPath;
                     if (options.tags) params.tags = options.tags;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("update_memory", params);
                 },
-                updateUserPreferences: function(options) {
-                    options = options || {};
-                    var params = {};
-                    if (options.birthDate !== undefined && options.birthDate !== null) params.birth_date = String(options.birthDate);
-                    if (options.birth_date !== undefined && options.birth_date !== null) params.birth_date = String(options.birth_date);
-                    if (options.gender !== undefined && options.gender !== null) params.gender = String(options.gender);
-                    if (options.personality !== undefined && options.personality !== null) params.personality = String(options.personality);
-                    if (options.identity !== undefined && options.identity !== null) params.identity = String(options.identity);
-                    if (options.occupation !== undefined && options.occupation !== null) params.occupation = String(options.occupation);
-                    if (options.aiStyle !== undefined && options.aiStyle !== null) params.ai_style = String(options.aiStyle);
-                    if (options.ai_style !== undefined && options.ai_style !== null) params.ai_style = String(options.ai_style);
+                updateUserPreferences: function(content, targetOwnerKey) {
+                    var options = content && typeof content === 'object' && !Array.isArray(content) ? content : { content: content, targetOwnerKey: targetOwnerKey };
+                    var params = { content: String(options.content || '') };
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("update_user_preferences", params);
                 },
-                deleteMemory: function(title, callerCardId) {
-                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, callerCardId: callerCardId };
+                deleteMemory: function(title, targetOwnerKey) {
+                    var options = title && typeof title === 'object' && !Array.isArray(title) ? title : { title: title, targetOwnerKey: targetOwnerKey };
                     var params = { title: options.title };
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("delete_memory", params);
                 },
-                move: function(targetFolderPath, titles, sourceFolderPath, callerCardId) {
-                    var options = targetFolderPath && typeof targetFolderPath === 'object' && !Array.isArray(targetFolderPath) ? targetFolderPath : { targetFolderPath: targetFolderPath, titles: titles, sourceFolderPath: sourceFolderPath, callerCardId: callerCardId };
+                move: function(targetFolderPath, targetOwnerKey, titles, sourceFolderPath) {
+                    var options = targetFolderPath && typeof targetFolderPath === 'object' && !Array.isArray(targetFolderPath) ? targetFolderPath : { targetFolderPath: targetFolderPath, targetOwnerKey: targetOwnerKey, titles: titles, sourceFolderPath: sourceFolderPath };
                     var params = { target_folder_path: options.targetFolderPath };
                     if (options.titles) params.titles = Array.isArray(options.titles) ? options.titles.join(",") : String(options.titles);
                     if (options.sourceFolderPath !== undefined && options.sourceFolderPath !== null) params.source_folder_path = String(options.sourceFolderPath);
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("move_memory", params);
                 },
-                link: function(sourceTitle, targetTitle, linkType, weight, description, callerCardId) {
-                    var options = sourceTitle && typeof sourceTitle === 'object' && !Array.isArray(sourceTitle) ? sourceTitle : { sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, weight: weight, description: description, callerCardId: callerCardId };
+                link: function(sourceTitle, targetTitle, targetOwnerKey, linkType, weight, description) {
+                    var options = sourceTitle && typeof sourceTitle === 'object' && !Array.isArray(sourceTitle) ? sourceTitle : { sourceTitle: sourceTitle, targetTitle: targetTitle, targetOwnerKey: targetOwnerKey, linkType: linkType, weight: weight, description: description };
                     var params = { source_title: options.sourceTitle, target_title: options.targetTitle };
                     if (options.linkType) params.link_type = options.linkType;
                     if (options.weight !== undefined) params.weight = options.weight;
                     if (options.description) params.description = options.description;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("link_memories", params);
                 },
-                queryLinks: function(linkId, sourceTitle, targetTitle, linkType, limit, callerCardId) {
-                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, limit: limit, callerCardId: callerCardId };
+                queryLinks: function(targetOwnerKey, linkId, sourceTitle, targetTitle, linkType, limit) {
+                    var options = targetOwnerKey && typeof targetOwnerKey === 'object' && !Array.isArray(targetOwnerKey) ? targetOwnerKey : { targetOwnerKey: targetOwnerKey, linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, limit: limit };
                     var params = {};
                     if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
                     if (options.sourceTitle) params.source_title = options.sourceTitle;
                     if (options.targetTitle) params.target_title = options.targetTitle;
                     if (options.linkType) params.link_type = options.linkType;
                     if (options.limit !== undefined) params.limit = options.limit;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("query_memory_links", params);
                 },
-                updateLink: function(linkId, sourceTitle, targetTitle, linkType, newLinkType, weight, description, callerCardId) {
-                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, newLinkType: newLinkType, weight: weight, description: description, callerCardId: callerCardId };
+                updateLink: function(targetOwnerKey, linkId, sourceTitle, targetTitle, linkType, newLinkType, weight, description) {
+                    var options = targetOwnerKey && typeof targetOwnerKey === 'object' && !Array.isArray(targetOwnerKey) ? targetOwnerKey : { targetOwnerKey: targetOwnerKey, linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, newLinkType: newLinkType, weight: weight, description: description };
                     var params = {};
                     if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
                     if (options.sourceTitle) params.source_title = options.sourceTitle;
@@ -700,19 +690,17 @@ pub fn getJsToolsDefinition() -> &'static str {
                     if (options.newLinkType) params.new_link_type = options.newLinkType;
                     if (options.weight !== undefined) params.weight = options.weight;
                     if (options.description !== undefined) params.description = options.description;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("update_memory_link", params);
                 },
-                deleteLink: function(linkId, sourceTitle, targetTitle, linkType, callerCardId) {
-                    var options = linkId && typeof linkId === 'object' && !Array.isArray(linkId) ? linkId : { linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType, callerCardId: callerCardId };
+                deleteLink: function(targetOwnerKey, linkId, sourceTitle, targetTitle, linkType) {
+                    var options = targetOwnerKey && typeof targetOwnerKey === 'object' && !Array.isArray(targetOwnerKey) ? targetOwnerKey : { targetOwnerKey: targetOwnerKey, linkId: linkId, sourceTitle: sourceTitle, targetTitle: targetTitle, linkType: linkType };
                     var params = {};
                     if (options.linkId !== undefined && options.linkId !== null) params.link_id = options.linkId;
                     if (options.sourceTitle) params.source_title = options.sourceTitle;
                     if (options.targetTitle) params.target_title = options.targetTitle;
                     if (options.linkType) params.link_type = options.linkType;
-                    var normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
-                    if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._assignTargetOwnerKey(params, options);
                     return toolCall("delete_memory_link", params);
                 }
             },

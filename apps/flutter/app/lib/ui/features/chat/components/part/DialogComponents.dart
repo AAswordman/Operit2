@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../common/components/OperitDialog.dart';
 import 'ParamVisualizer.dart';
 import 'ToolDisplayComponents.dart';
 
@@ -25,76 +26,32 @@ class ContentDetailDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isXmlContent = content.trim().startsWith('<');
-    return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Card(
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+    return OperitDialogScaffold(
+      title: title,
+      icon: Icon(icon, size: 20),
+      maxWidth: 720,
+      actions: <Widget>[
+        FilledButton(onPressed: onDismiss, child: const Text('Close')),
+      ],
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 50, maxHeight: 400),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.5,
           ),
-          color: theme.colorScheme.surface,
-          elevation: 6,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Icon(icon, size: 20, color: theme.colorScheme.primary),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: theme.colorScheme.onSurface,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: SingleChildScrollView(
+          child: isDiffContent
+              ? _DiffContent(lines: content.lines())
+              : isXmlContent
+              ? ParamVisualizer(xmlContent: content)
+              : CodeContentWithLineNumbers(
+                  lines: content.lines(),
+                  textColor: theme.colorScheme.onSurface,
                 ),
-                const SizedBox(height: 16),
-                Divider(color: theme.colorScheme.outlineVariant, height: 1),
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  constraints: const BoxConstraints(
-                    minHeight: 50,
-                    maxHeight: 400,
-                  ),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.5,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SingleChildScrollView(
-                    child: isDiffContent
-                        ? _DiffContent(lines: content.lines())
-                        : isXmlContent
-                        ? ParamVisualizer(xmlContent: content)
-                        : CodeContentWithLineNumbers(
-                            lines: content.lines(),
-                            textColor: theme.colorScheme.onSurface,
-                          ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: onDismiss,
-                    child: const Text('Close'),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

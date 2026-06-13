@@ -268,103 +268,147 @@ impl MultiServiceManager {
         Ok((config, modelParameters, service))
     }
 
-    pub fn cancelAllStreaming(&mut self) {
-        let inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        for service in inner.serviceInstances.values() {
-            service.blocking_lock().cancel_streaming();
-        }
-        for service in inner.modelServiceInstances.values() {
-            service.blocking_lock().cancel_streaming();
-        }
-    }
-
-    pub fn resetAllTokenCounters(&mut self) {
-        let inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        for service in inner.serviceInstances.values() {
-            service.blocking_lock().reset_token_counts();
-        }
-        for service in inner.modelServiceInstances.values() {
-            service.blocking_lock().reset_token_counts();
+    pub async fn cancelAllStreaming(&mut self) {
+        let services = {
+            let inner = self
+                .inner
+                .lock()
+                .expect("MultiServiceManager mutex poisoned");
+            Self::collectServiceHandlesLocked(&inner)
+        };
+        for service in services {
+            service.lock().await.cancel_streaming();
         }
     }
 
-    pub fn resetTokenCountersForFunction(
+    pub async fn resetAllTokenCounters(&mut self) {
+        let services = {
+            let inner = self
+                .inner
+                .lock()
+                .expect("MultiServiceManager mutex poisoned");
+            Self::collectServiceHandlesLocked(&inner)
+        };
+        for service in services {
+            service.lock().await.reset_token_counts();
+        }
+    }
+
+    pub async fn resetTokenCountersForFunction(
         &mut self,
         functionType: FunctionType,
     ) -> Result<(), AiServiceError> {
         let service = self.getServiceForFunction(functionType)?;
-        service.blocking_lock().reset_token_counts();
+        service.lock().await.reset_token_counts();
         Ok(())
     }
 
-    pub fn refreshServiceForFunction(
+    pub async fn refreshServiceForFunction(
         &mut self,
         functionType: FunctionType,
     ) -> Result<(), AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
-        if let Some(oldService) = inner.serviceInstances.remove(&functionType) {
-            let mut service = oldService.blocking_lock();
+        let (oldService, oldModelServices) = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("MultiServiceManager mutex poisoned");
+            Self::ensureInitializedLocked(&mut inner)?;
+            let oldService = inner.serviceInstances.remove(&functionType);
+            let oldModelServices = if functionType == FunctionType::CHAT {
+                inner.defaultServiceKey = None;
+                inner
+                    .modelServiceInstances
+                    .drain()
+                    .map(|(_, oldService)| oldService)
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (oldService, oldModelServices)
+        };
+        if let Some(oldService) = oldService {
+            let mut service = oldService.lock().await;
             service.cancel_streaming();
             service.release();
         }
-        if functionType == FunctionType::CHAT {
-            inner.defaultServiceKey = None;
-            for (_, oldService) in inner.modelServiceInstances.drain() {
-                let mut service = oldService.blocking_lock();
-                service.cancel_streaming();
-                service.release();
-            }
+        for oldService in oldModelServices {
+            let mut service = oldService.lock().await;
+            service.cancel_streaming();
+            service.release();
         }
         Ok(())
     }
 
-    pub fn refreshServiceForModel(
+    pub async fn refreshServiceForModel(
         &mut self,
         providerId: String,
         modelId: String,
     ) -> Result<(), AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
-        let serviceKey = Self::modelServiceKey(&providerId, &modelId);
-        if let Some(oldService) = inner.modelServiceInstances.remove(&serviceKey) {
-            let mut service = oldService.blocking_lock();
+        let oldService = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("MultiServiceManager mutex poisoned");
+            Self::ensureInitializedLocked(&mut inner)?;
+            let serviceKey = Self::modelServiceKey(&providerId, &modelId);
+            inner.modelServiceInstances.remove(&serviceKey)
+        };
+        if let Some(oldService) = oldService {
+            let mut service = oldService.lock().await;
             service.cancel_streaming();
             service.release();
         }
         Ok(())
     }
 
-    pub fn refreshAllServices(&mut self) -> Result<(), AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
-        for (_, oldService) in inner.serviceInstances.drain() {
-            let mut service = oldService.blocking_lock();
+    pub async fn refreshAllServices(&mut self) -> Result<(), AiServiceError> {
+        let oldServices = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("MultiServiceManager mutex poisoned");
+            Self::ensureInitializedLocked(&mut inner)?;
+            let mut oldServices = inner
+                .serviceInstances
+                .drain()
+                .map(|(_, oldService)| oldService)
+                .collect::<Vec<_>>();
+            oldServices.extend(
+                inner
+                    .modelServiceInstances
+                    .drain()
+                    .map(|(_, oldService)| oldService),
+            );
+            inner.defaultServiceKey = None;
+            oldServices
+        };
+        for oldService in oldServices {
+            let mut service = oldService.lock().await;
             service.cancel_streaming();
             service.release();
         }
-        for (_, oldService) in inner.modelServiceInstances.drain() {
-            let mut service = oldService.blocking_lock();
-            service.cancel_streaming();
-            service.release();
-        }
-        inner.defaultServiceKey = None;
         Ok(())
+    }
+
+    fn collectServiceHandlesLocked(inner: &MultiServiceManagerState) -> Vec<SharedAIServiceHandle> {
+        let mut services = Vec::new();
+        for service in inner.serviceInstances.values() {
+            if !services
+                .iter()
+                .any(|existing| Arc::ptr_eq(existing, service))
+            {
+                services.push(service.clone());
+            }
+        }
+        for service in inner.modelServiceInstances.values() {
+            if !services
+                .iter()
+                .any(|existing| Arc::ptr_eq(existing, service))
+            {
+                services.push(service.clone());
+            }
+        }
+        services
     }
 
     fn createServiceFromResolvedConfigLocked(

@@ -1319,7 +1319,7 @@ impl OperitTui {
         let effective_context_length = if updated_context.enableMaxContextMode {
             updated_context.maxContextLength
         } else {
-            updated_context.contextLength
+            updated_context.maxContextLength * 0.4
         };
         self.status_message = format!(
             "context model={} | context={}K",
@@ -1845,7 +1845,7 @@ impl OperitTui {
         let effective_context_length = if config.context.enableMaxContextMode {
             config.context.maxContextLength
         } else {
-            config.context.contextLength
+            config.context.maxContextLength * 0.4
         };
         let max_tokens = (effective_context_length * 1024.0) as i32;
         let current_window_size = self.current_window_size_cache;

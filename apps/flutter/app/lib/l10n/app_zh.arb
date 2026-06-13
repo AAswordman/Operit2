@@ -710,15 +710,10 @@
   "settingsCharactersChatModelBindingMode": "聊天模型绑定模式",
   "settingsCharactersChatModelConfigId": "聊天模型配置 ID",
   "settingsCharactersChatModelIndex": "聊天模型序号",
-  "settingsCharactersMemoryBindingMode": "记忆绑定模式",
-  "settingsCharactersMemoryProfileId": "记忆配置 ID",
   "settingsCharactersToolAccess": "工具权限模式",
   "settingsCharactersChatModelFollowGlobal": "跟随全局模型",
   "settingsCharactersChatModelFixedConfig": "固定模型配置",
   "settingsCharactersChatModelConfig": "模型配置",
-  "settingsCharactersMemoryProfileFollowGlobal": "跟随全局记忆",
-  "settingsCharactersMemoryProfileFixedProfile": "固定记忆档案",
-  "settingsCharactersMemoryProfile": "记忆档案",
   "settingsCharactersToolAccessFollowGlobal": "跟随全局工具权限",
   "settingsCharactersToolAccessCustom": "自定义角色工具权限",
   "settingsCharactersToolAccessEmpty": "已启用，但未选择任何工具",
@@ -750,22 +745,42 @@
   "settingsCharactersAllowedSkills": "允许的技能",
   "settingsCharactersAllowedMcpServers": "允许的 MCP 服务",
   "settingsCharactersGroupMembersTitle": "组内角色",
-  "settingsCharactersPreferenceProfilesSection": "用户偏好与记忆",
-  "settingsCharactersCreatePreferenceProfile": "新建用户偏好档案",
-  "settingsCharactersEditPreferenceProfile": "编辑用户偏好档案",
-  "settingsCharactersPreferenceProfileName": "档案名称",
-  "settingsCharactersPreferenceBirthDate": "出生日期时间戳",
-  "settingsCharactersPreferenceGender": "性别",
-  "settingsCharactersPreferencePersonality": "性格",
-  "settingsCharactersPreferenceIdentity": "身份",
-  "settingsCharactersPreferenceOccupation": "职业",
-  "settingsCharactersPreferenceAiStyle": "AI 互动风格",
+    "settingsCharactersOpenMemoryGraph": "查看记忆图谱",
+    "settingsCharactersMemoryGraphTitle": "{profileName} 的记忆图谱",
+    "@settingsCharactersMemoryGraphTitle": {
+      "placeholders": {
+        "profileName": {
+          "type": "String"
+        }
+      }
+    },
+    "settingsCharactersMemoryGraphEmpty": "当前记忆库还没有节点",
+    "settingsCharactersMemoryGraphStats": "{nodes} 个节点 · {edges} 条关系",
+    "@settingsCharactersMemoryGraphStats": {
+      "placeholders": {
+        "nodes": {
+          "type": "int"
+        },
+        "edges": {
+          "type": "int"
+        }
+      }
+    },
+    "settingsCharactersMemoryGraphLink": "记忆关系",
+    "settingsCharactersEditUserMarkdown": "编辑 USER.md",
+  "settingsCharactersUserMarkdownTitle": "{profileName} 的 USER.md",
+  "@settingsCharactersUserMarkdownTitle": {
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersUserMarkdownSaved": "USER.md 已保存",
   "settingsCharactersMemoryAutoUpdate": "自动更新记忆偏好",
   "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中更新用户偏好与长期记忆。",
   "settingsCharactersPreferenceDescription": "向模型提供用户偏好",
   "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前偏好档案写入提示词。",
-  "settingsCharactersPreferenceLocksSection": "偏好字段锁定",
-  "settingsCharactersPreferenceLockDescription": "锁定后，自动记忆更新不会改写这个字段。",
   "settingsCharactersCardsSection": "角色卡",
   "settingsCharactersGroupsSection": "群组",
   "settingsCharactersGroupMembers": "{count} 个成员",

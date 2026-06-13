@@ -1,12 +1,9 @@
 // ignore_for_file: file_names, constant_identifier_names
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
-import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 
 class ThemePreferenceSnapshot {
   const ThemePreferenceSnapshot({
@@ -222,14 +219,6 @@ class UserPreferencesManager {
 
   static const String _fileName = 'user_preferences.preferences.json';
   static const String _displayPreferencesFileName = 'display_preferences';
-  static const String _ACTIVE_PROFILE_ID = 'active_profile_id';
-  static const String _PROFILE_LIST = 'profile_list';
-  static const String _BIRTH_DATE_LOCKED = 'birth_date_locked';
-  static const String _GENDER_LOCKED = 'gender_locked';
-  static const String _PERSONALITY_LOCKED = 'personality_locked';
-  static const String _IDENTITY_LOCKED = 'identity_locked';
-  static const String _OCCUPATION_LOCKED = 'occupation_locked';
-  static const String _AI_STYLE_LOCKED = 'ai_style_locked';
 
   static const ThemePreferenceSnapshot defaultThemePreferenceSnapshot =
       ThemePreferenceSnapshot(
@@ -533,174 +522,6 @@ class UserPreferencesManager {
     ..._themeKeys,
     ..._avatarThemeKeys,
   ];
-
-  Future<void> initializeIfNeeded({required String defaultProfileName}) async {
-    final profiles = await profileListFlowSnapshot();
-    if (profiles.isEmpty || !profiles.contains(DEFAULT_PROFILE_ID)) {
-      await createProfile(name: defaultProfileName, isDefault: true);
-    }
-  }
-
-  Future<String> activeProfileIdFlowSnapshot() {
-    return activeProfileId();
-  }
-
-  Future<String> activeProfileId() async {
-    return await _getString(_ACTIVE_PROFILE_ID) ?? DEFAULT_PROFILE_ID;
-  }
-
-  Future<List<String>> profileListFlowSnapshot() async {
-    final profileListJson = await _getString(_PROFILE_LIST) ?? '[]';
-    final profileList = (jsonDecode(profileListJson) as List<Object?>)
-        .map((profileId) => profileId as String)
-        .toList();
-    if (!profileList.contains(DEFAULT_PROFILE_ID)) {
-      profileList.insert(0, DEFAULT_PROFILE_ID);
-    }
-    return profileList;
-  }
-
-  Future<core_proxy.PreferenceProfile> getUserPreferencesFlowSnapshot({
-    String profileId = '',
-  }) async {
-    final targetProfileId = profileId.isEmpty
-        ? await activeProfileId()
-        : profileId;
-    return getProfile(profileId: targetProfileId);
-  }
-
-  Future<Map<String, bool>> categoryLockStatusFlowSnapshot() async {
-    return <String, bool>{
-      'birthDate': await _booleanValue(_BIRTH_DATE_LOCKED, false),
-      'gender': await _booleanValue(_GENDER_LOCKED, false),
-      'personality': await _booleanValue(_PERSONALITY_LOCKED, false),
-      'identity': await _booleanValue(_IDENTITY_LOCKED, false),
-      'occupation': await _booleanValue(_OCCUPATION_LOCKED, false),
-      'aiStyle': await _booleanValue(_AI_STYLE_LOCKED, false),
-    };
-  }
-
-  Future<bool> isCategoryLocked({required String category}) async {
-    final lockStatusMap = await categoryLockStatusFlowSnapshot();
-    return lockStatusMap[category] ?? false;
-  }
-
-  Future<void> setCategoryLocked({
-    required String category,
-    required bool locked,
-  }) async {
-    switch (category) {
-      case 'birthDate':
-        await _setString(_BIRTH_DATE_LOCKED, locked.toString());
-      case 'gender':
-        await _setString(_GENDER_LOCKED, locked.toString());
-      case 'personality':
-        await _setString(_PERSONALITY_LOCKED, locked.toString());
-      case 'identity':
-        await _setString(_IDENTITY_LOCKED, locked.toString());
-      case 'occupation':
-        await _setString(_OCCUPATION_LOCKED, locked.toString());
-      case 'aiStyle':
-        await _setString(_AI_STYLE_LOCKED, locked.toString());
-    }
-  }
-
-  Future<String> createProfile({
-    required String name,
-    bool isDefault = false,
-  }) async {
-    final profileId = isDefault
-        ? DEFAULT_PROFILE_ID
-        : 'profile_${DateTime.now().millisecondsSinceEpoch}';
-    final newProfile = core_proxy.PreferenceProfile(
-      id: profileId,
-      name: name,
-      birthDate: 0,
-      gender: '',
-      personality: '',
-      identity: '',
-      occupation: '',
-      aiStyle: '',
-      isInitialized: false,
-    );
-    final currentListJson = await _getString(_PROFILE_LIST) ?? '[]';
-    final currentList = (jsonDecode(currentListJson) as List<Object?>)
-        .map((profileId) => profileId as String)
-        .toList();
-    if (!currentList.contains(profileId)) {
-      currentList.add(profileId);
-    }
-    await _setString(_PROFILE_LIST, jsonEncode(currentList));
-    await updateProfile(newProfile);
-    await _setString(_BIRTH_DATE_LOCKED, true.toString());
-    return profileId;
-  }
-
-  Future<void> setActiveProfile({required String profileId}) {
-    return _setString(_ACTIVE_PROFILE_ID, profileId);
-  }
-
-  Future<core_proxy.PreferenceProfile> getProfile({
-    required String profileId,
-  }) async {
-    final profileJson = await _getString(_profileKey(profileId));
-    if (profileJson != null) {
-      return core_proxy.PreferenceProfile.fromJson(
-        Map<String, Object?>.from(jsonDecode(profileJson) as Map),
-      );
-    }
-    return _createDefaultProfile(profileId);
-  }
-
-  Future<void> updateProfile(core_proxy.PreferenceProfile profile) {
-    return _setString(_profileKey(profile.id), jsonEncode(profile.toJson()));
-  }
-
-  Future<core_proxy.PreferenceProfile> updateProfileCategory({
-    String profileId = '',
-    int? birthDate,
-    String? gender,
-    String? personality,
-    String? identity,
-    String? occupation,
-    String? aiStyle,
-  }) async {
-    final targetProfileId = profileId.isEmpty
-        ? await activeProfileId()
-        : profileId;
-    final currentProfile = await getProfile(profileId: targetProfileId);
-    final updatedProfile = core_proxy.PreferenceProfile(
-      id: currentProfile.id,
-      name: currentProfile.name,
-      birthDate:
-          birthDate != null && !(await isCategoryLocked(category: 'birthDate'))
-          ? birthDate
-          : currentProfile.birthDate,
-      gender: gender != null && !(await isCategoryLocked(category: 'gender'))
-          ? gender
-          : currentProfile.gender,
-      personality:
-          personality != null &&
-              !(await isCategoryLocked(category: 'personality'))
-          ? personality
-          : currentProfile.personality,
-      identity:
-          identity != null && !(await isCategoryLocked(category: 'identity'))
-          ? identity
-          : currentProfile.identity,
-      occupation:
-          occupation != null &&
-              !(await isCategoryLocked(category: 'occupation'))
-          ? occupation
-          : currentProfile.occupation,
-      aiStyle: aiStyle != null && !(await isCategoryLocked(category: 'aiStyle'))
-          ? aiStyle
-          : currentProfile.aiStyle,
-      isInitialized: true,
-    );
-    await updateProfile(updatedProfile);
-    return updatedProfile;
-  }
 
   Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot({
     String? characterCardId,
@@ -1207,19 +1028,6 @@ class UserPreferencesManager {
     }
   }
 
-  Future<String?> _stringValue(String key, {String? prefix}) {
-    return _getString(_keyWithPrefix(key, prefix));
-  }
-
-  Future<bool> _booleanValue(
-    String key,
-    bool defaultValue, {
-    String? prefix,
-  }) async {
-    final value = await _stringValue(key, prefix: prefix);
-    return value == null ? defaultValue : _decodeBool(value);
-  }
-
   Future<Map<String, String>> _getStrings(List<String> keys) {
     return _clients.preferencesPreferenceStorageManager.getPreferences(
       fileName: _fileName,
@@ -1241,20 +1049,6 @@ class UserPreferencesManager {
     );
   }
 
-  Future<String?> _getString(String key) {
-    return _clients.preferencesPreferenceStorageManager.getPreference(
-      fileName: _fileName,
-      key: key,
-    );
-  }
-
-  Future<void> _setString(String key, String value) {
-    return _clients.preferencesPreferenceStorageManager.setPreference(
-      fileName: _fileName,
-      key: key,
-      value: value,
-    );
-  }
 }
 
 bool _decodeBool(String value) {
@@ -1312,22 +1106,3 @@ bool _containsThemePrefix(Map<String, String> preferences, String prefix) {
   return false;
 }
 
-String _profileKey(String profileId) {
-  return 'profile_$profileId';
-}
-
-core_proxy.PreferenceProfile _createDefaultProfile(String profileId) {
-  return core_proxy.PreferenceProfile(
-    id: profileId,
-    name: profileId == UserPreferencesManager.DEFAULT_PROFILE_ID
-        ? 'Default'
-        : profileId,
-    birthDate: 0,
-    gender: '',
-    personality: '',
-    identity: '',
-    occupation: '',
-    aiStyle: '',
-    isInitialized: false,
-  );
-}

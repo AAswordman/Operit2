@@ -132,14 +132,14 @@ impl ChatServiceCore {
         }
     }
 
-    pub fn cancelCurrentMessage(&mut self) {
+    pub async fn cancelCurrentMessage(&mut self) {
         if let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() {
-            self.messageProcessingDelegate.cancelMessage(chatId);
+            self.messageProcessingDelegate.cancelMessage(chatId).await;
         }
     }
 
-    pub fn cancelMessage(&mut self, chatId: String) {
-        self.messageProcessingDelegate.cancelMessage(chatId);
+    pub async fn cancelMessage(&mut self, chatId: String) {
+        self.messageProcessingDelegate.cancelMessage(chatId).await;
     }
 
     pub fn updateUserMessage(&mut self, message: String) {
@@ -265,7 +265,6 @@ impl ChatServiceCore {
                     None,
                     None,
                     None,
-                    None,
                 )
                 .await;
             self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
@@ -368,7 +367,6 @@ impl ChatServiceCore {
                     None,
                     None,
                     false,
-                    None,
                     None,
                     None,
                     None,

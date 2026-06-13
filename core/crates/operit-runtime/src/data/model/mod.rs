@@ -78,8 +78,6 @@ pub mod OpenAIModels;
 pub mod OperitChatArchive;
 #[path = "OperitNodeInfo.rs"]
 pub mod OperitNodeInfo;
-#[path = "PreferenceProfile.rs"]
-pub mod PreferenceProfile;
 #[path = "PromptFunctionType.rs"]
 pub mod PromptFunctionType;
 #[path = "PromptTag.rs"]
@@ -138,7 +136,6 @@ pub use ModelParameter::*;
 pub use OpenAIModels::*;
 pub use OperitChatArchive::*;
 pub use OperitNodeInfo::*;
-pub use PreferenceProfile::*;
 pub use PromptFunctionType::*;
 pub use PromptTag::*;
 pub use SerializableColorScheme::*;

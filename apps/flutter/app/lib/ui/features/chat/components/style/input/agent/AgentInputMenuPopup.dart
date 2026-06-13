@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
-import '../../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
@@ -37,8 +36,6 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   bool _pluginsExpanded = false;
 
   GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
-  UserPreferencesManager get _userPreferencesManager =>
-      UserPreferencesManager(clients: _clients);
 
   @override
   void initState() {
@@ -82,17 +79,6 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   Future<_AgentInputMenuData> _loadSettings() async {
-    await _userPreferencesManager.initializeIfNeeded(
-      defaultProfileName: 'Operit',
-    );
-    final activeProfileId = await _userPreferencesManager.activeProfileId();
-    final profileIds = await _userPreferencesManager.profileListFlowSnapshot();
-    final profiles = <core_proxy.PreferenceProfile>[];
-    for (final profileId in profileIds) {
-      profiles.add(
-        await _userPreferencesManager.getProfile(profileId: profileId),
-      );
-    }
     _observedPluginChangeVersion = await _clients
         .pluginsToolpkgToolPkgInputMenuToggleBridge
         .changeVersion();
@@ -102,10 +88,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
           chatId: widget.currentChatId,
           featureStates: const <String, bool>{},
           runtime: 'main',
-        );
+    );
     return _AgentInputMenuData(
-      preferenceProfiles: profiles,
-      currentProfileId: activeProfileId,
       enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
           .enableMemoryAutoUpdateFlowSnapshot(),
       enableTools: await _clients.preferencesApiPreferences
@@ -127,14 +111,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     });
   }
 
-  Future<void> _selectMemory(String profileId) async {
-    await _userPreferencesManager.setActiveProfile(profileId: profileId);
-    await _clients.preferencesApiPreferences
-        .saveDisableUserPreferenceDescription(isDisabled: false);
-    _reloadSettings();
-  }
-
-  Future<void> _setMemoryProfileEnabled(
+  Future<void> _setUserMarkdownEnabled(
     _AgentInputMenuData data,
     bool enabled,
   ) async {
@@ -220,23 +197,16 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       children: <Widget>[
                         _SwitchRow(
                           icon: Icons.account_circle_outlined,
-                          title: '当前档案',
+                          title: '角色 USER.md',
                           value: data.disableUserPreferenceDescription
                               ? '关'
-                              : data.currentProfileName,
+                              : '开',
                           checked: !data.disableUserPreferenceDescription,
-                          onTap: () => _setMemoryProfileEnabled(
+                          onTap: () => _setUserMarkdownEnabled(
                             data,
                             data.disableUserPreferenceDescription,
                           ),
                         ),
-                        if (!data.disableUserPreferenceDescription)
-                          for (final profile in data.preferenceProfiles)
-                            _MemoryProfileRow(
-                              profile: profile,
-                              selected: profile.id == data.currentProfileId,
-                              onTap: () => _selectMemory(profile.id),
-                            ),
                         _SwitchRow(
                           icon: data.enableMemoryAutoUpdate
                               ? Icons.save
@@ -325,8 +295,6 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
 
 class _AgentInputMenuData {
   const _AgentInputMenuData({
-    required this.preferenceProfiles,
-    required this.currentProfileId,
     required this.enableMemoryAutoUpdate,
     required this.enableTools,
     required this.permissionLevel,
@@ -335,8 +303,6 @@ class _AgentInputMenuData {
     required this.pluginToggles,
   });
 
-  final List<core_proxy.PreferenceProfile> preferenceProfiles;
-  final String currentProfileId;
   final bool enableMemoryAutoUpdate;
   final bool enableTools;
   final String permissionLevel;
@@ -344,14 +310,8 @@ class _AgentInputMenuData {
   final bool disableUserPreferenceDescription;
   final List<core_proxy.InputMenuToggleDefinitionSnapshot> pluginToggles;
 
-  String get currentProfileName {
-    return preferenceProfiles
-        .singleWhere((profile) => profile.id == currentProfileId)
-        .name;
-  }
-
   String get memorySummary {
-    return disableUserPreferenceDescription ? '关' : currentProfileName;
+    return disableUserPreferenceDescription ? '关' : '角色';
   }
 
   _ToolPermissionMode get toolPermissionMode {
@@ -617,50 +577,6 @@ bool _materialIconNameHasStyle(String iconName) {
       iconName.endsWith('_outlined') ||
       iconName.endsWith('_rounded') ||
       iconName.endsWith('_sharp');
-}
-
-class _MemoryProfileRow extends StatelessWidget {
-  const _MemoryProfileRow({
-    required this.profile,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final core_proxy.PreferenceProfile profile;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(4),
-        onTap: onTap,
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: selected
-                ? colorScheme.primary.withValues(alpha: 0.10)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Text(
-            profile.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.bodySmall!.copyWith(
-              color: selected ? colorScheme.primary : colorScheme.onSurface,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _PermissionModeSelector extends StatelessWidget {

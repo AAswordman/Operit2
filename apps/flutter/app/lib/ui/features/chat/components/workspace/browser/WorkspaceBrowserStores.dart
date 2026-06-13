@@ -12,10 +12,23 @@ class WorkspaceBrowserStores {
   WorkspaceBrowserStores()
     : _clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()) {
     final runtimeStorage = _clients.repositoryRuntimeStorageRepository;
-    userscripts = WorkspaceUserscriptStore(runtimeStorage: runtimeStorage);
-    history = WorkspaceBrowserHistoryStore(runtimeStorage: runtimeStorage);
-    bookmarks = WorkspaceBrowserBookmarkStore(runtimeStorage: runtimeStorage);
-    downloads = WorkspaceBrowserDownloadStore(runtimeStorage: runtimeStorage);
+    userscripts = WorkspaceUserscriptStore(
+      runtimeStorage: runtimeStorage,
+      storagePath: runtimeStorage.webSessionUserscriptsStatePath,
+    );
+    history = WorkspaceBrowserHistoryStore(
+      runtimeStorage: runtimeStorage,
+      storagePath: runtimeStorage.webSessionBrowserHistoryPath,
+    );
+    bookmarks = WorkspaceBrowserBookmarkStore(
+      runtimeStorage: runtimeStorage,
+      storagePath: runtimeStorage.webSessionBrowserBookmarksPath,
+    );
+    downloads = WorkspaceBrowserDownloadStore(
+      runtimeStorage: runtimeStorage,
+      storagePath: runtimeStorage.webSessionBrowserDownloadsPath,
+      downloadDirectoryPath: runtimeStorage.webSessionBrowserDownloadFilesDirPath,
+    );
     userscriptRuntime = WorkspaceUserscriptRuntime(store: userscripts);
   }
 

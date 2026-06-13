@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:convert';
 
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -36,11 +37,12 @@ class WorkspaceBrowserHistoryStore {
   WorkspaceBrowserHistoryStore({
     required GeneratedRepositoryRuntimeStorageRepositoryCoreProxy
     runtimeStorage,
-  }) : _runtimeStorage = runtimeStorage;
-
-  static const String _storagePath = 'workspace_browser/history.json';
+    required Future<String> Function() storagePath,
+  }) : _runtimeStorage = runtimeStorage,
+       _storagePath = storagePath;
 
   final GeneratedRepositoryRuntimeStorageRepositoryCoreProxy _runtimeStorage;
+  final Future<String> Function() _storagePath;
   final List<WorkspaceBrowserHistoryItem> _items =
       <WorkspaceBrowserHistoryItem>[];
 
@@ -48,7 +50,7 @@ class WorkspaceBrowserHistoryStore {
       List<WorkspaceBrowserHistoryItem>.unmodifiable(_items);
 
   Future<void> load() async {
-    final content = await _runtimeStorage.readText(path: _storagePath);
+    final content = await _runtimeStorage.readText(path: await _storagePath());
     if (content == null) {
       return;
     }
@@ -100,8 +102,12 @@ class WorkspaceBrowserHistoryStore {
   }
 
   void _persist() {
-    _runtimeStorage.writeText(
-      path: _storagePath,
+    unawaited(_persistAsync());
+  }
+
+  Future<void> _persistAsync() async {
+    await _runtimeStorage.writeText(
+      path: await _storagePath(),
       content: jsonEncode(
         _items.map((item) => item.toJson()).toList(growable: false),
       ),

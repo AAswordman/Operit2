@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 mod bootstrap;
 mod chat_runtime;
+mod client_paths;
 mod cli;
 mod core_proxy;
 mod tui;

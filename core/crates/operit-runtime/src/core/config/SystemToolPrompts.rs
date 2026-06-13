@@ -1019,6 +1019,13 @@ fn memory_tools_en() -> SystemToolPromptCategory {
                 vec![
                     param("query", "string", "the search query", true, None),
                     param(
+                        "target_owner_key",
+                        "string",
+                        "optional, memory owner key such as character:<character-id> or shared:<shared-id>",
+                        false,
+                        None,
+                    ),
+                    param(
                         "folder_path",
                         "string",
                         "optional, the specific folder path to search within",
@@ -1067,6 +1074,13 @@ fn memory_tools_en() -> SystemToolPromptCategory {
                 "Retrieves a memory by exact title, including document content or selected chunks.",
                 vec![
                     param(
+                        "target_owner_key",
+                        "string",
+                        "required, memory owner key such as character:<character-id> or shared:<shared-id>",
+                        true,
+                        None,
+                    ),
+                    param(
                         "title",
                         "string",
                         "required, the exact title of the memory",
@@ -1105,7 +1119,7 @@ fn memory_tools_en() -> SystemToolPromptCategory {
             ),
         ],
     );
-    category.category_footer = "\nNote: The memory library and user personality profile may be updated automatically after the current reply is finalized. If you need to manage memories immediately or update user preferences, use the appropriate tools directly.".to_string();
+    category.category_footer = "\nNote: The graph memory library and USER.md may be updated automatically after the current reply is finalized. If you need to manage memories immediately or update USER.md, use the appropriate tools directly.".to_string();
     category
 }
 
@@ -1118,6 +1132,13 @@ fn memory_tools_cn() -> SystemToolPromptCategory {
                 "从记忆库中搜索相关记忆和文档分块。",
                 vec![
                     param("query", "string", "搜索查询", true, None),
+                    param(
+                        "target_owner_key",
+                        "string",
+                        "可选，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>",
+                        false,
+                        None,
+                    ),
                     param(
                         "folder_path",
                         "string",
@@ -1154,6 +1175,13 @@ fn memory_tools_cn() -> SystemToolPromptCategory {
                 "get_memory_by_title",
                 "通过精确标题检索记忆，可读取完整内容或文档分块。",
                 vec![
+                    param(
+                        "target_owner_key",
+                        "string",
+                        "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>",
+                        true,
+                        None,
+                    ),
                     param("title", "string", "必需, 记忆的精确标题", true, None),
                     param(
                         "chunk_index",
@@ -1175,7 +1203,7 @@ fn memory_tools_cn() -> SystemToolPromptCategory {
             ),
         ],
     );
-    category.category_footer = "\n注意：记忆库和用户人格画像可能会在当前回复完成后自动更新。若需要立即管理记忆或更新用户偏好，请直接使用对应工具。".to_string();
+    category.category_footer = "\n注意：图记忆库和 USER.md 可能会在当前回复完成后自动更新。若需要立即管理记忆或更新 USER.md，请直接使用对应工具。".to_string();
     category
 }
 

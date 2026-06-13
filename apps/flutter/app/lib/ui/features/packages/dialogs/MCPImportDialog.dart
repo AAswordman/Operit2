@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../theme/OperitFormStyles.dart';
 
 class MCPImportResult {
   const MCPImportResult({required this.message});
@@ -582,6 +583,7 @@ class _FormConfigPane extends StatelessWidget {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: type,
+            style: OperitFormStyles.dropdownTextStyle(context),
             decoration: const InputDecoration(labelText: '传输'),
             items: const <DropdownMenuItem<String>>[
               DropdownMenuItem<String>(

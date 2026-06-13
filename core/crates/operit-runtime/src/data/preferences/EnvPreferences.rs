@@ -1,8 +1,8 @@
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use operit_store::RuntimeStorePaths::default_data_dir;
 use std::collections::BTreeMap;
+use crate::util::OperitPaths;
 
 #[derive(Clone)]
 pub struct EnvPreferences {
@@ -15,7 +15,10 @@ impl EnvPreferences {
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(default_data_dir().join(Self::PREFS_FILE_NAME)),
+            dataStore: PreferencesDataStore::new(
+                OperitPaths::envPreferencesPath()
+                    .expect("env preferences path must be available"),
+            ),
         }
     }
 

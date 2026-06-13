@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../theme/OperitFormStyles.dart';
 import 'MCPToolRunDialog.dart';
 
 class MCPDetailsDialog extends StatefulWidget {
@@ -653,6 +654,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
                     initialValue: _type,
+                    style: OperitFormStyles.dropdownTextStyle(context),
                     decoration: const InputDecoration(
                       labelText: '传输',
                       border: OutlineInputBorder(),

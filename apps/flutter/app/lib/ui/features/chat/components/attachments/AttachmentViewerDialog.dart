@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../common/components/OperitDialog.dart';
+
 class ChatAttachment {
   const ChatAttachment({
     required this.id,
@@ -37,64 +39,24 @@ class AttachmentViewerDialog extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final theme = Theme.of(context);
     final isImage = attachment.mimeType.startsWith('image/');
     final isAudio = attachment.mimeType.startsWith('audio/');
     final isVideo = attachment.mimeType.startsWith('video/');
     final isTextLike = isTextLikeMimeType(attachment.mimeType);
 
-    return Dialog(
-      child: Material(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Icon(
-                      _attachmentIcon(
-                        isImage: isImage,
-                        isAudio: isAudio,
-                        isVideo: isVideo,
-                      ),
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        attachment.filename,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: onDismiss,
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                Divider(height: 17, color: theme.colorScheme.outlineVariant),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: _AttachmentPreview(
-                      attachment: attachment,
-                      isTextLike: isTextLike,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+    return OperitDialogScaffold(
+      title: attachment.filename,
+      icon: Icon(
+        _attachmentIcon(isImage: isImage, isAudio: isAudio, isVideo: isVideo),
+      ),
+      maxWidth: 720,
+      maxHeight: 520,
+      showCloseButton: true,
+      onClose: onDismiss,
+      child: SingleChildScrollView(
+        child: _AttachmentPreview(
+          attachment: attachment,
+          isTextLike: isTextLike,
         ),
       ),
     );

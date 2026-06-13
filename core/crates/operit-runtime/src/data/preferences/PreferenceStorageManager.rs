@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use operit_store::RuntimeStorePaths::default_data_dir;
+use crate::util::OperitPaths;
 
 pub struct PreferenceStorageManager {}
 
@@ -112,7 +112,10 @@ impl PreferenceStorageManager {
 }
 
 fn preferencesDataStore(fileName: &str) -> PreferencesDataStore {
-    PreferencesDataStore::new(default_data_dir().join(fileName))
+    PreferencesDataStore::new(
+        OperitPaths::customPreferencePath(fileName)
+            .expect("custom preference path must be available"),
+    )
 }
 
 fn normalizePreferenceFileName(fileName: &str) -> Result<String, PreferencesDataStoreError> {

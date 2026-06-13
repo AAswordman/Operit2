@@ -87,8 +87,9 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
         let localAppData = env::var_os("LOCALAPPDATA")
             .ok_or_else(|| HostError::new("LOCALAPPDATA is required for managed runtime storage"))?;
         let dir = PathBuf::from(localAppData)
+            .join("app.operit")
             .join("Operit2")
-            .join("managed_runtime");
+            .join("managed-runtime");
         std::fs::create_dir_all(&dir)?;
         Ok(dir.to_string_lossy().to_string())
     }

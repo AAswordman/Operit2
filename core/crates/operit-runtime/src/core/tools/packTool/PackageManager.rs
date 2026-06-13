@@ -35,7 +35,6 @@ const ENABLED_PACKAGES_KEY: &str = "imported_packages";
 const DISABLED_PACKAGES_KEY: &str = "disabled_packages";
 const BUNDLED_EXTERNAL_IMPORTS_KEY: &str = "bundled_external_imports";
 const TOOLPKG_SUBPACKAGE_STATES_KEY: &str = "toolpkg_subpackage_states";
-const TOOLPKG_CACHE_DIR: &str = "toolpkg_cache";
 const TOOLPKG_CACHE_SIGNATURE_FILE: &str = ".toolpkg-cache-signature";
 const PACKAGE_MANAGER_LOG_TAG: &str = "ToolPkg";
 
@@ -318,7 +317,7 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn toolPkgCacheRootDir(&self) -> PathBuf {
-        let dir = self.storePaths.root_dir().join(TOOLPKG_CACHE_DIR);
+        let dir = self.storePaths.toolpkg_cache_dir();
         if !dir.exists() {
             let _ = fs::create_dir_all(&dir);
         }

@@ -43,7 +43,6 @@ pub struct PrepareConversationHistoryRequest {
     pub use_tool_call_api: bool,
     pub chat_model_has_direct_image: bool,
     pub tool_exposure_mode: ToolExposureMode,
-    pub preference_profile_id_override: Option<String>,
     pub active_prompt_metadata: BTreeMap<String, String>,
     pub user_preferences_text: String,
     pub intro_prompt: String,
@@ -755,7 +754,7 @@ fn build_final_system_prompt(
     final_prompt.push_str(system_prompt);
     final_prompt.push_str(waifu_rules_text);
     if !disable_user_preference_description && !preferences_text.is_empty() {
-        final_prompt.push_str("\n\nUser preference description: ");
+        final_prompt.push_str("\n\nUSER.md:\n");
         final_prompt.push_str(preferences_text);
     }
     final_prompt

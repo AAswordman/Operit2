@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, CoroutineScope, PreferencesDataStore, PreferencesDataStoreError,
@@ -48,6 +48,7 @@ pub enum ChatHistoryManagerError {
 
 pub type ChatHistoryManagerResult<T> = Result<T, ChatHistoryManagerError>;
 
+#[derive(Clone)]
 pub struct ChatHistoryManager {
     database: Arc<AppDatabase>,
     chatDao: ChatDao,
@@ -59,6 +60,8 @@ pub struct ChatHistoryManager {
     _chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
     pub chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
 }
+
+static INSTANCE: Mutex<Option<ChatHistoryManager>> = Mutex::new(None);
 
 pub struct PreferencesKeys;
 
@@ -77,16 +80,28 @@ struct ImportCounters {
 
 impl ChatHistoryManager {
     pub fn getInstance(paths: RuntimeStorePaths) -> ChatHistoryManagerResult<Self> {
-        Self::new(paths)
+        let mut instance = INSTANCE
+            .lock()
+            .expect("ChatHistoryManager.INSTANCE mutex must not be poisoned");
+        if let Some(manager) = instance.as_ref() {
+            return Ok(manager.clone());
+        }
+        let manager = Self::create(paths)?;
+        *instance = Some(manager.clone());
+        Ok(manager)
     }
 
     pub fn default() -> ChatHistoryManagerResult<Self> {
-        Self::new(RuntimeStorePaths::default())
+        Self::getInstance(RuntimeStorePaths::default())
     }
 
     pub fn new(paths: RuntimeStorePaths) -> ChatHistoryManagerResult<Self> {
+        Self::getInstance(paths)
+    }
+
+    fn create(paths: RuntimeStorePaths) -> ChatHistoryManagerResult<Self> {
         let currentChatIdDataStore =
-            PreferencesDataStore::new(paths.root_dir().join("current_chat_id.preferences.json"));
+            PreferencesDataStore::new(paths.current_chat_id_preferences_path());
         let database = AppDatabase::getDatabase(paths.clone())?;
         let chatDao = database.chatDao();
         let messageDao = database.messageDao();

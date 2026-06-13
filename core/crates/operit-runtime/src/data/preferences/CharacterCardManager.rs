@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::data::model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryProfileBindingMode,
-    CharacterCardToolAccessConfig, OperitAttachedTagPayload, OperitCharacterCardPayload,
+    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
+    CharacterSharedMemoryMount, OperitAttachedTagPayload, OperitCharacterCardPayload,
     OperitTavernExtension, TavernCharacterCard, TavernCharacterData, TavernExtensions,
 };
 use crate::data::model::PromptFunctionType::PromptFunctionType;
@@ -58,9 +58,7 @@ impl CharacterCardManager {
 
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                paths.root_dir().join("character_cards.preferences.json"),
-            ),
+            dataStore: PreferencesDataStore::new(paths.character_cards_preferences_path()),
             tagManager: PromptTagManager::new(paths),
         }
     }
@@ -175,19 +173,10 @@ impl CharacterCardManager {
                     "character_card_{id}_chat_model_id"
                 )))
                 .cloned(),
-            memoryProfileBindingMode: preferences
-                .get(&stringPreferencesKey(&format!(
-                    "character_card_{id}_memory_profile_binding_mode"
-                )))
-                .map(|value| CharacterCardMemoryProfileBindingMode::normalize(Some(value)))
-                .unwrap_or_else(|| {
-                    CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL.to_string()
-                }),
-            memoryProfileId: preferences
-                .get(&stringPreferencesKey(&format!(
-                    "character_card_{id}_memory_profile_id"
-                )))
-                .cloned(),
+            sharedMemoryMounts: readJsonTypedVec(
+                preferences,
+                &format!("character_card_{id}_shared_memory_mounts"),
+            ),
             toolAccessConfig: preferences
                 .get(&stringPreferencesKey(&format!(
                     "character_card_{id}_tool_access_config_json"
@@ -448,13 +437,7 @@ impl CharacterCardManager {
                     .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
-                memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
-                    &card.memoryProfileBindingMode,
-                )),
-                memoryProfileId: card
-                    .memoryProfileId
-                    .clone()
-                    .filter(|value| !value.trim().is_empty()),
+                sharedMemoryMounts: normalizeSharedMemoryMounts(card.sharedMemoryMounts.clone()),
                 toolAccessConfig: card.toolAccessConfig.normalized(),
                 ..card
             };
@@ -599,13 +582,7 @@ impl CharacterCardManager {
                     .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
-                memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
-                    &card.memoryProfileBindingMode,
-                )),
-                memoryProfileId: card
-                    .memoryProfileId
-                    .clone()
-                    .filter(|value| !value.trim().is_empty()),
+                sharedMemoryMounts: normalizeSharedMemoryMounts(card.sharedMemoryMounts.clone()),
                 toolAccessConfig: Some(card.toolAccessConfig.normalized()),
             },
         };
@@ -666,13 +643,7 @@ impl CharacterCardManager {
                 .chatModelId
                 .clone()
                 .filter(|value| !value.trim().is_empty()),
-            memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::normalize(Some(
-                &payload.memoryProfileBindingMode,
-            )),
-            memoryProfileId: payload
-                .memoryProfileId
-                .clone()
-                .filter(|value| !value.trim().is_empty()),
+            sharedMemoryMounts: normalizeSharedMemoryMounts(payload.sharedMemoryMounts.clone()),
             toolAccessConfig: payload
                 .toolAccessConfig
                 .clone()
@@ -805,9 +776,7 @@ impl CharacterCardManager {
             marks: marks.trim().to_string(),
             chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string(),
             chatModelId: None,
-            memoryProfileBindingMode: CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL
-                .to_string(),
-            memoryProfileId: None,
+            sharedMemoryMounts: Vec::new(),
             toolAccessConfig: CharacterCardToolAccessConfig::default(),
             isDefault: false,
             createdAt: now,
@@ -964,19 +933,10 @@ impl CharacterCardManager {
             )));
         }
         preferences.set(
-            &stringPreferencesKey(&format!("character_card_{id}_memory_profile_binding_mode")),
-            card.memoryProfileBindingMode.clone(),
+            &stringPreferencesKey(&format!("character_card_{id}_shared_memory_mounts")),
+            serde_json::to_string(&normalizeSharedMemoryMounts(card.sharedMemoryMounts.clone()))
+                .expect("shared memory mounts must serialize"),
         );
-        if let Some(value) = &card.memoryProfileId {
-            preferences.set(
-                &stringPreferencesKey(&format!("character_card_{id}_memory_profile_id")),
-                value.clone(),
-            );
-        } else {
-            preferences.remove(&stringPreferencesKey(&format!(
-                "character_card_{id}_memory_profile_id"
-            )));
-        }
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_tool_access_config_json")),
             serde_json::to_string(&card.toolAccessConfig.normalized())
@@ -1043,12 +1003,10 @@ impl CharacterCardManager {
             "character_card_{id}_chat_model_id"
         )));
         preferences.set(
-            &stringPreferencesKey(&format!("character_card_{id}_memory_profile_binding_mode")),
-            CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL.to_string(),
+            &stringPreferencesKey(&format!("character_card_{id}_shared_memory_mounts")),
+            serde_json::to_string(&Vec::<CharacterSharedMemoryMount>::new())
+                .expect("shared memory mounts must serialize"),
         );
-        preferences.remove(&stringPreferencesKey(&format!(
-            "character_card_{id}_memory_profile_id"
-        )));
         preferences.remove(&stringPreferencesKey(&format!(
             "character_card_{id}_tool_access_config_json"
         )));
@@ -1211,6 +1169,35 @@ fn readJsonVec(preferences: &Preferences, key: &str) -> Vec<String> {
         .get(&stringPreferencesKey(key))
         .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
         .unwrap_or_default()
+}
+
+fn readJsonTypedVec<T>(preferences: &Preferences, key: &str) -> Vec<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    preferences
+        .get(&stringPreferencesKey(key))
+        .and_then(|raw| serde_json::from_str::<Vec<T>>(raw).ok())
+        .unwrap_or_default()
+}
+
+#[allow(non_snake_case)]
+fn normalizeSharedMemoryMounts(
+    mounts: Vec<CharacterSharedMemoryMount>,
+) -> Vec<CharacterSharedMemoryMount> {
+    let mut result = Vec::new();
+    for mount in mounts {
+        let sharedMemoryId = mount.sharedMemoryId.trim();
+        if sharedMemoryId.is_empty() || result.iter().any(|entry: &CharacterSharedMemoryMount| entry.sharedMemoryId == sharedMemoryId) {
+            continue;
+        }
+        result.push(CharacterSharedMemoryMount {
+            sharedMemoryId: sharedMemoryId.to_string(),
+            readable: mount.readable,
+            writable: mount.writable,
+        });
+    }
+    result
 }
 
 #[allow(non_snake_case)]

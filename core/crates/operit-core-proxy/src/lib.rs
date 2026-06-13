@@ -140,7 +140,8 @@ fn core_event_stream_channel() -> (
     tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     CoreEventStream,
 ) {
-    tokio::sync::mpsc::unbounded_channel()
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    (sender, CoreEventStream::new(receiver))
 }
 
 fn core_text_event_stream<S>(

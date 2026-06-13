@@ -637,6 +637,9 @@ ThemeData _themeData(
     scaffoldBackgroundColor: Colors.transparent,
     canvasColor: colorScheme.surface,
     textTheme: textTheme,
+    inputDecorationTheme: _inputDecorationTheme(colorScheme, textTheme),
+    dropdownMenuTheme: _dropdownMenuTheme(colorScheme, textTheme),
+    dialogTheme: _dialogTheme(colorScheme, textTheme),
     // ignore: deprecated_member_use
     progressIndicatorTheme: const ProgressIndicatorThemeData(year2023: false),
     appBarTheme: AppBarTheme(
@@ -657,6 +660,98 @@ ThemeData _themeData(
     fontFamily: fontFamily,
     fontFamilyFallback: fontFamilyFallback,
     useMaterial3: true,
+  );
+}
+
+DropdownMenuThemeData _dropdownMenuTheme(
+  ColorScheme colorScheme,
+  TextTheme textTheme,
+) {
+  return DropdownMenuThemeData(
+    textStyle: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface),
+  );
+}
+
+DialogThemeData _dialogTheme(ColorScheme colorScheme, TextTheme textTheme) {
+  return DialogThemeData(
+    backgroundColor: colorScheme.surfaceContainerHigh,
+    surfaceTintColor: Colors.transparent,
+    elevation: 6,
+    shadowColor: colorScheme.shadow.withValues(alpha: 0.18),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+    clipBehavior: Clip.antiAlias,
+    insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+    actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+    titleTextStyle: textTheme.headlineSmall?.copyWith(
+      color: colorScheme.onSurface,
+      fontWeight: FontWeight.w700,
+    ),
+    contentTextStyle: textTheme.bodyMedium?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+    ),
+    iconColor: colorScheme.primary,
+    barrierColor: Colors.black.withValues(alpha: 0.38),
+  );
+}
+
+InputDecorationTheme _inputDecorationTheme(
+  ColorScheme colorScheme,
+  TextTheme textTheme,
+) {
+  final radius = BorderRadius.circular(8);
+  final baseBorder = OutlineInputBorder(
+    borderRadius: radius,
+    borderSide: BorderSide(
+      color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+      width: 1,
+    ),
+  );
+  final disabledBorder = OutlineInputBorder(
+    borderRadius: radius,
+    borderSide: BorderSide(
+      color: colorScheme.outlineVariant.withValues(alpha: 0.36),
+      width: 1,
+    ),
+  );
+  final focusedBorder = OutlineInputBorder(
+    borderRadius: radius,
+    borderSide: BorderSide(color: colorScheme.primary, width: 1.4),
+  );
+  final errorBorder = OutlineInputBorder(
+    borderRadius: radius,
+    borderSide: BorderSide(color: colorScheme.error, width: 1.2),
+  );
+
+  return InputDecorationTheme(
+    filled: true,
+    fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
+    isDense: true,
+    contentPadding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+    border: baseBorder,
+    enabledBorder: baseBorder,
+    disabledBorder: disabledBorder,
+    focusedBorder: focusedBorder,
+    errorBorder: errorBorder,
+    focusedErrorBorder: errorBorder.copyWith(
+      borderSide: BorderSide(color: colorScheme.error, width: 1.4),
+    ),
+    labelStyle: textTheme.labelSmall?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+      fontWeight: FontWeight.w400,
+    ),
+    floatingLabelStyle: textTheme.labelSmall?.copyWith(
+      color: colorScheme.primary,
+      fontWeight: FontWeight.w500,
+    ),
+    hintStyle: textTheme.bodyMedium?.copyWith(
+      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.76),
+    ),
+    helperStyle: textTheme.bodySmall?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+    ),
+    errorStyle: textTheme.bodySmall?.copyWith(color: colorScheme.error),
+    prefixIconColor: colorScheme.onSurfaceVariant,
+    suffixIconColor: colorScheme.onSurfaceVariant,
   );
 }
 

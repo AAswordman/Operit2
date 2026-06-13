@@ -12,9 +12,7 @@ use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
-use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
@@ -581,12 +579,8 @@ fn parse_remote_url_token_save(
     Ok((url, token.ok_or_else(|| usage.to_string())?, save_name))
 }
 
-fn link_sessions_path() -> PathBuf {
-    ApiPreferences::data_dir().join("link_sessions.json")
-}
-
 fn load_link_sessions() -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
-    let path = link_sessions_path();
+    let path = crate::client_paths::link_sessions_path();
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
@@ -619,7 +613,7 @@ pub(crate) fn link_request_id() -> String {
 }
 
 fn save_link_session(name: &str, record: PairedRemoteSessionRecord) -> Result<(), String> {
-    let path = link_sessions_path();
+    let path = crate::client_paths::link_sessions_path();
     let parent = path
         .parent()
         .ok_or_else(|| format!("invalid link session path: {}", path.display()))?;

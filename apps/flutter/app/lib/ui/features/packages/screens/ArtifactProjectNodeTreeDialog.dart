@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitGlassSurface.dart';
 
 class ArtifactProjectNodeTreeDialog extends StatelessWidget {
@@ -22,79 +23,46 @@ class ArtifactProjectNodeTreeDialog extends StatelessWidget {
     final viewport = MediaQuery.sizeOf(context);
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 760,
-          maxHeight: viewport.height * 0.88,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 8, 10),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          project.projectDisplayName.trim().isEmpty
-                              ? project.projectId
-                              : project.projectDisplayName,
-                          style: textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: <Widget>[
-                            _SmallChip(text: _artifactTypeLabel(project.type)),
-                            _SmallChip(text: '${project.nodes.length} 节点'),
-                            _SmallChip(text: '${project.downloads} 下载'),
-                            if (project.likes > 0)
-                              _SmallChip(text: '${project.likes} 喜欢'),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
-                    tooltip: '关闭',
-                  ),
-                ],
-              ),
-            ),
-            if (project.projectDescription.trim().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                child: Text(
-                  project.projectDescription,
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            const Divider(height: 1),
-            Flexible(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                child: _ArtifactProjectTreeCanvas(
-                  project: project,
-                  onSelectNode: onSelectNode,
-                ),
+    return OperitDialogScaffold(
+      title: project.projectDisplayName.trim().isEmpty
+          ? project.projectId
+          : project.projectDisplayName,
+      maxWidth: 760,
+      maxHeight: viewport.height * 0.88,
+      showCloseButton: true,
+      onClose: () => Navigator.of(context).pop(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              _SmallChip(text: _artifactTypeLabel(project.type)),
+              _SmallChip(text: '${project.nodes.length} 节点'),
+              _SmallChip(text: '${project.downloads} 下载'),
+              if (project.likes > 0) _SmallChip(text: '${project.likes} 喜欢'),
+            ],
+          ),
+          if (project.projectDescription.trim().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            Text(
+              project.projectDescription,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
           ],
-        ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: _ArtifactProjectTreeCanvas(
+              project: project,
+              onSelectNode: onSelectNode,
+            ),
+          ),
+        ],
       ),
     );
   }

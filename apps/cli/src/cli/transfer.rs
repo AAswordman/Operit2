@@ -15,10 +15,10 @@ pub(super) async fn run_export_command(core: &mut CliCore, args: &[String]) -> R
         "memory" => {
             let path = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 export memory <path> [profile-id]".to_string())?;
-            let profileId = memory_profile_arg_for_transfer(core, args.get(2)).await?;
+                .ok_or_else(|| "usage: operit2 export memory <path> <owner-key>".to_string())?;
+            let ownerKey = memory_owner_key_arg_for_transfer(args.get(2))?;
             let content = core
-                .repository_memory_repository(&profileId)
+                .repository_memory_repository(&ownerKey)
                 .exportMemoriesToJson()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -55,14 +55,14 @@ pub(super) async fn run_import_command(core: &mut CliCore, args: &[String]) -> R
     match args[0].as_str() {
         "memory" => {
             let path = args.get(1).ok_or_else(|| {
-                "usage: operit2 import memory <path> <SKIP|UPDATE|CREATE_NEW> [profile-id]"
+                "usage: operit2 import memory <path> <SKIP|UPDATE|CREATE_NEW> <owner-key>"
                     .to_string()
             })?;
             let strategy = parse_import_strategy(args.get(2))?;
-            let profileId = memory_profile_arg_for_transfer(core, args.get(3)).await?;
+            let ownerKey = memory_owner_key_arg_for_transfer(args.get(3))?;
             let content = read_text(path)?;
             let result = core
-                .repository_memory_repository(&profileId)
+                .repository_memory_repository(&ownerKey)
                 .importMemoriesFromJson(content, strategy)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -152,24 +152,17 @@ async fn import_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
     Ok(())
 }
 
-async fn memory_profile_arg_for_transfer(
-    core: &mut CliCore,
-    value: Option<&String>,
-) -> Result<String, String> {
-    match value {
-        Some(profileId) => Ok(profileId.clone()),
-        None => core
-            .preferences_user_preferences_manager()
-            .activeProfileId()
-            .await
-            .map_err(|error| error.to_string()),
-    }
+fn memory_owner_key_arg_for_transfer(value: Option<&String>) -> Result<String, String> {
+    value
+        .map(|ownerKey| ownerKey.trim().to_string())
+        .filter(|ownerKey| !ownerKey.is_empty())
+        .ok_or_else(|| "owner-key is required, use character:<id> or shared:<id>".to_string())
 }
 
 fn parse_import_strategy(value: Option<&String>) -> Result<ImportStrategy, String> {
     match value
         .ok_or_else(|| {
-            "usage: operit2 import memory <path> <SKIP|UPDATE|CREATE_NEW> [profile-id]".to_string()
+            "usage: operit2 import memory <path> <SKIP|UPDATE|CREATE_NEW> <owner-key>".to_string()
         })?
         .as_str()
     {
@@ -205,13 +198,13 @@ fn write_bytes(path: &str, content: &[u8]) -> Result<(), String> {
 }
 
 fn print_export_usage() {
-    println!("operit2 cli export memory <path> [profile-id]");
+    println!("operit2 cli export memory <path> <owner-key>");
     println!("operit2 cli export chat <path>");
     println!("operit2 cli export snapshot <path>");
 }
 
 fn print_import_usage() {
-    println!("operit2 cli import memory <path> <SKIP|UPDATE|CREATE_NEW> [profile-id]");
+    println!("operit2 cli import memory <path> <SKIP|UPDATE|CREATE_NEW> <owner-key>");
     println!("operit2 cli import chat <path>");
     println!("operit2 cli import snapshot <path>");
 }

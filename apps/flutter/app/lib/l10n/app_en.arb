@@ -710,15 +710,10 @@
   "settingsCharactersChatModelBindingMode": "Chat model binding mode",
   "settingsCharactersChatModelConfigId": "Chat model config ID",
   "settingsCharactersChatModelIndex": "Chat model index",
-  "settingsCharactersMemoryBindingMode": "Memory binding mode",
-  "settingsCharactersMemoryProfileId": "Memory profile ID",
   "settingsCharactersToolAccess": "Tool permission mode",
   "settingsCharactersChatModelFollowGlobal": "Follow global model",
   "settingsCharactersChatModelFixedConfig": "Use fixed model config",
   "settingsCharactersChatModelConfig": "Model config",
-  "settingsCharactersMemoryProfileFollowGlobal": "Follow global memory",
-  "settingsCharactersMemoryProfileFixedProfile": "Use fixed memory profile",
-  "settingsCharactersMemoryProfile": "Memory profile",
   "settingsCharactersToolAccessFollowGlobal": "Follow global tool permissions",
   "settingsCharactersToolAccessCustom": "Custom character tool permissions",
   "settingsCharactersToolAccessEmpty": "Enabled with no selected tools",
@@ -750,22 +745,42 @@
   "settingsCharactersAllowedSkills": "Allowed skills",
   "settingsCharactersAllowedMcpServers": "Allowed MCP servers",
   "settingsCharactersGroupMembersTitle": "Group characters",
-  "settingsCharactersPreferenceProfilesSection": "User preferences & memory",
-  "settingsCharactersCreatePreferenceProfile": "New user preference profile",
-  "settingsCharactersEditPreferenceProfile": "Edit user preference profile",
-  "settingsCharactersPreferenceProfileName": "Profile name",
-  "settingsCharactersPreferenceBirthDate": "Birth date timestamp",
-  "settingsCharactersPreferenceGender": "Gender",
-  "settingsCharactersPreferencePersonality": "Personality",
-  "settingsCharactersPreferenceIdentity": "Identity",
-  "settingsCharactersPreferenceOccupation": "Occupation",
-  "settingsCharactersPreferenceAiStyle": "AI interaction style",
+    "settingsCharactersOpenMemoryGraph": "View memory graph",
+    "settingsCharactersMemoryGraphTitle": "{profileName}'s memory graph",
+    "@settingsCharactersMemoryGraphTitle": {
+      "placeholders": {
+        "profileName": {
+          "type": "String"
+        }
+      }
+    },
+    "settingsCharactersMemoryGraphEmpty": "No memory nodes yet",
+    "settingsCharactersMemoryGraphStats": "{nodes} nodes · {edges} links",
+    "@settingsCharactersMemoryGraphStats": {
+      "placeholders": {
+        "nodes": {
+          "type": "int"
+        },
+        "edges": {
+          "type": "int"
+        }
+      }
+    },
+    "settingsCharactersMemoryGraphLink": "Memory link",
+    "settingsCharactersEditUserMarkdown": "Edit USER.md",
+  "settingsCharactersUserMarkdownTitle": "{profileName}'s USER.md",
+  "@settingsCharactersUserMarkdownTitle": {
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersUserMarkdownSaved": "USER.md saved",
   "settingsCharactersMemoryAutoUpdate": "Auto-update memory preferences",
   "settingsCharactersMemoryAutoUpdateDescription": "Allow AI to update user preferences and long-term memory from conversations.",
   "settingsCharactersPreferenceDescription": "Send user preferences to model",
   "settingsCharactersPreferenceDescriptionSubtitle": "Include the active preference profile in chat prompts.",
-  "settingsCharactersPreferenceLocksSection": "Preference field locks",
-  "settingsCharactersPreferenceLockDescription": "When locked, automatic memory updates will not rewrite this field.",
   "settingsCharactersCardsSection": "Character cards",
   "settingsCharactersGroupsSection": "Groups",
   "settingsCharactersGroupMembers": "{count} members",

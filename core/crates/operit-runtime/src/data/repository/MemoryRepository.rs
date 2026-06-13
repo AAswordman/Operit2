@@ -1,18 +1,20 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::data::model::Memory::{Memory, MemoryLink, MemoryTag};
+use crate::data::model::Memory::{
+    Memory, MemoryGraph, MemoryGraphEdge, MemoryGraphNode, MemoryLink, MemoryTag,
+};
 use crate::data::model::MemoryExportModel::{
     ImportStrategy, MemoryExportData, MemoryImportResult, SerializableLink, SerializableMemory,
 };
+use crate::util::OperitPaths::{memoryLinkSqlitePath, memorySqlitePath};
 use operit_store::ObjectBoxStore::ObjectBox;
-use operit_store::RuntimeStorePaths::default_data_dir;
 
 #[derive(Clone)]
 pub struct MemoryRepository {
-    profileId: String,
+    ownerKey: String,
     memoryBox: ObjectBox<Memory>,
     linkBox: ObjectBox<MemoryLink>,
 }
@@ -29,20 +31,24 @@ impl MemoryRepository {
     pub const MEDIUM_LINK: f32 = 0.7;
     pub const WEAK_LINK: f32 = 0.3;
 
-    pub fn new(profileId: impl Into<String>) -> Self {
-        let profileId = profileId.into();
-        let root = default_data_dir()
-            .join("memory")
-            .join(sanitizeProfileId(&profileId));
+    pub fn new(ownerKey: impl Into<String>) -> Self {
+        let ownerKey = ownerKey.into();
         Self {
-            profileId,
-            memoryBox: ObjectBox::new(root.join("Memory.sqlite"), "Memory"),
-            linkBox: ObjectBox::new(root.join("MemoryLink.sqlite"), "MemoryLink"),
+            ownerKey: ownerKey.clone(),
+            memoryBox: ObjectBox::new(
+                memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"),
+                "Memory",
+            ),
+            linkBox: ObjectBox::new(
+                memoryLinkSqlitePath(&ownerKey).expect("memory link sqlite path must be valid"),
+                "MemoryLink",
+            ),
         }
     }
 
-    pub fn profileId(&self) -> &str {
-        &self.profileId
+    #[allow(non_snake_case)]
+    pub fn ownerKey(&self) -> &str {
+        &self.ownerKey
     }
 
     pub fn normalizeFolderPath(folderPath: Option<&str>) -> Option<String> {
@@ -492,6 +498,94 @@ impl MemoryRepository {
     }
 
     #[allow(non_snake_case)]
+    pub fn getMemoryGraph(&self) -> Result<MemoryGraph, String> {
+        self.cleanupDanglingLinksIfNeeded()?;
+        self.buildGraphFromMemories(self.memoryBox.all().map_err(|error| error.to_string())?)
+    }
+
+    #[allow(non_snake_case)]
+    fn cleanupDanglingLinksIfNeeded(&self) -> Result<(), String> {
+        let memories = self.memoryBox.all().map_err(|error| error.to_string())?;
+        let memoryIds = memories
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<HashSet<_>>();
+        let danglingLinkIds = self
+            .linkBox
+            .all()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|link| {
+                !memoryIds.contains(&link.sourceMemoryId)
+                    || !memoryIds.contains(&link.targetMemoryId)
+            })
+            .map(|link| link.id)
+            .collect::<Vec<_>>();
+        if danglingLinkIds.is_empty() {
+            return Ok(());
+        }
+        self.linkBox
+            .removeByIds(&danglingLinkIds)
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    fn buildGraphFromMemories(&self, memories: Vec<Memory>) -> Result<MemoryGraph, String> {
+        let memoryByObjectId = memories
+            .iter()
+            .map(|memory| (memory.id, memory))
+            .collect::<HashMap<_, _>>();
+        let memoryUuids = memories
+            .iter()
+            .map(|memory| memory.uuid.clone())
+            .collect::<HashSet<_>>();
+        let nodes = memories
+            .iter()
+            .map(|memory| MemoryGraphNode {
+                id: memory.uuid.clone(),
+                label: memory.title.clone(),
+                color: memoryGraphNodeColor(memory),
+                metadata: HashMap::new(),
+            })
+            .collect::<Vec<_>>();
+        let mut edgeKeys = HashSet::new();
+        let mut edges = Vec::new();
+        for link in self.linkBox.all().map_err(|error| error.to_string())? {
+            let Some(sourceMemory) = memoryByObjectId.get(&link.sourceMemoryId) else {
+                continue;
+            };
+            let Some(targetMemory) = memoryByObjectId.get(&link.targetMemoryId) else {
+                continue;
+            };
+            if !memoryUuids.contains(&sourceMemory.uuid) || !memoryUuids.contains(&targetMemory.uuid)
+            {
+                continue;
+            }
+            let edgeKey = (
+                link.id,
+                sourceMemory.uuid.clone(),
+                targetMemory.uuid.clone(),
+                link.type_.clone(),
+            );
+            if !edgeKeys.insert(edgeKey) {
+                continue;
+            }
+            edges.push(MemoryGraphEdge {
+                id: link.id,
+                sourceId: sourceMemory.uuid.clone(),
+                targetId: targetMemory.uuid.clone(),
+                label: Some(link.type_),
+                weight: link.weight,
+                metadata: HashMap::new(),
+                isCrossFolderLink: Self::normalizeFolderPath(sourceMemory.folderPath.as_deref())
+                    != Self::normalizeFolderPath(targetMemory.folderPath.as_deref()),
+            });
+        }
+        Ok(MemoryGraph { nodes, edges })
+    }
+
+    #[allow(non_snake_case)]
     pub fn exportMemoriesToJson(&self) -> Result<String, String> {
         let memories = self
             .memoryBox
@@ -703,22 +797,6 @@ impl MemoryRepository {
     }
 }
 
-fn sanitizeProfileId(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        "default".to_string()
-    } else {
-        out
-    }
-}
-
 fn nowMillis() -> i64 {
     Utc::now().timestamp_millis()
 }
@@ -737,6 +815,18 @@ fn buildTags(tags: Vec<String>) -> Vec<MemoryTag> {
         });
     }
     result
+}
+
+#[allow(non_snake_case)]
+fn memoryGraphNodeColor(memory: &Memory) -> i64 {
+    if memory.isDocumentNode {
+        return 0xFF9575CD_i64;
+    }
+    match memory.tags.first().map(|tag| tag.name.as_str()) {
+        Some("Person") => 0xFF81C784_i64,
+        Some("Concept") => 0xFF64B5F6_i64,
+        _ => 0xFFD3D3D3_i64,
+    }
 }
 
 fn lexicalTokens(query: &str) -> Vec<String> {

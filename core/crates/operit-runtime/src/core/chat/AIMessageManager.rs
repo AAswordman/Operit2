@@ -68,7 +68,6 @@ pub struct SendMessageRequest<'a> {
     pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
     pub disableWarning: bool,
     pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
@@ -90,7 +89,6 @@ pub struct StableContextWindowRequest<'a> {
     pub proxySenderName: Option<String>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
     pub publishEstimate: bool,
     pub runtime: SendMessageRuntime,
 }
@@ -287,7 +285,6 @@ impl AIMessageManager {
         options.notifyReplyOverride = request.notifyReplyOverride;
         options.chatProviderIdOverride = request.chatProviderIdOverride;
         options.chatModelIdOverride = request.chatModelIdOverride;
-        options.preferenceProfileIdOverride = request.preferenceProfileIdOverride;
         options.disableWarning = request.disableWarning;
         options.callbacks = request.callbacks;
         options.onToolInvocation = request.onToolInvocation;
@@ -494,7 +491,6 @@ impl AIMessageManager {
                 request.proxySenderName,
                 request.chatProviderIdOverride,
                 request.chatModelIdOverride,
-                request.preferenceProfileIdOverride,
                 request.publishEstimate,
                 request.runtime,
             )
@@ -795,17 +791,17 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelCurrentOperation() {
+    pub async fn cancelCurrentOperation() {
         let lock = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
         let chatKey = lock
             .lock()
             .expect("last active chat key mutex poisoned")
             .clone();
-        Self::cancelOperation(chatKey);
+        Self::cancelOperation(chatKey).await;
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelOperation(chatId: String) {
+    pub async fn cancelOperation(chatId: String) {
         let chatKey = if chatId.trim().is_empty() {
             DEFAULT_CHAT_KEY.to_string()
         } else {
@@ -816,13 +812,13 @@ impl AIMessageManager {
             stream.event_channel.close();
         }
         if let Some(mut service) = Self::takeActiveEnhancedAiService(&chatKey) {
-            service.cancelConversation();
+            service.cancelConversation().await;
         }
         Self::forgetActiveChatKey(&chatKey);
     }
 
     #[allow(non_snake_case)]
-    pub fn cancelAllOperations() {
+    pub async fn cancelAllOperations() {
         let keys = {
             let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
             map.lock()
@@ -854,7 +850,7 @@ impl AIMessageManager {
             .chain(stream_keys)
             .collect::<std::collections::BTreeSet<_>>();
         for key in keys {
-            Self::cancelOperation(key);
+            Self::cancelOperation(key).await;
         }
     }
 

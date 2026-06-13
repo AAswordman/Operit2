@@ -20,8 +20,7 @@ use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::ApiKeyInfo::ApiKeyInfo;
 use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
 use operit_runtime::data::model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryProfileBindingMode,
-    CharacterCardToolAccessConfig,
+    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
 };
 use operit_runtime::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_runtime::data::model::ChatMessage::ChatMessage;
@@ -39,7 +38,6 @@ use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroup
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
-use operit_runtime::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::util::stream::Stream::Stream;
@@ -276,7 +274,7 @@ fn print_cli_usage() {
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli log <show|package|path|clear>");
-    println!("operit2 cli memory <profile|kv|item>");
+    println!("operit2 cli memory <character|shared|mount|unmount>");
     println!("operit2 cli export <memory|chat|snapshot>");
     println!("operit2 cli import <memory|chat|snapshot>");
     println!("operit2 cli backup <create|restore|inspect>");
@@ -382,32 +380,15 @@ fn print_host_usage() {
 }
 
 fn print_memory_usage() {
-    println!("operit2 cli memory profile <list|active|show|create|switch|lock>");
-    println!("operit2 cli memory kv <show|set>");
-    println!("operit2 cli memory item <list|search|show|create|delete|move>");
-}
-
-fn print_memory_profile_usage() {
-    println!("operit2 cli memory profile list");
-    println!("operit2 cli memory profile active");
-    println!("operit2 cli memory profile show [profile-id]");
-    println!("operit2 cli memory profile create <name>");
-    println!("operit2 cli memory profile switch <profile-id>");
-    println!("operit2 cli memory profile lock <birthDate|gender|personality|identity|occupation|aiStyle> <true|false>");
-}
-
-fn print_memory_kv_usage() {
-    println!("operit2 cli memory kv show [profile-id]");
-    println!("operit2 cli memory kv set <birthDate|gender|personality|identity|occupation|aiStyle> <value> [profile-id]");
-}
-
-fn print_memory_item_usage() {
-    println!("operit2 cli memory item list [profile-id]");
-    println!("operit2 cli memory item search <query> [profile-id]");
-    println!("operit2 cli memory item show <title> [profile-id]");
-    println!("operit2 cli memory item create <title> <content> [folder] [tags-csv] [profile-id]");
-    println!("operit2 cli memory item delete <id> [profile-id]");
-    println!("operit2 cli memory item move <ids-csv> <folder> [profile-id]");
+    println!("operit2 cli memory character <character-id> user <show|write|path>");
+    println!("operit2 cli memory character <character-id> item <list|search|show|create|delete|move>");
+    println!("operit2 cli memory character <character-id> graph");
+    println!("operit2 cli memory shared <list|create|rename|delete>");
+    println!("operit2 cli memory shared <shared-id> user <show|write|path>");
+    println!("operit2 cli memory shared <shared-id> item <list|search|show|create|delete|move>");
+    println!("operit2 cli memory shared <shared-id> graph");
+    println!("operit2 cli memory mount <character-id> <shared-id> --read <true|false> --write <true|false>");
+    println!("operit2 cli memory unmount <character-id> <shared-id>");
 }
 
 fn print_chat_usage() {
@@ -646,10 +627,10 @@ fn print_character_card(card: &CharacterCard) {
     println!("marks={}", card.marks);
     println!("chatModelBindingMode={}", card.chatModelBindingMode);
     println!("chatModelId={}", card.chatModelId.clone().unwrap_or_default());
-    println!("memoryProfileBindingMode={}", card.memoryProfileBindingMode);
     println!(
-        "memoryProfileId={}",
-        card.memoryProfileId.clone().unwrap_or_default()
+        "sharedMemoryMounts={}",
+        serde_json::to_string(&card.sharedMemoryMounts)
+            .expect("sharedMemoryMounts must serialize")
     );
     println!(
         "toolAccessConfig={}",
@@ -821,53 +802,6 @@ fn parseCsvList(value: &str) -> Vec<String> {
         }
     }
     result
-}
-
-fn memory_profile_arg(
-    value: Option<&String>,
-    manager: &UserPreferencesManager,
-) -> Result<String, String> {
-    match value {
-        Some(profileId) => Ok(profileId.clone()),
-        None => manager.activeProfileId().map_err(|error| error.to_string()),
-    }
-}
-
-fn string_memory_kv_value(key: &str, target: &str, value: &str) -> Result<Option<String>, String> {
-    match key {
-        "birthDate" => Ok(None),
-        "gender" | "personality" | "identity" | "occupation" | "aiStyle" => {
-            if key == target {
-                Ok(Some(value.to_string()))
-            } else {
-                Ok(None)
-            }
-        }
-        other => Err(format!("invalid memory kv key: {other}")),
-    }
-}
-
-fn print_memory_profile(
-    profile: &operit_runtime::data::model::PreferenceProfile::PreferenceProfile,
-) {
-    println!("id={}", profile.id);
-    println!("name={}", profile.name);
-    println!("birthDate={}", profile.birthDate);
-    println!("gender={}", profile.gender);
-    println!("personality={}", profile.personality);
-    println!("identity={}", profile.identity);
-    println!("occupation={}", profile.occupation);
-    println!("aiStyle={}", profile.aiStyle);
-    println!("isInitialized={}", profile.isInitialized);
-}
-
-fn print_memory_kv(profile: &operit_runtime::data::model::PreferenceProfile::PreferenceProfile) {
-    println!("birthDate={}", profile.birthDate);
-    println!("gender={}", profile.gender);
-    println!("personality={}", profile.personality);
-    println!("identity={}", profile.identity);
-    println!("occupation={}", profile.occupation);
-    println!("aiStyle={}", profile.aiStyle);
 }
 
 fn print_memory_item_line(memory: &operit_runtime::data::model::Memory::Memory) {

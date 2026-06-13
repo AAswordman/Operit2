@@ -1,10 +1,15 @@
-use crate::commands::util::{parseCsvList, parse_bool_arg, parse_i64_arg};
+use crate::commands::util::{parseCsvList, parse_i64_arg};
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::data::model::CharacterCard::CharacterSharedMemoryMount;
 use operit_runtime::data::model::Memory::Memory;
-use operit_runtime::data::model::PreferenceProfile::PreferenceProfile;
-use operit_runtime::data::preferences::UserPreferencesManager::UserPreferencesManager;
+use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_runtime::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
 use operit_runtime::data::repository::MemoryRepository::MemoryRepository;
+use operit_runtime::util::OperitPaths::{
+    characterMemoryOwnerKey, sharedMemoryOwnerKey,
+};
+use operit_runtime::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 
 pub fn run_memory_command(
     _context: OperitApplicationContext,
@@ -17,9 +22,10 @@ pub fn run_memory_command(
     }
 
     match args[0].as_str() {
-        "profile" => run_memory_profile_command(&args[1..], output),
-        "kv" => run_memory_kv_command(&args[1..], output),
-        "item" => run_memory_item_command(&args[1..], output),
+        "character" => run_character_memory_command(&args[1..], output),
+        "shared" => run_shared_memory_command(&args[1..], output),
+        "mount" => run_mount_command(&args[1..], output),
+        "unmount" => run_unmount_command(&args[1..], output),
         _ => {
             print_memory_usage(output);
             Ok(())
@@ -27,184 +33,221 @@ pub fn run_memory_command(
     }
 }
 
-fn run_memory_profile_command(
+fn run_character_memory_command(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.is_empty() {
-        print_memory_profile_usage(output);
+    if args.len() < 2 {
+        print_character_memory_usage(output);
         return Ok(());
     }
-    let manager = user_preferences_manager()?;
+    let characterId = args[0].clone();
+    CharacterCardManager::getInstance()
+        .getCharacterCard(&characterId)
+        .map_err(|error| error.to_string())?;
+    let ownerKey = characterMemoryOwnerKey(&characterId)?;
+    match args[1].as_str() {
+        "user" => run_user_command(&ownerKey, &args[2..], output),
+        "item" => run_item_command(&ownerKey, &args[2..], output),
+        "graph" => run_graph_command(&ownerKey, output),
+        _ => {
+            print_character_memory_usage(output);
+            Ok(())
+        }
+    }
+}
+
+fn run_shared_memory_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+    if args.is_empty() {
+        print_shared_memory_usage(output);
+        return Ok(());
+    }
     match args[0].as_str() {
         "list" => {
-            let activeProfileId = manager
-                .activeProfileId()
-                .map_err(|error| error.to_string())?;
-            for profileId in manager
-                .profileListFlow()
-                .first()
-                .map_err(|error| error.to_string())?
-            {
-                let marker = if profileId == activeProfileId {
-                    "*"
-                } else {
-                    " "
-                };
-                let profile = manager
-                    .getProfile(&profileId)
-                    .map_err(|error| error.to_string())?;
-                output.push_stdout_line(format!("{marker}\t{}\t{}", profile.id, profile.name));
+            for store in SharedMemoryStoreManager::getInstance().getAllSharedMemoryStores()? {
+                output.push_stdout_line(format!(
+                    "{}\t{}\t{}\t{}",
+                    store.id, store.name, store.createdAt, store.updatedAt
+                ));
             }
-            Ok(())
-        }
-        "active" => {
-            output.push_stdout_line(
-                manager
-                    .activeProfileId()
-                    .map_err(|error| error.to_string())?,
-            );
-            Ok(())
-        }
-        "show" => {
-            let profileId = memory_profile_arg(args.get(1), &manager)?;
-            let profile = manager
-                .getProfile(&profileId)
-                .map_err(|error| error.to_string())?;
-            print_memory_profile(&profile, output);
             Ok(())
         }
         "create" => {
             let name = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 memory profile create <name>".to_string())?
+                .ok_or_else(|| "usage: operit2 memory shared create <name>".to_string())?
                 .clone();
-            let profile = manager
-                .createProfile(name, false)
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("created={}", profile.id));
+            let store = SharedMemoryStoreManager::getInstance().createSharedMemoryStore(name)?;
+            output.push_stdout_line(format!("created={}", store.id));
             Ok(())
         }
-        "switch" => {
-            let profileId = args
+        "rename" => {
+            let id = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 memory profile switch <profile-id>".to_string())?
+                .ok_or_else(|| "usage: operit2 memory shared rename <shared-id> <name>".to_string())?;
+            let name = args
+                .get(2)
+                .ok_or_else(|| "usage: operit2 memory shared rename <shared-id> <name>".to_string())?
                 .clone();
-            manager
-                .setActiveProfile(profileId.clone())
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("active={profileId}"));
+            let store = SharedMemoryStoreManager::getInstance().renameSharedMemoryStore(id, name)?;
+            output.push_stdout_line(format!("renamed={}", store.id));
             Ok(())
         }
-        "lock" => {
-            let category = args
+        "delete" => {
+            let id = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 memory profile lock <birthDate|gender|personality|identity|occupation|aiStyle> <true|false>".to_string())?;
-            let locked = parse_bool_arg(
-                args.get(2),
-                "usage: operit2 memory profile lock <birthDate|gender|personality|identity|occupation|aiStyle> <true|false>",
-            )?;
-            manager
-                .setCategoryLocked(category, locked)
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("{category}={locked}"));
+                .ok_or_else(|| "usage: operit2 memory shared delete <shared-id>".to_string())?;
+            let deleted = SharedMemoryStoreManager::getInstance().deleteSharedMemoryStore(id)?;
+            remove_shared_memory_mount_from_all_characters(id)?;
+            output.push_stdout_line(format!("deleted={deleted}"));
             Ok(())
         }
-        _ => {
-            print_memory_profile_usage(output);
-            Ok(())
+        sharedId => {
+            SharedMemoryStoreManager::getInstance()
+                .getSharedMemoryStore(sharedId)
+                .map_err(|error| error.to_string())?;
+            let ownerKey = sharedMemoryOwnerKey(sharedId)?;
+            match args.get(1).map(String::as_str) {
+                Some("user") => run_user_command(&ownerKey, &args[2..], output),
+                Some("item") => run_item_command(&ownerKey, &args[2..], output),
+                Some("graph") => run_graph_command(&ownerKey, output),
+                _ => {
+                    print_shared_memory_usage(output);
+                    Ok(())
+                }
+            }
         }
     }
 }
 
-fn run_memory_kv_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    if args.is_empty() {
-        print_memory_kv_usage(output);
+fn run_mount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+    if args.len() < 2 {
+        output.push_stdout_line(
+            "operit2 memory mount <character-id> <shared-id> --read <true|false> --write <true|false>",
+        );
         return Ok(());
     }
-    let manager = user_preferences_manager()?;
+    let characterId = args[0].clone();
+    let sharedId = args[1].clone();
+    SharedMemoryStoreManager::getInstance()
+        .getSharedMemoryStore(&sharedId)
+        .map_err(|error| error.to_string())?;
+    let readable = parse_named_bool(args, "--read")?;
+    let writable = parse_named_bool(args, "--write")?;
+    let manager = CharacterCardManager::getInstance();
+    let mut card = manager
+        .getCharacterCard(&characterId)
+        .map_err(|error| error.to_string())?;
+    card.sharedMemoryMounts
+        .retain(|mount| mount.sharedMemoryId != sharedId);
+    card.sharedMemoryMounts.push(CharacterSharedMemoryMount {
+        sharedMemoryId: sharedId.clone(),
+        readable,
+        writable,
+    });
+    manager
+        .updateCharacterCard(card)
+        .map_err(|error| error.to_string())?;
+    output.push_stdout_line(format!(
+        "mounted={characterId}:{sharedId}:read={readable}:write={writable}"
+    ));
+    Ok(())
+}
+
+fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+    if args.len() < 2 {
+        output.push_stdout_line("operit2 memory unmount <character-id> <shared-id>");
+        return Ok(());
+    }
+    let characterId = args[0].clone();
+    let sharedId = args[1].clone();
+    let manager = CharacterCardManager::getInstance();
+    let mut card = manager
+        .getCharacterCard(&characterId)
+        .map_err(|error| error.to_string())?;
+    let originalLen = card.sharedMemoryMounts.len();
+    card.sharedMemoryMounts
+        .retain(|mount| mount.sharedMemoryId != sharedId);
+    manager
+        .updateCharacterCard(card)
+        .map_err(|error| error.to_string())?;
+    output.push_stdout_line(format!(
+        "unmounted={}",
+        originalLen != CharacterCardManager::getInstance()
+            .getCharacterCard(&characterId)
+            .map_err(|error| error.to_string())?
+            .sharedMemoryMounts
+            .len()
+    ));
+    Ok(())
+}
+
+fn run_user_command(
+    ownerKey: &str,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    if args.is_empty() {
+        print_user_usage(output);
+        return Ok(());
+    }
+    let repository = UserMarkdownRepository::new(ownerKey);
     match args[0].as_str() {
         "show" => {
-            let profileId = memory_profile_arg(args.get(1), &manager)?;
-            let profile = manager
-                .getProfile(&profileId)
-                .map_err(|error| error.to_string())?;
-            print_memory_kv(&profile, output);
+            output.push_stdout(repository.readUserMarkdown()?);
             Ok(())
         }
-        "set" => {
-            let key = args
+        "write" => {
+            let content = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 memory kv set <birthDate|gender|personality|identity|occupation|aiStyle> <value> [profile-id]".to_string())?;
-            let value = args
-                .get(2)
-                .ok_or_else(|| "usage: operit2 memory kv set <birthDate|gender|personality|identity|occupation|aiStyle> <value> [profile-id]".to_string())?
+                .ok_or_else(|| "usage: operit2 memory <owner> user write <content>".to_string())?
                 .clone();
-            let profileId = memory_profile_arg(args.get(3), &manager)?;
-            let birthDate = if key == "birthDate" {
-                Some(
-                    value
-                        .parse::<i64>()
-                        .map_err(|error| format!("invalid birthDate millis: {error}"))?,
-                )
-            } else {
-                None
-            };
-            manager
-                .updateProfileCategory(
-                    profileId.clone(),
-                    birthDate,
-                    string_memory_kv_value(key, "gender", &value)?,
-                    string_memory_kv_value(key, "personality", &value)?,
-                    string_memory_kv_value(key, "identity", &value)?,
-                    string_memory_kv_value(key, "occupation", &value)?,
-                    string_memory_kv_value(key, "aiStyle", &value)?,
-                )
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("{profileId}.{key}={value}"));
+            repository.writeUserMarkdown(content)?;
+            output.push_stdout_line(format!("updated={ownerKey}/USER.md"));
+            Ok(())
+        }
+        "path" => {
+            output.push_stdout_line(repository.userMarkdownPath()?.display().to_string());
             Ok(())
         }
         _ => {
-            print_memory_kv_usage(output);
+            print_user_usage(output);
             Ok(())
         }
     }
 }
 
-fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+fn run_item_command(
+    ownerKey: &str,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.is_empty() {
-        print_memory_item_usage(output);
+        print_item_usage(output);
         return Ok(());
     }
-    let manager = user_preferences_manager()?;
     match args[0].as_str() {
         "list" => {
-            let profileId = memory_profile_arg(args.get(1), &manager)?;
-            for memory in
-                memory_repository(&profileId).searchMemories("*", None, 0.0, None, None)?
-            {
+            for memory in memory_repository(ownerKey).searchMemories("*", None, 0.0, None, None)? {
                 print_memory_item_line(&memory, output);
             }
             Ok(())
         }
         "search" => {
-            let query = args.get(1).ok_or_else(|| {
-                "usage: operit2 memory item search <query> [profile-id]".to_string()
-            })?;
-            let profileId = memory_profile_arg(args.get(2), &manager)?;
-            for memory in
-                memory_repository(&profileId).searchMemories(query, None, 0.0, None, None)?
+            let query = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 memory <owner> item search <query>".to_string())?;
+            for memory in memory_repository(ownerKey).searchMemories(query, None, 0.0, None, None)?
             {
                 print_memory_item_line(&memory, output);
             }
             Ok(())
         }
         "show" => {
-            let title = args.get(1).ok_or_else(|| {
-                "usage: operit2 memory item show <title> [profile-id]".to_string()
-            })?;
-            let profileId = memory_profile_arg(args.get(2), &manager)?;
-            let memory = memory_repository(&profileId)
+            let title = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 memory <owner> item show <title>".to_string())?;
+            let memory = memory_repository(ownerKey)
                 .findMemoryByTitle(title)?
                 .ok_or_else(|| format!("memory item not found: {title}"))?;
             print_memory_item(&memory, output);
@@ -213,19 +256,21 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
         "create" => {
             let title = args
                 .get(1)
-                .ok_or_else(|| "usage: operit2 memory item create <title> <content> [folder] [tags-csv] [profile-id]".to_string())?
+                .ok_or_else(|| {
+                    "usage: operit2 memory <owner> item create <title> <content> [folder] [tags-csv]"
+                        .to_string()
+                })?
                 .clone();
             let content = args
                 .get(2)
-                .ok_or_else(|| "usage: operit2 memory item create <title> <content> [folder] [tags-csv] [profile-id]".to_string())?
+                .ok_or_else(|| {
+                    "usage: operit2 memory <owner> item create <title> <content> [folder] [tags-csv]"
+                        .to_string()
+                })?
                 .clone();
-            let folder = match args.get(3) {
-                Some(value) => value.clone(),
-                None => String::new(),
-            };
+            let folder = args.get(3).cloned().unwrap_or_default();
             let tags = args.get(4).map(|value| parseCsvList(value));
-            let profileId = memory_profile_arg(args.get(5), &manager)?;
-            let memory = memory_repository(&profileId).createMemory(
+            let memory = memory_repository(ownerKey).createMemory(
                 title,
                 content,
                 "text".to_string(),
@@ -237,14 +282,10 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
             Ok(())
         }
         "delete" => {
-            let id = parse_i64_arg(
-                args.get(1),
-                "usage: operit2 memory item delete <id> [profile-id]",
-            )?;
-            let profileId = memory_profile_arg(args.get(2), &manager)?;
+            let id = parse_i64_arg(args.get(1), "usage: operit2 memory <owner> item delete <id>")?;
             output.push_stdout_line(format!(
                 "deleted={}",
-                memory_repository(&profileId).deleteMemory(id)?
+                memory_repository(ownerKey).deleteMemory(id)?
             ));
             Ok(())
         }
@@ -252,7 +293,7 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
             let ids = args
                 .get(1)
                 .ok_or_else(|| {
-                    "usage: operit2 memory item move <ids-csv> <folder> [profile-id]".to_string()
+                    "usage: operit2 memory <owner> item move <ids-csv> <folder>".to_string()
                 })?
                 .split(',')
                 .map(|value| {
@@ -263,84 +304,68 @@ fn run_memory_item_command(args: &[String], output: &mut CoreCommandOutput) -> R
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let folder = args.get(2).ok_or_else(|| {
-                "usage: operit2 memory item move <ids-csv> <folder> [profile-id]".to_string()
+                "usage: operit2 memory <owner> item move <ids-csv> <folder>".to_string()
             })?;
-            let profileId = memory_profile_arg(args.get(3), &manager)?;
             output.push_stdout_line(format!(
                 "moved={}",
-                memory_repository(&profileId).moveMemoriesToFolder(&ids, folder)?
+                memory_repository(ownerKey).moveMemoriesToFolder(&ids, folder)?
             ));
             Ok(())
         }
         _ => {
-            print_memory_item_usage(output);
+            print_item_usage(output);
             Ok(())
         }
     }
 }
 
-fn user_preferences_manager() -> Result<UserPreferencesManager, String> {
-    let manager = UserPreferencesManager::getInstance();
-    manager
-        .initializeIfNeeded("Default")
-        .map_err(|error| error.to_string())?;
-    Ok(manager)
+fn run_graph_command(ownerKey: &str, output: &mut CoreCommandOutput) -> Result<(), String> {
+    let graph = memory_repository(ownerKey).getMemoryGraph()?;
+    output.push_stdout_line(
+        serde_json::to_string_pretty(&graph).map_err(|error| error.to_string())?,
+    );
+    Ok(())
 }
 
-fn memory_repository(profileId: &str) -> MemoryRepository {
-    MemoryRepository::new(profileId)
+fn memory_repository(ownerKey: &str) -> MemoryRepository {
+    MemoryRepository::new(ownerKey)
 }
 
-fn memory_profile_arg(
-    value: Option<&String>,
-    manager: &UserPreferencesManager,
-) -> Result<String, String> {
-    match value {
-        Some(profileId) => Ok(profileId.clone()),
-        None => manager.activeProfileId().map_err(|error| error.to_string()),
+fn parse_named_bool(args: &[String], name: &str) -> Result<bool, String> {
+    let index = args
+        .iter()
+        .position(|value| value == name)
+        .ok_or_else(|| format!("missing argument: {name}"))?;
+    let raw = args
+        .get(index + 1)
+        .ok_or_else(|| format!("missing value for argument: {name}"))?;
+    match raw.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("invalid bool for {name}: {raw}")),
     }
 }
 
-fn string_memory_kv_value(key: &str, target: &str, value: &str) -> Result<Option<String>, String> {
-    match key {
-        "birthDate" => Ok(None),
-        "gender" | "personality" | "identity" | "occupation" | "aiStyle" => {
-            if key == target {
-                Ok(Some(value.to_string()))
-            } else {
-                Ok(None)
-            }
+fn remove_shared_memory_mount_from_all_characters(sharedId: &str) -> Result<(), String> {
+    let manager = CharacterCardManager::getInstance();
+    for mut card in manager
+        .getAllCharacterCards()
+        .map_err(|error| error.to_string())?
+    {
+        let originalLen = card.sharedMemoryMounts.len();
+        card.sharedMemoryMounts
+            .retain(|mount| mount.sharedMemoryId != sharedId);
+        if originalLen != card.sharedMemoryMounts.len() {
+            manager
+                .updateCharacterCard(card)
+                .map_err(|error| error.to_string())?;
         }
-        other => Err(format!("invalid memory kv key: {other}")),
     }
-}
-
-fn print_memory_profile(profile: &PreferenceProfile, output: &mut CoreCommandOutput) {
-    output.push_stdout_line(format!("id={}", profile.id));
-    output.push_stdout_line(format!("name={}", profile.name));
-    output.push_stdout_line(format!("birthDate={}", profile.birthDate));
-    output.push_stdout_line(format!("gender={}", profile.gender));
-    output.push_stdout_line(format!("personality={}", profile.personality));
-    output.push_stdout_line(format!("identity={}", profile.identity));
-    output.push_stdout_line(format!("occupation={}", profile.occupation));
-    output.push_stdout_line(format!("aiStyle={}", profile.aiStyle));
-    output.push_stdout_line(format!("isInitialized={}", profile.isInitialized));
-}
-
-fn print_memory_kv(profile: &PreferenceProfile, output: &mut CoreCommandOutput) {
-    output.push_stdout_line(format!("birthDate={}", profile.birthDate));
-    output.push_stdout_line(format!("gender={}", profile.gender));
-    output.push_stdout_line(format!("personality={}", profile.personality));
-    output.push_stdout_line(format!("identity={}", profile.identity));
-    output.push_stdout_line(format!("occupation={}", profile.occupation));
-    output.push_stdout_line(format!("aiStyle={}", profile.aiStyle));
+    Ok(())
 }
 
 fn print_memory_item_line(memory: &Memory, output: &mut CoreCommandOutput) {
-    let folderPath = match memory.folderPath.clone() {
-        Some(value) => value,
-        None => String::new(),
-    };
+    let folderPath = memory.folderPath.clone().unwrap_or_default();
     output.push_stdout_line(format!(
         "{}\t{}\t{}\t{}",
         memory.id,
@@ -356,10 +381,7 @@ fn print_memory_item_line(memory: &Memory, output: &mut CoreCommandOutput) {
 }
 
 fn print_memory_item(memory: &Memory, output: &mut CoreCommandOutput) {
-    let folderPath = match memory.folderPath.clone() {
-        Some(value) => value,
-        None => String::new(),
-    };
+    let folderPath = memory.folderPath.clone().unwrap_or_default();
     output.push_stdout_line(format!("id={}", memory.id));
     output.push_stdout_line(format!("uuid={}", memory.uuid));
     output.push_stdout_line(format!("title={}", memory.title));
@@ -384,30 +406,37 @@ fn print_memory_item(memory: &Memory, output: &mut CoreCommandOutput) {
 }
 
 fn print_memory_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory <profile|kv|item>");
+    output.push_stdout_line("operit2 memory <character|shared|mount|unmount>");
 }
 
-fn print_memory_profile_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory profile list");
-    output.push_stdout_line("operit2 memory profile active");
-    output.push_stdout_line("operit2 memory profile show [profile-id]");
-    output.push_stdout_line("operit2 memory profile create <name>");
-    output.push_stdout_line("operit2 memory profile switch <profile-id>");
-    output.push_stdout_line("operit2 memory profile lock <birthDate|gender|personality|identity|occupation|aiStyle> <true|false>");
-}
-
-fn print_memory_kv_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory kv show [profile-id]");
-    output.push_stdout_line("operit2 memory kv set <birthDate|gender|personality|identity|occupation|aiStyle> <value> [profile-id]");
-}
-
-fn print_memory_item_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory item list [profile-id]");
-    output.push_stdout_line("operit2 memory item search <query> [profile-id]");
-    output.push_stdout_line("operit2 memory item show <title> [profile-id]");
+fn print_character_memory_usage(output: &mut CoreCommandOutput) {
+    output.push_stdout_line("operit2 memory character <character-id> user <show|write|path>");
     output.push_stdout_line(
-        "operit2 memory item create <title> <content> [folder] [tags-csv] [profile-id]",
+        "operit2 memory character <character-id> item <list|search|show|create|delete|move>",
     );
-    output.push_stdout_line("operit2 memory item delete <id> [profile-id]");
-    output.push_stdout_line("operit2 memory item move <ids-csv> <folder> [profile-id]");
+    output.push_stdout_line("operit2 memory character <character-id> graph");
+}
+
+fn print_shared_memory_usage(output: &mut CoreCommandOutput) {
+    output.push_stdout_line("operit2 memory shared <list|create|rename|delete>");
+    output.push_stdout_line("operit2 memory shared <shared-id> user <show|write|path>");
+    output.push_stdout_line(
+        "operit2 memory shared <shared-id> item <list|search|show|create|delete|move>",
+    );
+    output.push_stdout_line("operit2 memory shared <shared-id> graph");
+}
+
+fn print_user_usage(output: &mut CoreCommandOutput) {
+    output.push_stdout_line("operit2 memory <owner> user show");
+    output.push_stdout_line("operit2 memory <owner> user write <content>");
+    output.push_stdout_line("operit2 memory <owner> user path");
+}
+
+fn print_item_usage(output: &mut CoreCommandOutput) {
+    output.push_stdout_line("operit2 memory <owner> item list");
+    output.push_stdout_line("operit2 memory <owner> item search <query>");
+    output.push_stdout_line("operit2 memory <owner> item show <title>");
+    output.push_stdout_line("operit2 memory <owner> item create <title> <content> [folder] [tags-csv]");
+    output.push_stdout_line("operit2 memory <owner> item delete <id>");
+    output.push_stdout_line("operit2 memory <owner> item move <ids-csv> <folder>");
 }

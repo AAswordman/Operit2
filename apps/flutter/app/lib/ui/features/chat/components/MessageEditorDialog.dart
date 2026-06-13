@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../common/components/OperitDialog.dart';
+
 enum _MessagePartType { text, xml }
 
 class _ParsedMessagePart {
@@ -89,123 +91,60 @@ class _MessageEditorDialogState extends State<MessageEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Material(
-            color: colorScheme.surface,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.3,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          widget.showResendButton ? '编辑消息' : '修改记忆',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => _setRawMode(!_rawEditMode),
-                        child: Text(_rawEditMode ? '可视' : '纯文本'),
-                      ),
-                      IconButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close),
-                        tooltip: '取消',
-                      ),
-                    ],
-                  ),
-                ),
-                Flexible(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 450),
-                    child: _rawEditMode
-                        ? _RawEditor(
-                            content: _content,
-                            enabled: !_submitting,
-                            onChanged: (value) {
-                              _content = value;
-                            },
-                          )
-                        : _VisualEditor(
-                            parts: _parts,
-                            enabled: !_submitting,
-                            onChanged: (parts) {
-                              setState(() {
-                                _parts = parts;
-                                _syncContentFromParts();
-                              });
-                            },
-                          ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.3,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 6),
-                      if (widget.showResendButton) ...<Widget>[
-                        OutlinedButton(
-                          onPressed: _submitting
-                              ? null
-                              : () => _submit(widget.onSave),
-                          child: const Text('保存'),
-                        ),
-                        const SizedBox(width: 6),
-                        FilledButton.icon(
-                          onPressed: _submitting
-                              ? null
-                              : () => _submit(widget.onResend),
-                          icon: const Icon(Icons.send, size: 14),
-                          label: const Text('保存并重发'),
-                        ),
-                      ] else
-                        FilledButton(
-                          onPressed: _submitting
-                              ? null
-                              : () => _submit(widget.onSave),
-                          child: const Text('更新记忆'),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+    return OperitDialogScaffold(
+      title: widget.showResendButton ? '编辑消息' : '修改记忆',
+      maxWidth: 520,
+      contentPadding: EdgeInsets.zero,
+      titleActions: <Widget>[
+        TextButton(
+          onPressed: _submitting ? null : () => _setRawMode(!_rawEditMode),
+          child: Text(_rawEditMode ? '可视' : '纯文本'),
         ),
+      ],
+      showCloseButton: true,
+      closeButtonEnabled: !_submitting,
+      onClose: () => Navigator.of(context).pop(),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        if (widget.showResendButton) ...<Widget>[
+          OutlinedButton(
+            onPressed: _submitting ? null : () => _submit(widget.onSave),
+            child: const Text('保存'),
+          ),
+          FilledButton.icon(
+            onPressed: _submitting ? null : () => _submit(widget.onResend),
+            icon: const Icon(Icons.send, size: 14),
+            label: const Text('保存并重发'),
+          ),
+        ] else
+          FilledButton(
+            onPressed: _submitting ? null : () => _submit(widget.onSave),
+            child: const Text('更新记忆'),
+          ),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 450),
+        child: _rawEditMode
+            ? _RawEditor(
+                content: _content,
+                enabled: !_submitting,
+                onChanged: (value) {
+                  _content = value;
+                },
+              )
+            : _VisualEditor(
+                parts: _parts,
+                enabled: !_submitting,
+                onChanged: (parts) {
+                  setState(() {
+                    _parts = parts;
+                    _syncContentFromParts();
+                  });
+                },
+              ),
       ),
     );
   }
@@ -594,108 +533,61 @@ class _TagEditorDialogState extends State<_TagEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text('编辑标签'),
-                        SizedBox(height: 2),
-                        Text('修改 XML 标签内容'),
-                      ],
-                    ),
-                  ),
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: colorScheme.primary.withValues(
-                      alpha: 0.15,
-                    ),
-                    child: Icon(
-                      Icons.tag_outlined,
-                      size: 20,
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _tagController,
-                decoration: InputDecoration(
-                  labelText: '标签名',
-                  hintText: '例如 memory',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _attributesController,
-                decoration: InputDecoration(
-                  labelText: '属性（可选）',
-                  hintText: '例如 type="note"',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _contentController,
-                minLines: 4,
-                maxLines: 6,
-                decoration: InputDecoration(
-                  labelText: '内容',
-                  alignLabelWithHint: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('取消'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: _tagController.text.trim().isEmpty
-                          ? null
-                          : () {
-                              Navigator.of(context).pop(
-                                _ParsedMessagePart(
-                                  type: _MessagePartType.xml,
-                                  content: _contentController.text,
-                                  tag: _tagController.text,
-                                  attributes: _attributesController.text,
-                                ),
-                              );
-                            },
-                      child: const Text('保存'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+    return OperitDialogScaffold(
+      title: '编辑标签',
+      icon: const Icon(Icons.tag_outlined, size: 20),
+      maxWidth: 520,
+      actions: <Widget>[
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
         ),
+        FilledButton(
+          onPressed: _tagController.text.trim().isEmpty
+              ? null
+              : () {
+                  Navigator.of(context).pop(
+                    _ParsedMessagePart(
+                      type: _MessagePartType.xml,
+                      content: _contentController.text,
+                      tag: _tagController.text,
+                      attributes: _attributesController.text,
+                    ),
+                  );
+                },
+          child: const Text('保存'),
+        ),
+      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          TextField(
+            controller: _tagController,
+            decoration: const InputDecoration(
+              labelText: '标签名',
+              hintText: '例如 memory',
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _attributesController,
+            decoration: const InputDecoration(
+              labelText: '属性（可选）',
+              hintText: '例如 type="note"',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _contentController,
+            minLines: 4,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              labelText: '内容',
+              alignLabelWithHint: true,
+            ),
+          ),
+        ],
       ),
     );
   }

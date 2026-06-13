@@ -30,6 +30,7 @@ use operit_store::SyncOperationStore::{
 use std::sync::{Mutex, OnceLock};
 
 use crate::util::AppLogger::AppLogger;
+use crate::util::OperitPaths;
 
 static APPLICATION_CONTEXT: OnceLock<Mutex<Option<OperitApplicationContext>>> = OnceLock::new();
 
@@ -73,6 +74,7 @@ impl OperitApplication {
         self.appStartupTimeMs = currentTimeMillis();
         setApplicationContext(self.applicationContext.clone());
         self.configureOpenMpEnvironment();
+        OperitPaths::cleanOnExitCleanup()?;
         self.ensureWorkManagerInitialized();
         AIMessageManager::initialize();
         self.initializeJsonSerializer();
@@ -166,6 +168,21 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn packageLogFilePath(&self) -> Result<String, String> {
         AppLogger::get_package_log_file_path()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn operitRootPath(&self) -> Result<String, String> {
+        OperitPaths::operitRootPathSdcard()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn exportsPath(&self) -> Result<String, String> {
+        OperitPaths::exportsPathSdcard()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cleanOnExitPath(&self) -> Result<String, String> {
+        OperitPaths::cleanOnExitPathSdcard()
     }
 
     #[allow(non_snake_case)]

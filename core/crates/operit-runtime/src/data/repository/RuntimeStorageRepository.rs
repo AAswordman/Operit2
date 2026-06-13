@@ -2,6 +2,8 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 
+use crate::util::OperitPaths;
+
 pub struct RuntimeStorageRepository;
 
 impl RuntimeStorageRepository {
@@ -38,5 +40,30 @@ impl RuntimeStorageRepository {
         defaultRuntimeStorageHost()
             .writeBytes(&path, &bytes)
             .map_err(|error| error.message)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn webSessionBrowserBookmarksPath(&self) -> String {
+        OperitPaths::RUNTIME_WEBSESSION_BROWSER_BOOKMARKS_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn webSessionBrowserHistoryPath(&self) -> String {
+        OperitPaths::RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn webSessionBrowserDownloadsPath(&self) -> String {
+        OperitPaths::RUNTIME_WEBSESSION_BROWSER_DOWNLOADS_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn webSessionBrowserDownloadFilesDirPath(&self) -> String {
+        OperitPaths::RUNTIME_WEBSESSION_BROWSER_DOWNLOAD_FILES_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn webSessionUserscriptsStatePath(&self) -> String {
+        OperitPaths::RUNTIME_WEBSESSION_USERSCRIPTS_STATE_PATH.to_string()
     }
 }

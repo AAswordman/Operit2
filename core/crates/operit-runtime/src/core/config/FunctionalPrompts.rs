@@ -529,6 +529,7 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
 - Prefer `update` / `merge` over creating `new`.
 - Use `new` only when concept is truly novel (max 5 items).
 - Existing memories provided in context are actionable: you may directly `update` / `merge` / `link` them.
+- Keep user profile facts in `USER.md`. Use graph memory nodes for entities, project facts, decisions, mistakes, and relations.
 
 [Output schema - strict JSON only]
 - Keys: `main`, `new`, `update`, `merge`, `links`, `user`.
@@ -537,9 +538,10 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
 - `update`: `[["Title", "New full content", "Reason", credibility_or_null, importance_or_null], ...]`.
 - `merge`: `[{{"source_titles":["A","B"],"new_title":"...","new_content":"...","new_tags":["..."],"folder_path":"...","reason":"..."}}, ...]`.
 - `links`: `[["Source", "Target", "RELATION_TYPE", "Description", weight], ...]`.
-- `user`: structured object; unknown fields should be `"<UNCHANGED>"`.
+- `user`: full updated `USER.md` markdown string, or `""` when the user profile should not change.
 
-Existing user preferences: {current_preferences}
+Current USER.md:
+{current_preferences}
 
 Return only a valid JSON object. No extra text."#
             )
@@ -561,6 +563,7 @@ Return only a valid JSON object. No extra text."#
 - 优先 `update` / `merge`，其次才是 `new`。
 - `new` 仅在确实新增概念时使用（最多 5 条）。
 - 提供给你的已有记忆样本是可操作对象：即使本轮没有 `new`，也可以直接对这些已有记忆做 `update`、`merge`、`links`。
+- 用户画像信息写入 `USER.md`。实体、项目事实、决策、反复错误和关系写入图记忆节点。
 
 【输出格式（严格JSON）】
 - 顶层键：`main`、`new`、`update`、`merge`、`links`、`user`。
@@ -569,9 +572,10 @@ Return only a valid JSON object. No extra text."#
 - `update`: `[["标题","新完整内容","原因",可信度或null,重要性或null], ...]`。
 - `merge`: `[{{"source_titles":["A","B"],"new_title":"...","new_content":"...","new_tags":["..."],"folder_path":"...","reason":"..."}}, ...]`。
 - `links`: `[["源","目标","RELATION_TYPE","描述",权重], ...]`。
-- `user`: 结构化对象，未变化字段填 `"<UNCHANGED>"`。
+- `user`: 更新后的完整 `USER.md` markdown 字符串；用户画像不需要变化时填空字符串。
 
-现有用户偏好：{current_preferences}
+当前 USER.md：
+{current_preferences}
 
 只返回合法 JSON 对象，不要输出其他内容。"#
             )

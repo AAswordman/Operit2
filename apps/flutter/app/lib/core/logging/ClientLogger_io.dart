@@ -3,9 +3,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-
+import '../path/OperitClientPaths.dart';
 import 'ClientLogLevel.dart';
 
 File? _logFile;
@@ -77,28 +75,27 @@ File _requireLogFile() {
 
 Future<String> _resolveLogFilePath() async {
   if (Platform.isAndroid) {
-    return _applicationSupportClientLogPath();
+    return _clientLogPath();
   }
   if (Platform.isWindows) {
-    return _applicationSupportClientLogPath();
+    return _clientLogPath();
   }
   if (Platform.isLinux) {
-    return _applicationSupportClientLogPath();
+    return _clientLogPath();
   }
   if (Platform.isMacOS) {
-    return _applicationSupportClientLogPath();
+    return _clientLogPath();
   }
   if (Platform.isIOS) {
-    return _applicationSupportClientLogPath();
+    return _clientLogPath();
   }
   throw UnsupportedError(
     'ClientLogger file logging is not supported on ${Platform.operatingSystem}',
   );
 }
 
-Future<String> _applicationSupportClientLogPath() async {
-  final supportDir = await getApplicationSupportDirectory();
-  return p.join(supportDir.path, 'logs', 'client.log');
+Future<String> _clientLogPath() async {
+  return (await OperitClientPaths.clientLogFile()).path;
 }
 
 String _formatLogLine(

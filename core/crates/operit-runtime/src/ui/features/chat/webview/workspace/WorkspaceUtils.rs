@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_store::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde_json::{json, Value};
 
@@ -49,15 +50,12 @@ pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String
 
 #[allow(non_snake_case)]
 pub fn getWorkspacePath(chatId: &str) -> PathBuf {
-    RuntimeStorePaths::default()
-        .root_dir()
-        .join("workspace")
-        .join(chatId)
+    RuntimeStorePaths::default().workspace_path(chatId)
 }
 
 #[allow(non_snake_case)]
 fn getWorkspaceRelativePath(chatId: &str) -> String {
-    format!("workspace/{chatId}")
+    format!("{WORKSPACE_DIR_PATH}/{chatId}")
 }
 
 #[allow(non_snake_case)]

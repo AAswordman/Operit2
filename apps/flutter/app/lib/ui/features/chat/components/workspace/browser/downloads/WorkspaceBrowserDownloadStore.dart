@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -81,12 +82,15 @@ class WorkspaceBrowserDownloadStore extends ChangeNotifier {
   WorkspaceBrowserDownloadStore({
     required GeneratedRepositoryRuntimeStorageRepositoryCoreProxy
     runtimeStorage,
-  }) : _runtimeStorage = runtimeStorage;
-
-  static const String _storagePath = 'workspace_browser/downloads.json';
-  static const String _downloadDirectory = 'workspace_browser/download_files';
+    required Future<String> Function() storagePath,
+    required Future<String> Function() downloadDirectoryPath,
+  }) : _runtimeStorage = runtimeStorage,
+       _storagePath = storagePath,
+       _downloadDirectoryPath = downloadDirectoryPath;
 
   final GeneratedRepositoryRuntimeStorageRepositoryCoreProxy _runtimeStorage;
+  final Future<String> Function() _storagePath;
+  final Future<String> Function() _downloadDirectoryPath;
   final List<WorkspaceBrowserDownloadItem> _items =
       <WorkspaceBrowserDownloadItem>[];
   final Map<String, http.Client> _activeClients = <String, http.Client>{};
@@ -103,7 +107,7 @@ class WorkspaceBrowserDownloadStore extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    final content = await _runtimeStorage.readText(path: _storagePath);
+    final content = await _runtimeStorage.readText(path: await _storagePath());
     if (content == null) {
       return;
     }
@@ -156,8 +160,9 @@ class WorkspaceBrowserDownloadStore extends ChangeNotifier {
       }
       final bytes = Uint8List.fromList(chunks);
       final savedPath = 'downloads/${_safeFileName(item.fileName)}';
+      final downloadDirectory = await _downloadDirectoryPath();
       await _runtimeStorage.writeBase64(
-        path: '$_downloadDirectory/${_safeFileName(item.fileName)}',
+        path: '$downloadDirectory/${_safeFileName(item.fileName)}',
         base64Content: base64Encode(bytes),
       );
       final saveToWorkspace = _saveToWorkspace;
@@ -238,8 +243,12 @@ class WorkspaceBrowserDownloadStore extends ChangeNotifier {
   }
 
   void _persist() {
-    _runtimeStorage.writeText(
-      path: _storagePath,
+    unawaited(_persistAsync());
+  }
+
+  Future<void> _persistAsync() async {
+    await _runtimeStorage.writeText(
+      path: await _storagePath(),
       content: jsonEncode(
         _items.map((item) => item.toJson()).toList(growable: false),
       ),

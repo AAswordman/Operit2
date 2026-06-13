@@ -86,7 +86,15 @@ impl SyncOperationStore {
     pub fn native(paths: RuntimeStorePaths) -> Self {
         Self::new(
             defaultRuntimeStorageHost(),
-            runtimeStoragePath(&paths.root_dir().join("sync")),
+            runtimeStoragePath(&paths.sync_dir()),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn adjacentTo(paths: RuntimeStorePaths) -> Self {
+        Self::new(
+            defaultRuntimeStorageHost(),
+            runtimeStoragePath(&paths.adjacent_sync_dir()),
         )
     }
 

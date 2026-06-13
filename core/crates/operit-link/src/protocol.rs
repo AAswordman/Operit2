@@ -3,7 +3,42 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub type CoreValue = Value;
-pub type CoreEventStream = mpsc::UnboundedReceiver<CoreEvent>;
+
+pub struct CoreEventStream {
+    receiver: mpsc::UnboundedReceiver<CoreEvent>,
+    onClose: Option<Box<dyn FnOnce() + Send + 'static>>,
+}
+
+impl CoreEventStream {
+    pub fn new(receiver: mpsc::UnboundedReceiver<CoreEvent>) -> Self {
+        Self {
+            receiver,
+            onClose: None,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withOnClose(mut self, onClose: impl FnOnce() + Send + 'static) -> Self {
+        self.onClose = Some(Box::new(onClose));
+        self
+    }
+
+    pub async fn recv(&mut self) -> Option<CoreEvent> {
+        self.receiver.recv().await
+    }
+
+    pub fn try_recv(&mut self) -> Result<CoreEvent, mpsc::error::TryRecvError> {
+        self.receiver.try_recv()
+    }
+}
+
+impl Drop for CoreEventStream {
+    fn drop(&mut self) {
+        if let Some(onClose) = self.onClose.take() {
+            onClose();
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CoreRequestId(pub String);

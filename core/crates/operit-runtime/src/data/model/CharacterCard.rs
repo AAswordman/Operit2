@@ -40,6 +40,13 @@ impl CharacterCardToolAccessConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CharacterSharedMemoryMount {
+    pub sharedMemoryId: String,
+    pub readable: bool,
+    pub writable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CharacterCard {
     pub id: String,
@@ -54,8 +61,7 @@ pub struct CharacterCard {
     pub marks: String,
     pub chatModelBindingMode: String,
     pub chatModelId: Option<String>,
-    pub memoryProfileBindingMode: String,
-    pub memoryProfileId: Option<String>,
+    pub sharedMemoryMounts: Vec<CharacterSharedMemoryMount>,
     pub toolAccessConfig: CharacterCardToolAccessConfig,
     pub isDefault: bool,
     pub createdAt: i64,
@@ -71,21 +77,6 @@ impl CharacterCardChatModelBindingMode {
     pub fn normalize(mode: Option<&str>) -> String {
         if mode == Some(Self::FIXED_MODEL) {
             Self::FIXED_MODEL.to_string()
-        } else {
-            Self::FOLLOW_GLOBAL.to_string()
-        }
-    }
-}
-
-pub struct CharacterCardMemoryProfileBindingMode;
-
-impl CharacterCardMemoryProfileBindingMode {
-    pub const FOLLOW_GLOBAL: &'static str = "FOLLOW_GLOBAL";
-    pub const FIXED_PROFILE: &'static str = "FIXED_PROFILE";
-
-    pub fn normalize(mode: Option<&str>) -> String {
-        if mode == Some(Self::FIXED_PROFILE) {
-            Self::FIXED_PROFILE.to_string()
         } else {
             Self::FOLLOW_GLOBAL.to_string()
         }
@@ -186,20 +177,14 @@ pub struct OperitCharacterCardPayload {
     pub chatModelBindingMode: String,
     #[serde(default)]
     pub chatModelId: Option<String>,
-    #[serde(default = "default_character_memory_profile_binding_mode")]
-    pub memoryProfileBindingMode: String,
     #[serde(default)]
-    pub memoryProfileId: Option<String>,
+    pub sharedMemoryMounts: Vec<CharacterSharedMemoryMount>,
     #[serde(default)]
     pub toolAccessConfig: Option<CharacterCardToolAccessConfig>,
 }
 
 fn default_character_chat_model_binding_mode() -> String {
     CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string()
-}
-
-fn default_character_memory_profile_binding_mode() -> String {
-    CharacterCardMemoryProfileBindingMode::FOLLOW_GLOBAL.to_string()
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

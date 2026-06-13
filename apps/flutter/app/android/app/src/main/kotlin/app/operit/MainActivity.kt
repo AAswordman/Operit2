@@ -1,4 +1,4 @@
-package com.ai.assistance.operit2
+package app.operit
 
 import android.os.Build
 import android.os.Bundle
@@ -14,10 +14,15 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : FlutterActivity() {
     private val runtimeLock = Any()
-    private val runtimeExecutor: ExecutorService = Executors.newCachedThreadPool()
+    private val runtimeThreadIndex = AtomicInteger(0)
+    private val runtimeExecutor: ExecutorService =
+        Executors.newFixedThreadPool(8) { runnable ->
+            Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
+        }
     private var runtimeHandle: Long = 0
     private lateinit var runtimeChannel: MethodChannel
 
@@ -217,7 +222,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun prepareAndroidRuntimePaths(): AndroidRuntimePaths {
-        val root = File(applicationContext.filesDir, "operit-runtime")
+        val root = applicationContext.filesDir
         root.mkdirs()
         return AndroidRuntimeAssets.prepare(applicationContext, root)
     }
@@ -380,7 +385,7 @@ object AndroidClientLogger {
 
     @Synchronized
     private fun write(context: android.content.Context, level: String, tag: String, message: String) {
-        val logsDir = File(context.filesDir, "logs")
+        val logsDir = File(context.filesDir, "client/logs")
         logsDir.mkdirs()
         val logFile = File(logsDir, "client.log")
         logFile.appendText("${System.currentTimeMillis()} $level/$tag: $message\n", Charsets.UTF_8)

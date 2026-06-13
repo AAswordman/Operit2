@@ -4,8 +4,9 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
@@ -314,9 +315,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   Future<String> _manualTerminalWorkingDirectory() async {
     if (!widget.hasBoundWorkspace) {
-      final supportDirectory = await getApplicationSupportDirectory();
-      await supportDirectory.create(recursive: true);
-      return supportDirectory.path;
+      return const GeneratedCoreProxyClients(
+        ProxyCoreRuntimeBridge(),
+      ).application.operitRootPath();
     }
     final workspaceDirectory = widget.workspacePath?.trim();
     if (workspaceDirectory == null || workspaceDirectory.isEmpty) {

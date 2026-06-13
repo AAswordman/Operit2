@@ -100,7 +100,7 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     );
     output.push_stdout_line("operit2 approval <status|list|allow|ask|forbid|tool>");
     output.push_stdout_line("operit2 tag <list|show|create|update|delete>");
-    output.push_stdout_line("operit2 memory <profile|kv|item>");
+    output.push_stdout_line("operit2 memory <character|shared|mount|unmount>");
     output.push_stdout_line(
         "operit2 character <init|list|show|create|update|delete|set-active|combine|reset-default>",
     );

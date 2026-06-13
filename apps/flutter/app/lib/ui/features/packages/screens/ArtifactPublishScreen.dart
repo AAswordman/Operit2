@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
@@ -446,6 +447,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
               DropdownButtonFormField<String>(
                 key: ValueKey<String?>(source?.packageName),
                 initialValue: source?.packageName,
+                style: OperitFormStyles.dropdownTextStyle(context),
                 decoration: const InputDecoration(
                   labelText: '本地 Artifact',
                   border: OutlineInputBorder(),

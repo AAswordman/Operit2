@@ -1,0 +1,40 @@
+use std::env;
+use std::path::PathBuf;
+
+pub(crate) fn client_root_dir() -> PathBuf {
+    platform_files_root_dir().join("client")
+}
+
+pub(crate) fn link_sessions_path() -> PathBuf {
+    client_root_dir()
+        .join("link")
+        .join("link_sessions.json")
+}
+
+#[cfg(windows)]
+fn platform_files_root_dir() -> PathBuf {
+    let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 CLI client storage");
+    PathBuf::from(appdata)
+        .join("app.operit")
+        .join("Operit2")
+}
+
+#[cfg(target_os = "linux")]
+fn platform_files_root_dir() -> PathBuf {
+    let home = env::var_os("HOME").expect("HOME is required for Operit2 CLI client storage");
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("app.operit")
+        .join("Operit2")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_files_root_dir() -> PathBuf {
+    let home = env::var_os("HOME").expect("HOME is required for Operit2 CLI client storage");
+    PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("app.operit")
+        .join("Operit2")
+}

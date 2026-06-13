@@ -36,7 +36,6 @@ pub struct PendingAutoContinuationRequest {
     pub promptFunctionType: PromptFunctionType,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
     pub roleCardIdOverride: Option<String>,
     pub isGroupOrchestrationTurn: bool,
     pub groupParticipantNamesText: Option<String>,
@@ -71,7 +70,6 @@ pub struct MessageCoordinationDelegate {
     pub currentPromptFunctionType: PromptFunctionType,
     pub currentChatProviderIdOverride: Option<String>,
     pub currentChatModelIdOverride: Option<String>,
-    pub currentPreferenceProfileIdOverride: Option<String>,
     pub nonFatalErrorCollectorJob: Option<String>,
     pub pendingAutoContinuationByChatId: HashMap<String, PendingAutoContinuationRequest>,
 }
@@ -98,7 +96,6 @@ impl MessageCoordinationDelegate {
             currentPromptFunctionType: PromptFunctionType::CHAT,
             currentChatProviderIdOverride: None,
             currentChatModelIdOverride: None,
-            currentPreferenceProfileIdOverride: None,
             nonFatalErrorCollectorJob: None,
             pendingAutoContinuationByChatId: HashMap::new(),
         };
@@ -130,7 +127,6 @@ impl MessageCoordinationDelegate {
         groupParticipantNamesText: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
     ) -> i32 {
         let currentChat = chatId.as_ref().and_then(|chatId| {
             self.chatHistoryDelegate
@@ -150,7 +146,6 @@ impl MessageCoordinationDelegate {
             promptFunctionType: promptFunctionType.clone(),
             chatProviderIdOverride: chatProviderIdOverride.clone(),
             chatModelIdOverride: chatModelIdOverride.clone(),
-            preferenceProfileIdOverride: preferenceProfileIdOverride.clone(),
             ..SendMessageOptions::new()
         };
         let runtime = service
@@ -174,7 +169,6 @@ impl MessageCoordinationDelegate {
             proxySenderName: None,
             chatProviderIdOverride,
             chatModelIdOverride,
-            preferenceProfileIdOverride,
             publishEstimate: false,
             runtime,
         })
@@ -192,7 +186,6 @@ impl MessageCoordinationDelegate {
         groupParticipantNamesText: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
     ) -> Option<i32> {
         let targetChatId = chatId.or_else(|| self.chatHistoryDelegate.currentChatId.clone())?;
         let effectivePromptFunctionType =
@@ -201,8 +194,6 @@ impl MessageCoordinationDelegate {
             chatModelIdOverride.or_else(|| self.currentChatModelIdOverride.clone());
         let effectiveChatProviderIdOverride =
             chatProviderIdOverride.or_else(|| self.currentChatProviderIdOverride.clone());
-        let effectivePreferenceProfileIdOverride =
-            preferenceProfileIdOverride.or_else(|| self.currentPreferenceProfileIdOverride.clone());
         let newWindowSize = self
             .recalculateStableWindowSize(
                 service,
@@ -213,7 +204,6 @@ impl MessageCoordinationDelegate {
                 groupParticipantNamesText,
                 effectiveChatProviderIdOverride,
                 effectiveChatModelIdOverride,
-                effectivePreferenceProfileIdOverride,
             )
             .await;
         let (inputTokens, outputTokens) = self
@@ -304,7 +294,6 @@ impl MessageCoordinationDelegate {
             proxySenderNameOverride,
             chatProviderIdOverride,
             chatModelIdOverride,
-            None,
             attachments,
             replyToMessage,
             false,
@@ -381,7 +370,6 @@ impl MessageCoordinationDelegate {
                 tokenUsageThreshold: 0.0,
                 chatProviderIdOverride: None,
                 chatModelIdOverride: None,
-                preferenceProfileIdOverride: None,
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -425,7 +413,6 @@ impl MessageCoordinationDelegate {
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         isGroupOrchestrationTurn: bool,
@@ -436,7 +423,6 @@ impl MessageCoordinationDelegate {
         self.currentPromptFunctionType = promptFunctionType.clone();
         self.currentChatProviderIdOverride = chatProviderIdOverride.clone();
         self.currentChatModelIdOverride = chatModelIdOverride.clone();
-        self.currentPreferenceProfileIdOverride = preferenceProfileIdOverride.clone();
         let chatId = chatIdOverride
             .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
             .unwrap_or_else(|| {
@@ -551,7 +537,6 @@ impl MessageCoordinationDelegate {
                 tokenUsageThreshold: 0.0,
                 chatProviderIdOverride,
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 isGroupOrchestrationTurn,
                 groupParticipantNamesText,
                 proxySenderNameOverride,
@@ -920,7 +905,6 @@ impl MessageCoordinationDelegate {
                     None,
                     None,
                     None,
-                    None,
                     Vec::new(),
                     None,
                     true,
@@ -1225,7 +1209,6 @@ impl MessageCoordinationDelegate {
                 Some(chatId),
                 self.currentChatProviderIdOverride.clone(),
                 self.currentChatModelIdOverride.clone(),
-                self.currentPreferenceProfileIdOverride.clone(),
                 None,
                 true,
                 false,
@@ -1251,7 +1234,6 @@ impl MessageCoordinationDelegate {
             None,
             None,
             None,
-            None,
             false,
             false,
             None,
@@ -1273,7 +1255,6 @@ impl MessageCoordinationDelegate {
             true,
             None,
             chatId,
-            None,
             None,
             None,
             roleCardId,
@@ -1364,7 +1345,6 @@ impl MessageCoordinationDelegate {
         roleCardId: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
     ) {
         if snapshotMessages.is_empty() || originalChatId.is_none() {
             return;
@@ -1413,7 +1393,6 @@ impl MessageCoordinationDelegate {
                 None,
                 chatProviderIdOverride,
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
             )
             .await;
         }
@@ -1435,7 +1414,6 @@ impl MessageCoordinationDelegate {
         chatIdOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         roleCardIdOverride: Option<String>,
         isGroupChat: bool,
         isGroupOrchestrationTurn: bool,
@@ -1463,8 +1441,6 @@ impl MessageCoordinationDelegate {
             chatModelIdOverride.or_else(|| self.currentChatModelIdOverride.clone());
         let effectiveChatProviderIdOverride =
             chatProviderIdOverride.or_else(|| self.currentChatProviderIdOverride.clone());
-        let effectivePreferenceProfileIdOverride =
-            preferenceProfileIdOverride.or_else(|| self.currentPreferenceProfileIdOverride.clone());
         let currentMessages = currentChatId
             .clone()
             .map(|chatId| self.chatHistoryDelegate.getRuntimeChatHistory(chatId))
@@ -1507,7 +1483,6 @@ impl MessageCoordinationDelegate {
                 groupParticipantNamesText.clone(),
                 effectiveChatProviderIdOverride.clone(),
                 effectiveChatModelIdOverride.clone(),
-                effectivePreferenceProfileIdOverride.clone(),
             )
             .await;
             summarySuccess = true;
@@ -1530,7 +1505,6 @@ impl MessageCoordinationDelegate {
                         continuationPromptType,
                         effectiveChatProviderIdOverride.clone(),
                         effectiveChatModelIdOverride,
-                        effectivePreferenceProfileIdOverride,
                         roleCardIdOverride,
                         isGroupOrchestrationTurn,
                         groupParticipantNamesText,
@@ -1549,7 +1523,6 @@ impl MessageCoordinationDelegate {
                         None,
                         effectiveChatProviderIdOverride,
                         effectiveChatModelIdOverride,
-                        effectivePreferenceProfileIdOverride,
                         Vec::new(),
                         None,
                         isGroupOrchestrationTurn,
@@ -1570,7 +1543,6 @@ impl MessageCoordinationDelegate {
         promptFunctionType: PromptFunctionType,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         roleCardIdOverride: Option<String>,
         isGroupOrchestrationTurn: bool,
         groupParticipantNamesText: Option<String>,
@@ -1582,7 +1554,6 @@ impl MessageCoordinationDelegate {
                 promptFunctionType,
                 chatProviderIdOverride,
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 roleCardIdOverride,
                 isGroupOrchestrationTurn,
                 groupParticipantNamesText,

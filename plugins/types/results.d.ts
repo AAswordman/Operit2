@@ -1758,6 +1758,8 @@ export interface ChatMessagesResult extends BaseResult {
  * Single memory item returned by memory query
  */
 export interface MemoryQueryResultMemoryInfo {
+    /** Memory owner key where this memory was found */
+    ownerKey: string;
     /** Memory title */
     title: string;
     /** Memory content or formatted document chunk summary */

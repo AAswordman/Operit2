@@ -13,6 +13,7 @@ use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use crate::util::ImagePoolManager::ImagePoolManager;
 use crate::util::MediaPoolManager::MediaPoolManager;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelConnectionTestType {
@@ -321,7 +322,7 @@ impl ModelConfigConnectionTester {
         fileName: &str,
         bytes: &[u8],
     ) -> Result<PathBuf, std::io::Error> {
-        let dir = rootDir.join("cache").join("model_connection_test");
+        let dir = RuntimeStorePaths::new(rootDir.to_path_buf()).model_connection_test_cache_dir();
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}_{}", uuid::Uuid::new_v4(), fileName));
         std::fs::write(&path, bytes)?;

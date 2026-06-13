@@ -353,6 +353,7 @@ pub struct DeviceInfoResultData {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MemoryInfo {
+    pub ownerKey: String,
     pub title: String,
     pub content: String,
     pub source: String,
@@ -1042,7 +1043,8 @@ impl MemoryQueryResultData {
             .iter()
             .map(|memory| {
                 format!(
-                    "Title: {}\nContent: {}\nSource: {}\nTags: {}\nCreated: {}",
+                    "Owner: {}\nTitle: {}\nContent: {}\nSource: {}\nTags: {}\nCreated: {}",
+                    memory.ownerKey,
                     memory.title,
                     memory.content,
                     memory.source,

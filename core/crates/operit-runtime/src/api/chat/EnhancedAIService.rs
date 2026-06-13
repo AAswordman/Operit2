@@ -40,6 +40,8 @@ use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::util::OperitPaths::characterMemoryOwnerKey;
+use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::data::skill::SkillRepository::SkillRepository;
 use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{ChatMarkupRegex, attr_value};
@@ -131,7 +133,6 @@ pub struct SendMessageOptions {
     pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub preferenceProfileIdOverride: Option<String>,
     pub stream: bool,
     pub disableWarning: bool,
 }
@@ -165,7 +166,6 @@ impl SendMessageOptions {
             notifyReplyOverride: None,
             chatProviderIdOverride: None,
             chatModelIdOverride: None,
-            preferenceProfileIdOverride: None,
             stream: true,
             disableWarning: false,
         }
@@ -552,17 +552,19 @@ impl EnhancedAIService {
         runtime.modelConfig.clone()
     }
 
-    pub fn refreshServiceForFunction(&mut self, functionType: FunctionType) {
+    pub async fn refreshServiceForFunction(&mut self, functionType: FunctionType) {
         self.ensureInitialized();
         self.multi_service_manager
             .refreshServiceForFunction(functionType)
+            .await
             .expect("refreshServiceForFunction must succeed");
     }
 
-    pub fn refreshAllServices(&mut self) {
+    pub async fn refreshAllServices(&mut self) {
         self.ensureInitialized();
         self.multi_service_manager
             .refreshAllServices()
+            .await
             .expect("refreshAllServices must succeed");
     }
 
@@ -665,7 +667,6 @@ impl EnhancedAIService {
         functionType: FunctionType,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> Vec<PromptTurn> {
         let config = self.getModelConfigForFunction(
@@ -702,7 +703,6 @@ impl EnhancedAIService {
                 use_tool_call_api: useToolCallApi,
                 chat_model_has_direct_image: chatModelHasDirectImage,
                 tool_exposure_mode: runtime.toolExposureMode.clone(),
-                preference_profile_id_override: preferenceProfileIdOverride,
                 active_prompt_metadata: runtime.activePromptMetadata.clone(),
                 user_preferences_text: runtime.userPreferencesText.clone(),
                 intro_prompt: runtime.introPrompt.clone(),
@@ -811,7 +811,6 @@ impl EnhancedAIService {
         proxySenderName: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         publishEstimate: bool,
         mut runtime: SendMessageRuntime,
     ) -> Result<i32, AiServiceError> {
@@ -832,7 +831,6 @@ impl EnhancedAIService {
             FunctionType::CHAT,
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
-            preferenceProfileIdOverride.clone(),
             &runtime,
         );
         let availableTools = self.getAvailableToolsForFunction(
@@ -993,11 +991,22 @@ impl EnhancedAIService {
             .map(|card| card.name.clone())
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Operit".to_string());
+        let activeCardId = activeCard
+            .as_ref()
+            .map(|card| card.id.clone())
+            .ok_or_else(|| {
+                AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
+            })?;
+        let userOwnerKey = characterMemoryOwnerKey(&activeCardId)
+            .map_err(AiServiceError::RequestFailed)?;
+        let userPreferencesText = UserMarkdownRepository::new(userOwnerKey)
+            .readUserMarkdown()
+            .map_err(AiServiceError::RequestFailed)?;
 
         Ok(SendMessageRuntime {
             activePromptMetadata: BTreeMap::new(),
             useEnglish: false,
-            userPreferencesText: String::new(),
+            userPreferencesText,
             introPrompt,
             waifuRulesText: String::new(),
             avatarMoodRulesText: String::new(),
@@ -1098,6 +1107,7 @@ impl EnhancedAIService {
         let characterName = options.characterName.clone();
         let avatarUri = options.avatarUri.clone();
         let roleCardId = options.roleCardId.clone();
+        let memoryAutoUpdateCharacterCardId = roleCardId.clone();
         let enableGroupOrchestrationHint = options.enableGroupOrchestrationHint;
         let groupParticipantNamesText = options.groupParticipantNamesText.clone();
         let proxySenderName = options.proxySenderName.clone();
@@ -1105,7 +1115,6 @@ impl EnhancedAIService {
         let notifyReplyOverride = options.notifyReplyOverride;
         let chatProviderIdOverride = options.chatProviderIdOverride.clone();
         let chatModelIdOverride = options.chatModelIdOverride.clone();
-        let preferenceProfileIdOverride = options.preferenceProfileIdOverride.clone();
         let stream = options.stream;
         let disableWarning = options.disableWarning;
         let onNonFatalError = options.onNonFatalError;
@@ -1163,7 +1172,6 @@ impl EnhancedAIService {
             functionType.clone(),
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
-            preferenceProfileIdOverride.clone(),
             &runtime,
         );
         lifecycle.push(SendMessageLifecycleStage::SyncPreparedHistoryToExecutionContext);
@@ -1404,7 +1412,6 @@ impl EnhancedAIService {
             notifyReplyOverride,
             chatProviderIdOverride.clone(),
             chatModelIdOverride,
-            preferenceProfileIdOverride.clone(),
             stream,
             enableGroupOrchestrationHint,
             disableWarning,
@@ -1420,7 +1427,7 @@ impl EnhancedAIService {
                     promptTurnsToMemoryPairs(&requestHistory),
                     memoryContent,
                     runtime.aiService.clone(),
-                    preferenceProfileIdOverride.clone(),
+                    memoryAutoUpdateCharacterCardId.clone(),
                 );
             }
         }
@@ -1474,7 +1481,6 @@ impl EnhancedAIService {
         notifyReplyOverride: Option<bool>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
         toolResultMessageOverride: Option<String>,
@@ -1650,7 +1656,6 @@ impl EnhancedAIService {
             notifyReplyOverride,
             chatProviderIdOverride,
             chatModelIdOverride,
-            preferenceProfileIdOverride,
             stream,
             enableGroupOrchestrationHint,
             disableWarning,
@@ -1683,7 +1688,6 @@ impl EnhancedAIService {
         notifyReplyOverride: Option<bool>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
         disableWarning: bool,
@@ -1706,7 +1710,6 @@ impl EnhancedAIService {
                 characterName,
                 avatarUri,
                 notifyReplyOverride,
-                preferenceProfileIdOverride,
                 callbacks,
             );
             return Ok(());
@@ -1726,7 +1729,6 @@ impl EnhancedAIService {
                     characterName,
                     avatarUri,
                     notifyReplyOverride,
-                    preferenceProfileIdOverride,
                     callbacks,
                 );
                 return Ok(());
@@ -1765,7 +1767,6 @@ impl EnhancedAIService {
                 notifyReplyOverride,
                 chatProviderIdOverride.clone(),
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
                 Some(pureThinkingWarning),
@@ -1829,7 +1830,6 @@ impl EnhancedAIService {
                     characterName,
                     avatarUri,
                     notifyReplyOverride,
-                    preferenceProfileIdOverride,
                     callbacks,
                 );
                 return Ok(());
@@ -1862,7 +1862,6 @@ impl EnhancedAIService {
                 notifyReplyOverride,
                 chatProviderIdOverride.clone(),
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
                 Some(warningStatus),
@@ -1894,7 +1893,6 @@ impl EnhancedAIService {
                 notifyReplyOverride,
                 chatProviderIdOverride,
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
                 None,
@@ -1914,7 +1912,6 @@ impl EnhancedAIService {
             characterName,
             avatarUri,
             notifyReplyOverride,
-            preferenceProfileIdOverride,
             callbacks,
         );
         Ok(())
@@ -1943,7 +1940,6 @@ impl EnhancedAIService {
         notifyReplyOverride: Option<bool>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-        preferenceProfileIdOverride: Option<String>,
         stream: bool,
         enableGroupOrchestrationHint: bool,
         toolResultOverrideMessage: Option<String>,
@@ -2018,7 +2014,6 @@ impl EnhancedAIService {
                 notifyReplyOverride,
                 chatProviderIdOverride.clone(),
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
                 None,
@@ -2051,7 +2046,6 @@ impl EnhancedAIService {
                 notifyReplyOverride,
                 chatProviderIdOverride,
                 chatModelIdOverride,
-                preferenceProfileIdOverride,
                 stream,
                 enableGroupOrchestrationHint,
                 toolResultOverrideMessage,
@@ -2254,7 +2248,6 @@ impl EnhancedAIService {
         characterName: Option<String>,
         avatarUri: Option<String>,
         notifyReplyOverride: Option<bool>,
-        _preferenceProfileIdOverride: Option<String>,
         callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     ) {
         self.shared_state().last_reply_content = Some(content.to_string());
@@ -2264,8 +2257,9 @@ impl EnhancedAIService {
         self.notifyReplyCompleted(chatId, characterName, avatarUri, notifyReplyOverride);
     }
 
-    pub fn cancelConversation(&mut self) {
+    pub async fn cancelConversation(&mut self) {
         self.invalidateAllExecutionContexts("cancelConversation".to_string());
+        self.multi_service_manager.cancelAllStreaming().await;
         self.input_processing_state
             .set_value(InputProcessingState::Idle);
         {

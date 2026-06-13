@@ -594,7 +594,7 @@ impl PairedRemoteSession {
             .error_for_status()
             .map_err(|error| error.to_string())?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let mut bytes = response.bytes_stream();
             let mut buffer = Vec::<u8>::new();
             while let Some(item) = bytes.next().await {
@@ -614,7 +614,7 @@ impl PairedRemoteSession {
                 }
             }
         });
-        Ok(receiver)
+        Ok(CoreEventStream::new(receiver).withOnClose(move || task.abort()))
     }
 
     #[allow(non_snake_case)]

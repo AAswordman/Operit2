@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::thread;
 
-use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
 
@@ -12,8 +12,9 @@ use crate::core::chat::hooks::PromptTurn::{toPromptTurns, PromptTurn, PromptTurn
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::Memory::{Memory, MemoryTag};
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
-use crate::data::preferences::UserPreferencesManager::PreferencesManager;
+use crate::util::OperitPaths::characterMemoryOwnerKey;
 use crate::data::repository::MemoryRepository::MemoryRepository;
+use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::util::stream::Stream::Stream;
 use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{tag_ranges, ChatMarkupRegex};
@@ -89,7 +90,7 @@ impl MemoryLibrary {
         conversationHistory: Vec<(String, String)>,
         content: String,
         aiService: SharedAIServiceHandle,
-        profileIdOverride: Option<String>,
+        characterCardId: Option<String>,
     ) {
         thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -100,7 +101,7 @@ impl MemoryLibrary {
                 conversationHistory,
                 content,
                 aiService,
-                profileIdOverride,
+                characterCardId,
             ));
             if let Err(error) = result {
                 AppLogger::e(TAG, &format!("保存记忆失败: {error}"));
@@ -113,9 +114,9 @@ impl MemoryLibrary {
         conversationHistory: Vec<(String, String)>,
         content: String,
         aiService: SharedAIServiceHandle,
-        profileIdOverride: Option<String>,
+        characterCardId: Option<String>,
     ) -> Result<(), String> {
-        Self::saveMemory(conversationHistory, content, aiService, profileIdOverride).await
+        Self::saveMemory(conversationHistory, content, aiService, characterCardId).await
     }
 
     #[allow(non_snake_case)]
@@ -123,18 +124,16 @@ impl MemoryLibrary {
         conversationHistory: Vec<(String, String)>,
         content: String,
         aiService: SharedAIServiceHandle,
-        profileIdOverride: Option<String>,
+        characterCardId: Option<String>,
     ) -> Result<(), String> {
         let mutex = memoryMutex();
         let _guard = mutex.lock().await;
-        let preferencesManager = PreferencesManager::getInstance();
-        let profileId = match profileIdOverride {
-            Some(profileId) if !profileId.trim().is_empty() => profileId,
-            _ => preferencesManager
-                .activeProfileId()
-                .map_err(|error| error.to_string())?,
-        };
-        let memoryRepository = MemoryRepository::new(profileId.clone());
+        let characterCardId = characterCardId
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "characterCardId is required for memory auto update".to_string())?;
+        let ownerKey = characterMemoryOwnerKey(&characterCardId)?;
+        let memoryRepository = MemoryRepository::new(ownerKey.clone());
         let prunedContent =
             ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(&content));
 
@@ -176,7 +175,7 @@ impl MemoryLibrary {
             &prunedContent,
             &processedHistory,
             &memoryRepository,
-            &profileId,
+            &ownerKey,
         )
         .await?;
 
@@ -230,7 +229,8 @@ impl MemoryLibrary {
         }
 
         if !analysis.userPreferences.is_empty() {
-            updateUserPreferencesFromAnalysis(&analysis.userPreferences, &profileId)?;
+            UserMarkdownRepository::new(&ownerKey)
+                .writeUserMarkdown(analysis.userPreferences.clone())?;
         }
 
         let Some(mainProblem) = analysis.mainProblem.clone() else {
@@ -318,15 +318,12 @@ impl MemoryLibrary {
         solution: &str,
         conversationHistory: &[(String, String)],
         memoryRepository: &MemoryRepository,
-        profileId: &str,
+        ownerKey: &str,
     ) -> Result<ParsedAnalysis, String> {
         let useEnglish = false;
-        let currentPreferences = PreferencesManager::getInstance()
-            .innerProfile(profileId)
-            .map(buildPreferencesText)
-            .map_err(|error| error.to_string())?;
+        let currentPreferences = UserMarkdownRepository::new(ownerKey).readUserMarkdown()?;
         let contextQuery = buildCandidateSearchQuery(query, solution);
-        let searchConfig = MemorySearchSettingsPreferences::new(profileId)
+        let searchConfig = MemorySearchSettingsPreferences::new(ownerKey)
             .load()
             .map_err(|error| error.to_string())?;
         let candidateMemories = memoryRepository
@@ -400,31 +397,6 @@ impl MemoryLibrary {
         }
         let _ = searchConfig;
         parseAnalysisResult(&ChatUtils::remove_thinking_content(&result), useEnglish)
-    }
-}
-
-pub trait PreferencesManagerMemoryAccess {
-    #[allow(non_snake_case)]
-    fn innerProfile(
-        &self,
-        profileId: &str,
-    ) -> Result<
-        crate::data::model::PreferenceProfile::PreferenceProfile,
-        operit_store::PreferencesDataStore::PreferencesDataStoreError,
-    >;
-}
-
-impl PreferencesManagerMemoryAccess for PreferencesManager {
-    #[allow(non_snake_case)]
-    fn innerProfile(
-        &self,
-        profileId: &str,
-    ) -> Result<
-        crate::data::model::PreferenceProfile::PreferenceProfile,
-        operit_store::PreferencesDataStore::PreferencesDataStoreError,
-    > {
-        crate::data::preferences::UserPreferencesManager::UserPreferencesManager::getInstance()
-            .getProfile(profileId)
     }
 }
 
@@ -600,7 +572,7 @@ fn buildAnalysisMessage(
 }
 
 #[allow(non_snake_case)]
-fn parseAnalysisResult(jsonString: &str, useEnglish: bool) -> Result<ParsedAnalysis, String> {
+fn parseAnalysisResult(jsonString: &str, _useEnglish: bool) -> Result<ParsedAnalysis, String> {
     let cleanJson = ChatUtils::extract_json(jsonString);
     if cleanJson.trim().is_empty()
         || !cleanJson.trim_start().starts_with('{')
@@ -647,8 +619,9 @@ fn parseAnalysisResult(jsonString: &str, useEnglish: bool) -> Result<ParsedAnaly
         .unwrap_or_default();
     let userPreferences = json
         .get("user")
-        .and_then(Value::as_object)
-        .map(|object| parseUserPreferences(object, useEnglish))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .unwrap_or_default();
     Ok(ParsedAnalysis {
         mainProblem,
@@ -735,134 +708,6 @@ fn parseMergeObject(value: &Value) -> Option<ParsedMerge> {
             .unwrap_or("")
             .to_string(),
     })
-}
-
-#[allow(non_snake_case)]
-fn parseUserPreferences(
-    preferencesObj: &serde_json::Map<String, Value>,
-    useEnglish: bool,
-) -> String {
-    let labels = if useEnglish {
-        [
-            ("age", "Birth year"),
-            ("gender", "Gender"),
-            ("personality", "Personality"),
-            ("identity", "Identity"),
-            ("occupation", "Occupation"),
-            ("aiStyle", "AI Style"),
-        ]
-    } else {
-        [
-            ("age", "出生年份"),
-            ("gender", "性别"),
-            ("personality", "性格"),
-            ("identity", "身份"),
-            ("occupation", "职业"),
-            ("aiStyle", "AI风格"),
-        ]
-    };
-    let mut parts = Vec::new();
-    for (key, prefix) in labels {
-        if let Some(value) = preferencesObj.get(key) {
-            if value != "<UNCHANGED>" {
-                let text = value
-                    .as_str()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| value.to_string());
-                if !text.is_empty() {
-                    parts.push(format!("{prefix}: {text}"));
-                }
-            }
-        }
-    }
-    parts.join("; ")
-}
-
-#[allow(non_snake_case)]
-fn buildPreferencesText(
-    profile: crate::data::model::PreferenceProfile::PreferenceProfile,
-) -> String {
-    let mut parts = Vec::new();
-    if !profile.gender.is_empty() {
-        parts.push(format!("性别: {}", profile.gender));
-    }
-    if profile.birthDate > 0 {
-        if let Some(date) = Utc.timestamp_millis_opt(profile.birthDate).single() {
-            parts.push(format!("出生日期: {}", date.format("%Y-%m-%d")));
-            let today = Utc::now().date_naive();
-            let birth = date.date_naive();
-            let mut age = today.year() - birth.year();
-            if today.ordinal() < birth.ordinal() {
-                age -= 1;
-            }
-            parts.push(format!("年龄: {age}"));
-        }
-    }
-    if !profile.personality.is_empty() {
-        parts.push(format!("性格: {}", profile.personality));
-    }
-    if !profile.identity.is_empty() {
-        parts.push(format!("身份: {}", profile.identity));
-    }
-    if !profile.occupation.is_empty() {
-        parts.push(format!("职业: {}", profile.occupation));
-    }
-    if !profile.aiStyle.is_empty() {
-        parts.push(format!("AI风格: {}", profile.aiStyle));
-    }
-    parts.join("; ")
-}
-
-#[allow(non_snake_case)]
-fn updateUserPreferencesFromAnalysis(preferencesText: &str, profileId: &str) -> Result<(), String> {
-    if preferencesText.is_empty() {
-        return Ok(());
-    }
-    let extract = |pattern: &str| -> Option<String> {
-        Regex::new(pattern)
-            .expect("preference regex must compile")
-            .captures(preferencesText)
-            .and_then(|captures| {
-                captures
-                    .get(captures.len() - 1)
-                    .map(|value| value.as_str().trim().to_string())
-            })
-    };
-    let birthDate = extract(r"(出生日期|出生年月日|Birth Date|Date of Birth)[:：\s]+([\d-]+)")
-        .and_then(|value| {
-            NaiveDate::parse_from_str(&value, "%Y-%m-%d")
-                .ok()
-                .and_then(|date| date.and_hms_opt(0, 0, 0))
-                .map(|date| Utc.from_utc_datetime(&date).timestamp_millis())
-        })
-        .or_else(|| {
-            extract(r"(出生年份|年龄|Birth year|Age)[:：\s]+(\d+)").and_then(|value| {
-                value.parse::<i32>().ok().and_then(|year| {
-                    NaiveDate::from_ymd_opt(year, 1, 1)
-                        .and_then(|date| date.and_hms_opt(0, 0, 0))
-                        .map(|date| Utc.from_utc_datetime(&date).timestamp_millis())
-                })
-            })
-        });
-    let gender = extract(r"(性别|Gender)[:：\s]+([^;]+)");
-    let personality = extract(r"(性格(特点)?|Personality( traits)?)[:：\s]+([^;]+)");
-    let identity = extract(r"(身份(认同)?|Identity( recognition)?)[:：\s]+([^;]+)");
-    let occupation = extract(r"(职业|Occupation)[:：\s]+([^;]+)");
-    let aiStyle = extract(
-        r"(AI风格|期待的AI风格|偏好的AI风格|AI Style|Expected AI Style|Preferred AI Style)[:：\s]+([^;]+)",
-    );
-    PreferencesManager::getInstance()
-        .updateProfileCategory(
-            profileId.to_string(),
-            birthDate,
-            gender,
-            personality,
-            identity,
-            occupation,
-            aiStyle,
-        )
-        .map(|_| ())
-        .map_err(|error| error.to_string())
 }
 
 #[allow(non_snake_case)]

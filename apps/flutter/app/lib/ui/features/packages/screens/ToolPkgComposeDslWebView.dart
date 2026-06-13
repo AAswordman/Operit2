@@ -7,11 +7,11 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../core/bridge/RuntimeHostBridge.dart';
+import '../../../../core/path/OperitClientPaths.dart';
 import 'ToolPkgComposeDslWebViewResourceServer.dart';
 
 const String composeDslWebViewInternalBridgeName =
@@ -1168,10 +1168,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     final files = multiple
         ? await openFiles(acceptedTypeGroups: acceptedTypeGroups)
         : <XFile>[?await openFile(acceptedTypeGroups: acceptedTypeGroups)];
-    final tempDirectory = await getTemporaryDirectory();
-    final stagedDirectory = Directory(
-      '${tempDirectory.path}${Platform.pathSeparator}compose_dsl_webview_files',
-    );
+    final stagedDirectory = await OperitClientPaths.composeDslWebviewFilesDir();
     if (!await stagedDirectory.exists()) {
       await stagedDirectory.create(recursive: true);
     }

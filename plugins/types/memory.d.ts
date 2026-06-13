@@ -1,17 +1,22 @@
 /**
  * Memory management namespace
- * Provides methods for managing the memory library
+ * Provides methods for managing owner-key memory stores.
+ *
+ * Memory owner keys use one of these exact forms:
+ * - character:<character-card-id>
+ * - shared:<shared-memory-id>
  */
 
-/**
- * Memory management tools
- */
 export namespace Memory {
-    interface CallerScopedOptions {
-        callerCardId?: string;
+    interface OwnerScopedOptions {
+        targetOwnerKey?: string;
     }
 
-    interface QueryOptions extends CallerScopedOptions {
+    interface RequiredOwnerScopedOptions {
+        targetOwnerKey: string;
+    }
+
+    interface QueryOptions extends OwnerScopedOptions {
         query: string;
         folderPath?: string;
         limit?: number;
@@ -21,7 +26,7 @@ export namespace Memory {
         threshold?: number;
     }
 
-    interface GetByTitleOptions extends CallerScopedOptions {
+    interface GetByTitleOptions extends RequiredOwnerScopedOptions {
         title: string;
         chunkIndex?: number;
         chunkRange?: string;
@@ -29,7 +34,7 @@ export namespace Memory {
         limit?: number;
     }
 
-    interface CreateOptions extends CallerScopedOptions {
+    interface CreateOptions extends RequiredOwnerScopedOptions {
         title: string;
         content: string;
         contentType?: string;
@@ -39,16 +44,8 @@ export namespace Memory {
     }
 
     /**
-     * Query the memory library
-     * @param query - Search query. Supports a natural-language question, a space-separated phrase, or `|`-separated keywords. Inside a keyword, `*` works as a fuzzy wildcard placeholder such as `error*timeout`; use only `*` to return all memories
-     * @param folderPath - Optional folder path to search within
-     * @param limit - Optional maximum number of results (>=1, default 20)
-     * @param startTime - Optional local-time start time in `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` format, filters memories by createdAt >= startTime
-     * @param endTime - Optional local-time end time in `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` format, filters memories by createdAt <= endTime
-     * @param snapshotId - Optional snapshot id. Omit or pass empty to auto-create one; pass any non-empty id to use or create that exact snapshot so follow-up or parallel queries can exclude already returned memories
-     * @param threshold - Optional relevance threshold (>=0). Only memories whose score is at least this value are returned; `query_memory` defaults to `0`
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Structured query results
+     * Query memory. When targetOwnerKey is provided, only that owner is queried.
+     * During agent execution, omitting targetOwnerKey queries the current role's readable memory owners.
      */
     function query(
         query: string,
@@ -58,41 +55,23 @@ export namespace Memory {
         endTime?: string,
         snapshotId?: string,
         threshold?: number,
-        callerCardId?: string
+        targetOwnerKey?: string
     ): Promise<import('./results').MemoryQueryResultData>;
     function query(options: QueryOptions): Promise<import('./results').MemoryQueryResultData>;
 
     /**
-     * Get a memory by exact title
-     * @param title - The exact title of the memory
-     * @param chunkIndex - Optional chunk index for document nodes
-     * @param chunkRange - Optional chunk range for document nodes (e.g., "3-7")
-     * @param query - Optional query to search within the document. Supports natural language, space-separated phrases, `|`-separated keywords, and `*` as a fuzzy wildcard inside a keyword
-     * @param limit - Optional maximum number of matched chunks when using query (>=1, default 20)
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Memory content as a string
+     * Get a memory by exact title from one memory owner.
      */
-    function getByTitle(title: string, chunkIndex?: number, chunkRange?: string, query?: string, limit?: number, callerCardId?: string): Promise<string>;
-    function getByTitle(options: GetByTitleOptions): Promise<string>;
+    function getByTitle(title: string, targetOwnerKey: string, chunkIndex?: number, chunkRange?: string, query?: string, limit?: number): Promise<import('./results').MemoryQueryResultData>;
+    function getByTitle(options: GetByTitleOptions): Promise<import('./results').MemoryQueryResultData>;
 
     /**
-     * Create a new memory
-     * @param title - Memory title
-     * @param content - Memory content
-     * @param contentType - Optional content type (default "text/plain")
-     * @param source - Optional source (default "ai_created")
-     * @param folderPath - Optional folder path (default "")
-     * @param tags - Optional tags (comma-separated string)
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Creation result as a string
+     * Create a new memory in one memory owner.
      */
-    function create(title: string, content: string, contentType?: string, source?: string, folderPath?: string, tags?: string, callerCardId?: string): Promise<string>;
+    function create(title: string, content: string, targetOwnerKey: string, contentType?: string, source?: string, folderPath?: string, tags?: string): Promise<string>;
     function create(options: CreateOptions): Promise<string>;
 
-    /**
-     * Update options for memory update
-     */
-    interface UpdateOptions {
+    interface UpdateOptions extends RequiredOwnerScopedOptions {
         oldTitle?: string;
         newTitle?: string;
         content?: string;
@@ -102,68 +81,47 @@ export namespace Memory {
         importance?: number;
         folderPath?: string;
         tags?: string;
-        callerCardId?: string;
     }
 
     /**
-     * Update an existing memory
-     * @param oldTitle - The current title of the memory
-     * @param updates - Update options
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Update result as a string
+     * Update an existing memory in one memory owner.
      */
-    function update(oldTitle: string, updates?: Omit<UpdateOptions, 'oldTitle'>, callerCardId?: string): Promise<string>;
+    function update(oldTitle: string, targetOwnerKey: string, updates?: Omit<UpdateOptions, 'oldTitle' | 'targetOwnerKey'>): Promise<string>;
     function update(options: UpdateOptions & { oldTitle: string }): Promise<string>;
 
-    interface UserPreferencesOptions {
-        birthDate?: number | string;
-        birth_date?: number | string;
-        gender?: string;
-        personality?: string;
-        identity?: string;
-        occupation?: string;
-        aiStyle?: string;
-        ai_style?: string;
+    interface UserPreferencesOptions extends RequiredOwnerScopedOptions {
+        content: string;
     }
 
     /**
-     * Update user preference profile fields
-     * @param options - Preference fields to update
-     * @returns Update result as a string
+     * Overwrite USER.md for one memory owner.
      */
+    function updateUserPreferences(content: string, targetOwnerKey: string): Promise<string>;
     function updateUserPreferences(options: UserPreferencesOptions): Promise<string>;
 
-    interface DeleteOptions extends CallerScopedOptions {
+    interface DeleteOptions extends RequiredOwnerScopedOptions {
         title: string;
     }
 
     /**
-     * Delete a memory
-     * @param title - The title of the memory to delete
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Deletion result as a string
+     * Delete a memory from one memory owner.
      */
-    function deleteMemory(title: string, callerCardId?: string): Promise<string>;
+    function deleteMemory(title: string, targetOwnerKey: string): Promise<string>;
     function deleteMemory(options: DeleteOptions): Promise<string>;
 
-    interface MoveOptions extends CallerScopedOptions {
+    interface MoveOptions extends RequiredOwnerScopedOptions {
         targetFolderPath: string;
         titles?: string[] | string;
         sourceFolderPath?: string;
     }
 
     /**
-     * Move memories to another folder in batch
-     * @param targetFolderPath - Target folder path (empty string means uncategorized)
-     * @param titles - Optional memory titles (string array or comma-separated string)
-     * @param sourceFolderPath - Optional source folder path (empty string means uncategorized)
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Move result as a string
+     * Move memories inside one memory owner.
      */
-    function move(targetFolderPath: string, titles?: string[] | string, sourceFolderPath?: string, callerCardId?: string): Promise<string>;
+    function move(targetFolderPath: string, targetOwnerKey: string, titles?: string[] | string, sourceFolderPath?: string): Promise<string>;
     function move(options: MoveOptions): Promise<string>;
 
-    interface LinkOptions extends CallerScopedOptions {
+    interface LinkOptions extends RequiredOwnerScopedOptions {
         sourceTitle: string;
         targetTitle: string;
         linkType?: string;
@@ -172,19 +130,12 @@ export namespace Memory {
     }
 
     /**
-     * Create a link between two memories
-     * @param sourceTitle - The title of the source memory
-     * @param targetTitle - The title of the target memory
-     * @param linkType - Optional link type (default "related")
-     * @param weight - Optional link strength (0.0-1.0, default 0.7)
-     * @param description - Optional description of the relationship
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Link creation result
+     * Create a link between two memories inside one memory owner.
      */
-    function link(sourceTitle: string, targetTitle: string, linkType?: string, weight?: number, description?: string, callerCardId?: string): Promise<import('./results').MemoryLinkResultData>;
+    function link(sourceTitle: string, targetTitle: string, targetOwnerKey: string, linkType?: string, weight?: number, description?: string): Promise<import('./results').MemoryLinkResultData>;
     function link(options: LinkOptions): Promise<import('./results').MemoryLinkResultData>;
 
-    interface QueryLinksOptions extends CallerScopedOptions {
+    interface QueryLinksOptions extends RequiredOwnerScopedOptions {
         linkId?: number;
         sourceTitle?: string;
         targetTitle?: string;
@@ -193,26 +144,19 @@ export namespace Memory {
     }
 
     /**
-     * Query memory links with optional filters
-     * @param linkId - Optional link ID (exact match)
-     * @param sourceTitle - Optional source memory title filter
-     * @param targetTitle - Optional target memory title filter
-     * @param linkType - Optional link type filter
-     * @param limit - Optional maximum number of links to return (1-200, default 20)
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Link query result
+     * Query memory links inside one memory owner.
      */
     function queryLinks(
+        targetOwnerKey: string,
         linkId?: number,
         sourceTitle?: string,
         targetTitle?: string,
         linkType?: string,
-        limit?: number,
-        callerCardId?: string
+        limit?: number
     ): Promise<import('./results').MemoryLinkQueryResultData>;
     function queryLinks(options: QueryLinksOptions): Promise<import('./results').MemoryLinkQueryResultData>;
 
-    interface UpdateLinkOptions extends CallerScopedOptions {
+    interface UpdateLinkOptions extends RequiredOwnerScopedOptions {
         linkId?: number;
         sourceTitle?: string;
         targetTitle?: string;
@@ -223,30 +167,21 @@ export namespace Memory {
     }
 
     /**
-     * Update an existing memory link
-     * @param linkId - Optional link ID (preferred locator)
-     * @param sourceTitle - Optional source memory title (used when linkId is not provided)
-     * @param targetTitle - Optional target memory title (used when linkId is not provided)
-     * @param linkType - Optional current link type (for unique resolution)
-     * @param newLinkType - Optional new link type
-     * @param weight - Optional new link strength (0.0-1.0)
-     * @param description - Optional new relationship description
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Link update result
+     * Update an existing memory link inside one memory owner.
      */
     function updateLink(
+        targetOwnerKey: string,
         linkId?: number,
         sourceTitle?: string,
         targetTitle?: string,
         linkType?: string,
         newLinkType?: string,
         weight?: number,
-        description?: string,
-        callerCardId?: string
-    ): Promise<import('./results').MemoryLinkResultData>;
-    function updateLink(options: UpdateLinkOptions): Promise<import('./results').MemoryLinkResultData>;
+        description?: string
+    ): Promise<import('./results').MemoryLinkQueryResultData>;
+    function updateLink(options: UpdateLinkOptions): Promise<import('./results').MemoryLinkQueryResultData>;
 
-    interface DeleteLinkOptions extends CallerScopedOptions {
+    interface DeleteLinkOptions extends RequiredOwnerScopedOptions {
         linkId?: number;
         sourceTitle?: string;
         targetTitle?: string;
@@ -254,14 +189,8 @@ export namespace Memory {
     }
 
     /**
-     * Delete an existing memory link
-     * @param linkId - Optional link ID (preferred locator)
-     * @param sourceTitle - Optional source memory title (used when linkId is not provided)
-     * @param targetTitle - Optional target memory title (used when linkId is not provided)
-     * @param linkType - Optional link type (for unique resolution)
-     * @param callerCardId - Optional caller role card id used to select the bound memory profile
-     * @returns Deletion result as a string
+     * Delete an existing memory link inside one memory owner.
      */
-    function deleteLink(linkId?: number, sourceTitle?: string, targetTitle?: string, linkType?: string, callerCardId?: string): Promise<string>;
+    function deleteLink(targetOwnerKey: string, linkId?: number, sourceTitle?: string, targetTitle?: string, linkType?: string): Promise<string>;
     function deleteLink(options: DeleteLinkOptions): Promise<string>;
 }

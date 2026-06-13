@@ -5,8 +5,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../../../../core/path/OperitClientPaths.dart';
 import '../../../../common/OperitLogoMark.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import '../style/cursor/CursorStyleChatMessage.dart';
@@ -51,7 +51,7 @@ class ChatShareImageGenerator {
     image.dispose();
     entry.remove();
 
-    final directory = await getTemporaryDirectory();
+    final directory = await OperitClientPaths.shareImageTempDir();
     final file = File(
       '${directory.path}${Platform.pathSeparator}operit_share_${DateTime.now().millisecondsSinceEpoch}.png',
     );

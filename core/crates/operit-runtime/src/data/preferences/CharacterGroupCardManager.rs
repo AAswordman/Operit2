@@ -31,9 +31,7 @@ pub struct CharacterGroupCardManager {
 impl CharacterGroupCardManager {
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                paths.root_dir().join("character_groups.preferences.json"),
-            ),
+            dataStore: PreferencesDataStore::new(paths.character_groups_preferences_path()),
             characterCardManager: CharacterCardManager::new(paths),
         }
     }

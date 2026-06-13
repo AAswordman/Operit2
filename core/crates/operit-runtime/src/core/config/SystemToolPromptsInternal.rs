@@ -516,6 +516,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Creates a new memory node in the library. Use this when you want to save important information for future reference.",
                     "",
                     vec![
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
                         param("title", "string", "required, string", true, None),
                         param("content", "string", "required, string", true, None),
                         param("content_type", "string", "optional", false, Some("\"text/plain\"".to_string())),
@@ -531,6 +532,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Updates an existing memory node by title. Use this to modify an existing memory's content or metadata.",
                     "",
                     vec![
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
                         param("old_title", "string", "required, string to identify the memory", true, None),
                         param("new_title", "string", "optional, string, new title if renaming", false, None),
                         param("content", "string", "optional, string", false, None),
@@ -549,6 +551,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Deletes a memory node from the library by title. Use with caution as this operation is irreversible.",
                     "",
                     vec![
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
                         param("title", "string", "required, string to identify the memory", true, None)
                     ],
                     "",
@@ -559,6 +562,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Creates a semantic link between two memories in the library. Use this to establish relationships between related concepts, facts, or pieces of information. This helps build a knowledge graph structure for better memory retrieval and understanding.",
                     "",
                     vec![
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
                         param("source_title", "string", "required, string, the title of the source memory", true, None),
                         param("target_title", "string", "required, string, the title of the target memory", true, None),
                         param("link_type", "string", "optional, string, the type of relationship such as \"related\", \"causes\", \"explains\", \"part_of\", \"contradicts\", etc.", false, Some("\"related\"".to_string())),
@@ -573,6 +577,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Queries links in the memory graph. Supports filtering by link_id, source_title, target_title, and link_type. Use this before updating/deleting links to precisely identify targets.",
                     "",
                     vec![
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
                         param("link_id", "integer", "optional, exact link id", false, None),
                         param("source_title", "string", "optional, exact source memory title", false, None),
                         param("target_title", "string", "optional, exact target memory title", false, None),
@@ -584,15 +589,11 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "update_user_preferences",
-                    "Updates user preference information directly. Use this when you learn new information about the user that should be remembered (e.g., their birthday, gender, personality traits, identity, occupation, or preferred AI interaction style). This allows immediate updates without waiting for the automatic system.",
+                    "Updates USER.md directly. Use this when stable information about the user or their working style should be remembered in the user profile markdown.",
                     "",
                     vec![
-                        param("birth_date", "integer", "optional, Unix timestamp in milliseconds", false, None),
-                        param("gender", "string", "optional, string", false, None),
-                        param("personality", "string", "optional, string describing personality traits", false, None),
-                        param("identity", "string", "optional, string describing identity/role", false, None),
-                        param("occupation", "string", "optional, string", false, None),
-                        param("ai_style", "string", "optional, string describing preferred AI interaction style. At least one parameter must be provided", false, None)
+                        param("target_owner_key", "string", "required, memory owner key such as character:<character-id> or shared:<shared-id>", true, None),
+                        param("content", "string", "required, complete updated USER.md markdown content", true, None)
                     ],
                     "",
                     "",
@@ -1724,6 +1725,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在记忆库中创建新的记忆节点。当你想保存重要信息供将来参考时使用。",
                     "",
                     vec![
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
                         param("title", "string", "必需, 字符串", true, None),
                         param("content", "string", "必需, 字符串", true, None),
                         param("content_type", "string", "可选", false, Some("\"text/plain\"".to_string())),
@@ -1739,6 +1741,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "通过标题更新现有的记忆节点。用于修改现有记忆的内容或元数据。",
                     "",
                     vec![
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
                         param("old_title", "string", "必需, 字符串，用于识别记忆", true, None),
                         param("new_title", "string", "可选, 字符串, 重命名时的新标题", false, None),
                         param("content", "string", "可选, 字符串", false, None),
@@ -1757,6 +1760,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "通过标题从记忆库中删除记忆节点。谨慎使用，此操作不可逆。",
                     "",
                     vec![
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
                         param("title", "string", "必需, 字符串，用于识别记忆", true, None)
                     ],
                     "",
@@ -1767,6 +1771,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "在记忆库中的两个记忆之间创建语义链接。用于建立相关概念、事实或信息片段之间的关系。这有助于构建知识图谱结构，以便更好地检索和理解记忆。",
                     "",
                     vec![
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
                         param("source_title", "string", "必需, 字符串, 源记忆的标题", true, None),
                         param("target_title", "string", "必需, 字符串, 目标记忆的标题", true, None),
                         param("link_type", "string", "可选, 字符串, 关系类型，如\"related\"（相关）、\"causes\"（导致）、\"explains\"（解释）、\"part_of\"（部分）、\"contradicts\"（矛盾）等", false, Some("\"related\"".to_string())),
@@ -1781,6 +1786,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "查询记忆图谱中的链接。支持按 link_id、source_title、target_title、link_type 过滤。适合在更新/删除链接前先精确定位目标。",
                     "",
                     vec![
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
                         param("link_id", "integer", "可选, 精确链接ID", false, None),
                         param("source_title", "string", "可选, 源记忆精确标题", false, None),
                         param("target_title", "string", "可选, 目标记忆精确标题", false, None),
@@ -1792,15 +1798,11 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "update_user_preferences",
-                    "直接更新用户偏好信息。当你了解到用户的新信息时使用（例如生日、性别、性格特征、身份、职业或首选AI交互风格）。这允许立即更新而无需等待自动系统。",
+                    "直接更新 USER.md。当稳定的用户信息或用户工作方式需要写入用户画像 markdown 时使用。",
                     "",
                     vec![
-                        param("birth_date", "integer", "可选, Unix时间戳，毫秒", false, None),
-                        param("gender", "string", "可选, 字符串", false, None),
-                        param("personality", "string", "可选, 描述性格特征的字符串", false, None),
-                        param("identity", "string", "可选, 描述身份/角色的字符串", false, None),
-                        param("occupation", "string", "可选, 字符串", false, None),
-                        param("ai_style", "string", "可选, 描述首选AI交互风格的字符串. 必须提供至少一个参数", false, None)
+                        param("target_owner_key", "string", "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>", true, None),
+                        param("content", "string", "必需，更新后的完整 USER.md markdown 内容", true, None)
                     ],
                     "",
                     "",

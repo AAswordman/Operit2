@@ -8,6 +8,8 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use std::sync::Once;
 
+use operit_store::RuntimeStorageLayout;
+
 pub const VERBOSE: i32 = 2;
 pub const DEBUG: i32 = 3;
 pub const INFO: i32 = 4;
@@ -97,9 +99,8 @@ impl AppLogger {
     }
 
     pub fn configure_log_files(root: impl AsRef<Path>) {
-        let logs_dir = root.as_ref().join("logs");
-        let log_file = logs_dir.join("operit.log");
-        let package_log_file = logs_dir.join("toolpkg.log");
+        let log_file = root.as_ref().join(RuntimeStorageLayout::OPERIT_LOG_PATH);
+        let package_log_file = root.as_ref().join(RuntimeStorageLayout::TOOLPKG_LOG_PATH);
         ensure_log_file(&log_file);
         ensure_log_file(&package_log_file);
         Self::bind_log_file(log_file);

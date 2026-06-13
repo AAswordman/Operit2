@@ -4,6 +4,8 @@ pub mod ObjectBoxStore;
 pub mod PreferencesDataStore;
 #[path = "RuntimeStorageHost.rs"]
 pub mod RuntimeStorageHost;
+#[path = "RuntimeStorageLayout.rs"]
+pub mod RuntimeStorageLayout;
 #[path = "RuntimeStorePaths.rs"]
 pub mod RuntimeStorePaths;
 #[path = "SqliteStore.rs"]
@@ -14,6 +16,7 @@ pub mod SyncOperationStore;
 pub use ObjectBoxStore::*;
 pub use PreferencesDataStore::*;
 pub use RuntimeStorageHost::*;
+pub use RuntimeStorageLayout::*;
 pub use RuntimeStorePaths::*;
 pub use SqliteStore::*;
 pub use SyncOperationStore::*;

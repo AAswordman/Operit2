@@ -2,6 +2,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
+use operit_store::RuntimeStorageLayout;
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -29,7 +30,7 @@ impl RawSnapshotBackupManager {
 
     #[allow(non_snake_case)]
     pub fn exportSnapshot(&self) -> Result<Vec<u8>, String> {
-        let files = self.collectFiles("")?;
+        let files = self.collectFiles(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH)?;
         let manifest = RawSnapshotManifest {
             formatVersion: FORMAT_VERSION,
             createdAt: currentTimeMillis(),
@@ -84,15 +85,9 @@ impl RawSnapshotBackupManager {
                 .map_err(|error| error.to_string())?;
             payloadFiles.push((path.to_string(), content));
         }
-        for entry in self
-            .storageHost
-            .list("")
-            .map_err(|error| error.to_string())?
-        {
-            self.storageHost
-                .delete(&entry.path, entry.isDirectory)
-                .map_err(|error| error.to_string())?;
-        }
+        self.storageHost
+            .delete(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH, true)
+            .map_err(|error| error.to_string())?;
         for (path, content) in payloadFiles {
             self.storageHost
                 .writeBytes(&path, &content)

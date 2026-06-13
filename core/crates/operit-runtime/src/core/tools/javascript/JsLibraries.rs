@@ -10,6 +10,7 @@ use crate::core::tools::javascript::JsInitRuntimeScriptBuilder;
 use crate::core::tools::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
 use crate::core::tools::javascript::JsToolPkgRegistration::buildToolPkgRegistrationBridgeScript;
 use crate::core::tools::javascript::JsTools::getJsToolsDefinition;
+use crate::util::OperitPaths;
 
 pub struct JsBootstrapModule {
     pub fileName: String,
@@ -34,6 +35,11 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
             "quickjs/init/runtime.js",
             JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
             &[],
+        ),
+        JsBootstrapModule::new(
+            "quickjs/init/operit-paths.js",
+            buildOperitPathsBootstrapScript(),
+            &["OPERIT_CLEAN_ON_EXIT_DIR"],
         ),
         JsBootstrapModule::new(
             "quickjs/init/execution-runtime.js",
@@ -102,6 +108,24 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
         ),
         JsBootstrapModule::new("assets/js/pako.js", loadPakoJs(), &["pako"]),
     ]
+}
+
+#[allow(non_snake_case)]
+fn buildOperitPathsBootstrapScript() -> String {
+    let cleanOnExitDirJson = serde_json::to_string(
+        &OperitPaths::cleanOnExitPathSdcard()
+            .expect("OperitPaths cleanOnExit path must be available"),
+    )
+    .expect("OperitPaths cleanOnExit path must serialize");
+    format!(
+        r#"
+        var OPERIT_CLEAN_ON_EXIT_DIR = {};
+        if (typeof __operitExpose === 'function') {{
+            __operitExpose('OPERIT_CLEAN_ON_EXIT_DIR', OPERIT_CLEAN_ON_EXIT_DIR);
+        }}
+        "#,
+        cleanOnExitDirJson
+    )
 }
 
 #[allow(non_snake_case)]
@@ -185,11 +209,17 @@ pub fn buildRuntimeBootstrapScript() -> String {
     let executionPreludeJson =
         serde_json::to_string(&JsExecutionScriptBuilder::buildExecutionPreludeSource())
             .unwrap_or_else(|_| "\"\"".to_string());
+    let cleanOnExitDirJson = serde_json::to_string(
+        &OperitPaths::cleanOnExitPathSdcard()
+            .expect("OperitPaths cleanOnExit path must be available"),
+    )
+    .expect("OperitPaths cleanOnExit path must serialize");
     format!(
         r#"
         {}
         var globalThis = this;
         var window = globalThis;
+        var OPERIT_CLEAN_ON_EXIT_DIR = {};
         var __operitRuntimePrelude = {};
         {}
         var console = {{
@@ -1504,6 +1534,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
         {}
         "#,
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
+        cleanOnExitDirJson,
         executionPreludeJson,
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),

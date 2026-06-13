@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use operit_store::RuntimeStorePaths::default_data_dir;
 use serde::{Deserialize, Serialize};
+use crate::util::OperitPaths;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitHubUser {
@@ -35,7 +35,7 @@ impl GitHubAuthPreferences {
     const GITHUB_SCOPE: &'static str = "notifications,public_repo,user:email,read:user";
 
     pub fn data_dir() -> PathBuf {
-        default_data_dir()
+        OperitPaths::operitRootDir().expect("Operit root dir must be available")
     }
 
     pub fn getInstance() -> Self {
@@ -43,8 +43,9 @@ impl GitHubAuthPreferences {
     }
 
     pub fn new(root_dir: PathBuf) -> Self {
+        let path = root_dir.join(OperitPaths::GITHUB_AUTH_PREFERENCES_PATH);
         Self {
-            dataStore: PreferencesDataStore::new(root_dir.join("github_auth_preferences.json")),
+            dataStore: PreferencesDataStore::new(path),
         }
     }
 

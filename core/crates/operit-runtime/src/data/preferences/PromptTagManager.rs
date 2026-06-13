@@ -19,9 +19,7 @@ impl PromptTagManager {
 
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                paths.root_dir().join("prompt_tags.preferences.json"),
-            ),
+            dataStore: PreferencesDataStore::new(paths.prompt_tags_preferences_path()),
         }
     }
 

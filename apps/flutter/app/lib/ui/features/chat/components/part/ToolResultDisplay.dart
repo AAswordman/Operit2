@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../common/components/OperitDialog.dart';
+
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import 'XmlCanvasSummaryComponents.dart';
 
@@ -118,89 +120,39 @@ class _ToolResultDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Card(
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          color: theme.colorScheme.surface,
-          elevation: 6,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Icon(
-                      isSuccess ? Icons.check : Icons.close,
-                      size: 20,
-                      color: isSuccess
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '$toolName ${isSuccess ? 'Execution success' : 'Execution failed'}',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: theme.colorScheme.onSurface,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: onCopy,
-                      icon: Icon(
-                        Icons.content_copy,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Divider(color: theme.colorScheme.outlineVariant, height: 1),
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  constraints: const BoxConstraints(
-                    minHeight: 50,
-                    maxHeight: 300,
-                  ),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: isSuccess
-                        ? theme.colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.5,
-                          )
-                        : theme.colorScheme.errorContainer.withValues(
-                            alpha: 0.2,
-                          ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      result,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: onDismiss,
-                    child: const Text('Close'),
-                  ),
-                ),
-              ],
+    return OperitDialogScaffold(
+      title:
+          '$toolName ${isSuccess ? 'Execution success' : 'Execution failed'}',
+      icon: Icon(
+        isSuccess ? Icons.check : Icons.close,
+        size: 20,
+        color: isSuccess ? theme.colorScheme.primary : theme.colorScheme.error,
+      ),
+      maxWidth: 720,
+      titleActions: <Widget>[
+        IconButton(
+          onPressed: onCopy,
+          icon: Icon(Icons.content_copy, color: theme.colorScheme.primary),
+        ),
+      ],
+      actions: <Widget>[
+        FilledButton(onPressed: onDismiss, child: const Text('Close')),
+      ],
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 50, maxHeight: 300),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSuccess
+              ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+              : theme.colorScheme.errorContainer.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: SingleChildScrollView(
+          child: SelectableText(
+            result,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
             ),
           ),
         ),

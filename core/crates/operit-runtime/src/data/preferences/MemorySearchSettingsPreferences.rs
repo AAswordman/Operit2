@@ -2,7 +2,7 @@ use crate::data::model::MemorySearchConfig::MemorySearchConfig;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use operit_store::RuntimeStorePaths::default_data_dir;
+use crate::util::OperitPaths;
 
 #[derive(Clone)]
 pub struct MemorySearchSettingsPreferences {
@@ -11,10 +11,8 @@ pub struct MemorySearchSettingsPreferences {
 
 impl MemorySearchSettingsPreferences {
     pub fn new(profileId: impl AsRef<str>) -> Self {
-        let path = default_data_dir()
-            .join("memory")
-            .join(sanitizeProfileId(profileId.as_ref()))
-            .join("memory_search_settings.preferences.json");
+        let path = OperitPaths::memorySearchSettingsPath(profileId.as_ref())
+            .expect("memory search settings path must be available");
         Self {
             dataStore: PreferencesDataStore::new(path),
         }
@@ -36,21 +34,5 @@ impl MemorySearchSettingsPreferences {
                 encoded.clone(),
             );
         })
-    }
-}
-
-fn sanitizeProfileId(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        "default".to_string()
-    } else {
-        out
     }
 }

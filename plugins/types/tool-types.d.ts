@@ -176,7 +176,15 @@ export interface ToolResultMap {
     'get_chat_messages': ChatMessagesResultData;
 
     // Memory operations
+    'query_memory': MemoryQueryResultData;
+    'get_memory_by_title': MemoryQueryResultData;
+    'create_memory': StringResultData;
+    'update_memory': StringResultData;
+    'delete_memory': StringResultData;
+    'move_memory': StringResultData;
     'link_memories': MemoryLinkResultData;
     'query_memory_links': MemoryLinkQueryResultData;
+    'update_memory_link': MemoryLinkQueryResultData;
+    'delete_memory_link': StringResultData;
     'update_user_preferences': StringResultData;
 } 

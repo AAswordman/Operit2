@@ -1273,7 +1273,7 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
 
     std::fs::create_dir_all(&tmpDir)?;
 
-    let _ = nonBlank(workingDir, "working_directory")?;
+    let workDir = nonBlank(workingDir, "working_directory")?;
     let ldLibraryPath = format!(
         "{}:{}",
         nativeLibraryDir.to_string_lossy(),
@@ -1299,6 +1299,7 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
         cstring(&format!("PROOT_LOADER={}", loader.to_string_lossy()))?,
         cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
         cstring(&format!("PROOT_TMP_DIR={}", tmpDir.to_string_lossy()))?,
+        cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,
         cstring("TERM=xterm-256color")?,
         cstring("LANG=en_US.UTF-8")?,
     ];
