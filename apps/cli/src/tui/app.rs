@@ -24,8 +24,8 @@ use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
 use operit_runtime::data::model::FunctionType::FunctionType;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
+use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_runtime::util::AppLogger::AppLogger;
 use operit_runtime::util::GithubReleaseUtil::{
@@ -1034,12 +1034,8 @@ impl OperitTui {
     }
 
     async fn show_current_chat_model(&mut self) -> Result<(), String> {
-        let (provider_id, model_id, provider_name) =
-            self.current_chat_model_status_parts().await?;
-        self.status_message = format!(
-            "CHAT -> {} {} / {}",
-            provider_id, provider_name, model_id
-        );
+        let (provider_id, model_id, provider_name) = self.current_chat_model_status_parts().await?;
+        self.status_message = format!("CHAT -> {} {} / {}", provider_id, provider_name, model_id);
         self.refresh_context_usage_label().await;
         Ok(())
     }
@@ -1070,11 +1066,7 @@ impl OperitTui {
             .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .await
             .map_err(|error| error.to_string())?;
-        Ok((
-            binding.providerId,
-            binding.modelId,
-            config.providerName,
-        ))
+        Ok((binding.providerId, binding.modelId, config.providerName))
     }
 
     async fn current_chat_model_status_label(&mut self) -> Result<String, String> {
@@ -1205,7 +1197,8 @@ impl OperitTui {
             .map_err(|error| error.to_string())?
             .into_iter()
             .map(|summary| ModelChoiceItem {
-                selected: binding.providerId == summary.providerId && binding.modelId == summary.modelId,
+                selected: binding.providerId == summary.providerId
+                    && binding.modelId == summary.modelId,
                 provider_id: summary.providerId,
                 model_id: summary.modelId,
                 provider_name: summary.providerName,

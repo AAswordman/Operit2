@@ -7,7 +7,9 @@ import '../characters/CharacterSettingsPanel.dart';
 import '../data/DataSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
+import '../runtime/RuntimeSettingsPanel.dart';
 import '../tools/ToolSettingsPanel.dart';
+import '../web_access/WebAccessSettingsPanel.dart';
 import '../workspace/WorkspaceSettingsPanel.dart';
 
 class SettingsDetailView extends StatelessWidget {
@@ -27,6 +29,8 @@ class SettingsDetailView extends StatelessWidget {
       SettingsCategory.characters => const CharacterSettingsPanel(),
       SettingsCategory.tools => const ToolSettingsPanel(),
       SettingsCategory.workspace => const WorkspaceSettingsPanel(),
+      SettingsCategory.runtime => const RuntimeSettingsPanel(),
+      SettingsCategory.webAccess => const WebAccessSettingsPanel(),
       SettingsCategory.appearance => const AppearanceSettingsPanel(),
       SettingsCategory.data => const DataSettingsPanel(),
     };

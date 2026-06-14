@@ -751,6 +751,26 @@ class AppLocalizationsZh extends AppLocalizations {
       '管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。';
 
   @override
+  String get settingsCategoryRuntimeTitle => 'Runtime';
+
+  @override
+  String get settingsCategoryRuntimeSubtitle => '本地 core、远程 core';
+
+  @override
+  String get settingsCategoryRuntimeDescription =>
+      '选择当前 Flutter 客户端连接的 runtime，可使用本地 core 或已配对的远程 core。';
+
+  @override
+  String get settingsCategoryWebAccessTitle => 'Web 访问';
+
+  @override
+  String get settingsCategoryWebAccessSubtitle => '浏览器入口、Token';
+
+  @override
+  String get settingsCategoryWebAccessDescription =>
+      '为当前客户端打开本机 Web 访问入口，并管理绑定地址和访问 Token。';
+
+  @override
   String get settingsCategoryAppearanceTitle => '外观与交互';
 
   @override
@@ -1660,6 +1680,199 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsWorkspaceBrowserSessions => '浏览器与 WebVisit 会话';
+
+  @override
+  String get settingsWorkspaceBoundOverview => '工作区绑定概览';
+
+  @override
+  String get settingsWorkspaceBoundOverviewDescription => '聊天记录里的工作区路径就是绑定来源。';
+
+  @override
+  String get settingsWorkspaceBoundChats => '已绑定聊天';
+
+  @override
+  String get settingsWorkspaceInternalRoot => '内部工作区根目录';
+
+  @override
+  String get settingsWorkspaceExternalRoot => '旧外部工作区根目录';
+
+  @override
+  String get settingsWorkspaceUnboundTitle => '无绑定工作区';
+
+  @override
+  String get settingsWorkspaceUnboundSubtitle => '这些工作区文件夹没有被任何聊天使用。';
+
+  @override
+  String get settingsWorkspaceNoUnbound => '没有无绑定工作区。';
+
+  @override
+  String settingsWorkspaceSelectedCount(int selected, int total) {
+    return '已选择 $selected / $total';
+  }
+
+  @override
+  String get settingsWorkspaceSelectAllCurrentList => '全选';
+
+  @override
+  String get settingsWorkspaceClearAll => '清空';
+
+  @override
+  String get settingsWorkspaceInternalStorage => '内部存储';
+
+  @override
+  String get settingsWorkspaceExternalStorage => '外部存储';
+
+  @override
+  String get settingsWorkspaceNotUsedByAnyChat => '未被任何聊天使用';
+
+  @override
+  String settingsWorkspaceDeleteSelected(int count) {
+    return '删除选中的工作区（$count）';
+  }
+
+  @override
+  String get settingsWorkspaceConfirmDeleteTitle => '确认删除';
+
+  @override
+  String settingsWorkspaceDeleteConfirmation(int count) {
+    return '确定删除选中的 $count 个工作区文件夹吗？';
+  }
+
+  @override
+  String settingsWorkspaceDeleted(int count) {
+    return '已删除 $count 个无绑定工作区。';
+  }
+
+  @override
+  String settingsWorkspaceDeleteFailed(String error) {
+    return '删除失败：$error';
+  }
+
+  @override
+  String settingsWorkspaceLoadFailed(String error) {
+    return '加载工作区失败：$error';
+  }
+
+  @override
+  String get settingsWorkspaceRefresh => '刷新';
+
+  @override
+  String get settingsRuntimeConnection => 'Runtime 连接';
+
+  @override
+  String get settingsRuntimeConnectionDescription =>
+      '当前客户端的所有 core 调用都会走这里选择的 runtime；Web 访问入口也会跟随它。';
+
+  @override
+  String get settingsRuntimeUseLocal => '使用本地 runtime';
+
+  @override
+  String get settingsRuntimeUseRemote => '使用远程 runtime';
+
+  @override
+  String get settingsRuntimeCurrentMode => '当前模式';
+
+  @override
+  String get settingsRuntimeLocalMode => '本地';
+
+  @override
+  String get settingsRuntimeRemoteMode => '远程';
+
+  @override
+  String get settingsRuntimeRemoteName => '远程名称';
+
+  @override
+  String get settingsRuntimeBaseUrl => 'Base URL';
+
+  @override
+  String get settingsRuntimeSessionId => 'Session ID';
+
+  @override
+  String get settingsRuntimeDeviceId => 'Device ID';
+
+  @override
+  String get settingsRuntimeSessionSecret => 'Session Secret';
+
+  @override
+  String get settingsRuntimeSaveRemote => '保存并使用远程';
+
+  @override
+  String get settingsRuntimeTestCurrent => '测试当前 runtime';
+
+  @override
+  String get settingsRuntimeSwitchedLocal => '已切换到本地 runtime。';
+
+  @override
+  String get settingsRuntimeSwitchedRemote => '已切换到远程 runtime。';
+
+  @override
+  String settingsRuntimeTestResult(String version) {
+    return 'Runtime 可用：$version';
+  }
+
+  @override
+  String settingsRuntimeTestFailed(String error) {
+    return 'Runtime 测试失败：$error';
+  }
+
+  @override
+  String get settingsWebAccessService => 'Web 访问服务';
+
+  @override
+  String get settingsWebAccessServiceDescription =>
+      '开启后，当前客户端会在本机启动一个 HTTP 入口，浏览器可通过 Token 访问 core。';
+
+  @override
+  String get settingsWebAccessEnable => '开启 Web 访问';
+
+  @override
+  String get settingsWebAccessBindAddress => '绑定地址';
+
+  @override
+  String get settingsWebAccessToken => '访问 Token';
+
+  @override
+  String get settingsWebAccessRotateToken => '轮换 Token';
+
+  @override
+  String get settingsWebAccessCopyToken => '复制 Token';
+
+  @override
+  String get settingsWebAccessAccessUrl => '访问地址';
+
+  @override
+  String get settingsWebAccessCopyUrl => '复制地址';
+
+  @override
+  String get settingsWebAccessOpenUrl => '打开';
+
+  @override
+  String get settingsWebAccessRunning => '运行中';
+
+  @override
+  String get settingsWebAccessStopped => '未开启';
+
+  @override
+  String get settingsWebAccessSaved => 'Web 访问设置已保存。';
+
+  @override
+  String get settingsWebAccessTokenCopied => '访问 Token 已复制。';
+
+  @override
+  String get settingsWebAccessUrlCopied => '访问地址已复制。';
+
+  @override
+  String get settingsWebAccessInvalidBindAddress => '绑定地址格式应为 host:port。';
+
+  @override
+  String settingsWebAccessStartFailed(String error) {
+    return '启动 Web 访问失败：$error';
+  }
+
+  @override
+  String settingsWebAccessStopFailed(String error) {
+    return '关闭 Web 访问失败：$error';
+  }
 
   @override
   String get settingsAppearanceThemeSection => '主题';

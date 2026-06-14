@@ -18,5 +18,5 @@ pub use remote::{
     RemoteHostInteractionPollEnvelope, RemoteHostInteractionPollResponse,
     RemoteHostInteractionRequest, RemoteHostInteractionRespondEnvelope, RemoteLinkClient,
     RemoteLinkServer, RemoteLinkServerConfig, RemoteSessionInfoEnvelope, RemoteSessionInfoResponse,
-    RemoteWsEnvelope, RemoteWsPayload, RemoteWsResponse,
+    RemoteWebAccessConfig, RemoteWsEnvelope, RemoteWsPayload, RemoteWsResponse,
 };

@@ -1,8 +1,9 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
-
-import 'package:flutter/services.dart';
+import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 
 class WorkspaceTerminalSessionInfo {
   const WorkspaceTerminalSessionInfo({
@@ -14,14 +15,16 @@ class WorkspaceTerminalSessionInfo {
     required this.commandRunning,
   });
 
-  factory WorkspaceTerminalSessionInfo.fromJson(Map<String, dynamic> json) {
+  factory WorkspaceTerminalSessionInfo.fromCore(
+    core_proxy.RuntimeTerminalSessionInfo info,
+  ) {
     return WorkspaceTerminalSessionInfo(
-      sessionId: _requiredString(json, 'sessionId'),
-      sessionName: _requiredString(json, 'sessionName'),
-      terminalType: _requiredString(json, 'terminalType'),
-      sessionKind: _requiredString(json, 'sessionKind'),
-      workingDir: _requiredString(json, 'workingDir'),
-      commandRunning: json['commandRunning'] == true,
+      sessionId: info.sessionId,
+      sessionName: info.sessionName,
+      terminalType: info.terminalType,
+      sessionKind: info.sessionKind,
+      workingDir: info.workingDir,
+      commandRunning: info.commandRunning,
     );
   }
 
@@ -47,14 +50,16 @@ class WorkspaceTerminalScreen {
     required this.commandRunning,
   });
 
-  factory WorkspaceTerminalScreen.fromJson(Map<String, dynamic> json) {
+  factory WorkspaceTerminalScreen.fromCore(
+    core_proxy.RuntimeTerminalScreen screen,
+  ) {
     return WorkspaceTerminalScreen(
-      sessionId: _requiredString(json, 'sessionId'),
-      terminalType: _requiredString(json, 'terminalType'),
-      rows: _requiredInt(json, 'rows'),
-      cols: _requiredInt(json, 'cols'),
-      content: _requiredString(json, 'content'),
-      commandRunning: json['commandRunning'] == true,
+      sessionId: screen.sessionId,
+      terminalType: screen.terminalType,
+      rows: screen.rows,
+      cols: screen.cols,
+      content: screen.content,
+      commandRunning: screen.commandRunning,
     );
   }
 
@@ -68,24 +73,20 @@ class WorkspaceTerminalScreen {
 
 class WorkspaceTerminalSessions {
   const WorkspaceTerminalSessions({
-    MethodChannel channel = const MethodChannel('operit/runtime'),
-  }) : _channel = channel;
+    GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(
+      ProxyCoreRuntimeBridge(),
+    ),
+  }) : _clients = clients;
 
-  final MethodChannel _channel;
+  final GeneratedCoreProxyClients _clients;
+
+  GeneratedRepositoryRuntimeTerminalServiceCoreProxy get _terminal =>
+      _clients.repositoryRuntimeTerminalService;
 
   Future<List<WorkspaceTerminalSessionInfo>> listSessions() async {
-    final response = await _invokeJson('listTerminalSessions');
-    final sessions = response['sessions'];
-    if (sessions is! List) {
-      throw StateError('listTerminalSessions missing sessions');
-    }
+    final sessions = await _terminal.listTerminalSessions();
     return sessions
-        .map((item) {
-          if (item is! Map<String, dynamic>) {
-            throw StateError('terminal session item is not an object');
-          }
-          return WorkspaceTerminalSessionInfo.fromJson(item);
-        })
+        .map(WorkspaceTerminalSessionInfo.fromCore)
         .toList(growable: false);
   }
 
@@ -94,70 +95,30 @@ class WorkspaceTerminalSessions {
     required String workingDirectory,
     required int rows,
     required int columns,
-  }) async {
-    final response = await _invokeJson('startTerminalPty', <String, Object>{
-      'sessionName': sessionName,
-      'workingDirectory': workingDirectory,
-      'rows': rows,
-      'columns': columns,
-    });
-    final sessionId = response['sessionId'];
-    if (sessionId is! String || sessionId.isEmpty) {
-      throw StateError('startTerminalPty missing sessionId');
-    }
-    return sessionId;
+  }) {
+    return _terminal.startTerminalPty(
+      sessionName: sessionName,
+      workingDir: workingDirectory,
+      rows: rows,
+      cols: columns,
+    );
   }
 
   Future<WorkspaceTerminalScreen> getSessionScreen(String sessionId) async {
-    final response = await _invokeJson('getTerminalSessionScreen', sessionId);
-    return WorkspaceTerminalScreen.fromJson(response);
+    final screen = await _terminal.getTerminalSessionScreen(
+      sessionId: sessionId,
+    );
+    return WorkspaceTerminalScreen.fromCore(screen);
   }
 
   Future<void> inputSession({
     required String sessionId,
     required String input,
   }) async {
-    await _invokeJson('inputTerminalSession', <String, Object>{
-      'sessionId': sessionId,
-      'input': input,
-    });
+    await _terminal.inputTerminalSession(sessionId: sessionId, input: input);
   }
 
-  Future<void> closePtySession(String sessionId) async {
-    await _invokeJson('closeTerminalPty', sessionId);
+  Future<void> closePtySession(String sessionId) {
+    return _terminal.closeTerminalPty(sessionId: sessionId);
   }
-
-  Future<Map<String, dynamic>> _invokeJson(
-    String method, [
-    Object? arguments,
-  ]) async {
-    final raw = await _channel.invokeMethod<String>(method, arguments);
-    if (raw == null) {
-      throw StateError('$method returned null');
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('$method returned non-object JSON');
-    }
-    if (decoded['ok'] != true) {
-      throw StateError(decoded['error']?.toString() ?? '$method failed');
-    }
-    return decoded;
-  }
-}
-
-String _requiredString(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is! String) {
-    throw StateError('terminal session field $key is not a string');
-  }
-  return value;
-}
-
-int _requiredInt(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is int) {
-    return value;
-  }
-  throw StateError('terminal screen field $key is not an int');
 }

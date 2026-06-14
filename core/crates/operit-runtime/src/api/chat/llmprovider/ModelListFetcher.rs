@@ -1,6 +1,8 @@
-use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
+#[cfg(not(target_arch = "wasm32"))]
+use reqwest::blocking::Client;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
 use crate::data::model::BillingMode::BillingMode;
@@ -51,6 +53,15 @@ impl ModelListFetcher {
         provider: &ProviderProfile,
         operation: &ProviderOperationSpec,
     ) -> Result<Value, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = provider;
+            let _ = operation;
+            return Err("list_models http_json operation is not available in wasm runtime".to_string());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         if operation.handlerId != "http_json" {
             return Err(format!("unsupported provider operation handler: {}", operation.handlerId));
         }
@@ -77,6 +88,7 @@ impl ModelListFetcher {
             return Err(format!("list_models request failed: {status} {body}"));
         }
         serde_json::from_str(&body).map_err(|error| error.to_string())
+        }
     }
 
     #[allow(non_snake_case)]

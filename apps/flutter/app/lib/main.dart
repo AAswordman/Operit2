@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/logging/ClientLogger.dart';
+import 'core/runtime/RuntimeConnectionManager.dart';
+import 'core/web_access/FlutterWebAccessServer.dart';
 import 'ui/main/OperitApp.dart';
 
 void main() async {
@@ -13,6 +15,8 @@ void main() async {
       WidgetsFlutterBinding.ensureInitialized();
       await ClientLogger.initialize();
       _installClientLogHooks();
+      await RuntimeConnectionManager.instance.initialize();
+      await FlutterWebAccessServer.instance.initializeFromConfig();
       await LiquidGlassWidgets.initialize();
       runApp(
         LiquidGlassWidgets.wrap(

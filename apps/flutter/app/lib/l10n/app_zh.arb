@@ -379,6 +379,12 @@
   "settingsCategoryWorkspaceTitle": "工作区与浏览器",
   "settingsCategoryWorkspaceSubtitle": "文件、终端、浏览器",
   "settingsCategoryWorkspaceDescription": "管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。",
+  "settingsCategoryRuntimeTitle": "Runtime",
+  "settingsCategoryRuntimeSubtitle": "本地 core、远程 core",
+  "settingsCategoryRuntimeDescription": "选择当前 Flutter 客户端连接的 runtime，可使用本地 core 或已配对的远程 core。",
+  "settingsCategoryWebAccessTitle": "Web 访问",
+  "settingsCategoryWebAccessSubtitle": "浏览器入口、Token",
+  "settingsCategoryWebAccessDescription": "为当前客户端打开本机 Web 访问入口，并管理绑定地址和访问 Token。",
   "settingsCategoryAppearanceTitle": "外观与交互",
   "settingsCategoryAppearanceSubtitle": "主题、语言",
   "settingsCategoryAppearanceDescription": "调整客户端主题和当前本地化显示。",
@@ -831,6 +837,136 @@
   "settingsWorkspacePerChat": "按聊天绑定",
   "settingsWorkspaceGlobalSessions": "全局终端会话",
   "settingsWorkspaceBrowserSessions": "浏览器与 WebVisit 会话",
+  "settingsWorkspaceBoundOverview": "工作区绑定概览",
+  "settingsWorkspaceBoundOverviewDescription": "聊天记录里的工作区路径就是绑定来源。",
+  "settingsWorkspaceBoundChats": "已绑定聊天",
+  "settingsWorkspaceInternalRoot": "内部工作区根目录",
+  "settingsWorkspaceExternalRoot": "旧外部工作区根目录",
+  "settingsWorkspaceUnboundTitle": "无绑定工作区",
+  "settingsWorkspaceUnboundSubtitle": "这些工作区文件夹没有被任何聊天使用。",
+  "settingsWorkspaceNoUnbound": "没有无绑定工作区。",
+  "settingsWorkspaceSelectedCount": "已选择 {selected} / {total}",
+  "@settingsWorkspaceSelectedCount": {
+    "placeholders": {
+      "selected": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceSelectAllCurrentList": "全选",
+  "settingsWorkspaceClearAll": "清空",
+  "settingsWorkspaceInternalStorage": "内部存储",
+  "settingsWorkspaceExternalStorage": "外部存储",
+  "settingsWorkspaceNotUsedByAnyChat": "未被任何聊天使用",
+  "settingsWorkspaceDeleteSelected": "删除选中的工作区（{count}）",
+  "@settingsWorkspaceDeleteSelected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceConfirmDeleteTitle": "确认删除",
+  "settingsWorkspaceDeleteConfirmation": "确定删除选中的 {count} 个工作区文件夹吗？",
+  "@settingsWorkspaceDeleteConfirmation": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleted": "已删除 {count} 个无绑定工作区。",
+  "@settingsWorkspaceDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleteFailed": "删除失败：{error}",
+  "@settingsWorkspaceDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceLoadFailed": "加载工作区失败：{error}",
+  "@settingsWorkspaceLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceRefresh": "刷新",
+  "settingsRuntimeConnection": "Runtime 连接",
+  "settingsRuntimeConnectionDescription": "当前客户端的所有 core 调用都会走这里选择的 runtime；Web 访问入口也会跟随它。",
+  "settingsRuntimeUseLocal": "使用本地 runtime",
+  "settingsRuntimeUseRemote": "使用远程 runtime",
+  "settingsRuntimeCurrentMode": "当前模式",
+  "settingsRuntimeLocalMode": "本地",
+  "settingsRuntimeRemoteMode": "远程",
+  "settingsRuntimeRemoteName": "远程名称",
+  "settingsRuntimeBaseUrl": "Base URL",
+  "settingsRuntimeSessionId": "Session ID",
+  "settingsRuntimeDeviceId": "Device ID",
+  "settingsRuntimeSessionSecret": "Session Secret",
+  "settingsRuntimeSaveRemote": "保存并使用远程",
+  "settingsRuntimeTestCurrent": "测试当前 runtime",
+  "settingsRuntimeSwitchedLocal": "已切换到本地 runtime。",
+  "settingsRuntimeSwitchedRemote": "已切换到远程 runtime。",
+  "settingsRuntimeTestResult": "Runtime 可用：{version}",
+  "@settingsRuntimeTestResult": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeTestFailed": "Runtime 测试失败：{error}",
+  "@settingsRuntimeTestFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessService": "Web 访问服务",
+  "settingsWebAccessServiceDescription": "开启后，当前客户端会在本机启动一个 HTTP 入口，浏览器可通过 Token 访问 core。",
+  "settingsWebAccessEnable": "开启 Web 访问",
+  "settingsWebAccessBindAddress": "绑定地址",
+  "settingsWebAccessToken": "访问 Token",
+  "settingsWebAccessRotateToken": "轮换 Token",
+  "settingsWebAccessCopyToken": "复制 Token",
+  "settingsWebAccessAccessUrl": "访问地址",
+  "settingsWebAccessCopyUrl": "复制地址",
+  "settingsWebAccessOpenUrl": "打开",
+  "settingsWebAccessRunning": "运行中",
+  "settingsWebAccessStopped": "未开启",
+  "settingsWebAccessSaved": "Web 访问设置已保存。",
+  "settingsWebAccessTokenCopied": "访问 Token 已复制。",
+  "settingsWebAccessUrlCopied": "访问地址已复制。",
+  "settingsWebAccessInvalidBindAddress": "绑定地址格式应为 host:port。",
+  "settingsWebAccessStartFailed": "启动 Web 访问失败：{error}",
+  "@settingsWebAccessStartFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessStopFailed": "关闭 Web 访问失败：{error}",
+  "@settingsWebAccessStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeSection": "主题",
   "settingsAppearanceThemeMode": "当前模式",
   "settingsAppearanceThemeTarget": "主题保存目标",

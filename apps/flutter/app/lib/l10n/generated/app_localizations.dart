@@ -1484,6 +1484,42 @@ abstract class AppLocalizations {
   /// **'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.'**
   String get settingsCategoryWorkspaceDescription;
 
+  /// No description provided for @settingsCategoryRuntimeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime'**
+  String get settingsCategoryRuntimeTitle;
+
+  /// No description provided for @settingsCategoryRuntimeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Local core, remote core'**
+  String get settingsCategoryRuntimeSubtitle;
+
+  /// No description provided for @settingsCategoryRuntimeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose the runtime connected by this Flutter client: local core or a paired remote core.'**
+  String get settingsCategoryRuntimeDescription;
+
+  /// No description provided for @settingsCategoryWebAccessTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Web Access'**
+  String get settingsCategoryWebAccessTitle;
+
+  /// No description provided for @settingsCategoryWebAccessSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser entry, token'**
+  String get settingsCategoryWebAccessSubtitle;
+
+  /// No description provided for @settingsCategoryWebAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Open a local web access entry for this client and manage its bind address and access token.'**
+  String get settingsCategoryWebAccessDescription;
+
   /// No description provided for @settingsCategoryAppearanceTitle.
   ///
   /// In en, this message translates to:
@@ -3180,6 +3216,348 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Browser and WebVisit sessions'**
   String get settingsWorkspaceBrowserSessions;
+
+  /// No description provided for @settingsWorkspaceBoundOverview.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace binding overview'**
+  String get settingsWorkspaceBoundOverview;
+
+  /// No description provided for @settingsWorkspaceBoundOverviewDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace paths recorded by chat histories are used as the binding source.'**
+  String get settingsWorkspaceBoundOverviewDescription;
+
+  /// No description provided for @settingsWorkspaceBoundChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Bound chats'**
+  String get settingsWorkspaceBoundChats;
+
+  /// No description provided for @settingsWorkspaceInternalRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Internal workspace root'**
+  String get settingsWorkspaceInternalRoot;
+
+  /// No description provided for @settingsWorkspaceExternalRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Legacy external workspace root'**
+  String get settingsWorkspaceExternalRoot;
+
+  /// No description provided for @settingsWorkspaceUnboundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unbound workspaces'**
+  String get settingsWorkspaceUnboundTitle;
+
+  /// No description provided for @settingsWorkspaceUnboundSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'These workspace folders are not used by any chat.'**
+  String get settingsWorkspaceUnboundSubtitle;
+
+  /// No description provided for @settingsWorkspaceNoUnbound.
+  ///
+  /// In en, this message translates to:
+  /// **'No unbound workspaces.'**
+  String get settingsWorkspaceNoUnbound;
+
+  /// No description provided for @settingsWorkspaceSelectedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected {selected} / {total}'**
+  String settingsWorkspaceSelectedCount(int selected, int total);
+
+  /// No description provided for @settingsWorkspaceSelectAllCurrentList.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get settingsWorkspaceSelectAllCurrentList;
+
+  /// No description provided for @settingsWorkspaceClearAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get settingsWorkspaceClearAll;
+
+  /// No description provided for @settingsWorkspaceInternalStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Internal storage'**
+  String get settingsWorkspaceInternalStorage;
+
+  /// No description provided for @settingsWorkspaceExternalStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'External storage'**
+  String get settingsWorkspaceExternalStorage;
+
+  /// No description provided for @settingsWorkspaceNotUsedByAnyChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Not used by any chat'**
+  String get settingsWorkspaceNotUsedByAnyChat;
+
+  /// No description provided for @settingsWorkspaceDeleteSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete selected workspaces ({count})'**
+  String settingsWorkspaceDeleteSelected(int count);
+
+  /// No description provided for @settingsWorkspaceConfirmDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm delete'**
+  String get settingsWorkspaceConfirmDeleteTitle;
+
+  /// No description provided for @settingsWorkspaceDeleteConfirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count} selected workspace folders?'**
+  String settingsWorkspaceDeleteConfirmation(int count);
+
+  /// No description provided for @settingsWorkspaceDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted {count} unbound workspaces.'**
+  String settingsWorkspaceDeleted(int count);
+
+  /// No description provided for @settingsWorkspaceDeleteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete failed: {error}'**
+  String settingsWorkspaceDeleteFailed(String error);
+
+  /// No description provided for @settingsWorkspaceLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load workspaces: {error}'**
+  String settingsWorkspaceLoadFailed(String error);
+
+  /// No description provided for @settingsWorkspaceRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get settingsWorkspaceRefresh;
+
+  /// No description provided for @settingsRuntimeConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime connection'**
+  String get settingsRuntimeConnection;
+
+  /// No description provided for @settingsRuntimeConnectionDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.'**
+  String get settingsRuntimeConnectionDescription;
+
+  /// No description provided for @settingsRuntimeUseLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Use local runtime'**
+  String get settingsRuntimeUseLocal;
+
+  /// No description provided for @settingsRuntimeUseRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Use remote runtime'**
+  String get settingsRuntimeUseRemote;
+
+  /// No description provided for @settingsRuntimeCurrentMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Current mode'**
+  String get settingsRuntimeCurrentMode;
+
+  /// No description provided for @settingsRuntimeLocalMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get settingsRuntimeLocalMode;
+
+  /// No description provided for @settingsRuntimeRemoteMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote'**
+  String get settingsRuntimeRemoteMode;
+
+  /// No description provided for @settingsRuntimeRemoteName.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote name'**
+  String get settingsRuntimeRemoteName;
+
+  /// No description provided for @settingsRuntimeBaseUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Base URL'**
+  String get settingsRuntimeBaseUrl;
+
+  /// No description provided for @settingsRuntimeSessionId.
+  ///
+  /// In en, this message translates to:
+  /// **'Session ID'**
+  String get settingsRuntimeSessionId;
+
+  /// No description provided for @settingsRuntimeDeviceId.
+  ///
+  /// In en, this message translates to:
+  /// **'Device ID'**
+  String get settingsRuntimeDeviceId;
+
+  /// No description provided for @settingsRuntimeSessionSecret.
+  ///
+  /// In en, this message translates to:
+  /// **'Session Secret'**
+  String get settingsRuntimeSessionSecret;
+
+  /// No description provided for @settingsRuntimeSaveRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and use remote'**
+  String get settingsRuntimeSaveRemote;
+
+  /// No description provided for @settingsRuntimeTestCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Test current runtime'**
+  String get settingsRuntimeTestCurrent;
+
+  /// No description provided for @settingsRuntimeSwitchedLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Switched to local runtime.'**
+  String get settingsRuntimeSwitchedLocal;
+
+  /// No description provided for @settingsRuntimeSwitchedRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Switched to remote runtime.'**
+  String get settingsRuntimeSwitchedRemote;
+
+  /// No description provided for @settingsRuntimeTestResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime available: {version}'**
+  String settingsRuntimeTestResult(String version);
+
+  /// No description provided for @settingsRuntimeTestFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime test failed: {error}'**
+  String settingsRuntimeTestFailed(String error);
+
+  /// No description provided for @settingsWebAccessService.
+  ///
+  /// In en, this message translates to:
+  /// **'Web access service'**
+  String get settingsWebAccessService;
+
+  /// No description provided for @settingsWebAccessServiceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'When enabled, this client starts a local HTTP entry. Browsers can access core with the token.'**
+  String get settingsWebAccessServiceDescription;
+
+  /// No description provided for @settingsWebAccessEnable.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable web access'**
+  String get settingsWebAccessEnable;
+
+  /// No description provided for @settingsWebAccessBindAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Bind address'**
+  String get settingsWebAccessBindAddress;
+
+  /// No description provided for @settingsWebAccessToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Access token'**
+  String get settingsWebAccessToken;
+
+  /// No description provided for @settingsWebAccessRotateToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Rotate token'**
+  String get settingsWebAccessRotateToken;
+
+  /// No description provided for @settingsWebAccessCopyToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy token'**
+  String get settingsWebAccessCopyToken;
+
+  /// No description provided for @settingsWebAccessAccessUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Access URL'**
+  String get settingsWebAccessAccessUrl;
+
+  /// No description provided for @settingsWebAccessCopyUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy URL'**
+  String get settingsWebAccessCopyUrl;
+
+  /// No description provided for @settingsWebAccessOpenUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get settingsWebAccessOpenUrl;
+
+  /// No description provided for @settingsWebAccessRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get settingsWebAccessRunning;
+
+  /// No description provided for @settingsWebAccessStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get settingsWebAccessStopped;
+
+  /// No description provided for @settingsWebAccessSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Web access settings saved.'**
+  String get settingsWebAccessSaved;
+
+  /// No description provided for @settingsWebAccessTokenCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Access token copied.'**
+  String get settingsWebAccessTokenCopied;
+
+  /// No description provided for @settingsWebAccessUrlCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Access URL copied.'**
+  String get settingsWebAccessUrlCopied;
+
+  /// No description provided for @settingsWebAccessInvalidBindAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Bind address must be host:port.'**
+  String get settingsWebAccessInvalidBindAddress;
+
+  /// No description provided for @settingsWebAccessStartFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to start web access: {error}'**
+  String settingsWebAccessStartFailed(String error);
+
+  /// No description provided for @settingsWebAccessStopFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to stop web access: {error}'**
+  String settingsWebAccessStopFailed(String error);
 
   /// No description provided for @settingsAppearanceThemeSection.
   ///

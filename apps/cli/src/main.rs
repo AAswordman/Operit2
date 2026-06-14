@@ -1,12 +1,15 @@
 use std::env;
 use std::process::ExitCode;
 
+use operit_runtime::util::AppLogger::AppLogger;
+
 mod bootstrap;
 mod chat_runtime;
-mod client_paths;
 mod cli;
+mod client_paths;
 mod core_proxy;
 mod tui;
+mod web_access_assets;
 
 pub(crate) use bootstrap::create_local_core;
 pub(crate) use chat_runtime::{
@@ -26,6 +29,7 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), String> {
+    AppLogger::set_enable_console_logging(false);
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
         return tui::run_tui_command(&[]).await;

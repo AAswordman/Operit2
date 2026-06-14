@@ -11,6 +11,307 @@
   let sqliteModulePromise;
   let SQLite;
 
+  const webAccessConfig = globalThis.__OPERIT_WEB_ACCESS__;
+  if (webAccessConfig && webAccessConfig.mode === "link") {
+    installLinkedWebRuntime(webAccessConfig);
+    return;
+  }
+
+  function installLinkedWebRuntime(config) {
+    const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
+    const sessionId = String(config.sessionId);
+    const deviceId = String(config.deviceId);
+    const sessionSecret = String(config.sessionSecret);
+    const streamQueues = new Map();
+    const streamChannels = new Map();
+    const channels = new Map();
+    const permissionRequestTimes = new Map();
+    let currentPermissionRequestId = null;
+    let hmacKeyPromise = null;
+    let openingChannelPromise = null;
+    const maxSubscriptionsPerChannel = 16;
+
+    function linkPath(path) {
+      return `${baseUrl}${path}`;
+    }
+
+    async function hmacKey() {
+      if (!hmacKeyPromise) {
+        hmacKeyPromise = crypto.subtle.importKey(
+          "raw",
+          base64ToBytes(sessionSecret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"],
+        );
+      }
+      return hmacKeyPromise;
+    }
+
+    async function linkHeaders(bodyText) {
+      const signature = await crypto.subtle.sign(
+        "HMAC",
+        await hmacKey(),
+        textEncoder.encode(bodyText),
+      );
+      return {
+        "content-type": "application/json",
+        "x-operit-session": sessionId,
+        "x-operit-device": deviceId,
+        "x-operit-signature": bytesToBase64(new Uint8Array(signature)),
+      };
+    }
+
+    async function postText(path, body, signal) {
+      const bodyText = JSON.stringify(body);
+      const response = await fetch(linkPath(path), {
+        method: "POST",
+        headers: await linkHeaders(bodyText),
+        body: bodyText,
+        signal,
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(text);
+      }
+      return text;
+    }
+
+    async function openChannel() {
+      const channelId = `watch-channel-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      const channel = {
+        channelId,
+        controller,
+        subscriptionCount: 0,
+      };
+      const body = { channelId };
+      const bodyText = JSON.stringify(body);
+      const response = await fetch(linkPath("/link/watch/channel/events"), {
+        method: "POST",
+        headers: await linkHeaders(bodyText),
+        body: bodyText,
+        signal: controller.signal,
+      });
+      const errorText = response.ok ? null : await response.text();
+      if (errorText !== null) {
+        throw new Error(errorText);
+      }
+      channels.set(channelId, channel);
+      readWatchChannel(channel, response);
+      return channel;
+    }
+
+    async function readWatchChannel(channel, response) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) {
+            break;
+          }
+          buffer += decoder.decode(chunk.value, { stream: true });
+          let newlineIndex = buffer.indexOf("\n");
+          while (newlineIndex >= 0) {
+            const line = buffer.substring(0, newlineIndex).trim();
+            buffer = buffer.substring(newlineIndex + 1);
+          if (line.length > 0) {
+              const event = JSON.parse(line);
+              const queue = streamQueues.get(event.subscriptionId);
+              if (queue) {
+                queue.push(event.event);
+              }
+            }
+            newlineIndex = buffer.indexOf("\n");
+          }
+        }
+        const tail = buffer.trim();
+        if (tail.length > 0) {
+          const event = JSON.parse(tail);
+          const queue = streamQueues.get(event.subscriptionId);
+          if (queue) {
+            queue.push(event.event);
+          }
+        }
+      } catch (error) {
+        for (const [subscriptionId, channelId] of streamChannels.entries()) {
+          if (channelId === channel.channelId) {
+            const queue = streamQueues.get(subscriptionId);
+            if (queue) {
+              queue.push({
+                requestId: null,
+                targetPath: { segments: [] },
+                propertyName: "watch",
+                kind: "Completed",
+                value: {
+                  code: "LINK_WATCH_CHANNEL_ERROR",
+                  message: String(error),
+                },
+              });
+            }
+          }
+        }
+      } finally {
+        channels.delete(channel.channelId);
+      }
+    }
+
+    async function acquireChannel() {
+      for (const channel of channels.values()) {
+        if (channel.subscriptionCount < maxSubscriptionsPerChannel) {
+          return channel;
+        }
+      }
+      if (!openingChannelPromise) {
+        openingChannelPromise = openChannel().finally(() => {
+          openingChannelPromise = null;
+        });
+      }
+      return openingChannelPromise;
+    }
+
+    function permissionResult(value) {
+      if (value === "ALLOW") {
+        return "allow";
+      }
+      if (value === "ALWAYS_ALLOW") {
+        return "always_allow";
+      }
+      if (value === "DENY") {
+        return "deny";
+      }
+      throw new Error(`unknown permission result: ${value}`);
+    }
+
+    globalThis.__operitRuntime = {
+      async call(request) {
+        return postText("/link/call", {
+          request: JSON.parse(request),
+        });
+      },
+      async watchSnapshot(request) {
+        return postText("/link/watch/snapshot", {
+          request: JSON.parse(request),
+        });
+      },
+      async watchStream(request) {
+        const channel = await acquireChannel();
+        const subscriptionId = `watch-${crypto.randomUUID()}`;
+        streamQueues.set(subscriptionId, []);
+        streamChannels.set(subscriptionId, channel.channelId);
+        channel.subscriptionCount += 1;
+        try {
+          const responseText = await postText("/link/watch/channel/open", {
+            channelId: channel.channelId,
+            subscriptionId,
+            request: JSON.parse(request),
+          });
+          const response = JSON.parse(responseText);
+          if (response.subscriptionId !== subscriptionId) {
+            throw new Error("watch channel subscription id mismatch");
+          }
+          return JSON.stringify({ subscriptionId });
+        } catch (error) {
+          channel.subscriptionCount -= 1;
+          streamQueues.delete(subscriptionId);
+          streamChannels.delete(subscriptionId);
+          throw error;
+        }
+      },
+      async pollWatchStream(subscriptionId) {
+        const queue = streamQueues.get(subscriptionId);
+        if (!queue) {
+          throw new Error(`link watch stream not found: ${subscriptionId}`);
+        }
+        const events = queue.splice(0, queue.length);
+        return JSON.stringify(events);
+      },
+      async closeWatchStream(subscriptionId) {
+        const channelId = streamChannels.get(subscriptionId);
+        if (!channelId) {
+          throw new Error(`link watch stream not found: ${subscriptionId}`);
+        }
+        const channel = channels.get(channelId);
+        await postText("/link/watch/channel/close", {
+          channelId,
+          subscriptionId,
+        });
+        streamChannels.delete(subscriptionId);
+        streamQueues.delete(subscriptionId);
+        if (channel) {
+          channel.subscriptionCount -= 1;
+          if (channel.subscriptionCount === 0) {
+            channel.controller.abort();
+            channels.delete(channelId);
+          }
+        }
+        return "{}";
+      },
+      async hostDescriptor() {
+        const nonce = `web-${Date.now()}`;
+        const status = JSON.parse(await postText("/link/session", { nonce }));
+        return JSON.stringify({
+          id: `web-access:${status.coreDeviceId}`,
+          displayName: "Web Access Operit Core",
+          pathStyleDescriptionEn: "Web access core path style",
+          pathStyleDescriptionCn: "Web Access 核心路径风格",
+          examplePaths: [],
+          usesEnvironmentParameter: false,
+          environmentParameterDescriptionEn: "",
+          environmentParameterDescriptionCn: "",
+          capabilities: status.transports,
+          fileSystemHost: true,
+          webVisitHost: true,
+          systemOperationHost: true,
+          managedRuntimeHost: true,
+          runtimeStorageHost: true,
+          runtimeSqliteHost: true,
+        });
+      },
+      async currentPermissionRequest() {
+        const text = await postText("/host/interaction/poll", {
+          timeoutMs: 0,
+        });
+        const response = JSON.parse(text);
+        const request = response.request;
+        if (request === null) {
+          return "null";
+        }
+        if (request.kind !== "tool_permission") {
+          return "null";
+        }
+        currentPermissionRequestId = request.requestId;
+        let requestedAtMillis = permissionRequestTimes.get(request.requestId);
+        if (requestedAtMillis === undefined) {
+          requestedAtMillis = Date.now();
+          permissionRequestTimes.set(request.requestId, requestedAtMillis);
+        }
+        return JSON.stringify({
+          tool: request.payload.tool,
+          description: request.payload.description,
+          requestedAtMillis,
+        });
+      },
+      async handlePermissionResult(result) {
+        if (currentPermissionRequestId === null) {
+          throw new Error("no pending web access permission request");
+        }
+        const requestId = currentPermissionRequestId;
+        currentPermissionRequestId = null;
+        permissionRequestTimes.delete(requestId);
+        await postText("/host/interaction/respond", {
+          requestId,
+          response: {
+            result: permissionResult(result),
+          },
+        });
+        return "{}";
+      },
+    };
+  }
+
   function key(prefix, path) {
     return prefix + String(path).replace(/^\/+/, "");
   }

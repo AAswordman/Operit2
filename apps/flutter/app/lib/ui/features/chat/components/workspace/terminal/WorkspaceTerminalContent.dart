@@ -641,7 +641,7 @@ class _TerminalShortcutButtonState extends State<_TerminalShortcutButton> {
 TerminalStyle _terminalStyleFromTheme(TextStyle style) {
   return TerminalStyle.fromTextStyle(
     style.copyWith(
-      fontFamily: 'monospace',
+      fontFamily: _terminalMonospaceFontFamily,
       fontFamilyFallback: _terminalMonospaceFontFamilies,
       fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
       letterSpacing: 0,
@@ -650,11 +650,12 @@ TerminalStyle _terminalStyleFromTheme(TextStyle style) {
   );
 }
 
+const String _terminalMonospaceFontFamily = 'OperitTerminalMono';
+
 const List<String> _terminalMonospaceFontFamilies = <String>[
+  'Cascadia Mono',
   'Consolas',
   'JetBrains Mono',
-  'Roboto Mono',
-  'Droid Sans Mono',
   'SF Mono',
   'Menlo',
   'monospace',

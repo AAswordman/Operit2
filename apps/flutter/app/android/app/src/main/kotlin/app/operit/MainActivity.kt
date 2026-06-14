@@ -48,6 +48,7 @@ class MainActivity : FlutterActivity() {
                     "watchSnapshot" -> callRuntime(call, result, OperitRuntimeNative::watchSnapshot)
                     "watchStream" -> callRuntime(call, result, OperitRuntimeNative::watchStream)
                     "pollWatchStream" -> pollWatchStream(call, result)
+                    "pollWatchStreams" -> pollWatchStreams(call, result)
                     "closeWatchStream" -> closeWatchStream(call, result)
                     "hostDescriptor" -> runRuntime(result) {
                         OperitRuntimeNative.hostDescriptor(ensureRuntimeHandle())
@@ -57,18 +58,6 @@ class MainActivity : FlutterActivity() {
                     }
                     "handlePermissionResult" -> handlePermissionResult(call, result)
                     "androidRuntimePaths" -> androidRuntimePaths(result)
-                    "listTerminalSessions" -> runRuntime(result) {
-                        OperitRuntimeNative.listTerminalSessions(ensureRuntimeHandle())
-                    }
-                    "startTerminalPty" -> startTerminalPty(call, result)
-                    "readTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::readTerminalPty)
-                    "pollTerminalPtyExit" -> terminalPtySessionCall(call, result, OperitRuntimeNative::pollTerminalPtyExit)
-                    "closeTerminalPty" -> terminalPtySessionCall(call, result, OperitRuntimeNative::closeTerminalPty)
-                    "getTerminalSessionScreen" -> terminalPtySessionCall(call, result, OperitRuntimeNative::getTerminalSessionScreen)
-                    "inputTerminalSession" -> inputTerminalSession(call, result)
-                    "terminalDebugInfo" -> terminalDebugInfo(call, result)
-                    "writeTerminalPty" -> writeTerminalPty(call, result)
-                    "resizeTerminalPty" -> resizeTerminalPty(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -121,6 +110,17 @@ class MainActivity : FlutterActivity() {
         }
         runRuntime(result) {
             OperitRuntimeNative.pollWatchStream(ensureRuntimeHandle(), subscriptionId)
+        }
+    }
+
+    private fun pollWatchStreams(call: MethodCall, result: MethodChannel.Result) {
+        val subscriptionIdsJson = call.arguments as? String
+        if (subscriptionIdsJson == null) {
+            result.error("INVALID_ARGS", "pollWatchStreams expects a JSON string array", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.pollWatchStreams(ensureRuntimeHandle(), subscriptionIdsJson)
         }
     }
 
@@ -227,93 +227,6 @@ class MainActivity : FlutterActivity() {
         return AndroidRuntimeAssets.prepare(applicationContext, root)
     }
 
-    private fun startTerminalPty(call: MethodCall, result: MethodChannel.Result) {
-        val args = call.arguments as? Map<*, *>
-        val sessionName = args?.get("sessionName") as? String
-        val workingDirectory = args?.get("workingDirectory") as? String
-        val rows = args?.get("rows") as? Int
-        val columns = args?.get("columns") as? Int
-        if (sessionName == null || workingDirectory == null || rows == null || columns == null) {
-            result.error("INVALID_ARGS", "startTerminalPty expects sessionName, workingDirectory, rows, columns", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.startTerminalPty(
-                ensureRuntimeHandle(),
-                sessionName,
-                workingDirectory,
-                rows,
-                columns,
-            )
-        }
-    }
-
-    private fun terminalPtySessionCall(
-        call: MethodCall,
-        result: MethodChannel.Result,
-        nativeCall: (Long, String) -> String,
-    ) {
-        val sessionId = call.arguments as? String
-        if (sessionId == null) {
-            result.error("INVALID_ARGS", "${call.method} expects a session id", null)
-            return
-        }
-        runRuntime(result) {
-            nativeCall(ensureRuntimeHandle(), sessionId)
-        }
-    }
-
-    private fun writeTerminalPty(call: MethodCall, result: MethodChannel.Result) {
-        val args = call.arguments as? Map<*, *>
-        val sessionId = args?.get("sessionId") as? String
-        val data = args?.get("data") as? ByteArray
-        if (sessionId == null || data == null) {
-            result.error("INVALID_ARGS", "writeTerminalPty expects sessionId and data", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.writeTerminalPty(ensureRuntimeHandle(), sessionId, data)
-        }
-    }
-
-    private fun resizeTerminalPty(call: MethodCall, result: MethodChannel.Result) {
-        val args = call.arguments as? Map<*, *>
-        val sessionId = args?.get("sessionId") as? String
-        val rows = args?.get("rows") as? Int
-        val columns = args?.get("columns") as? Int
-        if (sessionId == null || rows == null || columns == null) {
-            result.error("INVALID_ARGS", "resizeTerminalPty expects sessionId, rows, columns", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.resizeTerminalPty(ensureRuntimeHandle(), sessionId, rows, columns)
-        }
-    }
-
-    private fun inputTerminalSession(call: MethodCall, result: MethodChannel.Result) {
-        val args = call.arguments as? Map<*, *>
-        val sessionId = args?.get("sessionId") as? String
-        val input = args?.get("input") as? String
-        if (sessionId == null || input == null) {
-            result.error("INVALID_ARGS", "inputTerminalSession expects sessionId and input", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.inputTerminalSession(ensureRuntimeHandle(), sessionId, input)
-        }
-    }
-
-    private fun terminalDebugInfo(call: MethodCall, result: MethodChannel.Result) {
-        val workingDirectory = call.arguments as? String
-        if (workingDirectory == null) {
-            result.error("INVALID_ARGS", "terminalDebugInfo expects a working directory", null)
-            return
-        }
-        runRuntime(result) {
-            OperitRuntimeNative.terminalDebugInfo(ensureRuntimeHandle(), workingDirectory)
-        }
-    }
-
     private fun requestHighestRefreshRate() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return
@@ -404,18 +317,9 @@ object OperitRuntimeNative {
     @JvmStatic external fun watchSnapshot(handle: Long, request: ByteArray): String
     @JvmStatic external fun watchStream(handle: Long, request: ByteArray): String
     @JvmStatic external fun pollWatchStream(handle: Long, subscriptionId: String): String
+    @JvmStatic external fun pollWatchStreams(handle: Long, subscriptionIdsJson: String): String
     @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): String
     @JvmStatic external fun hostDescriptor(handle: Long): String
     @JvmStatic external fun currentPermissionRequest(handle: Long): String
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
-    @JvmStatic external fun startTerminalPty(handle: Long, sessionName: String, workingDirectory: String, rows: Int, columns: Int): String
-    @JvmStatic external fun listTerminalSessions(handle: Long): String
-    @JvmStatic external fun readTerminalPty(handle: Long, sessionId: String): String
-    @JvmStatic external fun writeTerminalPty(handle: Long, sessionId: String, data: ByteArray): String
-    @JvmStatic external fun resizeTerminalPty(handle: Long, sessionId: String, rows: Int, columns: Int): String
-    @JvmStatic external fun pollTerminalPtyExit(handle: Long, sessionId: String): String
-    @JvmStatic external fun closeTerminalPty(handle: Long, sessionId: String): String
-    @JvmStatic external fun getTerminalSessionScreen(handle: Long, sessionId: String): String
-    @JvmStatic external fun inputTerminalSession(handle: Long, sessionId: String, input: String): String
-    @JvmStatic external fun terminalDebugInfo(handle: Long, workingDirectory: String): String
 }

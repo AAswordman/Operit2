@@ -4,7 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 
-enum SettingsCategory { model, characters, tools, workspace, appearance, data }
+enum SettingsCategory {
+  model,
+  characters,
+  tools,
+  workspace,
+  runtime,
+  webAccess,
+  appearance,
+  data,
+}
 
 class SettingsCategorySpec {
   const SettingsCategorySpec({
@@ -47,6 +56,18 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryWorkspaceSubtitle,
         description: l10n.settingsCategoryWorkspaceDescription,
         icon: Icons.folder_outlined,
+      ),
+      SettingsCategory.runtime => SettingsCategorySpec(
+        title: l10n.settingsCategoryRuntimeTitle,
+        subtitle: l10n.settingsCategoryRuntimeSubtitle,
+        description: l10n.settingsCategoryRuntimeDescription,
+        icon: Icons.device_hub_outlined,
+      ),
+      SettingsCategory.webAccess => SettingsCategorySpec(
+        title: l10n.settingsCategoryWebAccessTitle,
+        subtitle: l10n.settingsCategoryWebAccessSubtitle,
+        description: l10n.settingsCategoryWebAccessDescription,
+        icon: Icons.language_outlined,
       ),
       SettingsCategory.appearance => SettingsCategorySpec(
         title: l10n.settingsCategoryAppearanceTitle,

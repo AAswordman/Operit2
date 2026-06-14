@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/services.dart';
 
@@ -82,38 +83,7 @@ class MethodChannelCoreProxy extends CoreProxy {
       throw error;
     }
     final subscriptionId = subscriptionJson['subscriptionId'] as String;
-    var completed = false;
-    try {
-      while (!completed) {
-        await Future<void>.delayed(const Duration(milliseconds: 24));
-        final eventsText = await _channel.invokeMethod<String>(
-          'pollWatchStream',
-          subscriptionId,
-        );
-        if (eventsText == null) {
-          throw const CoreLinkError(
-            code: 'EMPTY_RESPONSE',
-            message: 'runtime bridge returned empty stream events',
-          );
-        }
-        final decodedEvents = jsonDecode(eventsText);
-        if (decodedEvents is Map<String, Object?> &&
-            decodedEvents.containsKey('code') &&
-            decodedEvents.containsKey('message')) {
-          throw CoreLinkError.fromJson(decodedEvents);
-        }
-        final eventsJson = decodedEvents as List<Object?>;
-        for (final eventJson in eventsJson.cast<Map<String, Object?>>()) {
-          final event = CoreEvent.fromJson(eventJson);
-          yield event;
-          if (event.kind == 'Completed') {
-            completed = true;
-          }
-        }
-      }
-    } finally {
-      await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
-    }
+    yield* _methodChannelWatchPump(_channel).attach(subscriptionId);
   }
 
   @override
@@ -128,6 +98,119 @@ class MethodChannelCoreProxy extends CoreProxy {
     return HostEnvironmentDescriptor.fromJson(
       jsonDecode(responseText) as Map<String, Object?>,
     );
+  }
+}
+
+final Map<MethodChannel, _MethodChannelWatchPump> _methodChannelWatchPumps =
+    <MethodChannel, _MethodChannelWatchPump>{};
+
+_MethodChannelWatchPump _methodChannelWatchPump(MethodChannel channel) {
+  return _methodChannelWatchPumps.putIfAbsent(
+    channel,
+    () => _MethodChannelWatchPump(channel),
+  );
+}
+
+class _MethodChannelWatchPump {
+  _MethodChannelWatchPump(this._channel);
+
+  static const Duration interval = Duration(milliseconds: 24);
+
+  final MethodChannel _channel;
+  final Map<String, StreamController<CoreEvent>> _controllers =
+      <String, StreamController<CoreEvent>>{};
+  Timer? _timer;
+  bool _polling = false;
+
+  Stream<CoreEvent> attach(String subscriptionId) {
+    final controller = StreamController<CoreEvent>();
+    controller.onCancel = () async {
+      await _closeSubscription(subscriptionId);
+    };
+    _controllers[subscriptionId] = controller;
+    _timer ??= Timer.periodic(interval, (_) {
+      unawaited(_poll());
+    });
+    unawaited(_poll());
+    return controller.stream;
+  }
+
+  Future<void> _poll() async {
+    if (_polling || _controllers.isEmpty) {
+      return;
+    }
+    _polling = true;
+    final subscriptionIds = _controllers.keys.toList(growable: false);
+    try {
+      final eventsText = await _channel.invokeMethod<String>(
+        'pollWatchStreams',
+        jsonEncode(subscriptionIds),
+      );
+      if (eventsText == null) {
+        throw const CoreLinkError(
+          code: 'EMPTY_RESPONSE',
+          message: 'runtime bridge returned empty stream events',
+        );
+      }
+      final decodedEvents = jsonDecode(eventsText);
+      if (decodedEvents is Map<String, Object?> &&
+          decodedEvents.containsKey('code') &&
+          decodedEvents.containsKey('message')) {
+        throw CoreLinkError.fromJson(decodedEvents);
+      }
+      final eventsBySubscription =
+          (decodedEvents as Map<String, Object?>).cast<String, Object?>();
+      for (final subscriptionId in subscriptionIds) {
+        final controller = _controllers[subscriptionId];
+        if (controller == null) {
+          continue;
+        }
+        final eventsJson = eventsBySubscription[subscriptionId] as List<Object?>;
+        for (final eventJson in eventsJson.cast<Map<String, Object?>>()) {
+          final event = CoreEvent.fromJson(eventJson);
+          controller.add(event);
+          if (event.kind == 'Completed') {
+            _controllers.remove(subscriptionId);
+            await _channel.invokeMethod<String>(
+              'closeWatchStream',
+              subscriptionId,
+            );
+            controller.onCancel = null;
+            await controller.close();
+            break;
+          }
+        }
+      }
+      if (_controllers.isEmpty) {
+        _timer?.cancel();
+        _timer = null;
+      }
+    } catch (error, stackTrace) {
+      final entries = _controllers.entries.toList(growable: false);
+      _controllers.clear();
+      _timer?.cancel();
+      _timer = null;
+      for (final entry in entries) {
+        unawaited(
+          _channel.invokeMethod<String>('closeWatchStream', entry.key),
+        );
+        final controller = entry.value;
+        controller.addError(error, stackTrace);
+        controller.onCancel = null;
+        await controller.close();
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  Future<void> _closeSubscription(String subscriptionId) async {
+    _controllers.remove(subscriptionId);
+    if (_controllers.isEmpty) {
+      _timer?.cancel();
+      _timer = null;
+    }
+    await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
   }
 }
 

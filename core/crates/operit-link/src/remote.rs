@@ -1,14 +1,18 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::fs;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Json, State};
+use axum::extract::{Json, Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -17,11 +21,12 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use futures_util::StreamExt;
 use hmac::{Hmac, Mac};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -37,6 +42,8 @@ pub struct RemoteLinkServerConfig {
     pub bindAddress: String,
     pub token: String,
     pub hostInteractionBroker: Option<RemoteHostInteractionBroker>,
+    pub webAccess: Option<RemoteWebAccessConfig>,
+    pub printStartupInfo: bool,
 }
 
 impl Default for RemoteLinkServerConfig {
@@ -45,11 +52,20 @@ impl Default for RemoteLinkServerConfig {
             bindAddress: "0.0.0.0:37192".to_string(),
             token: "operit-link-dev".to_string(),
             hostInteractionBroker: None,
+            webAccess: None,
+            printStartupInfo: true,
         }
     }
 }
 
 pub struct RemoteLinkServer;
+
+#[derive(Clone)]
+pub struct RemoteWebAccessConfig {
+    pub token: String,
+    pub shutdownToken: String,
+    pub webRoot: PathBuf,
+}
 
 #[derive(Clone)]
 struct RemoteLinkState {
@@ -61,6 +77,58 @@ struct RemoteLinkState {
     pairings: Arc<Mutex<BTreeMap<String, PendingPairing>>>,
     sessions: Arc<Mutex<BTreeMap<String, RemoteSession>>>,
     hostInteractionBroker: Option<RemoteHostInteractionBroker>,
+    webAccess: Option<RemoteWebAccessState>,
+    watchChannels: Arc<Mutex<BTreeMap<String, RemoteWatchChannel>>>,
+}
+
+#[derive(Clone)]
+struct RemoteWebAccessState {
+    shutdownToken: String,
+    shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
+    webRoot: PathBuf,
+    linkSessionId: String,
+    linkDeviceId: String,
+    linkSessionSecret: String,
+}
+
+struct RemoteWatchChannel {
+    sender: mpsc::UnboundedSender<RemoteWatchChannelEvent>,
+    subscriptions: BTreeMap<String, JoinHandle<()>>,
+}
+
+struct WatchChannelEventStream {
+    receiver: mpsc::UnboundedReceiver<RemoteWatchChannelEvent>,
+    watchChannels: Arc<Mutex<BTreeMap<String, RemoteWatchChannel>>>,
+    channelId: String,
+}
+
+impl futures_util::Stream for WatchChannelEventStream {
+    type Item = Result<Bytes, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.receiver.poll_recv(context) {
+            Poll::Ready(Some(event)) => {
+                let mut line =
+                    serde_json::to_vec(&event).expect("RemoteWatchChannelEvent must serialize");
+                line.push(b'\n');
+                Poll::Ready(Some(Ok(Bytes::from(line))))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for WatchChannelEventStream {
+    fn drop(&mut self) {
+        let watchChannels = self.watchChannels.clone();
+        let channelId = self.channelId.clone();
+        tokio::spawn(async move {
+            if let Some(channel) = watchChannels.lock().await.remove(&channelId) {
+                abort_watch_channel(channel);
+            }
+        });
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +193,35 @@ pub struct RemoteCallEnvelope {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteWatchEnvelope {
     pub request: CoreWatchRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteWatchChannelEnvelope {
+    pub channelId: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteWatchChannelOpenEnvelope {
+    pub channelId: String,
+    pub subscriptionId: String,
+    pub request: CoreWatchRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteWatchChannelCloseEnvelope {
+    pub channelId: String,
+    pub subscriptionId: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteWatchChannelOpenResponse {
+    pub subscriptionId: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteWatchChannelEvent {
+    pub subscriptionId: String,
+    pub event: CoreEvent,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -334,30 +431,6 @@ impl RemoteLinkServer {
         core: impl CoreLinkClient + Send + 'static,
         config: RemoteLinkServerConfig,
     ) -> Result<(), String> {
-        let keySecret = Arc::new(StaticSecret::random_from_rng(OsRng));
-        let keyPublic = public_key_to_string(&PublicKey::from(keySecret.as_ref()));
-        let state = RemoteLinkState {
-            core: Arc::new(Mutex::new(Box::new(core))),
-            token: config.token.clone(),
-            keySecret,
-            keyPublic,
-            deviceId: format!("core-{}", Uuid::new_v4()),
-            pairings: Arc::new(Mutex::new(BTreeMap::new())),
-            sessions: Arc::new(Mutex::new(BTreeMap::new())),
-            hostInteractionBroker: config.hostInteractionBroker.clone(),
-        };
-        let app = Router::new()
-            .route("/link/hello", get(hello))
-            .route("/link/pair/start", post(pair_start))
-            .route("/link/pair/finish", post(pair_finish))
-            .route("/link/session", post(session_info))
-            .route("/link/call", post(call))
-            .route("/link/watch/snapshot", post(watch_snapshot))
-            .route("/link/watch/stream", post(watch_stream))
-            .route("/host/interaction/poll", post(host_interaction_poll))
-            .route("/host/interaction/respond", post(host_interaction_respond))
-            .route("/link/ws", get(ws))
-            .with_state(state);
         let address: SocketAddr = config
             .bindAddress
             .parse()
@@ -365,8 +438,105 @@ impl RemoteLinkServer {
         let listener = TcpListener::bind(address)
             .await
             .map_err(|error| error.to_string())?;
-        println!("operit link server listening on http://{address}");
-        println!("link token: {}", config.token);
+        Self::serveWithListener(core, config, listener, address).await
+    }
+
+    #[allow(non_snake_case)]
+    pub async fn serveWithListener(
+        core: impl CoreLinkClient + Send + 'static,
+        config: RemoteLinkServerConfig,
+        listener: TcpListener,
+        address: SocketAddr,
+    ) -> Result<(), String> {
+        let keySecret = Arc::new(StaticSecret::random_from_rng(OsRng));
+        let keyPublic = public_key_to_string(&PublicKey::from(keySecret.as_ref()));
+        let webAccessConfig = config.webAccess.clone();
+        let (shutdownSender, shutdownReceiver) = oneshot::channel::<()>();
+        let sessions = Arc::new(Mutex::new(BTreeMap::new()));
+        let webAccessSession = webAccessConfig.as_ref().map(|_| {
+            let mut sessionSecret = [0u8; 32];
+            OsRng.fill_bytes(&mut sessionSecret);
+            (
+                format!("web-access-{}", Uuid::new_v4().simple()),
+                format!("web-access-client-{}", Uuid::new_v4().simple()),
+                sessionSecret.to_vec(),
+            )
+        });
+        if let Some((sessionId, deviceId, sessionSecret)) = webAccessSession.as_ref() {
+            sessions.lock().await.insert(
+                sessionId.clone(),
+                RemoteSession {
+                    deviceId: deviceId.clone(),
+                    sessionSecret: sessionSecret.clone(),
+                },
+            );
+        }
+        let webAccess = webAccessConfig.clone().map(|value| RemoteWebAccessState {
+            shutdownToken: value.shutdownToken,
+            shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
+            webRoot: value.webRoot,
+            linkSessionId: webAccessSession
+                .as_ref()
+                .expect("web access session must exist")
+                .0
+                .clone(),
+            linkDeviceId: webAccessSession
+                .as_ref()
+                .expect("web access session must exist")
+                .1
+                .clone(),
+            linkSessionSecret: BASE64.encode(
+                webAccessSession
+                    .as_ref()
+                    .expect("web access session must exist")
+                    .2
+                    .as_slice(),
+            ),
+        });
+        let state = RemoteLinkState {
+            core: Arc::new(Mutex::new(Box::new(core))),
+            token: config.token.clone(),
+            keySecret,
+            keyPublic,
+            deviceId: format!("core-{}", Uuid::new_v4()),
+            pairings: Arc::new(Mutex::new(BTreeMap::new())),
+            sessions,
+            hostInteractionBroker: config.hostInteractionBroker.clone(),
+            webAccess,
+            watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let mut app = Router::new()
+            .route("/link/hello", get(hello))
+            .route("/link/pair/start", post(pair_start))
+            .route("/link/pair/finish", post(pair_finish))
+            .route("/link/session", post(session_info))
+            .route("/link/call", post(call))
+            .route("/link/watch/snapshot", post(watch_snapshot))
+            .route("/link/watch/channel/events", post(watch_channel_events))
+            .route("/link/watch/channel/open", post(watch_channel_open))
+            .route("/link/watch/channel/close", post(watch_channel_close))
+            .route("/host/interaction/poll", post(host_interaction_poll))
+            .route("/host/interaction/respond", post(host_interaction_respond))
+            .route("/link/ws", get(ws));
+        if webAccessConfig.is_some() {
+            app = app
+                .route("/", get(web_access_index))
+                .route("/*path", get(web_access_asset))
+                .route("/client/web-access/close", post(web_access_close));
+        }
+        let app = app.with_state(state);
+        if config.printStartupInfo {
+            println!("operit link server listening on http://{address}");
+            println!("link token: {}", config.token);
+        }
+        if webAccessConfig.is_some() {
+            return axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdownReceiver.await;
+                })
+                .await
+                .map_err(|error| error.to_string());
+        }
         axum::serve(listener, app)
             .await
             .map_err(|error| error.to_string())
@@ -477,17 +647,25 @@ impl RemoteLinkClient {
                 &state.clientNonce,
                 &state.serverNonce,
             ),
+            watchChannel: Arc::new(Mutex::new(None)),
         })
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PairedRemoteSession {
     baseUrl: String,
     http: reqwest::Client,
     pub sessionId: String,
     pub deviceId: String,
     sessionSecret: Vec<u8>,
+    watchChannel: Arc<Mutex<Option<PairedRemoteWatchChannel>>>,
+}
+
+struct PairedRemoteWatchChannel {
+    channelId: String,
+    subscriptions: BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>,
+    task: JoinHandle<()>,
 }
 
 impl PairedRemoteSession {
@@ -511,6 +689,7 @@ impl PairedRemoteSession {
             sessionSecret: BASE64
                 .decode(record.sessionSecret)
                 .map_err(|error| error.to_string())?,
+            watchChannel: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -578,12 +757,94 @@ impl PairedRemoteSession {
     }
 
     pub async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, String> {
-        let body = serde_json::to_vec(&RemoteWatchEnvelope { request })
-            .map_err(|error| error.to_string())?;
+        let channelId = self.ensureWatchChannel().await?;
+        let subscriptionId = format!("watch-{}", Uuid::new_v4().simple());
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        {
+            let mut guard = self.watchChannel.lock().await;
+            let Some(channel) = guard.as_mut() else {
+                return Err("watch channel is not open".to_string());
+            };
+            if channel.channelId != channelId {
+                return Err("watch channel changed while opening subscription".to_string());
+            }
+            channel.subscriptions.insert(subscriptionId.clone(), sender);
+        }
+        let body = serde_json::to_vec(&RemoteWatchChannelOpenEnvelope {
+            channelId: channelId.clone(),
+            subscriptionId: subscriptionId.clone(),
+            request,
+        })
+        .map_err(|error| error.to_string())?;
+        let signature = sign(&self.sessionSecret, &body);
+        let openResult = self
+            .http
+            .post(format!("{}/link/watch/channel/open", self.baseUrl))
+            .header("x-operit-session", &self.sessionId)
+            .header("x-operit-device", &self.deviceId)
+            .header("x-operit-signature", signature)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json::<RemoteWatchChannelOpenResponse>()
+            .await;
+        if let Err(error) = openResult {
+            self.removeLocalWatchSubscription(&channelId, &subscriptionId)
+                .await;
+            return Err(error.to_string());
+        }
+        let http = self.http.clone();
+        let baseUrl = self.baseUrl.clone();
+        let sessionId = self.sessionId.clone();
+        let deviceId = self.deviceId.clone();
+        let sessionSecret = self.sessionSecret.clone();
+        let watchChannel = self.watchChannel.clone();
+        Ok(CoreEventStream::new(receiver).withOnClose(move || {
+            tokio::spawn(async move {
+                remove_paired_watch_subscription(&watchChannel, &channelId, &subscriptionId).await;
+                let body = match serde_json::to_vec(&RemoteWatchChannelCloseEnvelope {
+                    channelId,
+                    subscriptionId,
+                }) {
+                    Ok(value) => value,
+                    Err(_) => return,
+                };
+                let signature = sign(&sessionSecret, &body);
+                let _ = http
+                    .post(format!("{}/link/watch/channel/close", baseUrl))
+                    .header("x-operit-session", sessionId)
+                    .header("x-operit-device", deviceId)
+                    .header("x-operit-signature", signature)
+                    .body(body)
+                    .send()
+                    .await;
+            });
+        }))
+    }
+
+    #[allow(non_snake_case)]
+    async fn ensureWatchChannel(&self) -> Result<String, String> {
+        if let Some(channelId) = self
+            .watchChannel
+            .lock()
+            .await
+            .as_ref()
+            .map(|channel| channel.channelId.clone())
+        {
+            return Ok(channelId);
+        }
+        let channelId = format!("watch-channel-{}", Uuid::new_v4().simple());
+        let body = serde_json::to_vec(&RemoteWatchChannelEnvelope {
+            channelId: channelId.clone(),
+        })
+        .map_err(|error| error.to_string())?;
         let signature = sign(&self.sessionSecret, &body);
         let response = self
             .http
-            .post(format!("{}/link/watch/stream", self.baseUrl))
+            .post(format!("{}/link/watch/channel/events", self.baseUrl))
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -593,7 +854,8 @@ impl PairedRemoteSession {
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?;
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let watchChannel = self.watchChannel.clone();
+        let taskChannelId = channelId.clone();
         let task = tokio::spawn(async move {
             let mut bytes = response.bytes_stream();
             let mut buffer = Vec::<u8>::new();
@@ -608,13 +870,45 @@ impl PairedRemoteSession {
                     if line.is_empty() {
                         continue;
                     }
-                    if let Ok(event) = serde_json::from_slice::<CoreEvent>(line) {
-                        let _ = sender.send(event);
+                    let Ok(event) = serde_json::from_slice::<RemoteWatchChannelEvent>(line) else {
+                        continue;
+                    };
+                    let sender = {
+                        let guard = watchChannel.lock().await;
+                        guard.as_ref().and_then(|channel| {
+                            if channel.channelId == taskChannelId {
+                                channel.subscriptions.get(&event.subscriptionId).cloned()
+                            } else {
+                                None
+                            }
+                        })
+                    };
+                    if let Some(sender) = sender {
+                        let _ = sender.send(event.event);
                     }
                 }
             }
+            let mut guard = watchChannel.lock().await;
+            if guard.as_ref().map(|channel| channel.channelId.as_str())
+                == Some(taskChannelId.as_str())
+            {
+                let _ = guard.take();
+            }
         });
-        Ok(CoreEventStream::new(receiver).withOnClose(move || task.abort()))
+        let mut guard = self.watchChannel.lock().await;
+        if let Some(previous) = guard.replace(PairedRemoteWatchChannel {
+            channelId: channelId.clone(),
+            subscriptions: BTreeMap::new(),
+            task,
+        }) {
+            previous.task.abort();
+        }
+        Ok(channelId)
+    }
+
+    #[allow(non_snake_case)]
+    async fn removeLocalWatchSubscription(&self, channelId: &str, subscriptionId: &str) {
+        remove_paired_watch_subscription(&self.watchChannel, channelId, subscriptionId).await;
     }
 
     #[allow(non_snake_case)]
@@ -667,6 +961,19 @@ impl PairedRemoteSession {
             .error_for_status()
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+}
+
+async fn remove_paired_watch_subscription(
+    watchChannel: &Arc<Mutex<Option<PairedRemoteWatchChannel>>>,
+    channelId: &str,
+    subscriptionId: &str,
+) {
+    let mut guard = watchChannel.lock().await;
+    if let Some(channel) = guard.as_mut() {
+        if channel.channelId == channelId {
+            channel.subscriptions.remove(subscriptionId);
+        }
     }
 }
 
@@ -858,7 +1165,7 @@ async fn watch_snapshot(
     }
 }
 
-async fn watch_stream(
+async fn watch_channel_events(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
     body: Bytes,
@@ -866,27 +1173,140 @@ async fn watch_stream(
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteWatchEnvelope>(&body) {
+    let envelope = match serde_json::from_slice::<RemoteWatchChannelEnvelope>(&body) {
         Ok(value) => value,
         Err(error) => return bad_request(error.to_string()),
     };
-    let mut core = state.core.lock().await;
-    let receiver = match core.watch(envelope.request).await {
-        Ok(receiver) => receiver,
-        Err(error) => return (StatusCode::BAD_REQUEST, Json(error)).into_response(),
+    open_watch_channel_events(&state, envelope.channelId).await
+}
+
+async fn watch_channel_open(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = verify_session(&state, &headers, &body).await {
+        return response;
+    }
+    let envelope = match serde_json::from_slice::<RemoteWatchChannelOpenEnvelope>(&body) {
+        Ok(value) => value,
+        Err(error) => return bad_request(error.to_string()),
     };
-    drop(core);
-    let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|event| {
-            let mut line = serde_json::to_vec(&event).expect("CoreEvent must serialize");
-            line.push(b'\n');
-            (Ok::<Bytes, Infallible>(Bytes::from(line)), receiver)
-        })
-    });
+    match open_watch_channel_subscription(
+        &state,
+        envelope.channelId,
+        envelope.subscriptionId,
+        envelope.request,
+    )
+    .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, Json(error)).into_response(),
+    }
+}
+
+async fn watch_channel_close(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = verify_session(&state, &headers, &body).await {
+        return response;
+    }
+    let envelope = match serde_json::from_slice::<RemoteWatchChannelCloseEnvelope>(&body) {
+        Ok(value) => value,
+        Err(error) => return bad_request(error.to_string()),
+    };
+    close_watch_channel_subscription(&state, &envelope.channelId, &envelope.subscriptionId).await;
+    Json(serde_json::json!({})).into_response()
+}
+
+async fn open_watch_channel_events(state: &RemoteLinkState, channelId: String) -> Response {
+    let (sender, receiver) = mpsc::unbounded_channel::<RemoteWatchChannelEvent>();
+    let watchChannels = state.watchChannels.clone();
+    let previous = state.watchChannels.lock().await.insert(
+        channelId.clone(),
+        RemoteWatchChannel {
+            sender,
+            subscriptions: BTreeMap::new(),
+        },
+    );
+    if let Some(previous) = previous {
+        abort_watch_channel(previous);
+    }
+    let stream = WatchChannelEventStream {
+        receiver,
+        watchChannels,
+        channelId,
+    };
     Response::builder()
         .header("content-type", "application/x-ndjson")
         .body(Body::from_stream(stream))
-        .expect("watch stream response must build")
+        .expect("watch channel event response must build")
+}
+
+async fn open_watch_channel_subscription(
+    state: &RemoteLinkState,
+    channelId: String,
+    subscriptionId: String,
+    request: CoreWatchRequest,
+) -> Result<RemoteWatchChannelOpenResponse, CoreLinkError> {
+    let channel_sender = {
+        let channels = state.watchChannels.lock().await;
+        channels
+            .get(&channelId)
+            .map(|channel| channel.sender.clone())
+            .ok_or_else(|| {
+                CoreLinkError::new("WATCH_CHANNEL_NOT_FOUND", "watch channel not found")
+            })?
+    };
+    let mut core = state.core.lock().await;
+    let receiver = core.watch(request).await?;
+    drop(core);
+    let task_subscription_id = subscriptionId.clone();
+    let task = tokio::spawn(async move {
+        let mut receiver = receiver;
+        while let Some(event) = receiver.recv().await {
+            if channel_sender
+                .send(RemoteWatchChannelEvent {
+                    subscriptionId: task_subscription_id.clone(),
+                    event,
+                })
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+    let mut channels = state.watchChannels.lock().await;
+    let Some(channel) = channels.get_mut(&channelId) else {
+        task.abort();
+        return Err(CoreLinkError::new(
+            "WATCH_CHANNEL_NOT_FOUND",
+            "watch channel not found",
+        ));
+    };
+    channel.subscriptions.insert(subscriptionId.clone(), task);
+    Ok(RemoteWatchChannelOpenResponse { subscriptionId })
+}
+
+async fn close_watch_channel_subscription(
+    state: &RemoteLinkState,
+    channelId: &str,
+    subscriptionId: &str,
+) {
+    let mut channels = state.watchChannels.lock().await;
+    if let Some(channel) = channels.get_mut(channelId) {
+        if let Some(task) = channel.subscriptions.remove(subscriptionId) {
+            task.abort();
+        }
+    }
+}
+
+fn abort_watch_channel(channel: RemoteWatchChannel) {
+    for (_, task) in channel.subscriptions {
+        task.abort();
+    }
 }
 
 async fn host_interaction_poll(
@@ -935,6 +1355,45 @@ async fn host_interaction_respond(
     } else {
         bad_request("host interaction request not found")
     }
+}
+
+async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
+    let Some(webAccess) = state.webAccess.as_ref() else {
+        return bad_request("web access is not enabled");
+    };
+    serve_web_access_file(webAccess, "index.html")
+}
+
+async fn web_access_asset(
+    State(state): State<RemoteLinkState>,
+    AxumPath(path): AxumPath<String>,
+) -> Response {
+    let Some(webAccess) = state.webAccess.as_ref() else {
+        return bad_request("web access is not enabled");
+    };
+    serve_web_access_file(webAccess, &path)
+}
+
+async fn web_access_close(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Response {
+    let Some(webAccess) = state.webAccess.as_ref() else {
+        return bad_request("web access is not enabled");
+    };
+    let token = header_string(&headers, "x-operit-web-access-shutdown-token");
+    if token.as_deref() != Some(webAccess.shutdownToken.as_str()) {
+        return unauthorized("invalid web access shutdown token");
+    }
+    let sender = webAccess
+        .shutdownSender
+        .lock()
+        .expect("web access shutdown mutex poisoned")
+        .take();
+    let Some(sender) = sender else {
+        return bad_request("web access close already requested");
+    };
+    if sender.send(()).is_err() {
+        return bad_request("web access shutdown receiver is closed");
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
 }
 
 async fn ws(State(state): State<RemoteLinkState>, upgrade: WebSocketUpgrade) -> Response {
@@ -1127,4 +1586,87 @@ fn bad_request(message: impl Into<String>) -> Response {
         Json(CoreLinkError::new("BAD_REQUEST", message.into())),
     )
         .into_response()
+}
+
+fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Response {
+    let relativePath = match sanitize_web_asset_path(path) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let fullPath = webAccess.webRoot.join(&relativePath);
+    if !fullPath.starts_with(&webAccess.webRoot) {
+        return bad_request("web asset path escapes web root");
+    }
+    let mut bytes = match fs::read(&fullPath) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(CoreLinkError::new("NOT_FOUND", error.to_string())),
+            )
+                .into_response();
+        }
+    };
+    let contentType = content_type_for_path(&fullPath);
+    if relativePath == Path::new("index.html") {
+        let html = match String::from_utf8(bytes) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        bytes = inject_web_access_runtime_config(webAccess, &html).into_bytes();
+    }
+    Response::builder()
+        .header("content-type", contentType)
+        .body(Body::from(bytes))
+        .expect("web asset response must build")
+}
+
+fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
+    let normalized = path.trim_start_matches('/');
+    if normalized.is_empty() {
+        return Ok(PathBuf::from("index.html"));
+    }
+    let relative = PathBuf::from(normalized);
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(bad_request("invalid web asset path"));
+    }
+    Ok(relative)
+}
+
+fn inject_web_access_runtime_config(webAccess: &RemoteWebAccessState, html: &str) -> String {
+    let config = serde_json::json!({
+        "mode": "link",
+        "baseUrl": "",
+        "sessionId": webAccess.linkSessionId,
+        "deviceId": webAccess.linkDeviceId,
+        "sessionSecret": webAccess.linkSessionSecret,
+    });
+    let script = format!(
+        "<script>window.__OPERIT_WEB_ACCESS__ = {};</script>",
+        serde_json::to_string(&config).expect("web access config must serialize")
+    );
+    html.replace(
+        "<script src=\"operit_runtime_bridge.js\"></script>",
+        &format!("{script}\n  <script src=\"operit_runtime_bridge.js\"></script>"),
+    )
+}
+
+fn content_type_for_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }

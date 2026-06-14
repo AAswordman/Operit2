@@ -15,6 +15,7 @@ async-trait = "0.1"
 base64 = "0.22"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["png"] }
+include_dir = "0.7"
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
 operit-host-api = { path = "../../core/crates/operit-host-api" }
@@ -27,6 +28,7 @@ serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 operit-host-windows-native = { path = "../../hosts/windows" }

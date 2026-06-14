@@ -3,8 +3,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'WorkspacePtyProcess_stub.dart'
-    if (dart.library.io) 'WorkspacePtyProcess_io.dart';
+import 'WorkspacePtyProcess_io.dart';
 
 abstract class WorkspacePtyProcess {
   String get sessionId;

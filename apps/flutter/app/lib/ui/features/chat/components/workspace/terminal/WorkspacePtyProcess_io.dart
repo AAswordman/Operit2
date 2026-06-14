@@ -2,32 +2,32 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
+import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 
 import 'WorkspacePtyProcess.dart';
 
 class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
-  _BridgeWorkspacePtyProcess(this._channel, this._sessionId) {
-    _readTimer = Timer.periodic(
-      const Duration(milliseconds: 40),
-      (_) => unawaited(_readOutput()),
-    );
+  _BridgeWorkspacePtyProcess(this._terminal, this._sessionId) {
+    _outputSubscription = _terminal
+        .terminalPtyOutputChanges(sessionId: _sessionId)
+        .listen(_handleOutput, onError: _handleOutputError);
     _exitTimer = Timer.periodic(
       const Duration(milliseconds: 250),
       (_) => unawaited(_pollExit()),
     );
   }
 
-  final MethodChannel _channel;
+  final GeneratedRepositoryRuntimeTerminalServiceCoreProxy _terminal;
   final String _sessionId;
   final _output = StreamController<Uint8List>.broadcast();
   final _exitCode = Completer<int>();
-  Timer? _readTimer;
+  StreamSubscription<Object?>? _outputSubscription;
   Timer? _exitTimer;
   Timer? _resizeTimer;
   bool _closed = false;
-  bool _reading = false;
   bool _pollingExit = false;
   int? _pendingRows;
   int? _pendingColumns;
@@ -47,10 +47,10 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     unawaited(
-      _invokeJson('writeTerminalPty', <String, Object>{
-        'sessionId': _sessionId,
-        'data': data,
-      }),
+      _terminal.writeTerminalPty(
+        sessionId: _sessionId,
+        dataBase64: base64Encode(data),
+      ),
     );
   }
 
@@ -75,11 +75,11 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     unawaited(
-      _invokeJson('resizeTerminalPty', <String, Object>{
-        'sessionId': _sessionId,
-        'rows': rows,
-        'columns': columns,
-      }),
+      _terminal.resizeTerminalPty(
+        sessionId: _sessionId,
+        rows: rows,
+        cols: columns,
+      ),
     );
   }
 
@@ -89,7 +89,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     _closed = true;
-    _readTimer?.cancel();
+    unawaited(_outputSubscription?.cancel());
     _exitTimer?.cancel();
     _resizeTimer?.cancel();
     unawaited(_output.close());
@@ -98,24 +98,19 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
   }
 
-  Future<void> _readOutput() async {
-    if (_closed || _reading) {
+  void _handleOutput(Object? value) {
+    if (_closed || _output.isClosed) {
       return;
     }
-    _reading = true;
-    try {
-      final response = await _invokeJson('readTerminalPty', _sessionId);
-      final dataBase64 = response['dataBase64'];
-      if (dataBase64 is String && dataBase64.isNotEmpty && !_output.isClosed) {
-        final data = base64Decode(dataBase64);
-        _output.add(data);
-      }
-    } catch (error, stackTrace) {
-      if (!_closed && !_output.isClosed) {
-        _output.addError(error, stackTrace);
-      }
-    } finally {
-      _reading = false;
+    final dataBase64 = value as String;
+    if (dataBase64.isNotEmpty) {
+      _output.add(base64Decode(dataBase64));
+    }
+  }
+
+  void _handleOutputError(Object error, StackTrace stackTrace) {
+    if (!_closed && !_output.isClosed) {
+      _output.addError(error, stackTrace);
     }
   }
 
@@ -125,17 +120,13 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
     _pollingExit = true;
     try {
-      final response = await _invokeJson('pollTerminalPtyExit', _sessionId);
-      final code = response['exitCode'];
-      if (code is int) {
-        _readTimer?.cancel();
+      final code = await _terminal.pollTerminalPtyExit(sessionId: _sessionId);
+      if (code != null) {
+        await _outputSubscription?.cancel();
+        _outputSubscription = null;
         _exitTimer?.cancel();
-        while (_reading) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        await _readOutput();
         _closed = true;
-        await _invokeJson('closeTerminalPty', _sessionId);
+        await _terminal.closeTerminalPty(sessionId: _sessionId);
         await _output.close();
         if (!_exitCode.isCompleted) {
           _exitCode.complete(code);
@@ -149,21 +140,6 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       _pollingExit = false;
     }
   }
-
-  Future<Map<String, dynamic>> _invokeJson(String method, Object? args) async {
-    final raw = await _channel.invokeMethod<String>(method, args);
-    if (raw == null) {
-      throw StateError('$method returned null');
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('$method returned non-object JSON');
-    }
-    if (decoded['ok'] != true) {
-      throw StateError(decoded['error']?.toString() ?? '$method failed');
-    }
-    return decoded;
-  }
 }
 
 Future<WorkspacePtyProcess> startWorkspacePtyImpl({
@@ -172,46 +148,21 @@ Future<WorkspacePtyProcess> startWorkspacePtyImpl({
   required int rows,
   required int columns,
 }) async {
-  return _startBridgeWorkspacePty(
+  final terminal = const GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  ).repositoryRuntimeTerminalService;
+  final sessionId = await terminal.startTerminalPty(
     sessionName: sessionName,
-    workingDirectory: workingDirectory,
+    workingDir: workingDirectory,
     rows: rows,
-    columns: columns,
+    cols: columns,
   );
-}
-
-Future<WorkspacePtyProcess> _startBridgeWorkspacePty({
-  required String sessionName,
-  required String workingDirectory,
-  required int rows,
-  required int columns,
-}) async {
-  const channel = MethodChannel('operit/runtime');
-  final raw = await channel
-      .invokeMethod<String>('startTerminalPty', <String, Object>{
-        'sessionName': sessionName,
-        'workingDirectory': workingDirectory,
-        'rows': rows,
-        'columns': columns,
-      });
-  if (raw == null) {
-    throw StateError('startTerminalPty returned null');
-  }
-  final decoded = jsonDecode(raw);
-  if (decoded is! Map<String, dynamic>) {
-    throw StateError('startTerminalPty returned non-object JSON');
-  }
-  if (decoded['ok'] != true) {
-    throw StateError(decoded['error']?.toString() ?? 'startTerminalPty failed');
-  }
-  final sessionId = decoded['sessionId'];
-  if (sessionId is! String || sessionId.isEmpty) {
-    throw StateError('startTerminalPty missing sessionId');
-  }
-  return _BridgeWorkspacePtyProcess(channel, sessionId);
+  return _BridgeWorkspacePtyProcess(terminal, sessionId);
 }
 
 WorkspacePtyProcess attachWorkspacePtyImpl(String sessionId) {
-  const channel = MethodChannel('operit/runtime');
-  return _BridgeWorkspacePtyProcess(channel, sessionId);
+  final terminal = const GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  ).repositoryRuntimeTerminalService;
+  return _BridgeWorkspacePtyProcess(terminal, sessionId);
 }

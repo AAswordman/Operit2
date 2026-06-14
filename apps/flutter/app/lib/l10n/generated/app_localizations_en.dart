@@ -766,6 +766,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.';
 
   @override
+  String get settingsCategoryRuntimeTitle => 'Runtime';
+
+  @override
+  String get settingsCategoryRuntimeSubtitle => 'Local core, remote core';
+
+  @override
+  String get settingsCategoryRuntimeDescription =>
+      'Choose the runtime connected by this Flutter client: local core or a paired remote core.';
+
+  @override
+  String get settingsCategoryWebAccessTitle => 'Web Access';
+
+  @override
+  String get settingsCategoryWebAccessSubtitle => 'Browser entry, token';
+
+  @override
+  String get settingsCategoryWebAccessDescription =>
+      'Open a local web access entry for this client and manage its bind address and access token.';
+
+  @override
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
 
   @override
@@ -1726,6 +1746,202 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsWorkspaceBrowserSessions =>
       'Browser and WebVisit sessions';
+
+  @override
+  String get settingsWorkspaceBoundOverview => 'Workspace binding overview';
+
+  @override
+  String get settingsWorkspaceBoundOverviewDescription =>
+      'Workspace paths recorded by chat histories are used as the binding source.';
+
+  @override
+  String get settingsWorkspaceBoundChats => 'Bound chats';
+
+  @override
+  String get settingsWorkspaceInternalRoot => 'Internal workspace root';
+
+  @override
+  String get settingsWorkspaceExternalRoot => 'Legacy external workspace root';
+
+  @override
+  String get settingsWorkspaceUnboundTitle => 'Unbound workspaces';
+
+  @override
+  String get settingsWorkspaceUnboundSubtitle =>
+      'These workspace folders are not used by any chat.';
+
+  @override
+  String get settingsWorkspaceNoUnbound => 'No unbound workspaces.';
+
+  @override
+  String settingsWorkspaceSelectedCount(int selected, int total) {
+    return 'Selected $selected / $total';
+  }
+
+  @override
+  String get settingsWorkspaceSelectAllCurrentList => 'Select all';
+
+  @override
+  String get settingsWorkspaceClearAll => 'Clear';
+
+  @override
+  String get settingsWorkspaceInternalStorage => 'Internal storage';
+
+  @override
+  String get settingsWorkspaceExternalStorage => 'External storage';
+
+  @override
+  String get settingsWorkspaceNotUsedByAnyChat => 'Not used by any chat';
+
+  @override
+  String settingsWorkspaceDeleteSelected(int count) {
+    return 'Delete selected workspaces ($count)';
+  }
+
+  @override
+  String get settingsWorkspaceConfirmDeleteTitle => 'Confirm delete';
+
+  @override
+  String settingsWorkspaceDeleteConfirmation(int count) {
+    return 'Delete $count selected workspace folders?';
+  }
+
+  @override
+  String settingsWorkspaceDeleted(int count) {
+    return 'Deleted $count unbound workspaces.';
+  }
+
+  @override
+  String settingsWorkspaceDeleteFailed(String error) {
+    return 'Delete failed: $error';
+  }
+
+  @override
+  String settingsWorkspaceLoadFailed(String error) {
+    return 'Failed to load workspaces: $error';
+  }
+
+  @override
+  String get settingsWorkspaceRefresh => 'Refresh';
+
+  @override
+  String get settingsRuntimeConnection => 'Runtime connection';
+
+  @override
+  String get settingsRuntimeConnectionDescription =>
+      'All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.';
+
+  @override
+  String get settingsRuntimeUseLocal => 'Use local runtime';
+
+  @override
+  String get settingsRuntimeUseRemote => 'Use remote runtime';
+
+  @override
+  String get settingsRuntimeCurrentMode => 'Current mode';
+
+  @override
+  String get settingsRuntimeLocalMode => 'Local';
+
+  @override
+  String get settingsRuntimeRemoteMode => 'Remote';
+
+  @override
+  String get settingsRuntimeRemoteName => 'Remote name';
+
+  @override
+  String get settingsRuntimeBaseUrl => 'Base URL';
+
+  @override
+  String get settingsRuntimeSessionId => 'Session ID';
+
+  @override
+  String get settingsRuntimeDeviceId => 'Device ID';
+
+  @override
+  String get settingsRuntimeSessionSecret => 'Session Secret';
+
+  @override
+  String get settingsRuntimeSaveRemote => 'Save and use remote';
+
+  @override
+  String get settingsRuntimeTestCurrent => 'Test current runtime';
+
+  @override
+  String get settingsRuntimeSwitchedLocal => 'Switched to local runtime.';
+
+  @override
+  String get settingsRuntimeSwitchedRemote => 'Switched to remote runtime.';
+
+  @override
+  String settingsRuntimeTestResult(String version) {
+    return 'Runtime available: $version';
+  }
+
+  @override
+  String settingsRuntimeTestFailed(String error) {
+    return 'Runtime test failed: $error';
+  }
+
+  @override
+  String get settingsWebAccessService => 'Web access service';
+
+  @override
+  String get settingsWebAccessServiceDescription =>
+      'When enabled, this client starts a local HTTP entry. Browsers can access core with the token.';
+
+  @override
+  String get settingsWebAccessEnable => 'Enable web access';
+
+  @override
+  String get settingsWebAccessBindAddress => 'Bind address';
+
+  @override
+  String get settingsWebAccessToken => 'Access token';
+
+  @override
+  String get settingsWebAccessRotateToken => 'Rotate token';
+
+  @override
+  String get settingsWebAccessCopyToken => 'Copy token';
+
+  @override
+  String get settingsWebAccessAccessUrl => 'Access URL';
+
+  @override
+  String get settingsWebAccessCopyUrl => 'Copy URL';
+
+  @override
+  String get settingsWebAccessOpenUrl => 'Open';
+
+  @override
+  String get settingsWebAccessRunning => 'Running';
+
+  @override
+  String get settingsWebAccessStopped => 'Stopped';
+
+  @override
+  String get settingsWebAccessSaved => 'Web access settings saved.';
+
+  @override
+  String get settingsWebAccessTokenCopied => 'Access token copied.';
+
+  @override
+  String get settingsWebAccessUrlCopied => 'Access URL copied.';
+
+  @override
+  String get settingsWebAccessInvalidBindAddress =>
+      'Bind address must be host:port.';
+
+  @override
+  String settingsWebAccessStartFailed(String error) {
+    return 'Failed to start web access: $error';
+  }
+
+  @override
+  String settingsWebAccessStopFailed(String error) {
+    return 'Failed to stop web access: $error';
+  }
 
   @override
   String get settingsAppearanceThemeSection => 'Theme';

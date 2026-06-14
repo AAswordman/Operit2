@@ -1,25 +1,31 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
+import 'dart:html' as html;
+
 import 'ClientLogLevel.dart';
 
+const String _logStorageKey = 'operit2.client.log';
+bool _initialized = false;
+
 Future<void> initialize() async {
-  throw UnsupportedError('ClientLogger file logging is not supported on web');
+  _initialized = true;
 }
 
-bool isInitialized() => false;
+bool isInitialized() => _initialized;
 
 Future<String> logFilePath() async {
-  throw UnsupportedError('ClientLogger file logging is not supported on web');
+  return 'localStorage:$_logStorageKey';
 }
 
 Future<String> readText() async {
-  throw UnsupportedError('ClientLogger file logging is not supported on web');
+  return html.window.localStorage[_logStorageKey] ?? '';
 }
 
 String? lastWriteError() => null;
 
 Future<void> clear() async {
-  throw UnsupportedError('ClientLogger file logging is not supported on web');
+  html.window.localStorage.remove(_logStorageKey);
 }
 
 void write(
@@ -28,5 +34,45 @@ void write(
   Object? error,
   StackTrace? stackTrace,
 }) {
-  throw UnsupportedError('ClientLogger file logging is not supported on web');
+  final timestamp = DateTime.now().toIso8601String();
+  final buffer = StringBuffer()
+    ..write(timestamp)
+    ..write(' ')
+    ..write(level.name.toUpperCase())
+    ..write('/')
+    ..write(message);
+  if (error != null) {
+    buffer
+      ..write(' error=')
+      ..write(error);
+  }
+  if (stackTrace != null) {
+    buffer
+      ..write('\n')
+      ..write(stackTrace);
+  }
+  final text = buffer.toString();
+  switch (level) {
+    case ClientLogLevel.error:
+    case ClientLogLevel.assert_:
+      html.window.console.error(text);
+    case ClientLogLevel.warn:
+      html.window.console.warn(text);
+    case ClientLogLevel.verbose:
+    case ClientLogLevel.debug:
+    case ClientLogLevel.info:
+      html.window.console.log(text);
+  }
+  final current = html.window.localStorage[_logStorageKey] ?? '';
+  final next = current.isEmpty ? text : '$current\n$text';
+  html.window.localStorage[_logStorageKey] = _trimUtf8(next, 256 * 1024);
+}
+
+String _trimUtf8(String value, int maxBytes) {
+  var bytes = utf8.encode(value);
+  if (bytes.length <= maxBytes) {
+    return value;
+  }
+  bytes = bytes.sublist(bytes.length - maxBytes);
+  return utf8.decode(bytes, allowMalformed: true);
 }

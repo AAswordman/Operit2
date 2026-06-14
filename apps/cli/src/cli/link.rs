@@ -97,12 +97,14 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
             bindAddress: bind_address,
             token,
             hostInteractionBroker: Some(host_interaction_broker),
+            webAccess: None,
+            printStartupInfo: true,
         },
     )
     .await
 }
 
-fn install_remote_host_permission_requester(
+pub(crate) fn install_remote_host_permission_requester(
     core: &mut operit_core_proxy::LocalCoreProxy,
     broker: RemoteHostInteractionBroker,
 ) {

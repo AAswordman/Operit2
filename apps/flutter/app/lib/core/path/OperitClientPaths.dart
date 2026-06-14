@@ -35,6 +35,33 @@ class OperitClientPaths {
     return File(_join(<String>[directory.path, 'link_sessions.json']));
   }
 
+  static Future<Directory> runtimeConnectionDir() {
+    return _directory(<String>['client', 'runtime']);
+  }
+
+  static Future<File> runtimeConnectionConfigFile() async {
+    final directory = await runtimeConnectionDir();
+    return File(_join(<String>[directory.path, 'runtime_connection.json']));
+  }
+
+  static Future<Directory> webAccessDir() {
+    return _directory(<String>['client', 'web_access']);
+  }
+
+  static Future<Directory> webAccessBundleDir() {
+    return _directory(<String>['client', 'web_access', 'flutter_web']);
+  }
+
+  static Future<File> webAccessConfigFile() async {
+    final directory = await webAccessDir();
+    return File(_join(<String>[directory.path, 'web_access.json']));
+  }
+
+  static Future<File> webAccessStateFile() async {
+    final directory = await webAccessDir();
+    return File(_join(<String>[directory.path, 'web_access_state.json']));
+  }
+
   static Future<Directory> tempDir() {
     return _directory(<String>['client', 'temp']);
   }

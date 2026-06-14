@@ -46,11 +46,13 @@ use sha2::{Digest, Sha256};
 
 pub(crate) mod link;
 mod transfer;
+mod web_access;
 
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
 use link::{load_link_session, run_link_command};
 use transfer::{run_backup_command, run_export_command, run_import_command};
+use web_access::run_web_access_command;
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -67,6 +69,10 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
 
     if args[0].as_str() == "link" {
         return run_link_command(&args[1..]).await;
+    }
+
+    if args[0].as_str() == "web" {
+        return run_web_access_command(&args[1..]).await;
     }
 
     let mut core = local_cli_core()?;
@@ -262,7 +268,7 @@ pub(crate) fn print_root_usage() {
     println!("operit2");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|shell>");
+    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|web|shell>");
     println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
@@ -296,6 +302,7 @@ fn print_cli_usage() {
     println!(
         "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
     );
+    println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -381,7 +388,9 @@ fn print_host_usage() {
 
 fn print_memory_usage() {
     println!("operit2 cli memory character <character-id> user <show|write|path>");
-    println!("operit2 cli memory character <character-id> item <list|search|show|create|delete|move>");
+    println!(
+        "operit2 cli memory character <character-id> item <list|search|show|create|delete|move>"
+    );
     println!("operit2 cli memory character <character-id> graph");
     println!("operit2 cli memory shared <list|create|rename|delete>");
     println!("operit2 cli memory shared <shared-id> user <show|write|path>");
@@ -626,11 +635,13 @@ fn print_character_card(card: &CharacterCard) {
     println!("advancedCustomPrompt={}", card.advancedCustomPrompt);
     println!("marks={}", card.marks);
     println!("chatModelBindingMode={}", card.chatModelBindingMode);
-    println!("chatModelId={}", card.chatModelId.clone().unwrap_or_default());
+    println!(
+        "chatModelId={}",
+        card.chatModelId.clone().unwrap_or_default()
+    );
     println!(
         "sharedMemoryMounts={}",
-        serde_json::to_string(&card.sharedMemoryMounts)
-            .expect("sharedMemoryMounts must serialize")
+        serde_json::to_string(&card.sharedMemoryMounts).expect("sharedMemoryMounts must serialize")
     );
     println!(
         "toolAccessConfig={}",

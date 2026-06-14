@@ -17,10 +17,10 @@ using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchSnapshot = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePollWatchStream = char* (*)(BridgeHandle, const char*);
+using BridgePollWatchStreams = char* (*)(BridgeHandle, const char*);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
 using BridgeStartTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
-using BridgeReadTerminalPty = char* (*)(BridgeHandle, const char*);
 using BridgeWriteTerminalPty = char* (*)(BridgeHandle, const char*, const uint8_t*, size_t);
 using BridgeResizeTerminalPty = char* (*)(BridgeHandle, const char*, uint16_t, uint16_t);
 using BridgePollTerminalPtyExit = char* (*)(BridgeHandle, const char*);
@@ -65,14 +65,14 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_watch_stream"));
       poll_watch_stream_ = reinterpret_cast<BridgePollWatchStream>(
           dlsym(library_, "operit_flutter_bridge_poll_watch_stream"));
+      poll_watch_streams_ = reinterpret_cast<BridgePollWatchStreams>(
+          dlsym(library_, "operit_flutter_bridge_poll_watch_streams"));
       close_watch_stream_ = reinterpret_cast<BridgeCloseWatchStream>(
           dlsym(library_, "operit_flutter_bridge_close_watch_stream"));
       host_descriptor_ = reinterpret_cast<BridgeHostDescriptor>(
           dlsym(library_, "operit_flutter_bridge_host_descriptor"));
       start_terminal_pty_ = reinterpret_cast<BridgeStartTerminalPty>(
           dlsym(library_, "operit_flutter_bridge_start_terminal_pty"));
-      read_terminal_pty_ = reinterpret_cast<BridgeReadTerminalPty>(
-          dlsym(library_, "operit_flutter_bridge_read_terminal_pty"));
       write_terminal_pty_ = reinterpret_cast<BridgeWriteTerminalPty>(
           dlsym(library_, "operit_flutter_bridge_write_terminal_pty"));
       resize_terminal_pty_ = reinterpret_cast<BridgeResizeTerminalPty>(
@@ -85,10 +85,10 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
-          poll_watch_stream_ == nullptr || close_watch_stream_ == nullptr ||
+          poll_watch_stream_ == nullptr || poll_watch_streams_ == nullptr ||
+          close_watch_stream_ == nullptr ||
           host_descriptor_ == nullptr || start_terminal_pty_ == nullptr ||
-          read_terminal_pty_ == nullptr || write_terminal_pty_ == nullptr ||
-          resize_terminal_pty_ == nullptr ||
+          write_terminal_pty_ == nullptr || resize_terminal_pty_ == nullptr ||
           poll_terminal_pty_exit_ == nullptr ||
           close_terminal_pty_ == nullptr || free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
@@ -145,6 +145,15 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  bool PollWatchStreams(const std::string& subscriptions, std::string* response,
+                        std::string* error) {
+    if (!EnsureReady(error)) {
+      return false;
+    }
+    char* raw_response = poll_watch_streams_(handle_, subscriptions.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
   bool CloseWatchStream(const std::string& subscription, std::string* response,
                         std::string* error) {
     if (!EnsureReady(error)) {
@@ -171,15 +180,6 @@ class OperitRuntimeLibrary {
     char* raw_response = start_terminal_pty_(
         handle_, working_directory.c_str(), static_cast<uint16_t>(rows),
         static_cast<uint16_t>(columns));
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool ReadTerminalPty(const std::string& session_id, std::string* response,
-                       std::string* error) {
-    if (!EnsureReady(error)) {
-      return false;
-    }
-    char* raw_response = read_terminal_pty_(handle_, session_id.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -270,10 +270,10 @@ class OperitRuntimeLibrary {
   BridgeWatchSnapshot watch_snapshot_ = nullptr;
   BridgeWatchStream watch_stream_ = nullptr;
   BridgePollWatchStream poll_watch_stream_ = nullptr;
+  BridgePollWatchStreams poll_watch_streams_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeHostDescriptor host_descriptor_ = nullptr;
   BridgeStartTerminalPty start_terminal_pty_ = nullptr;
-  BridgeReadTerminalPty read_terminal_pty_ = nullptr;
   BridgeWriteTerminalPty write_terminal_pty_ = nullptr;
   BridgeResizeTerminalPty resize_terminal_pty_ = nullptr;
   BridgePollTerminalPtyExit poll_terminal_pty_exit_ = nullptr;
@@ -396,6 +396,22 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     }
     return;
   }
+  if (strcmp(method, "pollWatchStreams") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS",
+                    "pollWatchStreams expects a JSON string array");
+      return;
+    }
+    const gchar* subscriptions = fl_value_get_string(args);
+    if (g_operit_runtime_library->PollWatchStreams(
+            subscriptions, &response_text, &error)) {
+      respond_success(method_call, response_text);
+    } else {
+      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
+    }
+    return;
+  }
   if (strcmp(method, "closeWatchStream") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
     if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
@@ -438,22 +454,6 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     }
     if (g_operit_runtime_library->StartTerminalPty(
             working_directory, rows, columns, &response_text, &error)) {
-      respond_success(method_call, response_text);
-    } else {
-      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
-    }
-    return;
-  }
-  if (strcmp(method, "readTerminalPty") == 0) {
-    FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
-      respond_error(method_call, "INVALID_ARGS",
-                    "readTerminalPty expects a session id");
-      return;
-    }
-    const gchar* session_id = fl_value_get_string(args);
-    if (g_operit_runtime_library->ReadTerminalPty(session_id, &response_text,
-                                                 &error)) {
       respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);

@@ -379,6 +379,12 @@
   "settingsCategoryWorkspaceTitle": "Workspace & Browser",
   "settingsCategoryWorkspaceSubtitle": "Files, terminal, browser",
   "settingsCategoryWorkspaceDescription": "Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.",
+  "settingsCategoryRuntimeTitle": "Runtime",
+  "settingsCategoryRuntimeSubtitle": "Local core, remote core",
+  "settingsCategoryRuntimeDescription": "Choose the runtime connected by this Flutter client: local core or a paired remote core.",
+  "settingsCategoryWebAccessTitle": "Web Access",
+  "settingsCategoryWebAccessSubtitle": "Browser entry, token",
+  "settingsCategoryWebAccessDescription": "Open a local web access entry for this client and manage its bind address and access token.",
   "settingsCategoryAppearanceTitle": "Appearance & Interaction",
   "settingsCategoryAppearanceSubtitle": "Theme and language",
   "settingsCategoryAppearanceDescription": "Adjust the client theme and current localization display.",
@@ -831,6 +837,136 @@
   "settingsWorkspacePerChat": "Bound per chat",
   "settingsWorkspaceGlobalSessions": "Global terminal sessions",
   "settingsWorkspaceBrowserSessions": "Browser and WebVisit sessions",
+  "settingsWorkspaceBoundOverview": "Workspace binding overview",
+  "settingsWorkspaceBoundOverviewDescription": "Workspace paths recorded by chat histories are used as the binding source.",
+  "settingsWorkspaceBoundChats": "Bound chats",
+  "settingsWorkspaceInternalRoot": "Internal workspace root",
+  "settingsWorkspaceExternalRoot": "Legacy external workspace root",
+  "settingsWorkspaceUnboundTitle": "Unbound workspaces",
+  "settingsWorkspaceUnboundSubtitle": "These workspace folders are not used by any chat.",
+  "settingsWorkspaceNoUnbound": "No unbound workspaces.",
+  "settingsWorkspaceSelectedCount": "Selected {selected} / {total}",
+  "@settingsWorkspaceSelectedCount": {
+    "placeholders": {
+      "selected": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceSelectAllCurrentList": "Select all",
+  "settingsWorkspaceClearAll": "Clear",
+  "settingsWorkspaceInternalStorage": "Internal storage",
+  "settingsWorkspaceExternalStorage": "External storage",
+  "settingsWorkspaceNotUsedByAnyChat": "Not used by any chat",
+  "settingsWorkspaceDeleteSelected": "Delete selected workspaces ({count})",
+  "@settingsWorkspaceDeleteSelected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceConfirmDeleteTitle": "Confirm delete",
+  "settingsWorkspaceDeleteConfirmation": "Delete {count} selected workspace folders?",
+  "@settingsWorkspaceDeleteConfirmation": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleted": "Deleted {count} unbound workspaces.",
+  "@settingsWorkspaceDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleteFailed": "Delete failed: {error}",
+  "@settingsWorkspaceDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceLoadFailed": "Failed to load workspaces: {error}",
+  "@settingsWorkspaceLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceRefresh": "Refresh",
+  "settingsRuntimeConnection": "Runtime connection",
+  "settingsRuntimeConnectionDescription": "All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.",
+  "settingsRuntimeUseLocal": "Use local runtime",
+  "settingsRuntimeUseRemote": "Use remote runtime",
+  "settingsRuntimeCurrentMode": "Current mode",
+  "settingsRuntimeLocalMode": "Local",
+  "settingsRuntimeRemoteMode": "Remote",
+  "settingsRuntimeRemoteName": "Remote name",
+  "settingsRuntimeBaseUrl": "Base URL",
+  "settingsRuntimeSessionId": "Session ID",
+  "settingsRuntimeDeviceId": "Device ID",
+  "settingsRuntimeSessionSecret": "Session Secret",
+  "settingsRuntimeSaveRemote": "Save and use remote",
+  "settingsRuntimeTestCurrent": "Test current runtime",
+  "settingsRuntimeSwitchedLocal": "Switched to local runtime.",
+  "settingsRuntimeSwitchedRemote": "Switched to remote runtime.",
+  "settingsRuntimeTestResult": "Runtime available: {version}",
+  "@settingsRuntimeTestResult": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeTestFailed": "Runtime test failed: {error}",
+  "@settingsRuntimeTestFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessService": "Web access service",
+  "settingsWebAccessServiceDescription": "When enabled, this client starts a local HTTP entry. Browsers can access core with the token.",
+  "settingsWebAccessEnable": "Enable web access",
+  "settingsWebAccessBindAddress": "Bind address",
+  "settingsWebAccessToken": "Access token",
+  "settingsWebAccessRotateToken": "Rotate token",
+  "settingsWebAccessCopyToken": "Copy token",
+  "settingsWebAccessAccessUrl": "Access URL",
+  "settingsWebAccessCopyUrl": "Copy URL",
+  "settingsWebAccessOpenUrl": "Open",
+  "settingsWebAccessRunning": "Running",
+  "settingsWebAccessStopped": "Stopped",
+  "settingsWebAccessSaved": "Web access settings saved.",
+  "settingsWebAccessTokenCopied": "Access token copied.",
+  "settingsWebAccessUrlCopied": "Access URL copied.",
+  "settingsWebAccessInvalidBindAddress": "Bind address must be host:port.",
+  "settingsWebAccessStartFailed": "Failed to start web access: {error}",
+  "@settingsWebAccessStartFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessStopFailed": "Failed to stop web access: {error}",
+  "@settingsWebAccessStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeSection": "Theme",
   "settingsAppearanceThemeMode": "Current mode",
   "settingsAppearanceThemeTarget": "Theme save target",

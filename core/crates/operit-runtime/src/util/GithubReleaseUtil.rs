@@ -1,21 +1,33 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_arch = "wasm32"))]
 use reqwest::blocking::Client;
+#[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, RANGE, USER_AGENT};
 use serde::Deserialize;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 
-const GITHUB_API_BASE: &str = "https://api.github.com";
 const GITHUB_RELEASE_OWNER: &str = "AAswordman";
 const GITHUB_RELEASE_REPO: &str = "Operit2";
+#[cfg(not(target_arch = "wasm32"))]
+const GITHUB_API_BASE: &str = "https://api.github.com";
+#[cfg(not(target_arch = "wasm32"))]
 const DOWNLOAD_THREAD_COUNT: u64 = 6;
+#[cfg(not(target_arch = "wasm32"))]
 const BUFFER_SIZE: usize = 128 * 1024;
 
 #[derive(Debug, Clone, Default)]
@@ -120,6 +132,16 @@ impl GithubReleaseUtil {
         repoName: &str,
         target: FullUpdateTarget,
     ) -> Result<ReleaseInfo, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = repoOwner;
+            let _ = repoName;
+            let _ = target;
+            return Err("full update release query is not available in wasm runtime".to_string());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         let owner = repoOwner.to_string();
         let repo = repoName.to_string();
         tokio::task::spawn_blocking(move || {
@@ -127,6 +149,7 @@ impl GithubReleaseUtil {
         })
         .await
         .map_err(|error| error.to_string())?
+        }
     }
 
     pub async fn downloadAndPrepareFullUpdateWithProgress<F>(
@@ -138,6 +161,17 @@ impl GithubReleaseUtil {
     where
         F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
     {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = packageUrl;
+            let _ = packageFileName;
+            let _ = workDir;
+            let _ = onEvent;
+            return Err("full update package download is not available in wasm runtime".to_string());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         tokio::task::spawn_blocking(move || {
             Self::downloadAndPrepareFullUpdateBlocking(
                 &packageUrl,
@@ -148,6 +182,7 @@ impl GithubReleaseUtil {
         })
         .await
         .map_err(|error| error.to_string())?
+        }
     }
 
     pub fn compareVersions(v1: &str, v2: &str) -> i32 {
@@ -170,6 +205,16 @@ impl GithubReleaseUtil {
         repoName: &str,
         target: FullUpdateTarget,
     ) -> Result<ReleaseInfo, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = repoOwner;
+            let _ = repoName;
+            let _ = target;
+            return Err("full update release query is not available in wasm runtime".to_string());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         let targetAssetName = target.assetName()?;
         let url =
             format!("{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=1");
@@ -218,6 +263,7 @@ impl GithubReleaseUtil {
             releaseNotes: latestRelease.body.unwrap_or_default(),
             releasePageUrl: latestRelease.html_url,
         })
+        }
     }
 
     pub fn downloadAndPrepareFullUpdateBlocking<F>(
@@ -229,6 +275,17 @@ impl GithubReleaseUtil {
     where
         F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
     {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = packageUrl;
+            let _ = packageFileName;
+            let _ = workDir;
+            let _ = onEvent;
+            return Err("full update package download is not available in wasm runtime".to_string());
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         if workDir.exists() {
             fs::remove_dir_all(workDir).map_err(|error| error.to_string())?;
         }
@@ -243,6 +300,7 @@ impl GithubReleaseUtil {
         verifyRangeDownloadSupported(packageUrl)?;
         downloadToFileMultiThread(packageUrl, &packageFile, totalBytes, onEvent)?;
         Ok(packageFile)
+        }
     }
 }
 
@@ -373,6 +431,7 @@ fn parseVersion(v: &str) -> ParsedVersion {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetchContentLength(url: &str) -> Result<u64, String> {
     let client = blockingDownloadClient()?;
     let response = client
@@ -402,6 +461,7 @@ fn fetchContentLength(url: &str) -> Result<u64, String> {
     Ok(totalBytes)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn verifyRangeDownloadSupported(url: &str) -> Result<(), String> {
     let client = blockingDownloadClient()?;
     let response = client
@@ -418,6 +478,7 @@ fn verifyRangeDownloadSupported(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn downloadToFileMultiThread<F>(
     url: &str,
     out: &Path,
@@ -519,6 +580,7 @@ where
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn splitRanges(totalBytes: u64, threadCount: u64) -> Vec<(u64, u64)> {
     let mut ranges = Vec::new();
     let baseSize = totalBytes / threadCount;
@@ -536,6 +598,7 @@ fn splitRanges(totalBytes: u64, threadCount: u64) -> Vec<(u64, u64)> {
     ranges
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn downloadRangeToFile(
     url: &str,
     out: &Path,
@@ -578,6 +641,7 @@ fn downloadRangeToFile(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn blockingDownloadClient() -> Result<Client, String> {
     Client::builder()
         .connect_timeout(Duration::from_secs(30))

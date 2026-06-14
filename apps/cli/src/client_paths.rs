@@ -6,17 +6,28 @@ pub(crate) fn client_root_dir() -> PathBuf {
 }
 
 pub(crate) fn link_sessions_path() -> PathBuf {
+    client_root_dir().join("link").join("link_sessions.json")
+}
+
+pub(crate) fn web_access_config_path() -> PathBuf {
+    client_root_dir().join("web_access").join("web_access.json")
+}
+
+pub(crate) fn web_access_state_path() -> PathBuf {
     client_root_dir()
-        .join("link")
-        .join("link_sessions.json")
+        .join("web_access")
+        .join("web_access_state.json")
+}
+
+pub(crate) fn web_access_bundle_dir() -> PathBuf {
+    client_root_dir().join("web_access").join("flutter_web")
 }
 
 #[cfg(windows)]
 fn platform_files_root_dir() -> PathBuf {
-    let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 CLI client storage");
-    PathBuf::from(appdata)
-        .join("app.operit")
-        .join("Operit2")
+    let appdata =
+        env::var_os("APPDATA").expect("APPDATA is required for Operit2 CLI client storage");
+    PathBuf::from(appdata).join("app.operit").join("Operit2")
 }
 
 #[cfg(target_os = "linux")]

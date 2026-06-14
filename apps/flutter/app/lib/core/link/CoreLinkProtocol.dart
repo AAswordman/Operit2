@@ -96,6 +96,16 @@ class CoreEvent {
   final String propertyName;
   final String kind;
   final Object? value;
+
+  Map<String, Object?> toJson() {
+    return {
+      'requestId': requestId,
+      'targetPath': targetPath.toJson(),
+      'propertyName': propertyName,
+      'kind': kind,
+      'value': value,
+    };
+  }
 }
 
 class CoreLinkError implements Exception {
