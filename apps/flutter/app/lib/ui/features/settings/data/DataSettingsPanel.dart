@@ -24,6 +24,7 @@ class DataSettingsPanel extends StatefulWidget {
 class _DataSettingsPanelState extends State<DataSettingsPanel> {
   Future<_DataSettingsData>? _future;
   bool _busy = false;
+  int? _lastSnapshotBytes;
 
   @override
   void initState() {
@@ -79,16 +80,15 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   }
 
   Future<void> _exportRawSnapshot() async {
-    final l10n = AppLocalizations.of(context)!;
     setState(() => _busy = true);
     final bytes = await widget.clients.application.exportRawSnapshot();
-    setState(() => _busy = false);
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.settingsDataSnapshotBytes(bytes.length))),
-    );
+    setState(() {
+      _busy = false;
+      _lastSnapshotBytes = bytes.length;
+    });
   }
 
   Future<void> _copyChatHistoriesBackup() async {
@@ -428,6 +428,16 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   subtitle: l10n.settingsDataExportRawSnapshotDescription,
                   onTap: _busy ? null : _exportRawSnapshot,
                 ),
+                if (_lastSnapshotBytes != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: Text(
+                      l10n.settingsDataSnapshotBytes(_lastSnapshotBytes!),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ],

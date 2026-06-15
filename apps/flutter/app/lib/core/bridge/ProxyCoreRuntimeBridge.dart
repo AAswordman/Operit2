@@ -18,21 +18,45 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
 
   @override
   Future<Object?> call(CoreCallRequest request) {
-    return _coreProxy.call(request);
+    return _runWithRuntimeFailureHandling(() => _coreProxy.call(request));
   }
 
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) {
-    return _coreProxy.watchSnapshot(request);
+    return _runWithRuntimeFailureHandling(
+      () => _coreProxy.watchSnapshot(request),
+    );
   }
 
   @override
-  Stream<CoreEvent> watchStream(CoreWatchRequest request) {
-    return _coreProxy.watchStream(request);
+  Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
+    try {
+      await for (final event in _coreProxy.watchStream(request)) {
+        yield event;
+      }
+    } catch (error, stackTrace) {
+      await RuntimeConnectionManager.instance.handleRemoteFailure(
+        error,
+        stackTrace,
+      );
+      rethrow;
+    }
   }
 
   @override
   Future<HostEnvironmentDescriptor> hostDescriptor() {
-    return _coreProxy.hostDescriptor();
+    return _runWithRuntimeFailureHandling(() => _coreProxy.hostDescriptor());
+  }
+
+  Future<T> _runWithRuntimeFailureHandling<T>(Future<T> Function() action) async {
+    try {
+      return await action();
+    } catch (error, stackTrace) {
+      await RuntimeConnectionManager.instance.handleRemoteFailure(
+        error,
+        stackTrace,
+      );
+      rethrow;
+    }
   }
 }

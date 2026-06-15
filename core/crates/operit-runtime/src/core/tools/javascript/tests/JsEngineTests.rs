@@ -517,7 +517,7 @@ fn register_thinking_guidance_toolpkg_main() {
         .ancestors()
         .nth(3)
         .expect("repo root");
-    let scriptPath = repoRoot.join("plugins/buildin/thinking_guidance/dist/main.js");
+    let scriptPath = repoRoot.join("plugins/packages/buildin/thinking_guidance/dist/main.js");
     let script = std::fs::read_to_string(&scriptPath).expect("thinking_guidance main.js");
     let mut params = testParams();
     params.insert(
@@ -544,9 +544,9 @@ fn register_message_insert_toolpkg_main() {
         .ancestors()
         .nth(3)
         .expect("repo root");
-    let scriptPath = repoRoot.join("plugins/external/message_insert/dist/main.js");
+    let scriptPath = repoRoot.join("plugins/packages/external/message_insert/dist/main.js");
     let script = std::fs::read_to_string(&scriptPath).expect("message_insert main.js");
-    let distRoot = repoRoot.join("plugins/external/message_insert/dist");
+    let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let mut textResources = BTreeMap::new();
     for entry in std::fs::read_dir(&distRoot).expect("message_insert dist") {
         let entry = entry.expect("message_insert dist entry");

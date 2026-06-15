@@ -21,6 +21,13 @@ pub fn run_skill_command(
             Ok(())
         }
         "list" => list_skills(context, output),
+        "more" => list_more_skills(context, output),
+        "load" => {
+            let name = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 skill load <name>".to_string())?;
+            load_more_skill(context, name, output)
+        }
         "show" => {
             let name = args
                 .get(1)
@@ -104,6 +111,28 @@ pub fn run_skill_command(
     }
 }
 
+fn list_more_skills(
+    context: OperitApplicationContext,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let repository = skill_repository(&context);
+    for candidate in repository.getBundledExternalSkillCandidates() {
+        output.push_stdout_line(format!("{}\t{}", candidate.name, candidate.description));
+    }
+    Ok(())
+}
+
+fn load_more_skill(
+    context: OperitApplicationContext,
+    name: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let repository = skill_repository(&context);
+    let skill = repository.importBundledExternalSkill(name)?;
+    output.push_stdout_line(format!("loaded: {}", skill.name));
+    Ok(())
+}
+
 fn list_skills(
     context: OperitApplicationContext,
     output: &mut CoreCommandOutput,
@@ -155,6 +184,8 @@ fn skill_repository(context: &OperitApplicationContext) -> SkillRepository {
 fn print_skill_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 skill dir");
     output.push_stdout_line("operit2 skill list");
+    output.push_stdout_line("operit2 skill more");
+    output.push_stdout_line("operit2 skill load <name>");
     output.push_stdout_line("operit2 skill show <name>");
     output.push_stdout_line(
         "operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]",

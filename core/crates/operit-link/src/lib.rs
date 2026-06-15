@@ -13,10 +13,12 @@ pub use protocol::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use remote::{
+    AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
     PairFinishRequest, PairFinishResponse, PairStartRequest, PairStartResponse, PairStartState,
-    PairedRemoteSession, PairedRemoteSessionRecord, RemoteHostInteractionBroker,
+    PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteHostInteractionBroker,
     RemoteHostInteractionPollEnvelope, RemoteHostInteractionPollResponse,
     RemoteHostInteractionRequest, RemoteHostInteractionRespondEnvelope, RemoteLinkClient,
-    RemoteLinkServer, RemoteLinkServerConfig, RemoteSessionInfoEnvelope, RemoteSessionInfoResponse,
-    RemoteWebAccessConfig, RemoteWsEnvelope, RemoteWsPayload, RemoteWsResponse,
+    RemoteLinkServer, RemoteLinkServerConfig, RemotePairingCodeRecord, RemotePairingCodeSink,
+    RemoteSessionInfoEnvelope, RemoteSessionInfoResponse, RemoteWebAccessConfig, RemoteWsEnvelope,
+    RemoteWsPayload, RemoteWsResponse,
 };

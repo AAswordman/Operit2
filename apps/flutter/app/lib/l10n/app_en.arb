@@ -379,18 +379,15 @@
   "settingsCategoryWorkspaceTitle": "Workspace & Browser",
   "settingsCategoryWorkspaceSubtitle": "Files, terminal, browser",
   "settingsCategoryWorkspaceDescription": "Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.",
-  "settingsCategoryRuntimeTitle": "Runtime",
-  "settingsCategoryRuntimeSubtitle": "Local core, remote core",
-  "settingsCategoryRuntimeDescription": "Choose the runtime connected by this Flutter client: local core or a paired remote core.",
-  "settingsCategoryWebAccessTitle": "Web Access",
-  "settingsCategoryWebAccessSubtitle": "Browser entry, token",
-  "settingsCategoryWebAccessDescription": "Open a local web access entry for this client and manage its bind address and access token.",
   "settingsCategoryAppearanceTitle": "Appearance & Interaction",
   "settingsCategoryAppearanceSubtitle": "Theme and language",
   "settingsCategoryAppearanceDescription": "Adjust the client theme and current localization display.",
   "settingsCategoryDataTitle": "Data & Diagnostics",
   "settingsCategoryDataSubtitle": "History, backup, logs",
   "settingsCategoryDataDescription": "Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.",
+  "settingsCategoryAccessLinksTitle": "Access & Links",
+  "settingsCategoryAccessLinksSubtitle": "Runtime, Web Access",
+  "settingsCategoryAccessLinksDescription": "Manage the runtime connection, local web access entry, bind address, and access token for this client.",
   "settingsComingSoon": "This area will continue connecting existing runtime capabilities. Models, characters, and tools are being completed first.",
   "settingsAdvanced": "Advanced settings",
   "settingsActive": "Active",
@@ -906,16 +903,18 @@
   "settingsRuntimeConnection": "Runtime connection",
   "settingsRuntimeConnectionDescription": "All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.",
   "settingsRuntimeUseLocal": "Use local runtime",
-  "settingsRuntimeUseRemote": "Use remote runtime",
-  "settingsRuntimeCurrentMode": "Current mode",
-  "settingsRuntimeLocalMode": "Local",
-  "settingsRuntimeRemoteMode": "Remote",
-  "settingsRuntimeRemoteName": "Remote name",
-  "settingsRuntimeBaseUrl": "Base URL",
-  "settingsRuntimeSessionId": "Session ID",
-  "settingsRuntimeDeviceId": "Device ID",
-  "settingsRuntimeSessionSecret": "Session Secret",
-  "settingsRuntimeSaveRemote": "Save and use remote",
+  "settingsRuntimeLocalTitle": "Local runtime",
+  "settingsRuntimeLocalDescription": "Use the core built into this device. No connection details are required.",
+  "settingsRuntimeRemoteTitle": "Remote runtime",
+  "settingsRuntimeRemoteDescription": "Manage paired remote cores and switch to a specific remote from the list.",
+  "settingsRuntimeTesting": "Testing runtime…",
+  "settingsRuntimePairRemote": "Pair new remote",
+  "settingsRuntimeNoPairedRemote": "No paired remote core yet.",
+  "settingsRuntimePairToken": "Pairing token",
+  "settingsRuntimePairCode": "Pairing code",
+  "settingsRuntimeStartPairing": "Start pairing",
+  "settingsRuntimeFinishPairing": "Finish pairing",
+  "settingsRuntimeBaseUrl": "Remote address",
   "settingsRuntimeTestCurrent": "Test current runtime",
   "settingsRuntimeSwitchedLocal": "Switched to local runtime.",
   "settingsRuntimeSwitchedRemote": "Switched to remote runtime.",
@@ -935,6 +934,15 @@
       }
     }
   },
+  "settingsRuntimeRemoteDisconnected": "Remote runtime disconnected",
+  "settingsRuntimeRemoteDisconnectedMessage": "Switched to local core.\n\n{error}",
+  "@settingsRuntimeRemoteDisconnectedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsWebAccessService": "Web access service",
   "settingsWebAccessServiceDescription": "When enabled, this client starts a local HTTP entry. Browsers can access core with the token.",
   "settingsWebAccessEnable": "Enable web access",
@@ -942,7 +950,11 @@
   "settingsWebAccessToken": "Access token",
   "settingsWebAccessRotateToken": "Rotate token",
   "settingsWebAccessCopyToken": "Copy token",
-  "settingsWebAccessAccessUrl": "Access URL",
+  "settingsWebAccessAccessUrl": "Address",
+  "settingsWebAccessLocalUrl": "Local",
+  "settingsWebAccessPairingUrl": "Pairing",
+  "settingsWebAccessPairingUrlLocalOnly": "Local only",
+  "settingsWebAccessPairingUrlUnavailable": "No LAN address found",
   "settingsWebAccessCopyUrl": "Copy URL",
   "settingsWebAccessOpenUrl": "Open",
   "settingsWebAccessRunning": "Running",
@@ -950,6 +962,21 @@
   "settingsWebAccessSaved": "Web access settings saved.",
   "settingsWebAccessTokenCopied": "Access token copied.",
   "settingsWebAccessUrlCopied": "Access URL copied.",
+  "settingsWebAccessPairedClients": "Paired clients",
+  "settingsWebAccessNoPairedClients": "No client has paired with this device yet.",
+  "settingsWebAccessPairedDeleted": "Paired client deleted.",
+  "settingsWebAccessPairingRequest": "Remote pairing request",
+  "settingsWebAccessPairingRequestMessage": "Pairing code: {code}\nClient: {client}",
+  "@settingsWebAccessPairingRequestMessage": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      },
+      "client": {
+        "type": "String"
+      }
+    }
+  },
   "settingsWebAccessInvalidBindAddress": "Bind address must be host:port.",
   "settingsWebAccessStartFailed": "Failed to start web access: {error}",
   "@settingsWebAccessStartFailed": {

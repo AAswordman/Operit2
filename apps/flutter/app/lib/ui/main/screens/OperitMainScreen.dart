@@ -341,7 +341,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           topBarController: _topBarController,
           onGoBack: _goBack,
           onNavigationButtonPressed: () {
-            _refreshToolPkgNavigationModel();
             if (useTabletLayout) {
               setState(() {
                 _isTabletSidebarExpanded = !_isTabletSidebarExpanded;

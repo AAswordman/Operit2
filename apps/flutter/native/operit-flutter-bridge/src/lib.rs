@@ -1,15 +1,21 @@
 #![allow(non_snake_case)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use operit_core_proxy::LocalCoreProxy;
-use operit_link::{RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
+use operit_link::{
+    AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
+    PairStartState, RemoteDeviceInfo, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+    RemotePairingCodeRecord, RemotePairingCodeSink, RemoteWebAccessConfig,
+};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
     CoreRequestId, CoreWatchRequest,
@@ -64,15 +70,23 @@ pub struct OperitFlutterBridge {
     runtime: tokio::runtime::Runtime,
     #[cfg(not(target_arch = "wasm32"))]
     externalRuntimeEventRegistration: Box<dyn operit_host_api::ExternalRuntimeEventRegistration>,
-    proxyCore: ConcurrentLocalCoreProxy,
+    proxyCore: Arc<ConcurrentLocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
     approvalBridge: FlutterApprovalBridge,
     runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
     #[cfg(not(target_arch = "wasm32"))]
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pendingRemotePairings: Mutex<HashMap<String, PendingRemotePairing>>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     terminalHost: Arc<NativeTerminalHost>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PendingRemotePairing {
+    client: RemoteLinkClient,
+    state: PairStartState,
 }
 
 struct ConcurrentLocalCoreProxy {
@@ -87,9 +101,9 @@ impl ConcurrentLocalCoreProxy {
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, LocalCoreProxy>, CoreLinkError> {
-        self.inner.lock().map_err(|error| {
-            CoreLinkError::internal(format!("core proxy lock poisoned: {error}"))
-        })
+        self.inner
+            .lock()
+            .map_err(|error| CoreLinkError::internal(format!("core proxy lock poisoned: {error}")))
     }
 }
 
@@ -486,7 +500,8 @@ impl OperitFlutterBridge {
         let browserAutomationBridge =
             FlutterBrowserAutomationBridge::new(runtimeHostBridge.clone());
         let webVisitBridge = FlutterWebVisitBridge::new(runtimeHostBridge.clone());
-        let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new(runtimeHostBridge.clone());
+        let composeDslWebViewBridge =
+            FlutterComposeDslWebViewBridge::new(runtimeHostBridge.clone());
         #[cfg(any(windows, target_os = "linux", target_os = "android"))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
@@ -515,13 +530,15 @@ impl OperitFlutterBridge {
             runtime,
             #[cfg(not(target_arch = "wasm32"))]
             externalRuntimeEventRegistration,
-            proxyCore: ConcurrentLocalCoreProxy::new(core),
+            proxyCore: Arc::new(ConcurrentLocalCoreProxy::new(core)),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
             approvalBridge,
             runtimeHostBridge: runtimeHostBridgeForServer,
             #[cfg(not(target_arch = "wasm32"))]
             webAccessTask: Mutex::new(None),
+            #[cfg(not(target_arch = "wasm32"))]
+            pendingRemotePairings: Mutex::new(HashMap::new()),
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost,
         })
@@ -564,10 +581,7 @@ impl OperitFlutterBridge {
     }
 
     fn hostDescriptor(&self) -> serde_json::Value {
-        let mut proxyCore = self
-            .proxyCore
-            .lock()
-            .expect("core proxy lock poisoned");
+        let mut proxyCore = self.proxyCore.lock().expect("core proxy lock poisoned");
         let application = proxyCore.localApplicationMut();
         let context = &application.applicationContext;
         let host = &context.hostEnvironment;
@@ -684,14 +698,73 @@ impl OperitFlutterBridge {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn remotePairStart(
+        &self,
+        baseUrl: String,
+        token: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<String, String> {
+        let client = RemoteLinkClient::new(baseUrl);
+        let hello = self.runtime.block_on(client.hello(&token))?;
+        let state = self
+            .runtime
+            .block_on(client.pairStart(&token, clientDeviceInfo))?;
+        let pairingId = state.pairingId.clone();
+        let pairingServiceVersion = state.pairingServiceVersion;
+        self.pendingRemotePairings
+            .lock()
+            .map_err(|error| format!("pending remote pairing lock poisoned: {error}"))?
+            .insert(pairingId.clone(), PendingRemotePairing { client, state });
+        Ok(serde_json::json!({
+            "pairingId": pairingId,
+            "pairingServiceVersion": pairingServiceVersion,
+            "coreDeviceId": hello.coreDeviceId,
+            "coreDeviceInfo": hello.coreDeviceInfo,
+        })
+        .to_string())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remotePairFinish(&self, pairingId: String, pairingCode: String) -> Result<String, String> {
+        let pending = self
+            .pendingRemotePairings
+            .lock()
+            .map_err(|error| format!("pending remote pairing lock poisoned: {error}"))?
+            .remove(&pairingId)
+            .ok_or_else(|| "remote pairing not found".to_string())?;
+        let session = self
+            .runtime
+            .block_on(pending.client.pairFinish(&pending.state, &pairingCode))?;
+        serde_json::to_string(&session.exportRecord()).map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn startWebAccessServer(
         &self,
         bindAddress: String,
         token: String,
         shutdownToken: String,
         webRoot: PathBuf,
+        acceptedSessionsJson: String,
+        acceptedSessionStorePath: PathBuf,
+        pairingCodePath: PathBuf,
+        deviceInfo: RemoteDeviceInfo,
     ) -> Result<(), String> {
         self.stopWebAccessServer();
+        let acceptedSessions =
+            serde_json::from_str::<BTreeMap<String, AcceptedRemoteSessionRecord>>(
+                &acceptedSessionsJson,
+            )
+            .map_err(|error| format!("invalid accepted sessions JSON: {error}"))?;
+        let acceptedSessionLoaderPath = acceptedSessionStorePath.clone();
+        let acceptedSessionLoader: AcceptedRemoteSessionLoader =
+            Arc::new(move || load_accepted_remote_sessions(&acceptedSessionLoaderPath));
+        let acceptedSessionStore: AcceptedRemoteSessionStore =
+            Arc::new(move |sessionId, record| {
+                save_accepted_remote_session(&acceptedSessionStorePath, sessionId, record)
+            });
+        let pairingCodeSink: RemotePairingCodeSink =
+            Arc::new(move |record| save_remote_pairing_code(&pairingCodePath, record));
         let address: SocketAddr = bindAddress
             .parse()
             .map_err(|error| format!("invalid bind address: {error}"))?;
@@ -699,40 +772,17 @@ impl OperitFlutterBridge {
             .runtime
             .block_on(tokio::net::TcpListener::bind(address))
             .map_err(|error| error.to_string())?;
-        let runtimeHostBridge = self.runtimeHostBridge.clone();
-        let approvalBridge = self.approvalBridge.clone();
-        #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-        let terminalHost = self.terminalHost.clone();
+        let coreClient = SharedFlutterCoreClient {
+            proxyCore: self.proxyCore.clone(),
+            runtimeHandle: self.runtime.handle().clone(),
+        };
         let task = self.runtime.spawn(async move {
-            let browserAutomationBridge =
-                FlutterBrowserAutomationBridge::new(runtimeHostBridge.clone());
-            let webVisitBridge = FlutterWebVisitBridge::new(runtimeHostBridge.clone());
-            let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new(runtimeHostBridge);
-            let mut core = create_local_core(
-                None,
-                Arc::new(webVisitBridge),
-                Some(Arc::new(browserAutomationBridge)),
-                Some(Arc::new(composeDslWebViewBridge)),
-                #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-                terminalHost,
-            )?;
-            core.localApplicationMut().onCreate()?;
-            install_permission_requester(&mut core, approvalBridge);
-            let mainCore = core
-                .localApplicationMut()
-                .chatRuntimeHolder
-                .getCore(ChatRuntimeSlot::MAIN);
-            mainCore.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
-            let _externalRuntimeEventRegistration =
-                operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
-                    core.localApplicationMut().applicationContext.clone(),
-                    "flutter-web-access",
-                )?;
             RemoteLinkServer::serveWithListener(
-                core,
+                coreClient,
                 RemoteLinkServerConfig {
                     bindAddress,
                     token: token.clone(),
+                    deviceInfo,
                     hostInteractionBroker: None,
                     webAccess: Some(RemoteWebAccessConfig {
                         token,
@@ -740,6 +790,10 @@ impl OperitFlutterBridge {
                         webRoot,
                     }),
                     printStartupInfo: false,
+                    acceptedSessions,
+                    acceptedSessionLoader: Some(acceptedSessionLoader),
+                    acceptedSessionStore: Some(acceptedSessionStore),
+                    pairingCodeSink: Some(pairingCodeSink),
                 },
                 listener,
                 address,
@@ -764,7 +818,101 @@ impl OperitFlutterBridge {
             task.abort();
         }
     }
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_accepted_remote_sessions(
+    path: &PathBuf,
+) -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&content).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_accepted_remote_session(
+    path: &PathBuf,
+    sessionId: String,
+    record: AcceptedRemoteSessionRecord,
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid accepted session path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut sessions = load_accepted_remote_sessions(path)?;
+    sessions.insert(sessionId, record);
+    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_remote_pairing_code(path: &PathBuf, record: RemotePairingCodeRecord) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid remote pairing code path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let content = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct SharedFlutterCoreClient {
+    proxyCore: Arc<ConcurrentLocalCoreProxy>,
+    runtimeHandle: tokio::runtime::Handle,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl CoreLinkClient for SharedFlutterCoreClient {
+    async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
+        let requestId = request.requestId.clone();
+        let proxyCore = self.proxyCore.clone();
+        let runtimeHandle = self.runtimeHandle.clone();
+        match tokio::task::spawn_blocking(move || {
+            let mut proxyCore = proxyCore.lock()?;
+            Ok::<CoreCallResponse, CoreLinkError>(runtimeHandle.block_on(proxyCore.call(request)))
+        })
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => CoreCallResponse::err(requestId, error),
+            Err(error) => CoreCallResponse::err(
+                requestId,
+                CoreLinkError::internal(format!("core call task join failed: {error}")),
+            ),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        let proxyCore = self.proxyCore.clone();
+        let runtimeHandle = self.runtimeHandle.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut proxyCore = proxyCore.lock()?;
+            runtimeHandle.block_on(proxyCore.watchSnapshot(request))
+        })
+        .await
+        .map_err(|error| {
+            CoreLinkError::internal(format!("core watch snapshot task join failed: {error}"))
+        })?
+    }
+
+    async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        let proxyCore = self.proxyCore.clone();
+        let runtimeHandle = self.runtimeHandle.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut proxyCore = proxyCore.lock()?;
+            runtimeHandle.block_on(proxyCore.watch(request))
+        })
+        .await
+        .map_err(|error| CoreLinkError::internal(format!("core watch task join failed: {error}")))?
+    }
 }
 
 fn install_permission_requester(core: &mut LocalCoreProxy, approvalBridge: FlutterApprovalBridge) {
@@ -1190,6 +1338,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
     token: *const c_char,
     shutdown_token: *const c_char,
     web_root: *const c_char,
+    accepted_sessions_json: *const c_char,
+    accepted_session_store_path: *const c_char,
+    pairing_code_path: *const c_char,
+    device_info_json: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
         return string_to_ptr(
@@ -1204,6 +1356,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         ("token", token),
         ("shutdown token", shutdown_token),
         ("web root", web_root),
+        ("accepted sessions", accepted_sessions_json),
+        ("accepted session store path", accepted_session_store_path),
+        ("pairing code path", pairing_code_path),
+        ("device info", device_info_json),
     ];
     let mut values = Vec::new();
     for (name, ptr) in args {
@@ -1235,6 +1391,21 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         values[1].clone(),
         values[2].clone(),
         PathBuf::from(&values[3]),
+        values[4].clone(),
+        PathBuf::from(&values[5]),
+        PathBuf::from(&values[6]),
+        match serde_json::from_str::<RemoteDeviceInfo>(&values[7]) {
+            Ok(value) => value,
+            Err(error) => {
+                return string_to_ptr(
+                    serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("device info is invalid: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        },
     ) {
         Ok(()) => string_to_ptr("{\"ok\":true}"),
         Err(error) => string_to_ptr(
@@ -1318,6 +1489,145 @@ pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
         Err(_) => return string_to_ptr(serde_json::json!({"ok": false}).to_string()),
     };
     string_to_ptr((*handle).handlePermissionResult(result))
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
+    handle: *mut OperitFlutterBridge,
+    base_url: *const c_char,
+    token: *const c_char,
+    client_device_info_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::internal(
+                "runtime bridge is not initialized",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    if base_url.is_null() || token.is_null() || client_device_info_json.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::new(
+                "INVALID_ARGS",
+                "remote pair start expects baseUrl, token and clientDeviceInfo",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    let baseUrl = match CStr::from_ptr(base_url).to_str() {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("baseUrl is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    let token = match CStr::from_ptr(token).to_str() {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("token is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    let clientDeviceInfoJson = match CStr::from_ptr(client_device_info_json).to_str() {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("clientDeviceInfo is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    let clientDeviceInfo = match serde_json::from_str::<RemoteDeviceInfo>(&clientDeviceInfoJson) {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("clientDeviceInfo is invalid: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    match (*handle).remotePairStart(baseUrl, token, clientDeviceInfo) {
+        Ok(value) => string_to_ptr(value),
+        Err(error) => string_to_ptr(
+            serde_json::to_string(&CoreLinkError::internal(error))
+                .expect("CoreLinkError must serialize"),
+        ),
+    }
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_finish(
+    handle: *mut OperitFlutterBridge,
+    pairing_id: *const c_char,
+    pairing_code: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::internal(
+                "runtime bridge is not initialized",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    if pairing_id.is_null() || pairing_code.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::new(
+                "INVALID_ARGS",
+                "remote pair finish expects pairingId and pairingCode",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    let pairingId = match CStr::from_ptr(pairing_id).to_str() {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("pairingId is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    let pairingCode = match CStr::from_ptr(pairing_code).to_str() {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("pairingCode is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    match (*handle).remotePairFinish(pairingId, pairingCode) {
+        Ok(value) => string_to_ptr(value),
+        Err(error) => string_to_ptr(
+            serde_json::to_string(&CoreLinkError::internal(error))
+                .expect("CoreLinkError must serialize"),
+        ),
+    }
 }
 
 #[no_mangle]
@@ -1888,6 +2198,318 @@ mod android_jni {
             return new_java_string(env, "{\"error\":\"runtime bridge is not initialized\"}");
         };
         new_java_string(env, &bridge.hostDescriptor().to_string())
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_startWebAccessServer(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        bindAddress: JString,
+        token: JString,
+        shutdownToken: JString,
+        webRoot: JString,
+        acceptedSessionsJson: JString,
+        acceptedSessionStorePath: JString,
+        pairingCodePath: JString,
+        deviceInfoJson: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(
+                    "runtime bridge is not initialized",
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        };
+        let bindAddress = match env.get_string(&bindAddress) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI bindAddress: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let token = match env.get_string(&token) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI token: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let shutdownToken = match env.get_string(&shutdownToken) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI shutdownToken: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let webRoot = match env.get_string(&webRoot) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI webRoot: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let acceptedSessionsJson = match env.get_string(&acceptedSessionsJson) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI acceptedSessionsJson: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let acceptedSessionStorePath = match env.get_string(&acceptedSessionStorePath) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI acceptedSessionStorePath: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let pairingCodePath = match env.get_string(&pairingCodePath) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI pairingCodePath: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let deviceInfoJson = match env.get_string(&deviceInfoJson) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI deviceInfoJson: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let deviceInfo = match serde_json::from_str::<RemoteDeviceInfo>(&deviceInfoJson) {
+            Ok(value) => value,
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("deviceInfoJson is invalid: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        match bridge.startWebAccessServer(
+            bindAddress,
+            token,
+            shutdownToken,
+            PathBuf::from(webRoot),
+            acceptedSessionsJson,
+            PathBuf::from(acceptedSessionStorePath),
+            PathBuf::from(pairingCodePath),
+            deviceInfo,
+        ) {
+            Ok(()) => new_java_string(env, "{\"ok\":true}"),
+            Err(error) => new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(error))
+                    .expect("CoreLinkError must serialize"),
+            ),
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_stopWebAccessServer(
+        env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(
+                    "runtime bridge is not initialized",
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        };
+        bridge.stopWebAccessServer();
+        new_java_string(env, "{\"ok\":true}")
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_remotePairStart(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        baseUrl: JString,
+        token: JString,
+        clientDeviceInfoJson: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(
+                    "runtime bridge is not initialized",
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        };
+        let baseUrl = match env.get_string(&baseUrl) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI baseUrl: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let token = match env.get_string(&token) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI token: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let clientDeviceInfoJson = match env.get_string(&clientDeviceInfoJson) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI clientDeviceInfoJson: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let clientDeviceInfo = match serde_json::from_str::<RemoteDeviceInfo>(&clientDeviceInfoJson)
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("clientDeviceInfoJson is invalid: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        match bridge.remotePairStart(baseUrl, token, clientDeviceInfo) {
+            Ok(value) => new_java_string(env, &value),
+            Err(error) => new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(error))
+                    .expect("CoreLinkError must serialize"),
+            ),
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_remotePairFinish(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        pairingId: JString,
+        pairingCode: JString,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(
+                    "runtime bridge is not initialized",
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        };
+        let pairingId = match env.get_string(&pairingId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI pairingId: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let pairingCode = match env.get_string(&pairingCode) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI pairingCode: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        match bridge.remotePairFinish(pairingId, pairingCode) {
+            Ok(value) => new_java_string(env, &value),
+            Err(error) => new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(error))
+                    .expect("CoreLinkError must serialize"),
+            ),
+        }
     }
 
     #[no_mangle]

@@ -1484,42 +1484,6 @@ abstract class AppLocalizations {
   /// **'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.'**
   String get settingsCategoryWorkspaceDescription;
 
-  /// No description provided for @settingsCategoryRuntimeTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Runtime'**
-  String get settingsCategoryRuntimeTitle;
-
-  /// No description provided for @settingsCategoryRuntimeSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Local core, remote core'**
-  String get settingsCategoryRuntimeSubtitle;
-
-  /// No description provided for @settingsCategoryRuntimeDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Choose the runtime connected by this Flutter client: local core or a paired remote core.'**
-  String get settingsCategoryRuntimeDescription;
-
-  /// No description provided for @settingsCategoryWebAccessTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Web Access'**
-  String get settingsCategoryWebAccessTitle;
-
-  /// No description provided for @settingsCategoryWebAccessSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Browser entry, token'**
-  String get settingsCategoryWebAccessSubtitle;
-
-  /// No description provided for @settingsCategoryWebAccessDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Open a local web access entry for this client and manage its bind address and access token.'**
-  String get settingsCategoryWebAccessDescription;
-
   /// No description provided for @settingsCategoryAppearanceTitle.
   ///
   /// In en, this message translates to:
@@ -1555,6 +1519,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.'**
   String get settingsCategoryDataDescription;
+
+  /// No description provided for @settingsCategoryAccessLinksTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Access & Links'**
+  String get settingsCategoryAccessLinksTitle;
+
+  /// No description provided for @settingsCategoryAccessLinksSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime, Web Access'**
+  String get settingsCategoryAccessLinksSubtitle;
+
+  /// No description provided for @settingsCategoryAccessLinksDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage the runtime connection, local web access entry, bind address, and access token for this client.'**
+  String get settingsCategoryAccessLinksDescription;
 
   /// No description provided for @settingsComingSoon.
   ///
@@ -3361,65 +3343,77 @@ abstract class AppLocalizations {
   /// **'Use local runtime'**
   String get settingsRuntimeUseLocal;
 
-  /// No description provided for @settingsRuntimeUseRemote.
+  /// No description provided for @settingsRuntimeLocalTitle.
   ///
   /// In en, this message translates to:
-  /// **'Use remote runtime'**
-  String get settingsRuntimeUseRemote;
+  /// **'Local runtime'**
+  String get settingsRuntimeLocalTitle;
 
-  /// No description provided for @settingsRuntimeCurrentMode.
+  /// No description provided for @settingsRuntimeLocalDescription.
   ///
   /// In en, this message translates to:
-  /// **'Current mode'**
-  String get settingsRuntimeCurrentMode;
+  /// **'Use the core built into this device. No connection details are required.'**
+  String get settingsRuntimeLocalDescription;
 
-  /// No description provided for @settingsRuntimeLocalMode.
+  /// No description provided for @settingsRuntimeRemoteTitle.
   ///
   /// In en, this message translates to:
-  /// **'Local'**
-  String get settingsRuntimeLocalMode;
+  /// **'Remote runtime'**
+  String get settingsRuntimeRemoteTitle;
 
-  /// No description provided for @settingsRuntimeRemoteMode.
+  /// No description provided for @settingsRuntimeRemoteDescription.
   ///
   /// In en, this message translates to:
-  /// **'Remote'**
-  String get settingsRuntimeRemoteMode;
+  /// **'Manage paired remote cores and switch to a specific remote from the list.'**
+  String get settingsRuntimeRemoteDescription;
 
-  /// No description provided for @settingsRuntimeRemoteName.
+  /// No description provided for @settingsRuntimeTesting.
   ///
   /// In en, this message translates to:
-  /// **'Remote name'**
-  String get settingsRuntimeRemoteName;
+  /// **'Testing runtime…'**
+  String get settingsRuntimeTesting;
+
+  /// No description provided for @settingsRuntimePairRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair new remote'**
+  String get settingsRuntimePairRemote;
+
+  /// No description provided for @settingsRuntimeNoPairedRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'No paired remote core yet.'**
+  String get settingsRuntimeNoPairedRemote;
+
+  /// No description provided for @settingsRuntimePairToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing token'**
+  String get settingsRuntimePairToken;
+
+  /// No description provided for @settingsRuntimePairCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing code'**
+  String get settingsRuntimePairCode;
+
+  /// No description provided for @settingsRuntimeStartPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Start pairing'**
+  String get settingsRuntimeStartPairing;
+
+  /// No description provided for @settingsRuntimeFinishPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish pairing'**
+  String get settingsRuntimeFinishPairing;
 
   /// No description provided for @settingsRuntimeBaseUrl.
   ///
   /// In en, this message translates to:
-  /// **'Base URL'**
+  /// **'Remote address'**
   String get settingsRuntimeBaseUrl;
-
-  /// No description provided for @settingsRuntimeSessionId.
-  ///
-  /// In en, this message translates to:
-  /// **'Session ID'**
-  String get settingsRuntimeSessionId;
-
-  /// No description provided for @settingsRuntimeDeviceId.
-  ///
-  /// In en, this message translates to:
-  /// **'Device ID'**
-  String get settingsRuntimeDeviceId;
-
-  /// No description provided for @settingsRuntimeSessionSecret.
-  ///
-  /// In en, this message translates to:
-  /// **'Session Secret'**
-  String get settingsRuntimeSessionSecret;
-
-  /// No description provided for @settingsRuntimeSaveRemote.
-  ///
-  /// In en, this message translates to:
-  /// **'Save and use remote'**
-  String get settingsRuntimeSaveRemote;
 
   /// No description provided for @settingsRuntimeTestCurrent.
   ///
@@ -3450,6 +3444,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Runtime test failed: {error}'**
   String settingsRuntimeTestFailed(String error);
+
+  /// No description provided for @settingsRuntimeRemoteDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote runtime disconnected'**
+  String get settingsRuntimeRemoteDisconnected;
+
+  /// No description provided for @settingsRuntimeRemoteDisconnectedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Switched to local core.\n\n{error}'**
+  String settingsRuntimeRemoteDisconnectedMessage(String error);
 
   /// No description provided for @settingsWebAccessService.
   ///
@@ -3496,8 +3502,32 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessAccessUrl.
   ///
   /// In en, this message translates to:
-  /// **'Access URL'**
+  /// **'Address'**
   String get settingsWebAccessAccessUrl;
+
+  /// No description provided for @settingsWebAccessLocalUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get settingsWebAccessLocalUrl;
+
+  /// No description provided for @settingsWebAccessPairingUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing'**
+  String get settingsWebAccessPairingUrl;
+
+  /// No description provided for @settingsWebAccessPairingUrlLocalOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Local only'**
+  String get settingsWebAccessPairingUrlLocalOnly;
+
+  /// No description provided for @settingsWebAccessPairingUrlUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'No LAN address found'**
+  String get settingsWebAccessPairingUrlUnavailable;
 
   /// No description provided for @settingsWebAccessCopyUrl.
   ///
@@ -3540,6 +3570,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Access URL copied.'**
   String get settingsWebAccessUrlCopied;
+
+  /// No description provided for @settingsWebAccessPairedClients.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired clients'**
+  String get settingsWebAccessPairedClients;
+
+  /// No description provided for @settingsWebAccessNoPairedClients.
+  ///
+  /// In en, this message translates to:
+  /// **'No client has paired with this device yet.'**
+  String get settingsWebAccessNoPairedClients;
+
+  /// No description provided for @settingsWebAccessPairedDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired client deleted.'**
+  String get settingsWebAccessPairedDeleted;
+
+  /// No description provided for @settingsWebAccessPairingRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote pairing request'**
+  String get settingsWebAccessPairingRequest;
+
+  /// No description provided for @settingsWebAccessPairingRequestMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing code: {code}\nClient: {client}'**
+  String settingsWebAccessPairingRequestMessage(String code, String client);
 
   /// No description provided for @settingsWebAccessInvalidBindAddress.
   ///

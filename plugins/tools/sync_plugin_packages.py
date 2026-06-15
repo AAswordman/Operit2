@@ -34,6 +34,10 @@ def _plugins_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _plugin_packages_root() -> Path:
+    return _plugins_root() / "packages"
+
+
 def _find_manifest_file(folder: Path) -> Path | None:
     for file_name in MANIFEST_FILENAMES:
         manifest = folder / file_name
@@ -130,7 +134,7 @@ def _collect_prebuild_inputs(source_dir: Path, child_dir: Path) -> list[Path]:
             continue
         if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
             paths.append(file_path)
-    types_dir = source_dir.parent / "types"
+    types_dir = _plugins_root() / "types"
     if types_dir.is_dir():
         for file_path in types_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
@@ -152,7 +156,7 @@ def _collect_root_prebuild_inputs(source_dir: Path) -> list[Path]:
     for file_path in source_dir.iterdir():
         if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
             paths.append(file_path)
-    types_dir = source_dir.parent / "types"
+    types_dir = _plugins_root() / "types"
     if types_dir.is_dir():
         for file_path in types_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
@@ -473,7 +477,7 @@ def _sync(source_dir: Path, output_dir: Path, *, dry_run: bool) -> tuple[int, in
                 shutil.copy2(plan.source, destination)
             copied += 1
         elif plan.mode == "compile-ts":
-            compiled = source_dir.parent / ".out" / source_dir.name / f"{plan.source.stem}.js"
+            compiled = _plugins_root() / ".out" / source_dir.name / f"{plan.source.stem}.js"
             print(f"{'DRY-COPY' if dry_run else 'COPY'}: {compiled} -> {destination}")
             if not dry_run:
                 if not compiled.is_file():
@@ -519,11 +523,11 @@ def main() -> int:
     total_deleted = 0
     jobs: list[tuple[Path, Path]] = []
     if args.source in {"buildin", "all"}:
-        jobs.append((plugins_root / "buildin", Path(args.buildin_output)))
+        jobs.append((_plugin_packages_root() / "buildin", Path(args.buildin_output)))
     if args.source in {"external", "all"}:
-        jobs.append((plugins_root / "external", Path(args.external_output)))
+        jobs.append((_plugin_packages_root() / "external", Path(args.external_output)))
     if args.source in {"examples", "all"}:
-        jobs.append((plugins_root / "examples", Path(args.examples_output)))
+        jobs.append((_plugin_packages_root() / "examples", Path(args.examples_output)))
 
     for source_dir, output_dir in jobs:
         copied, packed, deleted = _sync(source_dir, output_dir, dry_run=args.dry_run)
@@ -533,7 +537,7 @@ def main() -> int:
 
     if args.source in {"buildin", "all"}:
         _maybe_hot_reload_buildin(
-            plugins_root / "buildin",
+            _plugin_packages_root() / "buildin",
             Path(args.buildin_output),
             dry_run=args.dry_run,
             disabled=bool(args.no_hot_reload),

@@ -11,7 +11,9 @@ import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
 
 class WebAccessSettingsPanel extends StatefulWidget {
-  const WebAccessSettingsPanel({super.key});
+  const WebAccessSettingsPanel({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   State<WebAccessSettingsPanel> createState() => _WebAccessSettingsPanelState();
@@ -21,6 +23,9 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   final TextEditingController _bindAddressController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
   WebAccessConfig? _config;
+  Map<String, WebAccessAcceptedSessionRecord> _acceptedSessions =
+      <String, WebAccessAcceptedSessionRecord>{};
+  List<String> _pairingBaseUrls = <String>[];
   bool _busy = false;
 
   @override
@@ -38,11 +43,17 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
 
   Future<void> _load() async {
     final config = await WebAccessConfigStore.read();
+    final acceptedSessions = await WebAccessAcceptedSessionStore.read();
+    final pairingBaseUrls = _bindAddressLooksValid(config.bindAddress)
+        ? await FlutterWebAccessServer.instance.pairingBaseUrls(config)
+        : <String>[];
     if (!mounted) {
       return;
     }
     setState(() {
       _config = config;
+      _acceptedSessions = acceptedSessions;
+      _pairingBaseUrls = pairingBaseUrls;
       _bindAddressController.text = config.bindAddress;
       _tokenController.text = config.token;
     });
@@ -75,8 +86,15 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
       if (!mounted) {
         return;
       }
-      setState(() => _config = next);
-      _showMessage(l10n.settingsWebAccessSaved);
+      final pairingBaseUrls = await FlutterWebAccessServer.instance
+          .pairingBaseUrls(next);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _config = next;
+        _pairingBaseUrls = pairingBaseUrls;
+      });
     } catch (error) {
       if (mounted) {
         _showMessage(
@@ -116,8 +134,15 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
       if (!mounted) {
         return;
       }
-      setState(() => _config = next);
-      _showMessage(l10n.settingsWebAccessSaved);
+      final pairingBaseUrls = await FlutterWebAccessServer.instance
+          .pairingBaseUrls(next);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _config = next;
+        _pairingBaseUrls = pairingBaseUrls;
+      });
     } catch (error) {
       if (mounted) {
         _showMessage(l10n.settingsWebAccessStartFailed(error.toString()));
@@ -148,7 +173,6 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
       return;
     }
     setState(() => _config = next);
-    _showMessage(AppLocalizations.of(context)!.settingsWebAccessSaved);
   }
 
   Future<void> _copyToken() async {
@@ -169,10 +193,22 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _deleteAcceptedSession(String sessionId) async {
+    final sessions = Map<String, WebAccessAcceptedSessionRecord>.of(
+      _acceptedSessions,
+    )..remove(sessionId);
+    await WebAccessAcceptedSessionStore.write(sessions);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _acceptedSessions = sessions);
+    _showMessage(AppLocalizations.of(context)!.settingsWebAccessPairedDeleted);
+  }
+
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -190,106 +226,139 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
         : (_bindAddressLooksValid(bindAddress)
               ? _baseUrlForBindAddress(bindAddress)
               : l10n.settingsWebAccessInvalidBindAddress);
+    final bindAddressIsValid = _bindAddressLooksValid(bindAddress);
+    final pairingAddressText = bindAddressIsValid
+        ? (_bindAddressIsLoopback(bindAddress)
+              ? l10n.settingsWebAccessPairingUrlLocalOnly
+              : (_pairingBaseUrls.isEmpty
+                    ? l10n.settingsWebAccessPairingUrlUnavailable
+                    : null))
+        : l10n.settingsWebAccessInvalidBindAddress;
+    final children = <Widget>[
+      _SectionCard(
+        title: l10n.settingsWebAccessService,
+        children: <Widget>[
+          Text(
+            l10n.settingsWebAccessServiceDescription,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            title: Text(l10n.settingsWebAccessEnable),
+            subtitle: Text(
+              running
+                  ? l10n.settingsWebAccessRunning
+                  : l10n.settingsWebAccessStopped,
+            ),
+            value: config.enabled,
+            onChanged: _busy ? null : _setEnabled,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _bindAddressController,
+            decoration: InputDecoration(
+              labelText: l10n.settingsWebAccessBindAddress,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _tokenController,
+            decoration: InputDecoration(
+              labelText: l10n.settingsWebAccessToken,
+              border: const OutlineInputBorder(),
+              isDense: true,
+              suffixIcon: IconButton(
+                tooltip: l10n.settingsWebAccessCopyToken,
+                icon: const Icon(Icons.content_copy_outlined),
+                onPressed: _copyToken,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              FilledButton.icon(
+                style: SettingsControlStyles.sectionFilledButton(),
+                onPressed: _busy ? null : _save,
+                icon: const Icon(Icons.save_outlined, size: 18),
+                label: Text(l10n.save),
+              ),
+              TextButton.icon(
+                style: SettingsControlStyles.sectionTextButton(),
+                onPressed: _busy ? null : _rotateToken,
+                icon: const Icon(Icons.autorenew_outlined, size: 18),
+                label: Text(l10n.settingsWebAccessRotateToken),
+              ),
+            ],
+          ),
+        ],
+      ),
+      _SectionCard(
+        title: l10n.settingsWebAccessAccessUrl,
+        children: <Widget>[
+          _AddressRow(
+            label: l10n.settingsWebAccessLocalUrl,
+            value: url,
+            onCopy: () => _copyUrl(url),
+            onOpen: running ? () => _openUrl(url) : null,
+          ),
+          const SizedBox(height: 8),
+          if (pairingAddressText != null)
+            _AddressRow(
+              label: l10n.settingsWebAccessPairingUrl,
+              value: pairingAddressText,
+            )
+          else
+            for (var index = 0; index < _pairingBaseUrls.length; index++)
+              Padding(
+                padding: EdgeInsets.only(top: index == 0 ? 0 : 8),
+                child: _AddressRow(
+                  label: index == 0 ? l10n.settingsWebAccessPairingUrl : '',
+                  value: _pairingBaseUrls[index],
+                  onCopy: () => _copyUrl(_pairingBaseUrls[index]),
+                ),
+              ),
+        ],
+      ),
+      _SectionCard(
+        title: l10n.settingsWebAccessPairedClients,
+        children: <Widget>[
+          if (_acceptedSessions.isEmpty)
+            Text(
+              l10n.settingsWebAccessNoPairedClients,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            for (final entry in _acceptedSessions.entries)
+              _AcceptedSessionTile(
+                sessionId: entry.key,
+                record: entry.value,
+                onDelete: () => _deleteAcceptedSession(entry.key),
+              ),
+        ],
+      ),
+    ];
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      );
+    }
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-      children: <Widget>[
-        _SectionCard(
-          title: l10n.settingsWebAccessService,
-          children: <Widget>[
-            Text(
-              l10n.settingsWebAccessServiceDescription,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: 10),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              visualDensity: VisualDensity.compact,
-              title: Text(l10n.settingsWebAccessEnable),
-              subtitle: Text(
-                running
-                    ? l10n.settingsWebAccessRunning
-                    : l10n.settingsWebAccessStopped,
-              ),
-              value: config.enabled,
-              onChanged: _busy ? null : _setEnabled,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _bindAddressController,
-              decoration: InputDecoration(
-                labelText: l10n.settingsWebAccessBindAddress,
-                border: const OutlineInputBorder(),
-                isDense: true,
-              ),
-              onSubmitted: (_) => _save(),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _tokenController,
-              decoration: InputDecoration(
-                labelText: l10n.settingsWebAccessToken,
-                border: const OutlineInputBorder(),
-                isDense: true,
-                suffixIcon: IconButton(
-                  tooltip: l10n.settingsWebAccessCopyToken,
-                  icon: const Icon(Icons.content_copy_outlined),
-                  onPressed: _copyToken,
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                FilledButton.icon(
-                  style: SettingsControlStyles.sectionFilledButton(),
-                  onPressed: _busy ? null : _save,
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: Text(l10n.save),
-                ),
-                TextButton.icon(
-                  style: SettingsControlStyles.sectionTextButton(),
-                  onPressed: _busy ? null : _rotateToken,
-                  icon: const Icon(Icons.autorenew_outlined, size: 18),
-                  label: Text(l10n.settingsWebAccessRotateToken),
-                ),
-              ],
-            ),
-          ],
-        ),
-        _SectionCard(
-          title: l10n.settingsWebAccessAccessUrl,
-          children: <Widget>[
-            SelectableText(
-              url,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                TextButton.icon(
-                  style: SettingsControlStyles.sectionTextButton(),
-                  onPressed: () => _copyUrl(url),
-                  icon: const Icon(Icons.content_copy_outlined, size: 18),
-                  label: Text(l10n.settingsWebAccessCopyUrl),
-                ),
-                TextButton.icon(
-                  style: SettingsControlStyles.sectionTextButton(),
-                  onPressed: running ? () => _openUrl(url) : null,
-                  icon: const Icon(Icons.open_in_browser_outlined, size: 18),
-                  label: Text(l10n.settingsWebAccessOpenUrl),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ],
+      children: children,
     );
   }
 }
@@ -330,6 +399,106 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
+class _AddressRow extends StatelessWidget {
+  const _AddressRow({
+    required this.label,
+    required this.value,
+    this.onCopy,
+    this.onOpen,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback? onCopy;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        SizedBox(
+          width: 72,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Expanded(
+          child: SelectableText(
+            value,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+        if (onCopy != null)
+          IconButton(
+            tooltip: AppLocalizations.of(context)!.settingsWebAccessCopyUrl,
+            icon: const Icon(Icons.content_copy_outlined, size: 18),
+            onPressed: onCopy,
+          ),
+        if (onOpen != null)
+          IconButton(
+            tooltip: AppLocalizations.of(context)!.settingsWebAccessOpenUrl,
+            icon: const Icon(Icons.open_in_browser_outlined, size: 18),
+            onPressed: onOpen,
+          ),
+      ],
+    );
+  }
+}
+
+class _AcceptedSessionTile extends StatelessWidget {
+  const _AcceptedSessionTile({
+    required this.sessionId,
+    required this.record,
+    required this.onDelete,
+  });
+
+  final String sessionId;
+  final WebAccessAcceptedSessionRecord record;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.surface.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+          ),
+        ),
+        child: ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.only(left: 10, right: 4),
+          title: Text(
+            record.deviceInfo.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            sessionId,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            tooltip: l10n.delete,
+            icon: const Icon(Icons.delete_outline),
+            onPressed: onDelete,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 bool _bindAddressLooksValid(String value) {
   final trimmed = value.trim();
   final index = trimmed.lastIndexOf(':');
@@ -337,6 +506,13 @@ bool _bindAddressLooksValid(String value) {
     return false;
   }
   return int.tryParse(trimmed.substring(index + 1)) != null;
+}
+
+bool _bindAddressIsLoopback(String bindAddress) {
+  final trimmed = bindAddress.trim();
+  final index = trimmed.lastIndexOf(':');
+  final host = trimmed.substring(0, index);
+  return host == '127.0.0.1' || host == 'localhost' || host == '::1';
 }
 
 String _baseUrlForBindAddress(String bindAddress) {

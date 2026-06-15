@@ -14,6 +14,7 @@ operit-host-api = { path = "../../../../core/crates/operit-host-api" }
 operit-link = { path = "../../../../core/crates/operit-link" }
 operit-runtime = { path = "../../../../core/crates/operit-runtime" }
 operit-store = { path = "../../../../core/crates/operit-store" }
+async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

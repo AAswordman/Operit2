@@ -2,14 +2,166 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/runtime/RuntimeConnectionManager.dart';
+import '../../core/web_access/FlutterWebAccessServer.dart';
+import '../../l10n/generated/app_localizations.dart';
 import '../theme/OperitTheme.dart';
 import 'screens/OperitMainScreen.dart';
 
 class OperitApp extends StatelessWidget {
-  const OperitApp({super.key});
+  const OperitApp({super.key, this.startupWebAccessError});
+
+  final String? startupWebAccessError;
 
   @override
   Widget build(BuildContext context) {
-    return const OperitTheme(child: OperitMainScreen());
+    return OperitTheme(
+      child: _AppDialogHost(
+        startupWebAccessError: startupWebAccessError,
+        child: const OperitMainScreen(),
+      ),
+    );
+  }
+}
+
+class _AppDialogHost extends StatefulWidget {
+  const _AppDialogHost({
+    required this.startupWebAccessError,
+    required this.child,
+  });
+
+  final String? startupWebAccessError;
+  final Widget child;
+
+  @override
+  State<_AppDialogHost> createState() => _AppDialogHostState();
+}
+
+class _AppDialogHostState extends State<_AppDialogHost> {
+  bool _shownStartupWebAccessError = false;
+  int _shownRemoteFailureId = 0;
+  String _shownPairingId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    RuntimeConnectionManager.instance.addListener(_onRuntimeChanged);
+    FlutterWebAccessServer.instance.addListener(_onWebAccessChanged);
+  }
+
+  @override
+  void dispose() {
+    RuntimeConnectionManager.instance.removeListener(_onRuntimeChanged);
+    FlutterWebAccessServer.instance.removeListener(_onWebAccessChanged);
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _showStartupWebAccessError();
+  }
+
+  void _showStartupWebAccessError() {
+    final error = widget.startupWebAccessError;
+    if (_shownStartupWebAccessError || error == null) {
+      return;
+    }
+    _shownStartupWebAccessError = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text(l10n.settingsWebAccessService),
+            content: SingleChildScrollView(
+              child: SelectableText(l10n.settingsWebAccessStartFailed(error)),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(l10n.ok),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  void _onRuntimeChanged() {
+    final event = RuntimeConnectionManager.instance.lastRemoteFailure;
+    if (event == null || event.id == _shownRemoteFailureId) {
+      return;
+    }
+    _shownRemoteFailureId = event.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text(l10n.settingsRuntimeRemoteDisconnected),
+            content: SingleChildScrollView(
+              child: SelectableText(
+                l10n.settingsRuntimeRemoteDisconnectedMessage(event.error),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(l10n.ok),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  void _onWebAccessChanged() {
+    final record = FlutterWebAccessServer.instance.lastPairingCode;
+    if (record == null || record.pairingId == _shownPairingId) {
+      return;
+    }
+    _shownPairingId = record.pairingId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text(l10n.settingsWebAccessPairingRequest),
+            content: SelectableText(
+              l10n.settingsWebAccessPairingRequestMessage(
+                record.pairingCode,
+                record.clientDeviceId,
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(l10n.ok),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }

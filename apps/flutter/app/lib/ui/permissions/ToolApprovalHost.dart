@@ -81,7 +81,11 @@ class _ToolApprovalHostState extends State<ToolApprovalHost> {
   }
 
   Future<void> _respond(ToolApprovalResult result) async {
-    await widget.bridge.handlePermissionResult(result);
+    final request = _request;
+    if (request == null) {
+      return;
+    }
+    await widget.bridge.respondPermissionRequest(request, result);
     if (mounted) {
       setState(() {
         _request = null;
@@ -90,7 +94,8 @@ class _ToolApprovalHostState extends State<ToolApprovalHost> {
   }
 
   bool _sameRequest(ToolApprovalRequest? a, ToolApprovalRequest? b) {
-    return a?.requestedAtMillis == b?.requestedAtMillis &&
+    return a?.remoteRequestId == b?.remoteRequestId &&
+        a?.requestedAtMillis == b?.requestedAtMillis &&
         a?.tool.name == b?.tool.name;
   }
 

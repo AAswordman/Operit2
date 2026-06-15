@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    ToolPkgChatInputHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgChatInputHookRegistration,
 };
 use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 

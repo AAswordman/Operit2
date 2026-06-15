@@ -1,7 +1,9 @@
 use super::*;
 use crate::create_local_core;
 
-use operit_link::{RemoteHostInteractionBroker, RemoteLinkServer, RemoteLinkServerConfig};
+use operit_link::{
+    RemoteDeviceInfo, RemoteHostInteractionBroker, RemoteLinkServer, RemoteLinkServerConfig,
+};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
@@ -154,6 +156,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
             RemoteLinkServerConfig {
                 bindAddress: config.bind_address,
                 token: config.token.clone(),
+                deviceInfo: RemoteDeviceInfo::native(),
                 hostInteractionBroker: None,
                 webAccess: Some(operit_link::RemoteWebAccessConfig {
                     token: config.token,
@@ -161,6 +164,10 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                     webRoot: web_root,
                 }),
                 printStartupInfo: false,
+                acceptedSessions: BTreeMap::new(),
+                acceptedSessionLoader: None,
+                acceptedSessionStore: None,
+                pairingCodeSink: None,
             },
         )
         .await;
@@ -192,6 +199,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         RemoteLinkServerConfig {
             bindAddress: config.bind_address,
             token: config.token.clone(),
+            deviceInfo: RemoteDeviceInfo::native(),
             hostInteractionBroker: Some(host_interaction_broker),
             webAccess: Some(operit_link::RemoteWebAccessConfig {
                 token: config.token,
@@ -199,6 +207,10 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 webRoot: web_root,
             }),
             printStartupInfo: false,
+            acceptedSessions: BTreeMap::new(),
+            acceptedSessionLoader: None,
+            acceptedSessionStore: None,
+            pairingCodeSink: None,
         },
     )
     .await;

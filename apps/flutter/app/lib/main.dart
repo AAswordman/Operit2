@@ -16,7 +16,17 @@ void main() async {
       await ClientLogger.initialize();
       _installClientLogHooks();
       await RuntimeConnectionManager.instance.initialize();
-      await FlutterWebAccessServer.instance.initializeFromConfig();
+      String? startupWebAccessError;
+      try {
+        await FlutterWebAccessServer.instance.initializeFromConfig();
+      } catch (error, stackTrace) {
+        startupWebAccessError = error.toString();
+        ClientLogger.e(
+          'Web access server failed during startup',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       await LiquidGlassWidgets.initialize();
       runApp(
         LiquidGlassWidgets.wrap(
@@ -26,7 +36,7 @@ void main() async {
             thickness: 36,
             quality: GlassQuality.standard,
           ),
-          child: const OperitApp(),
+          child: OperitApp(startupWebAccessError: startupWebAccessError),
         ),
       );
     },

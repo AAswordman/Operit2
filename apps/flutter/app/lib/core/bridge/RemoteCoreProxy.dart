@@ -86,10 +86,13 @@ class RemoteCoreProxy extends CoreProxy {
 
     final json = jsonDecode(response.body) as Map<String, Object?>;
     final coreDeviceId = json['coreDeviceId'] as String;
+    final coreDeviceInfo = RemoteDeviceInfo.fromJson(
+      json['coreDeviceInfo'] as Map<String, Object?>,
+    );
     final transports = (json['transports'] as List<Object?>).cast<String>();
     return HostEnvironmentDescriptor(
       id: 'remote:$coreDeviceId',
-      displayName: 'Remote Operit Core',
+      displayName: 'Remote ${coreDeviceInfo.displayName}',
       pathStyleDescriptionEn: 'Remote core path style',
       pathStyleDescriptionCn: '远程核心路径风格',
       examplePaths: const <String>[],
@@ -104,6 +107,42 @@ class RemoteCoreProxy extends CoreProxy {
       runtimeStorageHost: true,
       runtimeSqliteHost: true,
     );
+  }
+
+  Future<RemoteHostInteractionRequest?> pollHostInteraction({
+    required int timeoutMs,
+  }) async {
+    final body = jsonEncode({'timeoutMs': timeoutMs});
+    final response = await client.post(
+      session.uri('/host/interaction/poll'),
+      headers: session.signedHeaders(body),
+      body: body,
+    );
+    _throwIfRemoteError(response);
+    final decoded = jsonDecode(response.body) as Map<String, Object?>;
+    final request = decoded['request'];
+    if (request == null) {
+      return null;
+    }
+    return RemoteHostInteractionRequest.fromJson(
+      request as Map<String, Object?>,
+    );
+  }
+
+  Future<void> respondHostInteraction({
+    required String requestId,
+    required String result,
+  }) async {
+    final body = jsonEncode({
+      'requestId': requestId,
+      'response': {'result': result},
+    });
+    final response = await client.post(
+      session.uri('/host/interaction/respond'),
+      headers: session.signedHeaders(body),
+      body: body,
+    );
+    _throwIfRemoteError(response);
   }
 
   void dispose() {
@@ -140,11 +179,12 @@ class _RemoteWatchChannelPool {
   final PairedRemoteSessionRecord session;
   final http.Client client;
   final List<_RemoteWatchChannel> _channels = <_RemoteWatchChannel>[];
+  int _nextChannelId = 0;
+  int _nextSubscriptionId = 0;
 
   Future<_RemoteWatchSubscription> open(CoreWatchRequest request) async {
     final channel = await _acquireChannel();
-    final subscriptionId =
-        'watch-${DateTime.now().microsecondsSinceEpoch}-${_channels.length}';
+    final subscriptionId = 'watch-${_nextSubscriptionId++}';
     final controller = StreamController<CoreEvent>();
     channel.subscriptions[subscriptionId] = controller;
     channel.subscriptionCount += 1;
@@ -222,8 +262,7 @@ class _RemoteWatchChannelPool {
     final channel = await _RemoteWatchChannel.open(
       session: session,
       client: client,
-      channelId:
-          'watch-channel-${DateTime.now().microsecondsSinceEpoch}-${_channels.length}',
+      channelId: 'watch-channel-${_nextChannelId++}',
     );
     _channels.add(channel);
     return channel;
@@ -275,6 +314,9 @@ class _RemoteWatchChannel {
             }
           },
           onError: (Object error, StackTrace stackTrace) {
+            if (channel._closing) {
+              return;
+            }
             channel._fail(error, stackTrace);
           },
           onDone: () {
@@ -282,7 +324,7 @@ class _RemoteWatchChannel {
             if (tail.isNotEmpty) {
               channel._dispatch(tail);
             }
-            channel._closeAll();
+            channel._done();
           },
         );
     channel = _RemoteWatchChannel._(
@@ -297,30 +339,54 @@ class _RemoteWatchChannel {
   final Map<String, StreamController<CoreEvent>> subscriptions;
   final StreamSubscription<String> _eventSubscription;
   int subscriptionCount = 0;
+  bool _closing = false;
 
   void _dispatch(String line) {
     final decoded = jsonDecode(line) as Map<String, Object?>;
     final subscriptionId = decoded['subscriptionId'] as String;
     final event = CoreEvent.fromJson(decoded['event'] as Map<String, Object?>);
-    subscriptions[subscriptionId]?.add(event);
+    final controller = subscriptions[subscriptionId];
+    controller?.add(event);
+    if (event.kind == 'Completed') {
+      unawaited(controller?.close());
+    }
   }
 
   void _fail(Object error, StackTrace stackTrace) {
     for (final controller in subscriptions.values) {
-      controller.addError(error, stackTrace);
+      if (!controller.isClosed) {
+        controller.addError(error, stackTrace);
+      }
     }
     _closeAll();
   }
 
+  void _done() {
+    if (_closing) {
+      _closeAll();
+      return;
+    }
+    _fail(
+      const CoreLinkError(
+        code: 'REMOTE_WATCH_CLOSED',
+        message: 'remote watch channel closed',
+      ),
+      StackTrace.current,
+    );
+  }
+
   void _closeAll() {
     for (final controller in subscriptions.values) {
-      controller.close();
+      if (!controller.isClosed) {
+        controller.close();
+      }
     }
     subscriptions.clear();
     subscriptionCount = 0;
   }
 
   Future<void> dispose() {
+    _closing = true;
     _closeAll();
     return _eventSubscription.cancel();
   }
@@ -338,6 +404,26 @@ class _RemoteWatchSubscription {
   final Stream<CoreEvent> events;
 }
 
+class RemoteHostInteractionRequest {
+  const RemoteHostInteractionRequest({
+    required this.requestId,
+    required this.kind,
+    required this.payload,
+  });
+
+  factory RemoteHostInteractionRequest.fromJson(Map<String, Object?> json) {
+    return RemoteHostInteractionRequest(
+      requestId: json['requestId'] as String,
+      kind: json['kind'] as String,
+      payload: json['payload'] as Map<String, Object?>,
+    );
+  }
+
+  final String requestId;
+  final String kind;
+  final Map<String, Object?> payload;
+}
+
 void _throwRemoteErrorBody(int statusCode, String body) {
   final decoded = jsonDecode(body);
   if (decoded is Map<String, Object?> &&
@@ -351,11 +437,33 @@ void _throwRemoteErrorBody(int statusCode, String body) {
   );
 }
 
+class RemoteDeviceInfo {
+  const RemoteDeviceInfo({required this.platform, required this.model});
+
+  factory RemoteDeviceInfo.fromJson(Map<String, Object?> json) {
+    return RemoteDeviceInfo(
+      platform: json['platform'] as String,
+      model: json['model'] as String,
+    );
+  }
+
+  final String platform;
+  final String model;
+
+  String get displayName => '$platform-$model';
+
+  Map<String, Object?> toJson() {
+    return {'platform': platform, 'model': model};
+  }
+}
+
 class PairedRemoteSessionRecord {
   const PairedRemoteSessionRecord({
     required this.baseUrl,
     required this.sessionId,
     required this.deviceId,
+    required this.remoteDeviceInfo,
+    required this.pairingServiceVersion,
     required this.sessionSecret,
   });
 
@@ -364,6 +472,10 @@ class PairedRemoteSessionRecord {
       baseUrl: json['baseUrl'] as String,
       sessionId: json['sessionId'] as String,
       deviceId: json['deviceId'] as String,
+      remoteDeviceInfo: RemoteDeviceInfo.fromJson(
+        json['remoteDeviceInfo'] as Map<String, Object?>,
+      ),
+      pairingServiceVersion: json['pairingServiceVersion'] as int,
       sessionSecret: json['sessionSecret'] as String,
     );
   }
@@ -371,6 +483,8 @@ class PairedRemoteSessionRecord {
   final String baseUrl;
   final String sessionId;
   final String deviceId;
+  final RemoteDeviceInfo remoteDeviceInfo;
+  final int pairingServiceVersion;
   final String sessionSecret;
 
   Uri uri(String path) {
@@ -394,6 +508,8 @@ class PairedRemoteSessionRecord {
       'baseUrl': baseUrl,
       'sessionId': sessionId,
       'deviceId': deviceId,
+      'remoteDeviceInfo': remoteDeviceInfo.toJson(),
+      'pairingServiceVersion': pairingServiceVersion,
       'sessionSecret': sessionSecret,
     };
   }

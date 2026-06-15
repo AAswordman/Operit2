@@ -7,6 +7,7 @@ class ToolApprovalRequest {
     required this.tool,
     required this.description,
     required this.requestedAtMillis,
+    this.remoteRequestId,
   });
 
   factory ToolApprovalRequest.fromJson(Map<String, Object?> json) {
@@ -14,6 +15,7 @@ class ToolApprovalRequest {
       tool: ToolApprovalTool.fromJson(json['tool'] as Map<String, Object?>),
       description: json['description'] as String,
       requestedAtMillis: json['requestedAtMillis'] as int,
+      remoteRequestId: json['remoteRequestId'] as String?,
     );
   }
 
@@ -31,6 +33,7 @@ class ToolApprovalRequest {
   final ToolApprovalTool tool;
   final String description;
   final int requestedAtMillis;
+  final String? remoteRequestId;
 }
 
 class ToolApprovalTool {

@@ -766,26 +766,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.';
 
   @override
-  String get settingsCategoryRuntimeTitle => 'Runtime';
-
-  @override
-  String get settingsCategoryRuntimeSubtitle => 'Local core, remote core';
-
-  @override
-  String get settingsCategoryRuntimeDescription =>
-      'Choose the runtime connected by this Flutter client: local core or a paired remote core.';
-
-  @override
-  String get settingsCategoryWebAccessTitle => 'Web Access';
-
-  @override
-  String get settingsCategoryWebAccessSubtitle => 'Browser entry, token';
-
-  @override
-  String get settingsCategoryWebAccessDescription =>
-      'Open a local web access entry for this client and manage its bind address and access token.';
-
-  @override
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
 
   @override
@@ -804,6 +784,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCategoryDataDescription =>
       'Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.';
+
+  @override
+  String get settingsCategoryAccessLinksTitle => 'Access & Links';
+
+  @override
+  String get settingsCategoryAccessLinksSubtitle => 'Runtime, Web Access';
+
+  @override
+  String get settingsCategoryAccessLinksDescription =>
+      'Manage the runtime connection, local web access entry, bind address, and access token for this client.';
 
   @override
   String get settingsComingSoon =>
@@ -1835,34 +1825,42 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimeUseLocal => 'Use local runtime';
 
   @override
-  String get settingsRuntimeUseRemote => 'Use remote runtime';
+  String get settingsRuntimeLocalTitle => 'Local runtime';
 
   @override
-  String get settingsRuntimeCurrentMode => 'Current mode';
+  String get settingsRuntimeLocalDescription =>
+      'Use the core built into this device. No connection details are required.';
 
   @override
-  String get settingsRuntimeLocalMode => 'Local';
+  String get settingsRuntimeRemoteTitle => 'Remote runtime';
 
   @override
-  String get settingsRuntimeRemoteMode => 'Remote';
+  String get settingsRuntimeRemoteDescription =>
+      'Manage paired remote cores and switch to a specific remote from the list.';
 
   @override
-  String get settingsRuntimeRemoteName => 'Remote name';
+  String get settingsRuntimeTesting => 'Testing runtime…';
 
   @override
-  String get settingsRuntimeBaseUrl => 'Base URL';
+  String get settingsRuntimePairRemote => 'Pair new remote';
 
   @override
-  String get settingsRuntimeSessionId => 'Session ID';
+  String get settingsRuntimeNoPairedRemote => 'No paired remote core yet.';
 
   @override
-  String get settingsRuntimeDeviceId => 'Device ID';
+  String get settingsRuntimePairToken => 'Pairing token';
 
   @override
-  String get settingsRuntimeSessionSecret => 'Session Secret';
+  String get settingsRuntimePairCode => 'Pairing code';
 
   @override
-  String get settingsRuntimeSaveRemote => 'Save and use remote';
+  String get settingsRuntimeStartPairing => 'Start pairing';
+
+  @override
+  String get settingsRuntimeFinishPairing => 'Finish pairing';
+
+  @override
+  String get settingsRuntimeBaseUrl => 'Remote address';
 
   @override
   String get settingsRuntimeTestCurrent => 'Test current runtime';
@@ -1881,6 +1879,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String settingsRuntimeTestFailed(String error) {
     return 'Runtime test failed: $error';
+  }
+
+  @override
+  String get settingsRuntimeRemoteDisconnected => 'Remote runtime disconnected';
+
+  @override
+  String settingsRuntimeRemoteDisconnectedMessage(String error) {
+    return 'Switched to local core.\n\n$error';
   }
 
   @override
@@ -1906,7 +1912,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsWebAccessCopyToken => 'Copy token';
 
   @override
-  String get settingsWebAccessAccessUrl => 'Access URL';
+  String get settingsWebAccessAccessUrl => 'Address';
+
+  @override
+  String get settingsWebAccessLocalUrl => 'Local';
+
+  @override
+  String get settingsWebAccessPairingUrl => 'Pairing';
+
+  @override
+  String get settingsWebAccessPairingUrlLocalOnly => 'Local only';
+
+  @override
+  String get settingsWebAccessPairingUrlUnavailable => 'No LAN address found';
 
   @override
   String get settingsWebAccessCopyUrl => 'Copy URL';
@@ -1928,6 +1946,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsWebAccessUrlCopied => 'Access URL copied.';
+
+  @override
+  String get settingsWebAccessPairedClients => 'Paired clients';
+
+  @override
+  String get settingsWebAccessNoPairedClients =>
+      'No client has paired with this device yet.';
+
+  @override
+  String get settingsWebAccessPairedDeleted => 'Paired client deleted.';
+
+  @override
+  String get settingsWebAccessPairingRequest => 'Remote pairing request';
+
+  @override
+  String settingsWebAccessPairingRequestMessage(String code, String client) {
+    return 'Pairing code: $code\nClient: $client';
+  }
 
   @override
   String get settingsWebAccessInvalidBindAddress =>

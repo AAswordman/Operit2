@@ -9,10 +9,9 @@ enum SettingsCategory {
   characters,
   tools,
   workspace,
-  runtime,
-  webAccess,
   appearance,
   data,
+  accessLinks,
 }
 
 class SettingsCategorySpec {
@@ -57,18 +56,6 @@ class SettingsCategorySpec {
         description: l10n.settingsCategoryWorkspaceDescription,
         icon: Icons.folder_outlined,
       ),
-      SettingsCategory.runtime => SettingsCategorySpec(
-        title: l10n.settingsCategoryRuntimeTitle,
-        subtitle: l10n.settingsCategoryRuntimeSubtitle,
-        description: l10n.settingsCategoryRuntimeDescription,
-        icon: Icons.device_hub_outlined,
-      ),
-      SettingsCategory.webAccess => SettingsCategorySpec(
-        title: l10n.settingsCategoryWebAccessTitle,
-        subtitle: l10n.settingsCategoryWebAccessSubtitle,
-        description: l10n.settingsCategoryWebAccessDescription,
-        icon: Icons.language_outlined,
-      ),
       SettingsCategory.appearance => SettingsCategorySpec(
         title: l10n.settingsCategoryAppearanceTitle,
         subtitle: l10n.settingsCategoryAppearanceSubtitle,
@@ -80,6 +67,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryDataSubtitle,
         description: l10n.settingsCategoryDataDescription,
         icon: Icons.storage_outlined,
+      ),
+      SettingsCategory.accessLinks => SettingsCategorySpec(
+        title: l10n.settingsCategoryAccessLinksTitle,
+        subtitle: l10n.settingsCategoryAccessLinksSubtitle,
+        description: l10n.settingsCategoryAccessLinksDescription,
+        icon: Icons.language_outlined,
       ),
     };
   }

@@ -379,18 +379,15 @@
   "settingsCategoryWorkspaceTitle": "工作区与浏览器",
   "settingsCategoryWorkspaceSubtitle": "文件、终端、浏览器",
   "settingsCategoryWorkspaceDescription": "管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。",
-  "settingsCategoryRuntimeTitle": "Runtime",
-  "settingsCategoryRuntimeSubtitle": "本地 core、远程 core",
-  "settingsCategoryRuntimeDescription": "选择当前 Flutter 客户端连接的 runtime，可使用本地 core 或已配对的远程 core。",
-  "settingsCategoryWebAccessTitle": "Web 访问",
-  "settingsCategoryWebAccessSubtitle": "浏览器入口、Token",
-  "settingsCategoryWebAccessDescription": "为当前客户端打开本机 Web 访问入口，并管理绑定地址和访问 Token。",
   "settingsCategoryAppearanceTitle": "外观与交互",
   "settingsCategoryAppearanceSubtitle": "主题、语言",
   "settingsCategoryAppearanceDescription": "调整客户端主题和当前本地化显示。",
   "settingsCategoryDataTitle": "数据与诊断",
   "settingsCategoryDataSubtitle": "历史、备份、日志",
   "settingsCategoryDataDescription": "管理聊天历史、备份恢复、Token 统计、Host 能力、日志和版本更新。",
+  "settingsCategoryAccessLinksTitle": "访问与链接",
+  "settingsCategoryAccessLinksSubtitle": "Runtime、Web 访问",
+  "settingsCategoryAccessLinksDescription": "管理当前客户端连接的 runtime、本机 Web 访问入口、绑定地址和访问 Token。",
   "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。",
   "settingsAdvanced": "高级设置",
   "settingsActive": "当前",
@@ -906,16 +903,18 @@
   "settingsRuntimeConnection": "Runtime 连接",
   "settingsRuntimeConnectionDescription": "当前客户端的所有 core 调用都会走这里选择的 runtime；Web 访问入口也会跟随它。",
   "settingsRuntimeUseLocal": "使用本地 runtime",
-  "settingsRuntimeUseRemote": "使用远程 runtime",
-  "settingsRuntimeCurrentMode": "当前模式",
-  "settingsRuntimeLocalMode": "本地",
-  "settingsRuntimeRemoteMode": "远程",
-  "settingsRuntimeRemoteName": "远程名称",
-  "settingsRuntimeBaseUrl": "Base URL",
-  "settingsRuntimeSessionId": "Session ID",
-  "settingsRuntimeDeviceId": "Device ID",
-  "settingsRuntimeSessionSecret": "Session Secret",
-  "settingsRuntimeSaveRemote": "保存并使用远程",
+  "settingsRuntimeLocalTitle": "本地 runtime",
+  "settingsRuntimeLocalDescription": "使用当前设备内置的 core，不需要填写连接信息。",
+  "settingsRuntimeRemoteTitle": "远程 runtime",
+  "settingsRuntimeRemoteDescription": "管理已配对的远程 core，可从列表里切换到指定远程。",
+  "settingsRuntimeTesting": "正在测试 runtime…",
+  "settingsRuntimePairRemote": "配对新远程",
+  "settingsRuntimeNoPairedRemote": "还没有已配对的远程 core。",
+  "settingsRuntimePairToken": "配对 Token",
+  "settingsRuntimePairCode": "配对码",
+  "settingsRuntimeStartPairing": "开始配对",
+  "settingsRuntimeFinishPairing": "完成配对",
+  "settingsRuntimeBaseUrl": "远程地址",
   "settingsRuntimeTestCurrent": "测试当前 runtime",
   "settingsRuntimeSwitchedLocal": "已切换到本地 runtime。",
   "settingsRuntimeSwitchedRemote": "已切换到远程 runtime。",
@@ -935,6 +934,15 @@
       }
     }
   },
+  "settingsRuntimeRemoteDisconnected": "远程 runtime 已断开",
+  "settingsRuntimeRemoteDisconnectedMessage": "已切换到本地 core。\n\n{error}",
+  "@settingsRuntimeRemoteDisconnectedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsWebAccessService": "Web 访问服务",
   "settingsWebAccessServiceDescription": "开启后，当前客户端会在本机启动一个 HTTP 入口，浏览器可通过 Token 访问 core。",
   "settingsWebAccessEnable": "开启 Web 访问",
@@ -942,7 +950,11 @@
   "settingsWebAccessToken": "访问 Token",
   "settingsWebAccessRotateToken": "轮换 Token",
   "settingsWebAccessCopyToken": "复制 Token",
-  "settingsWebAccessAccessUrl": "访问地址",
+  "settingsWebAccessAccessUrl": "地址",
+  "settingsWebAccessLocalUrl": "本机访问",
+  "settingsWebAccessPairingUrl": "远程配对",
+  "settingsWebAccessPairingUrlLocalOnly": "仅本机",
+  "settingsWebAccessPairingUrlUnavailable": "未找到局域网地址",
   "settingsWebAccessCopyUrl": "复制地址",
   "settingsWebAccessOpenUrl": "打开",
   "settingsWebAccessRunning": "运行中",
@@ -950,6 +962,21 @@
   "settingsWebAccessSaved": "Web 访问设置已保存。",
   "settingsWebAccessTokenCopied": "访问 Token 已复制。",
   "settingsWebAccessUrlCopied": "访问地址已复制。",
+  "settingsWebAccessPairedClients": "已配对客户端",
+  "settingsWebAccessNoPairedClients": "还没有客户端配对此设备。",
+  "settingsWebAccessPairedDeleted": "已删除配对客户端。",
+  "settingsWebAccessPairingRequest": "远程配对请求",
+  "settingsWebAccessPairingRequestMessage": "配对码：{code}\n客户端：{client}",
+  "@settingsWebAccessPairingRequestMessage": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      },
+      "client": {
+        "type": "String"
+      }
+    }
+  },
   "settingsWebAccessInvalidBindAddress": "绑定地址格式应为 host:port。",
   "settingsWebAccessStartFailed": "启动 Web 访问失败：{error}",
   "@settingsWebAccessStartFailed": {

@@ -100,14 +100,11 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     final targets = Set<String>.from(_selectedWorkspaceNames);
     setState(() => _deleteInProgress = true);
     try {
-      final deletedCount = await widget.clients.repositoryWorkspaceService
+      await widget.clients.repositoryWorkspaceService
           .deleteUnboundWorkspaces(workspaceNames: targets.toList());
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsWorkspaceDeleted(deletedCount))),
-      );
       setState(() {
         _selectedWorkspaceNames.clear();
         _future = _load();
@@ -181,11 +178,6 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
                 _InfoLine(
                   label: l10n.settingsWorkspaceInternalRoot,
                   value: data.workspaceRoot,
-                ),
-                _ActionLine(
-                  icon: Icons.refresh,
-                  title: l10n.settingsWorkspaceRefresh,
-                  onTap: _deleteInProgress ? null : _reload,
                 ),
               ],
             ),
@@ -529,31 +521,6 @@ class _InfoLine extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ActionLine extends StatelessWidget {
-  const _ActionLine({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      leading: Icon(icon),
-      title: Text(title),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
     );
   }
 }

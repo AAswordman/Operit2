@@ -751,26 +751,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。';
 
   @override
-  String get settingsCategoryRuntimeTitle => 'Runtime';
-
-  @override
-  String get settingsCategoryRuntimeSubtitle => '本地 core、远程 core';
-
-  @override
-  String get settingsCategoryRuntimeDescription =>
-      '选择当前 Flutter 客户端连接的 runtime，可使用本地 core 或已配对的远程 core。';
-
-  @override
-  String get settingsCategoryWebAccessTitle => 'Web 访问';
-
-  @override
-  String get settingsCategoryWebAccessSubtitle => '浏览器入口、Token';
-
-  @override
-  String get settingsCategoryWebAccessDescription =>
-      '为当前客户端打开本机 Web 访问入口，并管理绑定地址和访问 Token。';
-
-  @override
   String get settingsCategoryAppearanceTitle => '外观与交互';
 
   @override
@@ -788,6 +768,16 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsCategoryDataDescription =>
       '管理聊天历史、备份恢复、Token 统计、Host 能力、日志和版本更新。';
+
+  @override
+  String get settingsCategoryAccessLinksTitle => '访问与链接';
+
+  @override
+  String get settingsCategoryAccessLinksSubtitle => 'Runtime、Web 访问';
+
+  @override
+  String get settingsCategoryAccessLinksDescription =>
+      '管理当前客户端连接的 runtime、本机 Web 访问入口、绑定地址和访问 Token。';
 
   @override
   String get settingsComingSoon => '这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。';
@@ -1767,34 +1757,40 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeUseLocal => '使用本地 runtime';
 
   @override
-  String get settingsRuntimeUseRemote => '使用远程 runtime';
+  String get settingsRuntimeLocalTitle => '本地 runtime';
 
   @override
-  String get settingsRuntimeCurrentMode => '当前模式';
+  String get settingsRuntimeLocalDescription => '使用当前设备内置的 core，不需要填写连接信息。';
 
   @override
-  String get settingsRuntimeLocalMode => '本地';
+  String get settingsRuntimeRemoteTitle => '远程 runtime';
 
   @override
-  String get settingsRuntimeRemoteMode => '远程';
+  String get settingsRuntimeRemoteDescription => '管理已配对的远程 core，可从列表里切换到指定远程。';
 
   @override
-  String get settingsRuntimeRemoteName => '远程名称';
+  String get settingsRuntimeTesting => '正在测试 runtime…';
 
   @override
-  String get settingsRuntimeBaseUrl => 'Base URL';
+  String get settingsRuntimePairRemote => '配对新远程';
 
   @override
-  String get settingsRuntimeSessionId => 'Session ID';
+  String get settingsRuntimeNoPairedRemote => '还没有已配对的远程 core。';
 
   @override
-  String get settingsRuntimeDeviceId => 'Device ID';
+  String get settingsRuntimePairToken => '配对 Token';
 
   @override
-  String get settingsRuntimeSessionSecret => 'Session Secret';
+  String get settingsRuntimePairCode => '配对码';
 
   @override
-  String get settingsRuntimeSaveRemote => '保存并使用远程';
+  String get settingsRuntimeStartPairing => '开始配对';
+
+  @override
+  String get settingsRuntimeFinishPairing => '完成配对';
+
+  @override
+  String get settingsRuntimeBaseUrl => '远程地址';
 
   @override
   String get settingsRuntimeTestCurrent => '测试当前 runtime';
@@ -1813,6 +1809,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String settingsRuntimeTestFailed(String error) {
     return 'Runtime 测试失败：$error';
+  }
+
+  @override
+  String get settingsRuntimeRemoteDisconnected => '远程 runtime 已断开';
+
+  @override
+  String settingsRuntimeRemoteDisconnectedMessage(String error) {
+    return '已切换到本地 core。\n\n$error';
   }
 
   @override
@@ -1838,7 +1842,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsWebAccessCopyToken => '复制 Token';
 
   @override
-  String get settingsWebAccessAccessUrl => '访问地址';
+  String get settingsWebAccessAccessUrl => '地址';
+
+  @override
+  String get settingsWebAccessLocalUrl => '本机访问';
+
+  @override
+  String get settingsWebAccessPairingUrl => '远程配对';
+
+  @override
+  String get settingsWebAccessPairingUrlLocalOnly => '仅本机';
+
+  @override
+  String get settingsWebAccessPairingUrlUnavailable => '未找到局域网地址';
 
   @override
   String get settingsWebAccessCopyUrl => '复制地址';
@@ -1860,6 +1876,23 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsWebAccessUrlCopied => '访问地址已复制。';
+
+  @override
+  String get settingsWebAccessPairedClients => '已配对客户端';
+
+  @override
+  String get settingsWebAccessNoPairedClients => '还没有客户端配对此设备。';
+
+  @override
+  String get settingsWebAccessPairedDeleted => '已删除配对客户端。';
+
+  @override
+  String get settingsWebAccessPairingRequest => '远程配对请求';
+
+  @override
+  String settingsWebAccessPairingRequestMessage(String code, String client) {
+    return '配对码：$code\n客户端：$client';
+  }
 
   @override
   String get settingsWebAccessInvalidBindAddress => '绑定地址格式应为 host:port。';

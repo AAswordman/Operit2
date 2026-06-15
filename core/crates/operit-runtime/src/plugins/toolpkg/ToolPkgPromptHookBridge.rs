@@ -15,7 +15,7 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
 };
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    ToolPkgPromptHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
 };
 use crate::util::AppLogger::AppLogger;
 use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
@@ -310,7 +310,11 @@ fn dispatch_prompt_hooks(
             );
         }
     }
-    if changed { Some(mutation) } else { None }
+    if changed {
+        Some(mutation)
+    } else {
+        None
+    }
 }
 
 fn prompt_context_to_value(context: &PromptHookContext) -> Value {

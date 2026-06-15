@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::body::Body;
@@ -21,7 +21,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use futures_util::StreamExt;
 use hmac::{Hmac, Mac};
-use rand_core::{OsRng, RngCore};
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
@@ -32,18 +32,25 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::client::CoreLinkClient;
 use crate::protocol::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
+    CoreWatchRequest,
 };
 
 type HmacSha256 = Hmac<Sha256>;
+pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 
 #[derive(Clone)]
 pub struct RemoteLinkServerConfig {
     pub bindAddress: String,
     pub token: String,
+    pub deviceInfo: RemoteDeviceInfo,
     pub hostInteractionBroker: Option<RemoteHostInteractionBroker>,
     pub webAccess: Option<RemoteWebAccessConfig>,
     pub printStartupInfo: bool,
+    pub acceptedSessions: BTreeMap<String, AcceptedRemoteSessionRecord>,
+    pub acceptedSessionLoader: Option<AcceptedRemoteSessionLoader>,
+    pub acceptedSessionStore: Option<AcceptedRemoteSessionStore>,
+    pub pairingCodeSink: Option<RemotePairingCodeSink>,
 }
 
 impl Default for RemoteLinkServerConfig {
@@ -51,14 +58,44 @@ impl Default for RemoteLinkServerConfig {
         Self {
             bindAddress: "0.0.0.0:37192".to_string(),
             token: "operit-link-dev".to_string(),
+            deviceInfo: RemoteDeviceInfo::native(),
             hostInteractionBroker: None,
             webAccess: None,
             printStartupInfo: true,
+            acceptedSessions: BTreeMap::new(),
+            acceptedSessionLoader: None,
+            acceptedSessionStore: None,
+            pairingCodeSink: None,
         }
     }
 }
 
 pub struct RemoteLinkServer;
+
+pub type AcceptedRemoteSessionStore =
+    Arc<dyn Fn(String, AcceptedRemoteSessionRecord) -> Result<(), String> + Send + Sync>;
+pub type AcceptedRemoteSessionLoader =
+    Arc<dyn Fn() -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> + Send + Sync>;
+pub type RemotePairingCodeSink =
+    Arc<dyn Fn(RemotePairingCodeRecord) -> Result<(), String> + Send + Sync>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemotePairingCodeRecord {
+    pub pairingId: String,
+    pub pairingServiceVersion: i32,
+    pub clientDeviceId: String,
+    pub clientDeviceInfo: RemoteDeviceInfo,
+    pub pairingCode: String,
+    pub createdAt: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AcceptedRemoteSessionRecord {
+    pub deviceId: String,
+    pub deviceInfo: RemoteDeviceInfo,
+    pub pairingServiceVersion: i32,
+    pub sessionSecret: String,
+}
 
 #[derive(Clone)]
 pub struct RemoteWebAccessConfig {
@@ -74,8 +111,13 @@ struct RemoteLinkState {
     keySecret: Arc<StaticSecret>,
     keyPublic: String,
     deviceId: String,
+    deviceInfo: RemoteDeviceInfo,
     pairings: Arc<Mutex<BTreeMap<String, PendingPairing>>>,
     sessions: Arc<Mutex<BTreeMap<String, RemoteSession>>>,
+    acceptedSessionIds: Arc<Mutex<BTreeSet<String>>>,
+    acceptedSessionLoader: Option<AcceptedRemoteSessionLoader>,
+    acceptedSessionStore: Option<AcceptedRemoteSessionStore>,
+    pairingCodeSink: Option<RemotePairingCodeSink>,
     hostInteractionBroker: Option<RemoteHostInteractionBroker>,
     webAccess: Option<RemoteWebAccessState>,
     watchChannels: Arc<Mutex<BTreeMap<String, RemoteWatchChannel>>>,
@@ -86,9 +128,6 @@ struct RemoteWebAccessState {
     shutdownToken: String,
     shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
     webRoot: PathBuf,
-    linkSessionId: String,
-    linkDeviceId: String,
-    linkSessionSecret: String,
 }
 
 struct RemoteWatchChannel {
@@ -133,7 +172,9 @@ impl Drop for WatchChannelEventStream {
 
 #[derive(Clone, Debug)]
 struct PendingPairing {
+    pairingServiceVersion: i32,
     clientDeviceId: String,
+    clientDeviceInfo: RemoteDeviceInfo,
     clientPublicKey: String,
     pairingCode: String,
     serverNonce: String,
@@ -144,13 +185,36 @@ struct PendingPairing {
 #[derive(Clone, Debug)]
 struct RemoteSession {
     deviceId: String,
+    deviceInfo: RemoteDeviceInfo,
+    pairingServiceVersion: i32,
     sessionSecret: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteDeviceInfo {
+    pub platform: String,
+    pub model: String,
+}
+
+impl RemoteDeviceInfo {
+    pub fn native() -> Self {
+        Self {
+            platform: std::env::consts::OS.to_string(),
+            model: std::env::consts::ARCH.to_string(),
+        }
+    }
+
+    pub fn displayName(&self) -> String {
+        format!("{}-{}", self.platform, self.model)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HelloResponse {
     pub protocolVersion: i32,
+    pub pairingServiceVersion: i32,
     pub coreDeviceId: String,
+    pub coreDeviceInfo: RemoteDeviceInfo,
     pub corePublicKey: String,
     pub transports: Vec<String>,
     pub pairingRequired: bool,
@@ -158,8 +222,10 @@ pub struct HelloResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairStartRequest {
+    pub pairingServiceVersion: i32,
     pub token: String,
     pub clientDeviceId: String,
+    pub clientDeviceInfo: RemoteDeviceInfo,
     pub clientPublicKey: String,
     pub clientNonce: String,
 }
@@ -167,7 +233,9 @@ pub struct PairStartRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairStartResponse {
     pub pairingId: String,
+    pub pairingServiceVersion: i32,
     pub coreDeviceId: String,
+    pub coreDeviceInfo: RemoteDeviceInfo,
     pub corePublicKey: String,
     pub serverNonce: String,
 }
@@ -182,6 +250,7 @@ pub struct PairFinishRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairFinishResponse {
     pub sessionId: String,
+    pub pairingServiceVersion: i32,
     pub coreProof: String,
 }
 
@@ -255,8 +324,11 @@ pub struct RemoteSessionInfoEnvelope {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteSessionInfoResponse {
     pub protocolVersion: i32,
+    pub pairingServiceVersion: i32,
     pub coreDeviceId: String,
+    pub coreDeviceInfo: RemoteDeviceInfo,
     pub clientDeviceId: String,
+    pub clientDeviceInfo: RemoteDeviceInfo,
     pub transports: Vec<String>,
     pub nonce: String,
 }
@@ -291,14 +363,19 @@ pub struct PairedRemoteSessionRecord {
     pub baseUrl: String,
     pub sessionId: String,
     pub deviceId: String,
+    pub remoteDeviceInfo: RemoteDeviceInfo,
+    pub pairingServiceVersion: i32,
     pub sessionSecret: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct PairStartState {
     pub pairingId: String,
+    pub pairingServiceVersion: i32,
     pub clientDeviceId: String,
+    pub clientDeviceInfo: RemoteDeviceInfo,
     pub clientPublicKey: String,
+    pub coreDeviceInfo: RemoteDeviceInfo,
     pub clientNonce: String,
     pub serverNonce: String,
     pub sharedSecret: Vec<u8>,
@@ -453,45 +530,25 @@ impl RemoteLinkServer {
         let webAccessConfig = config.webAccess.clone();
         let (shutdownSender, shutdownReceiver) = oneshot::channel::<()>();
         let sessions = Arc::new(Mutex::new(BTreeMap::new()));
-        let webAccessSession = webAccessConfig.as_ref().map(|_| {
-            let mut sessionSecret = [0u8; 32];
-            OsRng.fill_bytes(&mut sessionSecret);
-            (
-                format!("web-access-{}", Uuid::new_v4().simple()),
-                format!("web-access-client-{}", Uuid::new_v4().simple()),
-                sessionSecret.to_vec(),
-            )
-        });
-        if let Some((sessionId, deviceId, sessionSecret)) = webAccessSession.as_ref() {
+        let acceptedSessionIds = Arc::new(Mutex::new(BTreeSet::new()));
+        for (sessionId, session) in config.acceptedSessions.iter() {
             sessions.lock().await.insert(
                 sessionId.clone(),
                 RemoteSession {
-                    deviceId: deviceId.clone(),
-                    sessionSecret: sessionSecret.clone(),
+                    deviceId: session.deviceId.clone(),
+                    deviceInfo: session.deviceInfo.clone(),
+                    pairingServiceVersion: session.pairingServiceVersion,
+                    sessionSecret: BASE64
+                        .decode(session.sessionSecret.as_bytes())
+                        .map_err(|error| error.to_string())?,
                 },
             );
+            acceptedSessionIds.lock().await.insert(sessionId.clone());
         }
         let webAccess = webAccessConfig.clone().map(|value| RemoteWebAccessState {
             shutdownToken: value.shutdownToken,
             shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
             webRoot: value.webRoot,
-            linkSessionId: webAccessSession
-                .as_ref()
-                .expect("web access session must exist")
-                .0
-                .clone(),
-            linkDeviceId: webAccessSession
-                .as_ref()
-                .expect("web access session must exist")
-                .1
-                .clone(),
-            linkSessionSecret: BASE64.encode(
-                webAccessSession
-                    .as_ref()
-                    .expect("web access session must exist")
-                    .2
-                    .as_slice(),
-            ),
         });
         let state = RemoteLinkState {
             core: Arc::new(Mutex::new(Box::new(core))),
@@ -499,8 +556,13 @@ impl RemoteLinkServer {
             keySecret,
             keyPublic,
             deviceId: format!("core-{}", Uuid::new_v4()),
+            deviceInfo: config.deviceInfo.clone(),
             pairings: Arc::new(Mutex::new(BTreeMap::new())),
             sessions,
+            acceptedSessionIds,
+            acceptedSessionLoader: config.acceptedSessionLoader.clone(),
+            acceptedSessionStore: config.acceptedSessionStore.clone(),
+            pairingCodeSink: config.pairingCodeSink.clone(),
             hostInteractionBroker: config.hostInteractionBroker.clone(),
             webAccess,
             watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
@@ -565,14 +627,20 @@ impl RemoteLinkClient {
             .map_err(|error| error.to_string())
     }
 
-    pub async fn pairStart(&self, token: &str) -> Result<PairStartState, String> {
+    pub async fn pairStart(
+        &self,
+        token: &str,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<PairStartState, String> {
         let clientSecret = StaticSecret::random_from_rng(OsRng);
         let clientPublic = PublicKey::from(&clientSecret);
         let clientDeviceId = format!("client-{}", Uuid::new_v4());
         let clientNonce = Uuid::new_v4().to_string();
         let request = PairStartRequest {
+            pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
             token: token.to_string(),
             clientDeviceId: clientDeviceId.clone(),
+            clientDeviceInfo: clientDeviceInfo.clone(),
             clientPublicKey: public_key_to_string(&clientPublic),
             clientNonce: clientNonce.clone(),
         };
@@ -592,8 +660,11 @@ impl RemoteLinkClient {
         let sharedSecret = clientSecret.diffie_hellman(&corePublic).as_bytes().to_vec();
         Ok(PairStartState {
             pairingId: response.pairingId,
+            pairingServiceVersion: response.pairingServiceVersion,
             clientDeviceId,
+            clientDeviceInfo,
             clientPublicKey: public_key_to_string(&clientPublic),
+            coreDeviceInfo: response.coreDeviceInfo,
             clientNonce,
             serverNonce: response.serverNonce,
             sharedSecret,
@@ -642,6 +713,8 @@ impl RemoteLinkClient {
             http: self.http.clone(),
             sessionId: response.sessionId,
             deviceId: state.clientDeviceId.clone(),
+            remoteDeviceInfo: state.coreDeviceInfo.clone(),
+            pairingServiceVersion: response.pairingServiceVersion,
             sessionSecret: session_secret(
                 &state.sharedSecret,
                 &state.clientNonce,
@@ -658,6 +731,8 @@ pub struct PairedRemoteSession {
     http: reqwest::Client,
     pub sessionId: String,
     pub deviceId: String,
+    pub remoteDeviceInfo: RemoteDeviceInfo,
+    pub pairingServiceVersion: i32,
     sessionSecret: Vec<u8>,
     watchChannel: Arc<Mutex<Option<PairedRemoteWatchChannel>>>,
 }
@@ -675,6 +750,8 @@ impl PairedRemoteSession {
             baseUrl: self.baseUrl.clone(),
             sessionId: self.sessionId.clone(),
             deviceId: self.deviceId.clone(),
+            remoteDeviceInfo: self.remoteDeviceInfo.clone(),
+            pairingServiceVersion: self.pairingServiceVersion,
             sessionSecret: BASE64.encode(&self.sessionSecret),
         }
     }
@@ -686,6 +763,8 @@ impl PairedRemoteSession {
             http: reqwest::Client::new(),
             sessionId: record.sessionId,
             deviceId: record.deviceId,
+            remoteDeviceInfo: record.remoteDeviceInfo,
+            pairingServiceVersion: record.pairingServiceVersion,
             sessionSecret: BASE64
                 .decode(record.sessionSecret)
                 .map_err(|error| error.to_string())?,
@@ -1010,7 +1089,9 @@ async fn hello(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Resp
     }
     Json(HelloResponse {
         protocolVersion: 1,
+        pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
         coreDeviceId: state.deviceId,
+        coreDeviceInfo: state.deviceInfo,
         corePublicKey: state.keyPublic,
         transports: vec!["http".to_string(), "ws".to_string()],
         pairingRequired: true,
@@ -1041,10 +1122,24 @@ async fn pair_start(
         "operit link pairing code for {}: {}",
         request.clientDeviceId, pairingCode
     );
+    if let Some(sink) = state.pairingCodeSink.as_ref() {
+        if let Err(error) = sink(RemotePairingCodeRecord {
+            pairingId: pairingId.clone(),
+            pairingServiceVersion: request.pairingServiceVersion,
+            clientDeviceId: request.clientDeviceId.clone(),
+            clientDeviceInfo: request.clientDeviceInfo.clone(),
+            pairingCode: pairingCode.clone(),
+            createdAt: unix_millis(),
+        }) {
+            return internal_server_error(error);
+        }
+    }
     state.pairings.lock().await.insert(
         pairingId.clone(),
         PendingPairing {
+            pairingServiceVersion: request.pairingServiceVersion,
             clientDeviceId: request.clientDeviceId,
+            clientDeviceInfo: request.clientDeviceInfo,
             clientPublicKey: request.clientPublicKey,
             pairingCode,
             serverNonce: serverNonce.clone(),
@@ -1054,7 +1149,9 @@ async fn pair_start(
     );
     Json(PairStartResponse {
         pairingId,
+        pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
         coreDeviceId: state.deviceId,
+        coreDeviceInfo: state.deviceInfo,
         corePublicKey: state.keyPublic,
         serverNonce,
     })
@@ -1086,15 +1183,36 @@ async fn pair_finish(
         &pairing.clientNonce,
         &pairing.serverNonce,
     );
+    if let Some(store) = state.acceptedSessionStore.as_ref() {
+        if let Err(error) = store(
+            sessionId.clone(),
+            AcceptedRemoteSessionRecord {
+                deviceId: pairing.clientDeviceId.clone(),
+                deviceInfo: pairing.clientDeviceInfo.clone(),
+                pairingServiceVersion: pairing.pairingServiceVersion,
+                sessionSecret: BASE64.encode(sessionSecret.as_slice()),
+            },
+        ) {
+            return internal_server_error(error);
+        }
+    }
+    state
+        .acceptedSessionIds
+        .lock()
+        .await
+        .insert(sessionId.clone());
     state.sessions.lock().await.insert(
         sessionId.clone(),
         RemoteSession {
             deviceId: pairing.clientDeviceId,
+            deviceInfo: pairing.clientDeviceInfo,
+            pairingServiceVersion: pairing.pairingServiceVersion,
             sessionSecret,
         },
     );
     Json(PairFinishResponse {
         sessionId,
+        pairingServiceVersion: pairing.pairingServiceVersion,
         coreProof: proof(
             &pairing.sharedSecret,
             &pairing.clientNonce,
@@ -1126,8 +1244,11 @@ async fn session_info(
     };
     Json(RemoteSessionInfoResponse {
         protocolVersion: 1,
+        pairingServiceVersion: session.pairingServiceVersion,
         coreDeviceId: state.deviceId,
+        coreDeviceInfo: state.deviceInfo,
         clientDeviceId: session.deviceId.clone(),
+        clientDeviceInfo: session.deviceInfo.clone(),
         transports: vec!["http".to_string(), "ws".to_string()],
         nonce: envelope.nonce,
     })
@@ -1264,9 +1385,12 @@ async fn open_watch_channel_subscription(
     let receiver = core.watch(request).await?;
     drop(core);
     let task_subscription_id = subscriptionId.clone();
+    let task_channel_id = channelId.clone();
+    let task_watch_channels = state.watchChannels.clone();
     let task = tokio::spawn(async move {
         let mut receiver = receiver;
         while let Some(event) = receiver.recv().await {
+            let completed = event.kind == CoreEventKind::Completed;
             if channel_sender
                 .send(RemoteWatchChannelEvent {
                     subscriptionId: task_subscription_id.clone(),
@@ -1274,8 +1398,23 @@ async fn open_watch_channel_subscription(
                 })
                 .is_err()
             {
+                let mut channels = task_watch_channels.lock().await;
+                if let Some(channel) = channels.get_mut(&task_channel_id) {
+                    channel.subscriptions.remove(&task_subscription_id);
+                }
                 return;
             }
+            if completed {
+                let mut channels = task_watch_channels.lock().await;
+                if let Some(channel) = channels.get_mut(&task_channel_id) {
+                    channel.subscriptions.remove(&task_subscription_id);
+                }
+                return;
+            }
+        }
+        let mut channels = task_watch_channels.lock().await;
+        if let Some(channel) = channels.get_mut(&task_channel_id) {
+            channel.subscriptions.remove(&task_subscription_id);
         }
     });
     let mut channels = state.watchChannels.lock().await;
@@ -1458,8 +1597,11 @@ async fn handle_ws_envelope(
             };
             RemoteWsResponse::SessionInfo(RemoteSessionInfoResponse {
                 protocolVersion: 1,
+                pairingServiceVersion: session.pairingServiceVersion,
                 coreDeviceId: state.deviceId.clone(),
+                coreDeviceInfo: state.deviceInfo.clone(),
                 clientDeviceId: session.deviceId.clone(),
+                clientDeviceInfo: session.deviceInfo.clone(),
                 transports: vec!["http".to_string(), "ws".to_string()],
                 nonce: request.nonce,
             })
@@ -1504,6 +1646,7 @@ async fn verify_session_parts(
     signature: &str,
     body: &[u8],
 ) -> Result<(), CoreLinkError> {
+    refresh_accepted_session(state, sessionId).await?;
     let sessions = state.sessions.lock().await;
     let Some(session) = sessions.get(sessionId) else {
         return Err(CoreLinkError::new("UNAUTHORIZED", "invalid session"));
@@ -1513,6 +1656,44 @@ async fn verify_session_parts(
     }
     if sign(&session.sessionSecret, body) != signature {
         return Err(CoreLinkError::new("UNAUTHORIZED", "signature mismatch"));
+    }
+    Ok(())
+}
+
+fn accepted_session_from_record(
+    record: &AcceptedRemoteSessionRecord,
+) -> Result<RemoteSession, CoreLinkError> {
+    Ok(RemoteSession {
+        deviceId: record.deviceId.clone(),
+        deviceInfo: record.deviceInfo.clone(),
+        pairingServiceVersion: record.pairingServiceVersion,
+        sessionSecret: BASE64
+            .decode(record.sessionSecret.as_bytes())
+            .map_err(|error| CoreLinkError::new("INVALID_SESSION_STORE", error.to_string()))?,
+    })
+}
+
+async fn refresh_accepted_session(
+    state: &RemoteLinkState,
+    sessionId: &str,
+) -> Result<(), CoreLinkError> {
+    let known_accepted_session = state.acceptedSessionIds.lock().await.contains(sessionId);
+    if !known_accepted_session {
+        return Ok(());
+    }
+    let Some(loader) = state.acceptedSessionLoader.as_ref() else {
+        return Ok(());
+    };
+    let records = loader().map_err(CoreLinkError::internal)?;
+    if let Some(record) = records.get(sessionId) {
+        state
+            .sessions
+            .lock()
+            .await
+            .insert(sessionId.to_string(), accepted_session_from_record(record)?);
+    } else {
+        state.acceptedSessionIds.lock().await.remove(sessionId);
+        state.sessions.lock().await.remove(sessionId);
     }
     Ok(())
 }
@@ -1545,6 +1726,13 @@ fn public_key_to_string(value: &PublicKey) -> String {
 fn pairing_code() -> String {
     let bytes = Uuid::new_v4().as_u128();
     format!("{:06}", (bytes % 1_000_000) as u32)
+}
+
+fn unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after UNIX_EPOCH")
+        .as_millis() as i64
 }
 
 fn proof(sharedSecret: &[u8], clientNonce: &str, serverNonce: &str, role: &str) -> String {
@@ -1588,6 +1776,14 @@ fn bad_request(message: impl Into<String>) -> Response {
         .into_response()
 }
 
+fn internal_server_error(message: impl Into<String>) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(CoreLinkError::new("INTERNAL_SERVER_ERROR", message.into())),
+    )
+        .into_response()
+}
+
 fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Response {
     let relativePath = match sanitize_web_asset_path(path) {
         Ok(value) => value,
@@ -1613,7 +1809,7 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
-        bytes = inject_web_access_runtime_config(webAccess, &html).into_bytes();
+        bytes = inject_web_access_runtime_config(&html).into_bytes();
     }
     Response::builder()
         .header("content-type", contentType)
@@ -1636,13 +1832,11 @@ fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
     Ok(relative)
 }
 
-fn inject_web_access_runtime_config(webAccess: &RemoteWebAccessState, html: &str) -> String {
+fn inject_web_access_runtime_config(html: &str) -> String {
     let config = serde_json::json!({
-        "mode": "link",
+        "mode": "pair",
         "baseUrl": "",
-        "sessionId": webAccess.linkSessionId,
-        "deviceId": webAccess.linkDeviceId,
-        "sessionSecret": webAccess.linkSessionSecret,
+        "pairingServiceVersion": REMOTE_PAIRING_SERVICE_VERSION,
     });
     let script = format!(
         "<script>window.__OPERIT_WEB_ACCESS__ = {};</script>",

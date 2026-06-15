@@ -739,12 +739,6 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
           )
           .toList(growable: false);
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('作品信息已更新'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override
@@ -1859,12 +1853,6 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('已退出 GitHub'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
     } catch (error, stackTrace) {
       debugPrint('Failed to logout GitHub: $error\n$stackTrace');
       if (!mounted) {
@@ -2029,12 +2017,6 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
                 return;
               }
               Navigator.of(dialogContext).pop();
-              ScaffoldMessenger.of(parentContext).showSnackBar(
-                const SnackBar(
-                  content: Text('GitHub 登录完成'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
             } catch (error, stackTrace) {
               debugPrint('Failed to save GitHub token: $error\n$stackTrace');
               await _githubAuth.logout();

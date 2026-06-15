@@ -21,15 +21,15 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "typeRoots": [
-      "../../types",
+      "../../../types",
       "./node_modules/@types",
-      "../../node_modules/@types"
+      "../../../node_modules/@types"
     ]
   },
   "include": [
     "./**/*.ts",
     "./**/*.d.ts",
-    "../../types/**/*.d.ts"
+    "../../../types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules"

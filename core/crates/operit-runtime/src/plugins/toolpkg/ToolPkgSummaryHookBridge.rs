@@ -8,7 +8,7 @@ use crate::core::chat::hooks::SummaryHookRegistry::{
 use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    ToolPkgPromptHookRegistration, decodeToolPkgHookResult, toolPkgPackageManager,
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
 };
 use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 
@@ -134,7 +134,11 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                 );
             }
         }
-        if changed { Some(mutation) } else { None }
+        if changed {
+            Some(mutation)
+        } else {
+            None
+        }
     }
 }
 

@@ -127,14 +127,14 @@ class _QuickPluginCreatorEntry extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      'Quick Plugin Creator',
+                      '快速创作你的插件',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: colorScheme.onPrimaryContainer,
                       ),
                     ),
                     Text(
-                      '从需求快速开始插件创建流程。',
+                      '内置和市场都找不到想要的插件？创作你自己想要的！',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colorScheme.onPrimaryContainer.withValues(
                           alpha: 0.74,

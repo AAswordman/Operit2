@@ -2,9 +2,10 @@ use super::*;
 use crate::create_local_core;
 
 use operit_link::{
+    AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
     CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest, PairedRemoteSession,
-    PairedRemoteSessionRecord, RemoteHostInteractionBroker, RemoteLinkClient, RemoteLinkServer,
-    RemoteLinkServerConfig,
+    PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteHostInteractionBroker, RemoteLinkClient,
+    RemoteLinkServer, RemoteLinkServerConfig,
 };
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
@@ -13,6 +14,7 @@ use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
@@ -21,6 +23,11 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("connect") => run_link_connect_command(&args[1..]).await,
         Some("hello") => run_link_hello_command(&args[1..]).await,
         Some("sessions") => run_link_sessions_command().await,
+        Some("session-delete") => run_link_session_delete_command(&args[1..]).await,
+        Some("accepted-sessions") => run_link_accepted_sessions_command().await,
+        Some("accepted-session-delete") => {
+            run_link_accepted_session_delete_command(&args[1..]).await
+        }
         Some("ping") => run_link_ping_command(&args[1..]).await,
         Some("sync") => run_link_sync_command(&args[1..]).await,
         Some("sync-status") => run_link_sync_status_command(&args[1..]).await,
@@ -91,14 +98,22 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
     let host_interaction_broker = RemoteHostInteractionBroker::new();
     install_remote_host_permission_requester(&mut core, host_interaction_broker.clone());
+    let accepted_sessions = load_link_server_sessions()?;
+    let accepted_session_loader: AcceptedRemoteSessionLoader = Arc::new(load_link_server_sessions);
+    let accepted_session_store: AcceptedRemoteSessionStore = Arc::new(save_link_server_session);
     RemoteLinkServer::serve(
         core,
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
+            deviceInfo: RemoteDeviceInfo::native(),
             hostInteractionBroker: Some(host_interaction_broker),
             webAccess: None,
             printStartupInfo: true,
+            acceptedSessions: accepted_sessions,
+            acceptedSessionLoader: Some(accepted_session_loader),
+            acceptedSessionStore: Some(accepted_session_store),
+            pairingCodeSink: None,
         },
     )
     .await
@@ -165,11 +180,12 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let client = RemoteLinkClient::new(url);
     let hello = client.hello(&token).await?;
     println!(
-        "remote core={} transports={}",
+        "remote device={} core={} transports={}",
+        hello.coreDeviceInfo.displayName(),
         hello.coreDeviceId,
         hello.transports.join(",")
     );
-    let pair_state = client.pairStart(&token).await?;
+    let pair_state = client.pairStart(&token, RemoteDeviceInfo::native()).await?;
     println!("pairing started: {}", pair_state.pairingId);
     println!("check the server terminal for pairing code");
     print!("pairing code> ");
@@ -182,7 +198,8 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     println!("paired session={}", session.sessionId);
     let info = session.sessionInfo().await?;
     println!(
-        "session active core={} client={} transports={}",
+        "session active remote={} core={} client={} transports={}",
+        info.coreDeviceInfo.displayName(),
         info.coreDeviceId,
         info.clientDeviceId,
         info.transports.join(",")
@@ -197,8 +214,45 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
 async fn run_link_sessions_command() -> Result<(), String> {
     let sessions = load_link_sessions()?;
     for (name, session) in sessions {
-        println!("{}\t{}\t{}", name, session.baseUrl, session.deviceId);
+        println!(
+            "{}\t{}\t{}\t{}",
+            name,
+            session.remoteDeviceInfo.displayName(),
+            session.baseUrl,
+            session.deviceId
+        );
     }
+    Ok(())
+}
+
+async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> {
+    let name = args
+        .get(0)
+        .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
+    remove_link_session(name)?;
+    println!("session deleted: {name}");
+    Ok(())
+}
+
+async fn run_link_accepted_sessions_command() -> Result<(), String> {
+    let sessions = load_link_server_sessions()?;
+    for (session_id, session) in sessions {
+        println!(
+            "{}\t{}\t{}",
+            session_id,
+            session.deviceInfo.displayName(),
+            session.deviceId
+        );
+    }
+    Ok(())
+}
+
+async fn run_link_accepted_session_delete_command(args: &[String]) -> Result<(), String> {
+    let session_id = args.get(0).ok_or_else(|| {
+        "usage: operit2 cli link accepted-session-delete <session-id>".to_string()
+    })?;
+    remove_link_server_session(session_id)?;
+    println!("accepted session deleted: {session_id}");
     Ok(())
 }
 
@@ -214,7 +268,8 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let session = PairedRemoteSession::fromRecord(record)?;
     let info = session.sessionInfo().await?;
     println!(
-        "session active core={} client={} transports={}",
+        "session active remote={} core={} client={} transports={}",
+        info.coreDeviceInfo.displayName(),
         info.coreDeviceId,
         info.clientDeviceId,
         info.transports.join(",")
@@ -626,11 +681,58 @@ fn save_link_session(name: &str, record: PairedRemoteSessionRecord) -> Result<()
     fs::write(path, content).map_err(|error| error.to_string())
 }
 
+fn remove_link_session(name: &str) -> Result<(), String> {
+    let path = crate::client_paths::link_sessions_path();
+    let mut sessions = load_link_sessions()?;
+    if sessions.remove(name).is_none() {
+        return Err(format!("link session not found: {name}"));
+    }
+    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn load_link_server_sessions() -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
+    let path = crate::client_paths::link_server_sessions_path();
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&content).map_err(|error| error.to_string())
+}
+
+fn save_link_server_session(
+    session_id: String,
+    record: AcceptedRemoteSessionRecord,
+) -> Result<(), String> {
+    let path = crate::client_paths::link_server_sessions_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid link server session path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut sessions = load_link_server_sessions()?;
+    sessions.insert(session_id, record);
+    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn remove_link_server_session(session_id: &str) -> Result<(), String> {
+    let path = crate::client_paths::link_server_sessions_path();
+    let mut sessions = load_link_server_sessions()?;
+    if sessions.remove(session_id).is_none() {
+        return Err(format!("accepted link session not found: {session_id}"));
+    }
+    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
 fn print_link_usage() {
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
     println!("operit2 cli link hello <url> --token <token>");
     println!("operit2 cli link connect <url> --token <token> [--save <name>]");
     println!("operit2 cli link sessions");
+    println!("operit2 cli link session-delete <name>");
+    println!("operit2 cli link accepted-sessions");
+    println!("operit2 cli link accepted-session-delete <session-id>");
     println!("operit2 cli link ping <name>");
     println!("operit2 cli link sync <session> [--limit <n>]");
     println!("operit2 cli link sync-status <session> [--limit <n>]");

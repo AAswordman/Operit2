@@ -62,6 +62,18 @@ class OperitClientPaths {
     return File(_join(<String>[directory.path, 'web_access_state.json']));
   }
 
+  static Future<File> webAccessAcceptedSessionsFile() async {
+    final directory = await webAccessDir();
+    return File(_join(<String>[directory.path, 'link_server_sessions.json']));
+  }
+
+  static Future<File> webAccessPairingCodeFile() async {
+    final directory = await webAccessDir();
+    return File(
+      _join(<String>[directory.path, 'web_access_pairing_code.json']),
+    );
+  }
+
   static Future<Directory> tempDir() {
     return _directory(<String>['client', 'temp']);
   }

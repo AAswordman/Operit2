@@ -1,0 +1,34 @@
+{
+  "includes": [
+    {
+      "source": "../../../docs/package_builder/SCRIPT_DEV_GUIDE.md",
+      "target": "references/SCRIPT_DEV_GUIDE.md"
+    },
+    {
+      "source": "../../../docs/package_builder/TOOLPKG_FORMAT_GUIDE.md",
+      "target": "references/TOOLPKG_FORMAT_GUIDE.md"
+    },
+    {
+      "source": "../../../types",
+      "target": "types"
+    },
+    {
+      "source": "../../../packages/buildin",
+      "target": "examples/packages/buildin",
+      "excludeNames": [
+        ".sync_state.json",
+        ".sync_hot_reload_state.json",
+        "node_modules"
+      ]
+    },
+    {
+      "source": "../../../packages/external",
+      "target": "examples/packages/external",
+      "excludeNames": [
+        ".sync_state.json",
+        ".sync_hot_reload_state.json",
+        "node_modules"
+      ]
+    }
+  ]
+}

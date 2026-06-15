@@ -1,4 +1,4 @@
-import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import type { ComposeDslContext, ComposeNode } from "../../../../../types/compose-dsl";
 import {
   applySettingsPatch,
   createDefaultSettings,

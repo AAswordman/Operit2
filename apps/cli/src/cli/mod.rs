@@ -295,12 +295,12 @@ fn print_cli_usage() {
         "operit2 cli market <auth|stats|rank|search|show|install|comments|comment|reactions|react>"
     );
     println!("operit2 cli update [check|target]");
-    println!("operit2 cli skill <dir|list|show|create|import-zip|delete|visible|errors>");
+    println!("operit2 cli skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
-        "operit2 cli link <serve|hello|connect|sessions|ping|sync|sync-status|call|watch|tui|run>"
+        "operit2 cli link <serve|hello|connect|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|sync|sync-status|call|watch|tui|run>"
     );
     println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -507,6 +507,8 @@ fn print_update_usage() {
 fn print_skill_usage() {
     println!("operit2 cli skill dir");
     println!("operit2 cli skill list");
+    println!("operit2 cli skill more");
+    println!("operit2 cli skill load <name>");
     println!("operit2 cli skill show <name>");
     println!(
         "operit2 cli skill create <skill-id> <description> <content-or-@file> [attachment-path...]"

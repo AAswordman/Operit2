@@ -120,6 +120,10 @@ node_modules/
 !plugins/buildin/**/dist/**
 !plugins/external/**/dist/
 !plugins/external/**/dist/**
+!plugins/packages/buildin/**/dist/
+!plugins/packages/buildin/**/dist/**
+!plugins/packages/external/**/dist/
+!plugins/packages/external/**/dist/**
 **/.turbo/
 **/.vite/
 **/.rollup.cache/
@@ -157,6 +161,7 @@ plugins/**/.cache/
 plugins/**/.temp/
 plugins/**/*.pack.log
 plugins/**/.sync_state.json
+plugins/**/.sync_hot_reload_state.json
 
 # Archives generated during local packaging
 *.zip

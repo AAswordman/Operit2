@@ -14,12 +14,15 @@ import '../../../main/navigation/AppNavigationModels.dart';
 import '../../../main/screens/OperitScreens.dart';
 import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../../chat/PendingChatDraftHandler.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageTab.dart';
 import '../dialogs/MCPImportDialog.dart';
 import '../dialogs/PackageDetailsDialog.dart';
 import '../dialogs/PackageToolRunDialog.dart';
+import '../dialogs/QuickPluginCreatorDialog.dart';
 import '../dialogs/SkillImportDialog.dart';
+import '../market/PluginCreationIntent.dart';
 import '../model/PackageManagerModels.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'MCPConfigScreen.dart';
@@ -387,9 +390,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               enabledPackageNames: _snapshot.enabledPackageNames,
               isLoading: _loading || _searchFiltering,
               isSearchActive: _searchQuery.trim().isNotEmpty,
-              onQuickPluginCreatorClick: () {
-                _showSnackBar('Quick Plugin Creator');
-              },
+              onQuickPluginCreatorClick: _openQuickPluginCreator,
               onPackageTap: _showPackageDetails,
               onPackageEnabledChanged: _setPackageEnabled,
             ),
@@ -417,6 +418,27 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       routeId: entry.routeId,
       args: entry.args,
       source: entry.source,
+    );
+  }
+
+  Future<void> _openQuickPluginCreator() async {
+    final requirement = await QuickPluginCreatorDialog.show(
+      context: context,
+      clients: widget.clients,
+    );
+    if (requirement == null || !mounted) {
+      return;
+    }
+    PendingChatDraftHandler.setPendingDraft(
+      FreshPluginCreationIntent(requirement: requirement).toPrompt(),
+    );
+    final chatEntry = ScreenRouteRegistry.toEntry(
+      screen: const AiChatScreenRoute(),
+    );
+    AppRouterGateway.resetTo(
+      routeId: chatEntry.routeId,
+      args: chatEntry.args,
+      source: chatEntry.source,
     );
   }
 
@@ -607,9 +629,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     String? initialRouteId,
   }) {
     if (!_snapshot.enabledPluginContainerNames.contains(plugin.packageName)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('启用插件后可打开专属界面')));
       return;
     }
     Navigator.of(context).push(

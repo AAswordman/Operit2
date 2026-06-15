@@ -6,10 +6,19 @@ use std::path::{Path, PathBuf};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::core::tools::skill::SkillPackage::SkillPackage;
+use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
+
+const QUICK_PLUGIN_CREATOR_SKILL_NAME: &str = "PackageBuilder";
 
 #[derive(Clone, Debug)]
 pub struct SkillManager {
     paths: RuntimeStorePaths,
+}
+
+#[derive(Clone, Debug)]
+pub struct BundledExternalSkillCandidate {
+    pub name: String,
+    pub description: String,
 }
 
 impl SkillManager {
@@ -142,6 +151,87 @@ impl SkillManager {
     #[allow(non_snake_case)]
     pub fn getSkillLoadErrors(&self) -> BTreeMap<String, String> {
         self.refreshAvailableSkills().1
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
+        let mut grouped = BTreeMap::<String, Vec<_>>::new();
+        for asset in BUNDLED_EXTERNAL_SKILL_ASSETS {
+            grouped
+                .entry(asset.skill_name.to_string())
+                .or_default()
+                .push(asset);
+        }
+
+        grouped
+            .into_iter()
+            .map(|(assetName, assets)| {
+                let mut name = assetName.clone();
+                let mut description = String::new();
+                for asset in assets {
+                    if asset.path.eq_ignore_ascii_case("SKILL.md")
+                        || asset.path.eq_ignore_ascii_case("skill.md")
+                    {
+                        let content = String::from_utf8_lossy(asset.bytes);
+                        let (metaName, metaDescription) = parseSkillMetadataContent(&content);
+                        if !metaName.trim().is_empty() {
+                            name = metaName;
+                        }
+                        description = metaDescription;
+                        break;
+                    }
+                }
+                BundledExternalSkillCandidate { name, description }
+            })
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
+        let skillAssets = BUNDLED_EXTERNAL_SKILL_ASSETS
+            .iter()
+            .filter(|asset| asset.skill_name == skillName)
+            .collect::<Vec<_>>();
+        if skillAssets.is_empty() {
+            return Err(format!("Bundled external skill not found: {}", skillName));
+        }
+
+        let skillsRoot = self.getSkillsRootDir();
+        fs::create_dir_all(&skillsRoot)
+            .map_err(|error| format!("Cannot access skills directory: {}", error))?;
+
+        let skillRoot = skillsRoot.join(skillName);
+        if skillRoot.exists() && !skillRoot.is_dir() {
+            return Err(format!(
+                "Skill path is not a directory: {}",
+                skillRoot.to_string_lossy()
+            ));
+        }
+        fs::create_dir_all(&skillRoot)
+            .map_err(|error| format!("Failed to create skill directory: {}", error))?;
+
+        clearBundledSkillFiles(&skillRoot)?;
+        for asset in skillAssets {
+            let normalizedPath = normalizeAssetRelativePath(asset.path)?;
+            let outputFile = skillRoot.join(normalizedPath);
+            if let Some(parent) = outputFile.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to create bundled skill parent: {}", error))?;
+            }
+            fs::write(&outputFile, asset.bytes)
+                .map_err(|error| format!("Failed to write bundled skill asset: {}", error))?;
+        }
+
+        let skills = self.getAvailableSkills();
+        let Some(skill) = skills.get(skillName) else {
+            return Err(format!("Skill '{}' was not loaded after creation", skillName));
+        };
+        Ok(skill.clone())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn ensureQuickPluginCreatorBundledSkill(&self) -> Result<SkillPackage, String> {
+        self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME)
     }
 
     #[allow(non_snake_case)]
@@ -341,6 +431,11 @@ impl SkillManager {
 #[allow(non_snake_case)]
 fn parseSkillMetadata(skillFile: &Path) -> Result<(String, String), std::io::Error> {
     let content = fs::read_to_string(skillFile)?;
+    Ok(parseSkillMetadataContent(&content))
+}
+
+#[allow(non_snake_case)]
+fn parseSkillMetadataContent(content: &str) -> (String, String) {
     let lines = content.lines().collect::<Vec<_>>();
     let mut name = String::new();
     let mut description = String::new();
@@ -359,7 +454,7 @@ fn parseSkillMetadata(skillFile: &Path) -> Result<(String, String), std::io::Err
         }
     }
 
-    Ok((name, description))
+    (name, description)
 }
 
 #[allow(non_snake_case)]
@@ -389,6 +484,40 @@ fn unquote(valueRaw: &str) -> String {
         return value[1..value.len() - 1].to_string();
     }
     value.to_string()
+}
+
+#[allow(non_snake_case)]
+fn normalizeAssetRelativePath(path: &str) -> Result<PathBuf, String> {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::Normal(part) => normalized.push(part),
+            _ => return Err(format!("Invalid plugin type asset path: {}", path)),
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(format!("Invalid plugin type asset path: {}", path));
+    }
+    Ok(normalized)
+}
+
+#[allow(non_snake_case)]
+fn clearBundledSkillFiles(skillRoot: &Path) -> Result<(), String> {
+    let children = fs::read_dir(skillRoot)
+        .map_err(|error| format!("Failed to read bundled skill directory: {}", error))?;
+    for child in children {
+        let child =
+            child.map_err(|error| format!("Failed to read bundled skill entry: {}", error))?;
+        let path = child.path();
+        if path.is_dir() {
+            fs::remove_dir_all(&path)
+                .map_err(|error| format!("Failed to clear bundled skill directory: {}", error))?;
+        } else {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Failed to clear bundled skill file: {}", error))?;
+        }
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]

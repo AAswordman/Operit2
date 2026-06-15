@@ -6,7 +6,7 @@ import type {
   ComposeWebViewJavascriptInterface,
   ComposeWebViewResourceDecision,
   ComposeWebViewResourceRequest,
-} from "../../../../../types/compose-dsl";
+} from "../../../../../../types/compose-dsl";
 import {
   ARCADE_BONUS_TOKEN_BASE64,
   ARCADE_HOST_INTERFACE_NAME,

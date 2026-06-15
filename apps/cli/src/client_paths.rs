@@ -9,6 +9,12 @@ pub(crate) fn link_sessions_path() -> PathBuf {
     client_root_dir().join("link").join("link_sessions.json")
 }
 
+pub(crate) fn link_server_sessions_path() -> PathBuf {
+    client_root_dir()
+        .join("link")
+        .join("link_server_sessions.json")
+}
+
 pub(crate) fn web_access_config_path() -> PathBuf {
     client_root_dir().join("web_access").join("web_access.json")
 }

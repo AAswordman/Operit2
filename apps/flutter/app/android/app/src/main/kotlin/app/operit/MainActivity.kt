@@ -53,6 +53,12 @@ class MainActivity : FlutterActivity() {
                     "hostDescriptor" -> runRuntime(result) {
                         OperitRuntimeNative.hostDescriptor(ensureRuntimeHandle())
                     }
+                    "startWebAccessServer" -> startWebAccessServer(call, result)
+                    "stopWebAccessServer" -> runRuntime(result) {
+                        OperitRuntimeNative.stopWebAccessServer(ensureRuntimeHandle())
+                    }
+                    "remotePairStart" -> remotePairStart(call, result)
+                    "remotePairFinish" -> remotePairFinish(call, result)
                     "currentPermissionRequest" -> runRuntime(result) {
                         OperitRuntimeNative.currentPermissionRequest(ensureRuntimeHandle())
                     }
@@ -143,6 +149,75 @@ class MainActivity : FlutterActivity() {
         }
         runRuntime(result) {
             OperitRuntimeNative.handlePermissionResult(ensureRuntimeHandle(), permissionResult)
+        }
+    }
+
+    private fun startWebAccessServer(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val bindAddress = args?.get("bindAddress") as? String
+        val token = args?.get("token") as? String
+        val shutdownToken = args?.get("shutdownToken") as? String
+        val webRoot = args?.get("webRoot") as? String
+        val acceptedSessions = args?.get("acceptedSessions") as? String
+        val acceptedSessionStorePath = args?.get("acceptedSessionStorePath") as? String
+        val pairingCodePath = args?.get("pairingCodePath") as? String
+        val deviceInfoJson = args?.get("deviceInfo") as? String
+        if (
+            bindAddress == null ||
+                token == null ||
+                shutdownToken == null ||
+                webRoot == null ||
+                acceptedSessions == null ||
+                acceptedSessionStorePath == null ||
+                pairingCodePath == null ||
+                deviceInfoJson == null
+        ) {
+            result.error(
+                "INVALID_ARGS",
+                "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, acceptedSessions, acceptedSessionStorePath, pairingCodePath and deviceInfo",
+                null,
+            )
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.startWebAccessServer(
+                ensureRuntimeHandle(),
+                bindAddress,
+                token,
+                shutdownToken,
+                webRoot,
+                acceptedSessions,
+                acceptedSessionStorePath,
+                pairingCodePath,
+                deviceInfoJson,
+            )
+        }
+    }
+
+    private fun remotePairStart(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val baseUrl = args?.get("baseUrl") as? String
+        val token = args?.get("token") as? String
+        val clientDeviceInfoJson = args?.get("clientDeviceInfo") as? String
+        if (baseUrl == null || token == null || clientDeviceInfoJson == null) {
+            result.error("INVALID_ARGS", "remotePairStart expects baseUrl, token and clientDeviceInfo", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.remotePairStart(ensureRuntimeHandle(), baseUrl, token, clientDeviceInfoJson)
+        }
+    }
+
+    private fun remotePairFinish(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val pairingId = args?.get("pairingId") as? String
+        val pairingCode = args?.get("pairingCode") as? String
+        if (pairingId == null || pairingCode == null) {
+            result.error("INVALID_ARGS", "remotePairFinish expects pairingId and pairingCode", null)
+            return
+        }
+        runRuntime(result) {
+            OperitRuntimeNative.remotePairFinish(ensureRuntimeHandle(), pairingId, pairingCode)
         }
     }
 
@@ -320,6 +395,21 @@ object OperitRuntimeNative {
     @JvmStatic external fun pollWatchStreams(handle: Long, subscriptionIdsJson: String): String
     @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): String
     @JvmStatic external fun hostDescriptor(handle: Long): String
+    @JvmStatic
+    external fun startWebAccessServer(
+        handle: Long,
+        bindAddress: String,
+        token: String,
+        shutdownToken: String,
+        webRoot: String,
+        acceptedSessions: String,
+        acceptedSessionStorePath: String,
+        pairingCodePath: String,
+        deviceInfoJson: String,
+    ): String
+    @JvmStatic external fun stopWebAccessServer(handle: Long): String
+    @JvmStatic external fun remotePairStart(handle: Long, baseUrl: String, token: String, clientDeviceInfoJson: String): String
+    @JvmStatic external fun remotePairFinish(handle: Long, pairingId: String, pairingCode: String): String
     @JvmStatic external fun currentPermissionRequest(handle: Long): String
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String
 }

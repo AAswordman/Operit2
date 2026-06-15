@@ -20,6 +20,13 @@ class ToolApprovalBridge {
   Future<void> handlePermissionResult(ToolApprovalResult result) async {
     await _invokeString('handlePermissionResult', <Object?>[result.wireName]);
   }
+
+  Future<void> respondPermissionRequest(
+    ToolApprovalRequest request,
+    ToolApprovalResult result,
+  ) {
+    return handlePermissionResult(result);
+  }
 }
 
 Future<String> _invokeString(String method, List<Object?> args) async {

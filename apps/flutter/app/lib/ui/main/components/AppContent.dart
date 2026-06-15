@@ -95,7 +95,7 @@ class _AppContentState extends State<AppContent> {
 
   void _ensureScreenCached(String screenKey, OperitScreen screen) {
     _screenKeepAliveCache[screenKey] = screen.keepAlive;
-    _screenCache[screenKey] = Builder(builder: screen.build);
+    _screenCache.putIfAbsent(screenKey, () => Builder(builder: screen.build));
   }
 
   void _updateTransition(String currentScreenKey, OperitScreen currentScreen) {

@@ -179,14 +179,14 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
             if (!mounted) {
               return;
             }
-            scaffoldMessenger.showSnackBar(
-              SnackBar(
-                content: Text(
-                  deleted ? '已删除 ${skill.name}' : '删除失败 ${skill.name}',
+            if (!deleted) {
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text('删除失败 ${skill.name}'),
+                  behavior: SnackBarBehavior.floating,
                 ),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
+              );
+            }
           },
         );
       },

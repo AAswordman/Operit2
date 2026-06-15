@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::application::OperitApplicationContext::defaultHttpHost;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::skill::SkillManager::SkillManager;
+use crate::core::tools::skill::SkillManager::{BundledExternalSkillCandidate, SkillManager};
 use crate::core::tools::skill::SkillPackage::SkillPackage;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use operit_host_api::HttpRequestData;
@@ -55,6 +55,16 @@ impl SkillRepository {
     }
 
     #[allow(non_snake_case)]
+    pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
+        self.skillManager.getBundledExternalSkillCandidates()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
+        self.skillManager.importBundledExternalSkill(skillName)
+    }
+
+    #[allow(non_snake_case)]
     pub fn getAiVisibleSkillPackages(&self) -> BTreeMap<String, SkillPackage> {
         self.skillManager
             .getAvailableSkills()
@@ -90,6 +100,15 @@ impl SkillRepository {
     ) -> Result<(), operit_store::PreferencesDataStore::PreferencesDataStoreError> {
         self.skillVisibilityPreferences
             .setSkillVisibleToAi(skillName, visible)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn ensureQuickPluginCreatorSkillVisible(&self) -> Result<SkillPackage, String> {
+        let skill = self.skillManager.ensureQuickPluginCreatorBundledSkill()?;
+        self.skillVisibilityPreferences
+            .setSkillVisibleToAi(&skill.name, true)
+            .map_err(|error| error.to_string())?;
+        Ok(skill)
     }
 
     #[allow(non_snake_case)]

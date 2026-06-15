@@ -11,13 +11,193 @@
   let sqliteModulePromise;
   let SQLite;
 
+  const webAccessSessionStorageKey = "operit2.webAccess.session";
+  const pairingServiceVersion = 1;
   const webAccessConfig = globalThis.__OPERIT_WEB_ACCESS__;
-  if (webAccessConfig && webAccessConfig.mode === "link") {
-    installLinkedWebRuntime(webAccessConfig);
+  if (webAccessConfig && webAccessConfig.mode === "pair") {
+    installPairingWebRuntime(webAccessConfig);
     return;
   }
 
-  function installLinkedWebRuntime(config) {
+  function installPairingWebRuntime(config) {
+    const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
+    const runtimePromise = webAccessSession(baseUrl).then(createLinkedWebRuntime);
+    globalThis.__operitRuntime = {
+      async call(request) {
+        return (await runtimePromise).call(request);
+      },
+      async watchSnapshot(request) {
+        return (await runtimePromise).watchSnapshot(request);
+      },
+      async watchStream(request) {
+        return (await runtimePromise).watchStream(request);
+      },
+      async pollWatchStream(subscriptionId) {
+        return (await runtimePromise).pollWatchStream(subscriptionId);
+      },
+      async closeWatchStream(subscriptionId) {
+        return (await runtimePromise).closeWatchStream(subscriptionId);
+      },
+      async hostDescriptor() {
+        return (await runtimePromise).hostDescriptor();
+      },
+      async currentPermissionRequest() {
+        return (await runtimePromise).currentPermissionRequest();
+      },
+      async handlePermissionResult(result) {
+        return (await runtimePromise).handlePermissionResult(result);
+      },
+    };
+  }
+
+  async function webAccessSession(baseUrl) {
+    const savedSession = localStorage.getItem(webAccessSessionStorageKey);
+    if (savedSession !== null) {
+      return JSON.parse(savedSession);
+    }
+    const session = await pairWebAccessSession(baseUrl);
+    localStorage.setItem(webAccessSessionStorageKey, JSON.stringify(session));
+    return session;
+  }
+
+  async function pairWebAccessSession(baseUrl) {
+    const token = globalThis.prompt("Operit Web Access token");
+    if (token === null || token.trim().length === 0) {
+      throw new Error("web access token is required");
+    }
+    const keyPair = await crypto.subtle.generateKey(
+      { name: "X25519" },
+      true,
+      ["deriveBits"],
+    );
+    const clientPublicKey = bytesToBase64(
+      new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)),
+    );
+    const clientDeviceId = `web-client-${crypto.randomUUID()}`;
+    const clientNonce = crypto.randomUUID();
+    const start = await postJson(`${baseUrl}/link/pair/start`, {
+      pairingServiceVersion,
+      token: token.trim(),
+      clientDeviceId,
+      clientDeviceInfo: webDeviceInfo(),
+      clientPublicKey,
+      clientNonce,
+    });
+    const corePublicKey = await crypto.subtle.importKey(
+      "raw",
+      base64ToBytes(start.corePublicKey),
+      { name: "X25519" },
+      false,
+      [],
+    );
+    const sharedSecret = new Uint8Array(
+      await crypto.subtle.deriveBits(
+        { name: "X25519", public: corePublicKey },
+        keyPair.privateKey,
+        256,
+      ),
+    );
+    const pairingCode = globalThis.prompt("Operit Web Access pairing code");
+    if (pairingCode === null || pairingCode.trim().length === 0) {
+      throw new Error("web access pairing code is required");
+    }
+    const finish = await postJson(`${baseUrl}/link/pair/finish`, {
+      pairingId: start.pairingId,
+      pairingCode: pairingCode.trim(),
+      clientProof: await proof(sharedSecret, clientNonce, start.serverNonce, "client"),
+    });
+    const expectedCoreProof = await proof(sharedSecret, clientNonce, start.serverNonce, "core");
+    if (finish.coreProof !== expectedCoreProof) {
+      throw new Error("web access core proof mismatch");
+    }
+    return {
+      baseUrl,
+      sessionId: finish.sessionId,
+      deviceId: clientDeviceId,
+      pairingServiceVersion: finish.pairingServiceVersion,
+      sessionSecret: await sessionSecret(sharedSecret, clientNonce, start.serverNonce),
+    };
+  }
+
+  async function postJson(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text);
+    }
+    return JSON.parse(text);
+  }
+
+  function webDeviceInfo() {
+    return {
+      platform: navigator.platform,
+      model: browserName(navigator.userAgent),
+    };
+  }
+
+  function browserName(userAgent) {
+    const match = /(Edg|OPR|Firefox|Chrome|CriOS|FxiOS|Version)\/([0-9]+)/.exec(userAgent);
+    if (match === null) {
+      throw new Error("browser name is not available in userAgent");
+    }
+    const name = {
+      Edg: "Edge",
+      OPR: "Opera",
+      CriOS: "Chrome iOS",
+      FxiOS: "Firefox iOS",
+      Version: "Safari",
+    }[match[1]] || match[1];
+    return `${name} ${match[2]}`;
+  }
+
+  async function proof(sharedSecret, clientNonce, serverNonce, role) {
+    return bytesToBase64(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          concatBytes(
+            sharedSecret,
+            textEncoder.encode(clientNonce),
+            textEncoder.encode(serverNonce),
+            textEncoder.encode(role),
+          ),
+        ),
+      ),
+    );
+  }
+
+  async function sessionSecret(sharedSecret, clientNonce, serverNonce) {
+    return bytesToBase64(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          concatBytes(
+            sharedSecret,
+            textEncoder.encode(clientNonce),
+            textEncoder.encode(serverNonce),
+            textEncoder.encode("session"),
+          ),
+        ),
+      ),
+    );
+  }
+
+  function concatBytes(...parts) {
+    const length = parts.reduce((sum, part) => sum + part.length, 0);
+    const output = new Uint8Array(length);
+    let offset = 0;
+    for (const part of parts) {
+      output.set(part, offset);
+      offset += part.length;
+    }
+    return output;
+  }
+
+  function createLinkedWebRuntime(config) {
     const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
     const sessionId = String(config.sessionId);
     const deviceId = String(config.deviceId);
@@ -185,7 +365,7 @@
       throw new Error(`unknown permission result: ${value}`);
     }
 
-    globalThis.__operitRuntime = {
+    return {
       async call(request) {
         return postText("/link/call", {
           request: JSON.parse(request),
@@ -817,7 +997,7 @@
       getDeviceInfo() {
         return {
           deviceId: "web",
-          model: navigator.userAgent,
+          model: browserName(navigator.userAgent),
           manufacturer: "browser",
           androidVersion: "",
           sdkVersion: 0,

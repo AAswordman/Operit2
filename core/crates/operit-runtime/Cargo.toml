@@ -32,6 +32,8 @@ zip.workspace = true
 rusqlite.workspace = true
 
 [build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
 zip.workspace = true
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]

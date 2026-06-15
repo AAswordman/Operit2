@@ -1,4 +1,4 @@
-﻿{
+{
   "compilerOptions": {
     "target": "es2020",
     "module": "commonjs",
@@ -16,18 +16,20 @@
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "typeRoots": [
-      "../../types",
+      "../../../types",
       "./node_modules/@types",
-      "../../node_modules/@types"
+      "../../../node_modules/@types"
     ]
   },
   "include": [
     "./**/*.ts",
     "./**/*.d.ts",
-    "../../types/**/*.d.ts"
+    "../../../types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules"
