@@ -5,14 +5,16 @@ pub(crate) fn client_root_dir() -> PathBuf {
     platform_files_root_dir().join("client")
 }
 
+pub(crate) fn access_dir() -> PathBuf {
+    client_root_dir().join("access")
+}
+
 pub(crate) fn link_sessions_path() -> PathBuf {
-    client_root_dir().join("link").join("link_sessions.json")
+    access_dir().join("link_sessions.json")
 }
 
 pub(crate) fn link_server_sessions_path() -> PathBuf {
-    client_root_dir()
-        .join("link")
-        .join("link_server_sessions.json")
+    access_dir().join("link_server_sessions.json")
 }
 
 pub(crate) fn web_access_config_path() -> PathBuf {

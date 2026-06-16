@@ -1445,8 +1445,11 @@ name = "operit-flutter-bridge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
  "console_error_panic_hook",
+ "futures-util",
+ "hmac",
  "jni",
  "operit-core-proxy",
  "operit-host-android-native",
@@ -1457,11 +1460,16 @@ dependencies = [
  "operit-link",
  "operit-runtime",
  "operit-store",
+ "rand_core 0.6.4",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -1533,17 +1541,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
- "base64",
  "futures-util",
- "hmac",
- "rand_core 0.6.4",
- "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]

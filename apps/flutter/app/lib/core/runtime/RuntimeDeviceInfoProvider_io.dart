@@ -2,7 +2,7 @@
 
 import 'dart:io';
 
-import '../bridge/RemoteCoreProxy.dart';
+import '../link/RemoteRuntimeLinkClient.dart';
 
 class RuntimeDeviceInfoProvider {
   const RuntimeDeviceInfoProvider._();

@@ -2,8 +2,8 @@
 
 import 'package:flutter/services.dart';
 
+import '../link/RemoteRuntimeLinkClient.dart';
 import '../runtime/RuntimeConnectionManager.dart';
-import '../bridge/RemoteCoreProxy.dart';
 import 'ToolApprovalModels.dart';
 
 class ToolApprovalBridge {
@@ -41,9 +41,9 @@ class ToolApprovalBridge {
       await handlePermissionResult(result);
       return;
     }
-    final remoteProxy =
-        RuntimeConnectionManager.instance.coreProxy as RemoteCoreProxy;
-    await remoteProxy.respondHostInteraction(
+    final remoteLinkClient =
+        RuntimeConnectionManager.instance.coreProxy as RemoteRuntimeLinkClient;
+    await remoteLinkClient.respondHostInteraction(
       requestId: remoteRequestId,
       result: _remoteResultName(result),
     );
@@ -51,9 +51,9 @@ class ToolApprovalBridge {
   }
 
   Future<ToolApprovalRequest?> _currentRemotePermissionRequest() async {
-    final remoteProxy =
-        RuntimeConnectionManager.instance.coreProxy as RemoteCoreProxy;
-    final request = await remoteProxy.pollHostInteraction(timeoutMs: 500);
+    final remoteLinkClient =
+        RuntimeConnectionManager.instance.coreProxy as RemoteRuntimeLinkClient;
+    final request = await remoteLinkClient.pollHostInteraction(timeoutMs: 500);
     if (request == null) {
       return null;
     }
@@ -64,7 +64,7 @@ class ToolApprovalBridge {
     final toolJson = payload['tool'];
     final description = payload['description'];
     if (toolJson is! Map<String, Object?> || description is! String) {
-      await remoteProxy.respondHostInteraction(
+      await remoteLinkClient.respondHostInteraction(
         requestId: request.requestId,
         result: 'deny',
       );

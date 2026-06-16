@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 
-import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../core/web_access/FlutterWebAccessServer.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../theme/OperitTheme.dart';
@@ -39,19 +38,16 @@ class _AppDialogHost extends StatefulWidget {
 
 class _AppDialogHostState extends State<_AppDialogHost> {
   bool _shownStartupWebAccessError = false;
-  int _shownRemoteFailureId = 0;
   String _shownPairingId = '';
 
   @override
   void initState() {
     super.initState();
-    RuntimeConnectionManager.instance.addListener(_onRuntimeChanged);
     FlutterWebAccessServer.instance.addListener(_onWebAccessChanged);
   }
 
   @override
   void dispose() {
-    RuntimeConnectionManager.instance.removeListener(_onRuntimeChanged);
     FlutterWebAccessServer.instance.removeListener(_onWebAccessChanged);
     super.dispose();
   }
@@ -80,39 +76,6 @@ class _AppDialogHostState extends State<_AppDialogHost> {
             title: Text(l10n.settingsWebAccessService),
             content: SingleChildScrollView(
               child: SelectableText(l10n.settingsWebAccessStartFailed(error)),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(l10n.ok),
-              ),
-            ],
-          );
-        },
-      );
-    });
-  }
-
-  void _onRuntimeChanged() {
-    final event = RuntimeConnectionManager.instance.lastRemoteFailure;
-    if (event == null || event.id == _shownRemoteFailureId) {
-      return;
-    }
-    _shownRemoteFailureId = event.id;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      final l10n = AppLocalizations.of(context)!;
-      showDialog<void>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text(l10n.settingsRuntimeRemoteDisconnected),
-            content: SingleChildScrollView(
-              child: SelectableText(
-                l10n.settingsRuntimeRemoteDisconnectedMessage(event.error),
-              ),
             ),
             actions: <Widget>[
               TextButton(

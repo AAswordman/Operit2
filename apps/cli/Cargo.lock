@@ -1657,8 +1657,11 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "async-trait",
+ "axum",
  "base64",
  "crossterm",
+ "futures-util",
+ "hmac",
  "image",
  "include_dir",
  "operit-command-core",
@@ -1669,6 +1672,7 @@ dependencies = [
  "operit-link",
  "operit-runtime",
  "operit-store",
+ "rand_core 0.6.4",
  "ratatui",
  "reqwest",
  "serde",
@@ -1676,6 +1680,7 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -1756,17 +1761,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
- "base64",
  "futures-util",
- "hmac",
- "rand_core 0.6.4",
- "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]

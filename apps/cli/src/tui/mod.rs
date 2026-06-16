@@ -13,11 +13,11 @@ mod typewriter;
 use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
 use approval::TuiApprovalBridge;
 use link_proxy_rs::tui_core;
-use operit_link::{
-    CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest, PairedRemoteSession,
-    PairedRemoteSessionRecord, RemoteHostInteractionBroker, RemoteHostInteractionRequest,
-    RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+use crate::access::{
+    PairedRemoteSession, PairedRemoteSessionRecord, RemoteHostInteractionBroker,
+    RemoteHostInteractionRequest, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
 };
+use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;

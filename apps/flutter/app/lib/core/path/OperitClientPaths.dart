@@ -35,12 +35,12 @@ class OperitClientPaths {
     return File(_join(<String>[directory.path, 'link_sessions.json']));
   }
 
-  static Future<Directory> runtimeConnectionDir() {
-    return _directory(<String>['client', 'runtime']);
+  static Future<Directory> accessDir() {
+    return _directory(<String>['client', 'access']);
   }
 
   static Future<File> runtimeConnectionConfigFile() async {
-    final directory = await runtimeConnectionDir();
+    final directory = await accessDir();
     return File(_join(<String>[directory.path, 'runtime_connection.json']));
   }
 

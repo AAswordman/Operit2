@@ -6,8 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../bridge/CoreProxy.dart';
 import '../bridge/PlatformCoreProxy.dart';
-import '../bridge/RemoteCoreProxy.dart';
-import '../logging/ClientLogger.dart';
+import '../link/RemoteRuntimeLinkClient.dart';
 import 'RuntimeConnectionConfigStore.dart';
 
 enum RuntimeConnectionMode { local, remote }
@@ -83,18 +82,6 @@ class RuntimeConnectionConfig {
   }
 }
 
-class RuntimeRemoteFailureEvent {
-  const RuntimeRemoteFailureEvent({
-    required this.id,
-    required this.remoteName,
-    required this.error,
-  });
-
-  final int id;
-  final String remoteName;
-  final String error;
-}
-
 class RuntimeConnectionManager extends ChangeNotifier {
   RuntimeConnectionManager._();
 
@@ -102,73 +89,27 @@ class RuntimeConnectionManager extends ChangeNotifier {
   static const Duration _remoteStartupProbeTimeout = Duration(seconds: 4);
 
   RuntimeConnectionConfig _config = RuntimeConnectionConfig.local();
-  RemoteCoreProxy? _remoteProxy;
-  RuntimeRemoteFailureEvent? _lastRemoteFailure;
-  int _remoteFailureId = 0;
+  RemoteRuntimeLinkClient? _remoteLinkClient;
 
   RuntimeConnectionConfig get config => _config;
-  RuntimeRemoteFailureEvent? get lastRemoteFailure => _lastRemoteFailure;
 
   CoreProxy get coreProxy {
     return switch (_config.mode) {
       RuntimeConnectionMode.local => platformCoreProxy,
-      RuntimeConnectionMode.remote => _remoteProxy!,
+      RuntimeConnectionMode.remote => _remoteLinkClient!,
     };
   }
 
   Future<void> initialize() async {
     final storedConfig = await RuntimeConnectionConfigStore.read();
     if (storedConfig.mode == RuntimeConnectionMode.remote) {
-      try {
-        await _applyRemote(storedConfig, persist: false, verify: true);
-        return;
-      } catch (error, stackTrace) {
-        ClientLogger.w(
-          'Remote runtime unavailable during startup; switching to local runtime',
-          error: error,
-          stackTrace: stackTrace,
-        );
-        await _apply(
-          storedConfig.copyWith(
-            mode: RuntimeConnectionMode.local,
-            updatedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-          persist: true,
-        );
-        return;
-      }
+      await _applyRemote(storedConfig, persist: false, verify: true);
+      return;
     }
     await _apply(storedConfig, persist: false);
   }
 
   Future<void> setLocal() async {
-    await _apply(
-      _config.copyWith(
-        mode: RuntimeConnectionMode.local,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-      persist: true,
-    );
-  }
-
-  Future<void> handleRemoteFailure(
-    Object error, [
-    StackTrace? stackTrace,
-  ]) async {
-    if (_config.mode != RuntimeConnectionMode.remote) {
-      return;
-    }
-    final remoteName = _config.activeRemoteName;
-    ClientLogger.e(
-      'Remote runtime failed; switching to local runtime',
-      error: error,
-      stackTrace: stackTrace,
-    );
-    _lastRemoteFailure = RuntimeRemoteFailureEvent(
-      id: ++_remoteFailureId,
-      remoteName: remoteName,
-      error: error.toString(),
-    );
     await _apply(
       _config.copyWith(
         mode: RuntimeConnectionMode.local,
@@ -193,18 +134,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
       ),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    try {
-      await _applyRemote(remoteConfig, persist: true, verify: true);
-    } catch (_) {
-      await _apply(
-        remoteConfig.copyWith(
-          mode: RuntimeConnectionMode.local,
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-        persist: true,
-      );
-      rethrow;
-    }
+    await _applyRemote(remoteConfig, persist: true, verify: true);
   }
 
   Future<void> usePairedRemote(String name) async {
@@ -216,18 +146,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
       activeRemoteName: name,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    try {
-      await _applyRemote(remoteConfig, persist: true, verify: true);
-    } catch (_) {
-      await _apply(
-        remoteConfig.copyWith(
-          mode: RuntimeConnectionMode.local,
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-        persist: true,
-      );
-      rethrow;
-    }
+    await _applyRemote(remoteConfig, persist: true, verify: true);
   }
 
   Future<void> removePairedRemote(String name) async {
@@ -257,14 +176,14 @@ class RuntimeConnectionManager extends ChangeNotifier {
     RuntimeConnectionConfig config, {
     required bool persist,
   }) async {
-    _remoteProxy?.dispose();
-    _remoteProxy = null;
+    _remoteLinkClient?.dispose();
+    _remoteLinkClient = null;
     if (config.mode == RuntimeConnectionMode.remote) {
       final session = config.activeRemoteSession;
       if (session == null) {
         throw StateError('remote runtime session is required');
       }
-      _remoteProxy = RemoteCoreProxy(session: session);
+      _remoteLinkClient = RemoteRuntimeLinkClient(session: session);
     }
     _config = config;
     if (persist) {
@@ -278,25 +197,25 @@ class RuntimeConnectionManager extends ChangeNotifier {
     required bool persist,
     required bool verify,
   }) async {
-    _remoteProxy?.dispose();
-    _remoteProxy = null;
+    _remoteLinkClient?.dispose();
+    _remoteLinkClient = null;
     final session = config.activeRemoteSession;
     if (session == null) {
       throw StateError('remote runtime session is required');
     }
-    final proxy = RemoteCoreProxy(session: session);
+    final linkClient = RemoteRuntimeLinkClient(session: session);
     try {
       if (verify) {
-        await proxy.hostDescriptor().timeout(_remoteStartupProbeTimeout);
+        await linkClient.hostDescriptor().timeout(_remoteStartupProbeTimeout);
       }
-      _remoteProxy = proxy;
+      _remoteLinkClient = linkClient;
       _config = config;
       if (persist) {
         await RuntimeConnectionConfigStore.write(config);
       }
       notifyListeners();
     } catch (_) {
-      proxy.dispose();
+      linkClient.dispose();
       rethrow;
     }
   }

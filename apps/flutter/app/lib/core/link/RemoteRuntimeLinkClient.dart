@@ -8,10 +8,10 @@ import 'package:http/http.dart' as http;
 
 import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
-import 'CoreProxy.dart';
+import '../bridge/CoreProxy.dart';
 
-class RemoteCoreProxy extends CoreProxy {
-  RemoteCoreProxy({required this.session, http.Client? client})
+class RemoteRuntimeLinkClient extends CoreProxy {
+  RemoteRuntimeLinkClient({required this.session, http.Client? client})
     : client = client ?? http.Client() {
     _watchPool = _RemoteWatchChannelPool(session: session, client: this.client);
   }

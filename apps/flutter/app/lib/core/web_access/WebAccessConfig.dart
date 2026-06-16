@@ -3,7 +3,7 @@
 import 'dart:convert';
 import 'dart:math';
 
-import '../bridge/RemoteCoreProxy.dart';
+import '../link/RemoteRuntimeLinkClient.dart';
 import '../path/OperitClientPaths.dart';
 
 class WebAccessConfig {

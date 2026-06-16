@@ -12,8 +12,11 @@ path = "src/main.rs"
 [dependencies]
 arboard = "3"
 async-trait = "0.1"
+axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 crossterm = "0.28"
+futures-util = "0.3"
+hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 include_dir = "0.7"
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
@@ -23,12 +26,14 @@ operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
 operit-store = { path = "../../core/crates/operit-store" }
 ratatui = "0.28"
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [target.'cfg(windows)'.dependencies]
 operit-host-windows-native = { path = "../../hosts/windows" }

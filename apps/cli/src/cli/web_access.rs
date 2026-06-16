@@ -1,8 +1,9 @@
 use super::*;
 use crate::create_local_core;
 
-use operit_link::{
+use crate::access::{
     RemoteDeviceInfo, RemoteHostInteractionBroker, RemoteLinkServer, RemoteLinkServerConfig,
+    RemoteWebAccessConfig,
 };
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -158,7 +159,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 token: config.token.clone(),
                 deviceInfo: RemoteDeviceInfo::native(),
                 hostInteractionBroker: None,
-                webAccess: Some(operit_link::RemoteWebAccessConfig {
+                webAccess: Some(RemoteWebAccessConfig {
                     token: config.token,
                     shutdownToken: shutdown_token,
                     webRoot: web_root,
@@ -201,7 +202,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
             token: config.token.clone(),
             deviceInfo: RemoteDeviceInfo::native(),
             hostInteractionBroker: Some(host_interaction_broker),
-            webAccess: Some(operit_link::RemoteWebAccessConfig {
+            webAccess: Some(RemoteWebAccessConfig {
                 token: config.token,
                 shutdownToken: shutdown_token,
                 webRoot: web_root,

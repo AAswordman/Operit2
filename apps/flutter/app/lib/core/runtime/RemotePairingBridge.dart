@@ -4,8 +4,8 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-import '../bridge/RemoteCoreProxy.dart';
 import '../link/CoreLinkProtocol.dart';
+import '../link/RemoteRuntimeLinkClient.dart';
 import 'RuntimeDeviceInfoProvider.dart';
 
 class RemotePairingBridge {

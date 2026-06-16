@@ -13,6 +13,7 @@ UI Layer
 
 Bridge Layer
   apps/flutter/app/lib/core/bridge
+  apps/flutter/app/lib/core/link
   apps/flutter/native/operit-flutter-bridge
   core/crates/operit-link
   core/crates/operit-core-proxy
@@ -42,11 +43,17 @@ Extension Layer
 Flutter UI / CLI
   -> CoreProxy
   -> operit-link request
-  -> LocalCoreProxy / RemoteCoreProxy
+  -> LocalCoreProxy / app remote link client
   -> OperitApplication / ChatRuntimeHolder
   -> EnhancedAIService
   -> ToolExecutionManager / AIToolHandler
   -> Host trait / ToolPkg / MCP / Memory / Storage
+```
+
+Link / Access / Remote 边界见：
+
+```text
+docs/link-access-architecture.md
 ```
 
 平台能力方向：
@@ -329,7 +336,7 @@ core/crates/operit-link
 ```text
 src/protocol.rs
 src/client.rs
-src/remote.rs
+src/http.rs
 src/lib.rs
 ```
 
@@ -344,6 +351,15 @@ CoreEvent
 CoreEventKind
 CoreLinkClient
 CoreLinkError
+```
+
+职责边界：
+
+```text
+operit-link 只描述 core call/watch/event/error/stream 的穿透语义
+Proxy 只表示 core 能力在 app 侧的代理投影
+Remote 只表示跨 app 使用 link 的连接场景
+配对、session、签名、设备信任和 server 生命周期属于 app access
 ```
 
 通信语义：
@@ -1090,6 +1106,7 @@ lib/core/bridge/ProxyCoreRuntimeBridge.dart
 lib/core/bridge/CoreProxy.dart
 lib/core/bridge/PlatformCoreProxy.dart
 lib/core/link/CoreLinkProtocol.dart
+lib/core/link/RemoteRuntimeLinkClient.dart
 lib/core/proxy/generated/CoreProxyClients.g.dart
 lib/core/proxy/generated/CoreProxyModels.g.dart
 ```
@@ -1111,12 +1128,14 @@ watch(targetPath, propertyName, args)
 watchChanges(targetPath, propertyName, args)
 ```
 
-RemoteCoreProxy HTTP endpoints：
+Remote runtime link client endpoints：
 
 ```text
 POST /link/call
 POST /link/watch/snapshot
-POST /link/watch/stream
+POST /link/watch/channel/events
+POST /link/watch/channel/open
+POST /link/watch/channel/close
 POST /link/session
 ```
 
@@ -1135,10 +1154,13 @@ x-operit-signature
 Hmac(sha256, base64Decode(sessionSecret), utf8(body))
 ```
 
+签名、session 和配对属于 Flutter app access；`operit-link` 不持有这些状态。
+
 Native bridge：
 
 ```text
 apps/flutter/native/operit-flutter-bridge/src/lib.rs
+apps/flutter/native/operit-flutter-bridge/src/access.rs
 ```
 
 Native bridge 持有：
@@ -1150,6 +1172,16 @@ Mutex<HashMap<String, CoreEventStream>>
 FlutterApprovalBridge
 FlutterBrowserAutomationBridge
 NativeTerminalHost
+```
+
+Native app access 持有：
+
+```text
+pairing endpoints
+accepted session store
+request signature verification
+Web Access host server
+operit-link HTTP dispatcher wiring
 ```
 
 权限桥：
@@ -1590,6 +1622,7 @@ CLI command：
 src/cli/link.rs
 src/cli/transfer.rs
 src/cli/mod.rs
+src/access.rs
 ```
 
 TUI：
@@ -1617,6 +1650,15 @@ main
   -> LocalCoreProxy
   -> operit-command-core
   -> runtime / tool / workspace / package / update command
+```
+
+CLI app access：
+
+```text
+link serve/connect/sync/watch 由 CLI app access 管理配对、session、签名和 accepted sessions
+operit-link 只承载 core call/watch/event 穿透协议
+CLI app access session storage: client/access/link_sessions.json
+CLI app accepted session storage: client/access/link_server_sessions.json
 ```
 
 ## 14. Data Assembly

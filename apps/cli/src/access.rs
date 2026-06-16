@@ -1,11 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
-use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -30,10 +27,9 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::client::CoreLinkClient;
-use crate::protocol::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
-    CoreWatchRequest,
+use operit_link::CoreLinkClient;
+use operit_link::{
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CoreWatchRequest,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -107,6 +103,7 @@ pub struct RemoteWebAccessConfig {
 #[derive(Clone)]
 struct RemoteLinkState {
     core: Arc<Mutex<Box<dyn CoreLinkClient + Send>>>,
+    linkDispatcher: operit_link::CoreLinkHttpDispatcher,
     token: String,
     keySecret: Arc<StaticSecret>,
     keyPublic: String,
@@ -120,7 +117,30 @@ struct RemoteLinkState {
     pairingCodeSink: Option<RemotePairingCodeSink>,
     hostInteractionBroker: Option<RemoteHostInteractionBroker>,
     webAccess: Option<RemoteWebAccessState>,
-    watchChannels: Arc<Mutex<BTreeMap<String, RemoteWatchChannel>>>,
+}
+
+#[derive(Clone)]
+struct SharedAccessCoreClient {
+    core: Arc<Mutex<Box<dyn CoreLinkClient + Send>>>,
+}
+
+#[async_trait]
+impl CoreLinkClient for SharedAccessCoreClient {
+    async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
+        self.core.lock().await.call(request).await
+    }
+
+    #[allow(non_snake_case)]
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        self.core.lock().await.watchSnapshot(request).await
+    }
+
+    async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        self.core.lock().await.watch(request).await
+    }
 }
 
 #[derive(Clone)]
@@ -128,46 +148,6 @@ struct RemoteWebAccessState {
     shutdownToken: String,
     shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
     webRoot: PathBuf,
-}
-
-struct RemoteWatchChannel {
-    sender: mpsc::UnboundedSender<RemoteWatchChannelEvent>,
-    subscriptions: BTreeMap<String, JoinHandle<()>>,
-}
-
-struct WatchChannelEventStream {
-    receiver: mpsc::UnboundedReceiver<RemoteWatchChannelEvent>,
-    watchChannels: Arc<Mutex<BTreeMap<String, RemoteWatchChannel>>>,
-    channelId: String,
-}
-
-impl futures_util::Stream for WatchChannelEventStream {
-    type Item = Result<Bytes, Infallible>;
-
-    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.receiver.poll_recv(context) {
-            Poll::Ready(Some(event)) => {
-                let mut line =
-                    serde_json::to_vec(&event).expect("RemoteWatchChannelEvent must serialize");
-                line.push(b'\n');
-                Poll::Ready(Some(Ok(Bytes::from(line))))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl Drop for WatchChannelEventStream {
-    fn drop(&mut self) {
-        let watchChannels = self.watchChannels.clone();
-        let channelId = self.channelId.clone();
-        tokio::spawn(async move {
-            if let Some(channel) = watchChannels.lock().await.remove(&channelId) {
-                abort_watch_channel(channel);
-            }
-        });
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -550,8 +530,12 @@ impl RemoteLinkServer {
             shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
             webRoot: value.webRoot,
         });
+        let core = Arc::new(Mutex::new(Box::new(core) as Box<dyn CoreLinkClient + Send>));
+        let linkDispatcher =
+            operit_link::CoreLinkHttpDispatcher::new(SharedAccessCoreClient { core: core.clone() });
         let state = RemoteLinkState {
-            core: Arc::new(Mutex::new(Box::new(core))),
+            core,
+            linkDispatcher,
             token: config.token.clone(),
             keySecret,
             keyPublic,
@@ -565,7 +549,6 @@ impl RemoteLinkServer {
             pairingCodeSink: config.pairingCodeSink.clone(),
             hostInteractionBroker: config.hostInteractionBroker.clone(),
             webAccess,
-            watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
         };
         let mut app = Router::new()
             .route("/link/hello", get(hello))
@@ -1259,12 +1242,7 @@ async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: By
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteCallEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    let mut core = state.core.lock().await;
-    Json(core.call(envelope.request).await).into_response()
+    state.linkDispatcher.call(body).await
 }
 
 async fn watch_snapshot(
@@ -1275,15 +1253,7 @@ async fn watch_snapshot(
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteWatchEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    let mut core = state.core.lock().await;
-    match core.watchSnapshot(envelope.request).await {
-        Ok(event) => Json(event).into_response(),
-        Err(error) => (StatusCode::BAD_REQUEST, Json(error)).into_response(),
-    }
+    state.linkDispatcher.watchSnapshot(body).await
 }
 
 async fn watch_channel_events(
@@ -1294,11 +1264,7 @@ async fn watch_channel_events(
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteWatchChannelEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    open_watch_channel_events(&state, envelope.channelId).await
+    state.linkDispatcher.watchChannelEvents(body).await
 }
 
 async fn watch_channel_open(
@@ -1309,21 +1275,7 @@ async fn watch_channel_open(
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteWatchChannelOpenEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    match open_watch_channel_subscription(
-        &state,
-        envelope.channelId,
-        envelope.subscriptionId,
-        envelope.request,
-    )
-    .await
-    {
-        Ok(response) => Json(response).into_response(),
-        Err(error) => (StatusCode::BAD_REQUEST, Json(error)).into_response(),
-    }
+    state.linkDispatcher.watchChannelOpen(body).await
 }
 
 async fn watch_channel_close(
@@ -1334,118 +1286,7 @@ async fn watch_channel_close(
     if let Err(response) = verify_session(&state, &headers, &body).await {
         return response;
     }
-    let envelope = match serde_json::from_slice::<RemoteWatchChannelCloseEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    close_watch_channel_subscription(&state, &envelope.channelId, &envelope.subscriptionId).await;
-    Json(serde_json::json!({})).into_response()
-}
-
-async fn open_watch_channel_events(state: &RemoteLinkState, channelId: String) -> Response {
-    let (sender, receiver) = mpsc::unbounded_channel::<RemoteWatchChannelEvent>();
-    let watchChannels = state.watchChannels.clone();
-    let previous = state.watchChannels.lock().await.insert(
-        channelId.clone(),
-        RemoteWatchChannel {
-            sender,
-            subscriptions: BTreeMap::new(),
-        },
-    );
-    if let Some(previous) = previous {
-        abort_watch_channel(previous);
-    }
-    let stream = WatchChannelEventStream {
-        receiver,
-        watchChannels,
-        channelId,
-    };
-    Response::builder()
-        .header("content-type", "application/x-ndjson")
-        .body(Body::from_stream(stream))
-        .expect("watch channel event response must build")
-}
-
-async fn open_watch_channel_subscription(
-    state: &RemoteLinkState,
-    channelId: String,
-    subscriptionId: String,
-    request: CoreWatchRequest,
-) -> Result<RemoteWatchChannelOpenResponse, CoreLinkError> {
-    let channel_sender = {
-        let channels = state.watchChannels.lock().await;
-        channels
-            .get(&channelId)
-            .map(|channel| channel.sender.clone())
-            .ok_or_else(|| {
-                CoreLinkError::new("WATCH_CHANNEL_NOT_FOUND", "watch channel not found")
-            })?
-    };
-    let mut core = state.core.lock().await;
-    let receiver = core.watch(request).await?;
-    drop(core);
-    let task_subscription_id = subscriptionId.clone();
-    let task_channel_id = channelId.clone();
-    let task_watch_channels = state.watchChannels.clone();
-    let task = tokio::spawn(async move {
-        let mut receiver = receiver;
-        while let Some(event) = receiver.recv().await {
-            let completed = event.kind == CoreEventKind::Completed;
-            if channel_sender
-                .send(RemoteWatchChannelEvent {
-                    subscriptionId: task_subscription_id.clone(),
-                    event,
-                })
-                .is_err()
-            {
-                let mut channels = task_watch_channels.lock().await;
-                if let Some(channel) = channels.get_mut(&task_channel_id) {
-                    channel.subscriptions.remove(&task_subscription_id);
-                }
-                return;
-            }
-            if completed {
-                let mut channels = task_watch_channels.lock().await;
-                if let Some(channel) = channels.get_mut(&task_channel_id) {
-                    channel.subscriptions.remove(&task_subscription_id);
-                }
-                return;
-            }
-        }
-        let mut channels = task_watch_channels.lock().await;
-        if let Some(channel) = channels.get_mut(&task_channel_id) {
-            channel.subscriptions.remove(&task_subscription_id);
-        }
-    });
-    let mut channels = state.watchChannels.lock().await;
-    let Some(channel) = channels.get_mut(&channelId) else {
-        task.abort();
-        return Err(CoreLinkError::new(
-            "WATCH_CHANNEL_NOT_FOUND",
-            "watch channel not found",
-        ));
-    };
-    channel.subscriptions.insert(subscriptionId.clone(), task);
-    Ok(RemoteWatchChannelOpenResponse { subscriptionId })
-}
-
-async fn close_watch_channel_subscription(
-    state: &RemoteLinkState,
-    channelId: &str,
-    subscriptionId: &str,
-) {
-    let mut channels = state.watchChannels.lock().await;
-    if let Some(channel) = channels.get_mut(channelId) {
-        if let Some(task) = channel.subscriptions.remove(subscriptionId) {
-            task.abort();
-        }
-    }
-}
-
-fn abort_watch_channel(channel: RemoteWatchChannel) {
-    for (_, task) in channel.subscriptions {
-        task.abort();
-    }
+    state.linkDispatcher.watchChannelClose(body).await
 }
 
 async fn host_interaction_poll(

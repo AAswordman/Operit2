@@ -11,7 +11,11 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use operit_core_proxy::LocalCoreProxy;
-use operit_link::{
+#[cfg(not(target_arch = "wasm32"))]
+mod access;
+
+#[cfg(not(target_arch = "wasm32"))]
+use access::{
     AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
     PairStartState, RemoteDeviceInfo, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
     RemotePairingCodeRecord, RemotePairingCodeSink, RemoteWebAccessConfig,
