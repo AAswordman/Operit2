@@ -56,7 +56,25 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDeleteSelectedMessages,
     required this.onRefreshRequested,
     required this.onSendMessage,
+    required this.onQueueMessage,
     required this.onCancelMessage,
+    required this.pendingQueueMessages,
+    required this.isPendingQueueExpanded,
+    required this.onPendingQueueExpandedChange,
+    required this.onDeletePendingQueueMessage,
+    required this.onEditPendingQueueMessage,
+    required this.onSendPendingQueueMessage,
+    required this.attachments,
+    required this.onAttachImage,
+    required this.onTakePhoto,
+    required this.onAttachMemory,
+    required this.onAttachFile,
+    required this.onAttachScreenContent,
+    required this.onAttachNotifications,
+    required this.onAttachLocation,
+    required this.onAttachPackage,
+    required this.onRemoveAttachment,
+    required this.onInsertAttachment,
     required this.onModelChanged,
     required this.toastMessageListenable,
     required this.onDismissToast,
@@ -103,7 +121,25 @@ class ChatScreenContent extends StatelessWidget {
   final Future<void> Function() onDeleteSelectedMessages;
   final Future<void> Function() onRefreshRequested;
   final VoidCallback onSendMessage;
+  final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
+  final List<PendingQueueMessageItem> pendingQueueMessages;
+  final bool isPendingQueueExpanded;
+  final ValueChanged<bool> onPendingQueueExpandedChange;
+  final ValueChanged<int> onDeletePendingQueueMessage;
+  final ValueChanged<int> onEditPendingQueueMessage;
+  final ValueChanged<int> onSendPendingQueueMessage;
+  final List<AttachmentInfo> attachments;
+  final VoidCallback onAttachImage;
+  final VoidCallback onTakePhoto;
+  final VoidCallback onAttachMemory;
+  final VoidCallback onAttachFile;
+  final VoidCallback onAttachScreenContent;
+  final VoidCallback onAttachNotifications;
+  final VoidCallback onAttachLocation;
+  final ValueChanged<String> onAttachPackage;
+  final ValueChanged<String> onRemoveAttachment;
+  final ValueChanged<AttachmentInfo> onInsertAttachment;
   final ValueChanged<String> onModelChanged;
   final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
@@ -171,7 +207,26 @@ class ChatScreenContent extends StatelessWidget {
                       viewModel: viewModel,
                       currentChatId: currentChatId,
                       onSendMessage: onSendMessage,
+                      onQueueMessage: onQueueMessage,
                       onCancelMessage: onCancelMessage,
+                      pendingQueueMessages: pendingQueueMessages,
+                      isPendingQueueExpanded: isPendingQueueExpanded,
+                      onPendingQueueExpandedChange:
+                          onPendingQueueExpandedChange,
+                      onDeletePendingQueueMessage: onDeletePendingQueueMessage,
+                      onEditPendingQueueMessage: onEditPendingQueueMessage,
+                      onSendPendingQueueMessage: onSendPendingQueueMessage,
+                      attachments: attachments,
+                      onAttachImage: onAttachImage,
+                      onTakePhoto: onTakePhoto,
+                      onAttachMemory: onAttachMemory,
+                      onAttachFile: onAttachFile,
+                      onAttachScreenContent: onAttachScreenContent,
+                      onAttachNotifications: onAttachNotifications,
+                      onAttachLocation: onAttachLocation,
+                      onAttachPackage: onAttachPackage,
+                      onRemoveAttachment: onRemoveAttachment,
+                      onInsertAttachment: onInsertAttachment,
                       onModelChanged: onModelChanged,
                     );
                   },

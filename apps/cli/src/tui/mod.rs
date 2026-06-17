@@ -1,22 +1,45 @@
+#[path = "core/app.rs"]
 mod app;
+#[path = "core/approval.rs"]
 mod approval;
+#[path = "input/commands.rs"]
 mod commands;
+#[path = "transcript/empty_state.rs"]
 mod empty_state;
+#[path = "core/focus.rs"]
+mod focus;
+#[path = "transcript/helpers.rs"]
 mod helpers;
+#[path = "input/input.rs"]
 mod input;
+#[path = "core/link_proxy_rs.rs"]
 mod link_proxy_rs;
+#[path = "transcript/markdown.rs"]
 mod markdown;
+#[path = "input/pending_queue.rs"]
+mod pending_queue;
+#[path = "view/render.rs"]
 mod render;
+#[path = "transcript/response_stream.rs"]
+mod response_stream;
+#[path = "transcript/selection.rs"]
+mod selection;
+#[path = "transcript/stream_markdown.rs"]
+mod stream_markdown;
+#[path = "view/theme.rs"]
 mod theme;
+#[path = "transcript/transcript.rs"]
+mod transcript;
+#[path = "transcript/typewriter.rs"]
 mod typewriter;
 
-use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
-use approval::TuiApprovalBridge;
-use link_proxy_rs::tui_core;
 use crate::access::{
     PairedRemoteSession, PairedRemoteSessionRecord, RemoteHostInteractionBroker,
     RemoteHostInteractionRequest, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
 };
+use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
+use approval::TuiApprovalBridge;
+use link_proxy_rs::tui_core;
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};

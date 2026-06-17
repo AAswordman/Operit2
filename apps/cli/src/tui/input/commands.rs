@@ -5,7 +5,7 @@ pub(super) struct TuiCommandSpec {
     pub(super) description: &'static str,
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 20] = [
+const COMMAND_SPECS: [TuiCommandSpec; 25] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -53,7 +53,7 @@ const COMMAND_SPECS: [TuiCommandSpec; 20] = [
     },
     TuiCommandSpec {
         name: "model use",
-        usage: "/model use <model-id>",
+        usage: "/model use <provider-id> <model-id>",
         description: "switch chat model binding",
     },
     TuiCommandSpec {
@@ -95,6 +95,31 @@ const COMMAND_SPECS: [TuiCommandSpec; 20] = [
         name: "clear-attachments",
         usage: "/clear-attachments",
         description: "clear queued attachments",
+    },
+    TuiCommandSpec {
+        name: "queue",
+        usage: "/queue",
+        description: "show message queue",
+    },
+    TuiCommandSpec {
+        name: "queue clear",
+        usage: "/queue clear",
+        description: "clear message queue",
+    },
+    TuiCommandSpec {
+        name: "queue delete",
+        usage: "/queue delete <id>",
+        description: "delete queued message",
+    },
+    TuiCommandSpec {
+        name: "queue edit",
+        usage: "/queue edit <id>",
+        description: "edit queued message",
+    },
+    TuiCommandSpec {
+        name: "queue send",
+        usage: "/queue send <id>",
+        description: "send queued message",
     },
     TuiCommandSpec {
         name: "quit",

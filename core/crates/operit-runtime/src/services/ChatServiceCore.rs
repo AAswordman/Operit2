@@ -1,3 +1,5 @@
+use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
+use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
@@ -9,6 +11,7 @@ use crate::data::model::ChatTurnOptions::ChatTurnOptions;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::repository::ChatHistoryManager::ChatImportResult;
+use crate::data::skill::SkillRepository::SkillRepository;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
@@ -18,7 +21,18 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
+use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::StateFlow;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use url::Url;
+
+const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
+const OCR_INLINE_INSTRUCTION: &str =
+    "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
+
 pub trait ChatServiceUiBridge {}
 
 pub struct EmptyChatServiceUiBridge;
@@ -35,6 +49,7 @@ pub struct ChatServiceCore {
     pub onEnhancedAiServiceReady: Option<fn(&EnhancedAIService)>,
     pub additionalOnTurnComplete: Option<fn(Option<String>, i32, i32, i32)>,
     pub uiBridge: EmptyChatServiceUiBridge,
+    pub attachments: Vec<AttachmentInfo>,
 }
 
 impl ChatServiceCore {
@@ -49,6 +64,7 @@ impl ChatServiceCore {
             onEnhancedAiServiceReady: None,
             additionalOnTurnComplete: None,
             uiBridge: EmptyChatServiceUiBridge,
+            attachments: Vec::new(),
         };
         core.initializeDelegates();
         core
@@ -607,11 +623,274 @@ impl ChatServiceCore {
 
     pub fn updateCumulativeStatistics(&mut self) {}
 
-    pub fn handleAttachment(&mut self, _filePath: String) {}
+    pub fn handleAttachment(&mut self, _filePath: String) {
+        let filePath = _filePath.trim();
+        if filePath.is_empty() {
+            self.messageProcessingDelegate
+                .showToast("无法添加空附件路径".to_string());
+            return;
+        }
 
-    pub fn removeAttachment(&mut self, _filePath: String) {}
+        if filePath == "screen_capture" {
+            self.captureScreenContent();
+            return;
+        }
+        if filePath == "notifications_capture" {
+            self.captureNotifications(10);
+            return;
+        }
+        if filePath == "location_capture" {
+            self.captureLocation(true);
+            return;
+        }
+        if let Some(packageName) = filePath.strip_prefix(PACKAGE_ATTACHMENT_PREFIX) {
+            self.attachPackageInternal(packageName.trim());
+            return;
+        }
 
-    pub fn clearAttachments(&mut self) {}
+        match self.createAttachmentInfo(filePath) {
+            Ok(attachmentInfo) => {
+                let currentPath = attachmentInfo.filePath.clone();
+                if !self
+                    .attachments
+                    .iter()
+                    .any(|attachment| attachment.filePath == currentPath)
+                {
+                    let fileName = attachmentInfo.fileName.clone();
+                    self.attachments.push(attachmentInfo);
+                    self.messageProcessingDelegate
+                        .showToast(format!("已添加附件: {fileName}"));
+                }
+            }
+            Err(message) => {
+                self.messageProcessingDelegate.showToast(message);
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn captureScreenContent(&mut self) {
+        let mut toolHandler = AIToolHandler::default();
+        let result = toolHandler.executeTool(AITool {
+            name: "capture_screenshot".to_string(),
+            parameters: Vec::new(),
+        });
+        if !result.success {
+            self.messageProcessingDelegate
+                .showToast(format!("添加屏幕内容失败: {}", toolFailureMessage(&result)));
+            return;
+        }
+
+        let screenshotPath = result.result.toString().trim().to_string();
+        if screenshotPath.is_empty() {
+            self.messageProcessingDelegate
+                .showToast("添加屏幕内容失败: 截图失败".to_string());
+            return;
+        }
+
+        let positionInfo = match image::image_dimensions(&screenshotPath) {
+            Ok((width, height)) if width > 0 && height > 0 => {
+                format!("【位置】full_screen; image_px={}x{}", width, height)
+            }
+            _ => "【位置】full_screen".to_string(),
+        };
+
+        let ocrText =
+            OCRUtils::recognizeText(&toolHandler.getContext(), &screenshotPath, OCRQuality::HIGH);
+        let ocrText = ocrText.trim().to_string();
+        if ocrText.is_empty() {
+            self.messageProcessingDelegate
+                .showToast("添加屏幕内容失败: 未识别到屏幕文字".to_string());
+            return;
+        }
+
+        let captureId = format!("screen_ocr_{}", currentTimeMillis());
+        let content = format!("屏幕内容{positionInfo}\n\n{ocrText}\n\n{OCR_INLINE_INSTRUCTION}");
+        self.attachments.push(AttachmentInfo {
+            filePath: captureId,
+            fileName: "screen_content.txt".to_string(),
+            mimeType: "text/plain".to_string(),
+            fileSize: content.len() as i64,
+            content,
+        });
+        self.messageProcessingDelegate
+            .showToast("已添加屏幕内容".to_string());
+
+        let _ = fs::remove_file(&screenshotPath);
+    }
+
+    #[allow(non_snake_case)]
+    fn captureNotifications(&mut self, limit: i32) {
+        let mut toolHandler = AIToolHandler::default();
+        let result = toolHandler.executeTool(AITool {
+            name: "get_notifications".to_string(),
+            parameters: vec![
+                ToolParameter {
+                    name: "limit".to_string(),
+                    value: limit.to_string(),
+                },
+                ToolParameter {
+                    name: "include_ongoing".to_string(),
+                    value: "true".to_string(),
+                },
+            ],
+        });
+        if !result.success {
+            self.messageProcessingDelegate
+                .showToast(format!("添加当前通知失败: {}", toolFailureMessage(&result)));
+            return;
+        }
+
+        let content = result.result.toString();
+        let attachmentInfo = AttachmentInfo {
+            filePath: format!("notifications_{}", currentTimeMillis()),
+            fileName: "notifications.json".to_string(),
+            mimeType: "application/json".to_string(),
+            fileSize: content.len() as i64,
+            content,
+        };
+        self.attachments.push(attachmentInfo);
+        self.messageProcessingDelegate
+            .showToast("已添加当前通知".to_string());
+    }
+
+    #[allow(non_snake_case)]
+    fn captureLocation(&mut self, highAccuracy: bool) {
+        let mut toolHandler = AIToolHandler::default();
+        let result = toolHandler.executeTool(AITool {
+            name: "get_device_location".to_string(),
+            parameters: vec![
+                ToolParameter {
+                    name: "high_accuracy".to_string(),
+                    value: highAccuracy.to_string(),
+                },
+                ToolParameter {
+                    name: "timeout".to_string(),
+                    value: "10".to_string(),
+                },
+            ],
+        });
+        if !result.success {
+            self.messageProcessingDelegate
+                .showToast(format!("添加当前位置失败: {}", toolFailureMessage(&result)));
+            return;
+        }
+
+        let content = result.result.toString();
+        let attachmentInfo = AttachmentInfo {
+            filePath: format!("location_{}", currentTimeMillis()),
+            fileName: "location.json".to_string(),
+            mimeType: "application/json".to_string(),
+            fileSize: content.len() as i64,
+            content,
+        };
+        self.attachments.push(attachmentInfo);
+        self.messageProcessingDelegate
+            .showToast("已添加当前位置".to_string());
+    }
+
+    #[allow(non_snake_case)]
+    fn attachPackageInternal(&mut self, packageName: &str) {
+        if packageName.is_empty() {
+            self.messageProcessingDelegate
+                .showToast(format!("添加包附件失败: {packageName}"));
+            return;
+        }
+
+        let toolHandler = AIToolHandler::default();
+        let packageManager = toolHandler.getOrCreatePackageManager();
+        let isStandardPackage;
+        let isSkillPackage;
+        let isMcpPackage;
+        {
+            let packageManagerGuard = packageManager
+                .lock()
+                .expect("package manager mutex poisoned");
+            isStandardPackage = packageManagerGuard
+                .getAvailablePackages()
+                .contains_key(packageName)
+                && !packageManagerGuard.isToolPkgContainer(packageName);
+            isMcpPackage = packageManagerGuard
+                .getAvailableServerPackages()
+                .contains_key(packageName);
+        }
+        isSkillPackage = SkillRepository::getInstance(&toolHandler.getContext())
+            .getAiVisibleSkillPackages()
+            .contains_key(packageName);
+
+        if !isStandardPackage && !isSkillPackage && !isMcpPackage {
+            self.messageProcessingDelegate
+                .showToast(format!("添加包附件失败: {packageName}"));
+            return;
+        }
+
+        {
+            let mut packageManagerGuard = packageManager
+                .lock()
+                .expect("package manager mutex poisoned");
+            if isStandardPackage {
+                packageManagerGuard.enablePackage(packageName);
+            }
+            let packageContent = packageManagerGuard.usePackage(packageName);
+            if isPackageAttachmentError(packageName, &packageContent) {
+                self.messageProcessingDelegate
+                    .showToast(format!("添加包附件失败: {packageName}"));
+                return;
+            }
+
+            let attachmentInfo = AttachmentInfo {
+                filePath: packageAttachmentPath(packageName),
+                fileName: packageAttachmentDisplayName(packageName),
+                mimeType: "text/plain".to_string(),
+                fileSize: packageContent.len() as i64,
+                content: packageContent,
+            };
+            self.attachments
+                .retain(|attachment| attachment.filePath != attachmentInfo.filePath);
+            self.attachments.push(attachmentInfo);
+        }
+
+        self.messageProcessingDelegate
+            .showToast(format!("已添加包附件: {packageName}"));
+    }
+
+    #[allow(non_snake_case)]
+    fn createAttachmentInfo(&self, filePath: &str) -> Result<AttachmentInfo, String> {
+        let localPath = resolveAttachmentPath(filePath)?;
+        let metadata = fs::metadata(&localPath).map_err(|_| "附件文件不存在".to_string())?;
+        if !metadata.is_file() {
+            return Err(format!("无法添加附件: {}", localPath.display()));
+        }
+
+        let fileName = localPath
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("无法添加附件: {}", localPath.display()))?
+            .to_string();
+        let mimeType = getMimeTypeFromPath(&localPath).to_string();
+        let tempFile = createTempFileFromPath(&localPath, &fileName)?;
+        let fileSize = fs::metadata(&tempFile)
+            .map_err(|error| format!("无法读取附件大小: {error}"))?
+            .len() as i64;
+
+        Ok(AttachmentInfo {
+            filePath: tempFile.to_string_lossy().into_owned(),
+            fileName,
+            mimeType,
+            fileSize,
+            content: String::new(),
+        })
+    }
+
+    pub fn removeAttachment(&mut self, _filePath: String) {
+        self.attachments
+            .retain(|attachment| attachment.filePath != _filePath);
+    }
+
+    pub fn clearAttachments(&mut self) {
+        self.attachments.clear();
+    }
 
     pub fn userMessage(&self) -> &TextFieldValue {
         &self.messageProcessingDelegate.userMessage
@@ -756,7 +1035,7 @@ impl ChatServiceCore {
     }
 
     pub fn attachments(&self) -> Vec<AttachmentInfo> {
-        Vec::new()
+        self.attachments.clone()
     }
 
     pub fn getChatHistoryDelegate(&mut self) -> &mut ChatHistoryDelegate {
@@ -1027,4 +1306,116 @@ fn isXmlLikeTagNameStart(value: u8) -> bool {
 #[allow(non_snake_case)]
 fn isXmlLikeTagNameChar(value: u8) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, b':' | b'_' | b'-')
+}
+
+#[allow(non_snake_case)]
+fn resolveAttachmentPath(filePath: &str) -> Result<PathBuf, String> {
+    if filePath.starts_with("file://") {
+        let url = Url::parse(filePath).map_err(|_| format!("无法添加附件: {filePath}"))?;
+        return url
+            .to_file_path()
+            .map_err(|_| format!("无法添加附件: {filePath}"));
+    }
+    Ok(PathBuf::from(filePath))
+}
+
+#[allow(non_snake_case)]
+fn createTempFileFromPath(sourcePath: &Path, fileName: &str) -> Result<PathBuf, String> {
+    let fileExtension = fileName
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| !extension.trim().is_empty())
+        .unwrap_or("jpg");
+    let externalDir = OperitPaths::cleanOnExitDir()?;
+    fs::create_dir_all(&externalDir).map_err(|error| format!("无法创建附件临时目录: {error}"))?;
+    let noMediaFile = externalDir.join(".nomedia");
+    if !noMediaFile.exists() {
+        fs::File::create(&noMediaFile).map_err(|error| format!("无法创建附件媒体标记: {error}"))?;
+    }
+    let tempFile = externalDir.join(format!("img_{}.{}", currentTimeMillis(), fileExtension));
+    fs::copy(sourcePath, &tempFile).map_err(|error| format!("无法复制附件: {error}"))?;
+    let metadata =
+        fs::metadata(&tempFile).map_err(|error| format!("无法读取附件临时文件: {error}"))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(format!("无法添加附件: {}", sourcePath.display()));
+    }
+    Ok(tempFile)
+}
+
+#[allow(non_snake_case)]
+fn getMimeTypeFromPath(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("heic") => "image/heic",
+        Some("txt") => "text/plain",
+        Some("json") => "application/json",
+        Some("xml") => "application/xml",
+        Some("pdf") => "application/pdf",
+        Some("doc") | Some("docx") => "application/msword",
+        Some("xls") | Some("xlsx") => "application/vnd.ms-excel",
+        Some("zip") => "application/zip",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("m4a") => "audio/mp4",
+        Some("aac") => "audio/aac",
+        Some("ogg") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        Some("mp4") => "video/mp4",
+        Some("mkv") => "video/x-matroska",
+        Some("webm") => "video/webm",
+        Some("3gp") => "video/3gpp",
+        Some("avi") => "video/x-msvideo",
+        Some("mov") => "video/quicktime",
+        _ => "application/octet-stream",
+    }
+}
+
+#[allow(non_snake_case)]
+fn packageAttachmentPath(packageName: &str) -> String {
+    format!("{PACKAGE_ATTACHMENT_PREFIX}{packageName}")
+}
+
+#[allow(non_snake_case)]
+fn packageAttachmentDisplayName(packageName: &str) -> String {
+    format!("包: {packageName}")
+}
+
+#[allow(non_snake_case)]
+fn isPackageAttachmentError(packageName: &str, packageContent: &str) -> bool {
+    if packageContent.trim().is_empty() {
+        return true;
+    }
+    packageContent.starts_with("Package not found: ")
+        || packageContent.starts_with("Failed to load package data for: ")
+        || packageContent.starts_with("Missing required environment variables for package ")
+        || packageContent.starts_with("ToolPkg container '")
+        || packageContent.starts_with("MCP server '")
+        || packageContent.starts_with("Cannot connect to MCP server")
+        || packageContent.starts_with("Cannot get MCP server configuration")
+        || packageContent == format!("Skill '{packageName}' is set to not show to AI")
+}
+
+#[allow(non_snake_case)]
+fn toolFailureMessage(result: &ToolResult) -> String {
+    let message = result.error.clone().unwrap_or_default();
+    if !message.trim().is_empty() {
+        return message;
+    }
+    result.result.toString()
+}
+
+#[allow(non_snake_case)]
+fn currentTimeMillis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after unix epoch")
+        .as_millis()
 }

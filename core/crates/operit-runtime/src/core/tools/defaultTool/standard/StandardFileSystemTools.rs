@@ -1,17 +1,18 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
-    HttpRequestData,
+    HttpRequestData, SystemOperationHost,
 };
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::api::chat::enhance::ToolExecutionManager::ToolExecutionManager;
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutor, ToolParameter, ToolValidationResult,
@@ -26,6 +27,7 @@ use crate::core::tools::ToolResultDataClasses::{
     ToolResultData,
 };
 use crate::data::dao::ChatDao::ChatDao;
+use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 
 use super::StandardWebVisitTool::StandardWebVisitTool;
 
@@ -33,6 +35,7 @@ use super::StandardWebVisitTool::StandardWebVisitTool;
 pub struct StandardFileSystemTools {
     pub host: Arc<dyn FileSystemHost>,
     pub httpHost: Arc<dyn HttpHost>,
+    pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     runtimeStoreRoot: PathBuf,
     appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
@@ -43,6 +46,7 @@ impl StandardFileSystemTools {
     pub fn new(
         host: Arc<dyn FileSystemHost>,
         httpHost: Arc<dyn HttpHost>,
+        systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
         runtimeStoreRoot: PathBuf,
         appFilesRoot: Option<PathBuf>,
         workspaceCollectionRoot: PathBuf,
@@ -51,6 +55,7 @@ impl StandardFileSystemTools {
         Self {
             host,
             httpHost,
+            systemOperationHost,
             runtimeStoreRoot,
             appFilesRoot,
             workspaceCollectionRoot,
@@ -125,6 +130,43 @@ impl StandardFileSystemTools {
 
         match vfs.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
+                let fileExt = fileExtension(&path);
+                if isSpecialFileType(&fileExt) {
+                    let fullResult = self.readFileFull(tool);
+                    if !fullResult.success {
+                        return fullResult;
+                    }
+
+                    let ToolResultData::FileContentData(contentData) = fullResult.result else {
+                        return toolError(
+                            tool,
+                            String::new(),
+                            "Unexpected read_file_full result".to_string(),
+                        );
+                    };
+
+                    let mut content = contentData.content;
+                    let isTruncated = content.len() > ToolExecutionLimits::MAX_FILE_READ_BYTES;
+                    if isTruncated {
+                        content = content
+                            .chars()
+                            .take(ToolExecutionLimits::MAX_FILE_READ_BYTES)
+                            .collect();
+                    }
+                    let mut contentWithLineNumbers = addLineNumbers(&content, 0, 0);
+                    if isTruncated {
+                        contentWithLineNumbers.push_str("\n\n... (file content truncated) ...");
+                    }
+                    return successData(
+                        tool,
+                        ToolResultData::FileContentData(FileContentData {
+                            path: path.clone(),
+                            size: contentWithLineNumbers.len() as i64,
+                            content: contentWithLineNumbers,
+                        }),
+                    );
+                }
+
                 match vfs.readFileWithLimit(&path, ToolExecutionLimits::MAX_FILE_READ_BYTES) {
                     Ok(content) => {
                         let mut finalContent = addLineNumbers(&content, 0, 0);
@@ -160,6 +202,11 @@ impl StandardFileSystemTools {
 
         match vfs.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
+                let fileExt = fileExtension(&path);
+                if isSpecialFileType(&fileExt) {
+                    return self.handleSpecialFileRead(tool, &vfs, &path, &fileExt);
+                }
+
                 match vfs.readFile(&path) {
                     Ok(content) => successData(
                         tool,
@@ -180,6 +227,63 @@ impl StandardFileSystemTools {
             Ok(_) => toolError(tool, String::new(), format!("Path is not a file: {path}")),
             Err(error) => toolError(tool, String::new(), error),
         }
+    }
+
+    #[allow(non_snake_case)]
+    fn handleSpecialFileRead(
+        &self,
+        tool: &AITool,
+        vfs: &VisualFileSystem,
+        path: &str,
+        fileExt: &str,
+    ) -> ToolResult {
+        match fileExt {
+            "jpg" | "jpeg" | "png" | "gif" | "bmp" => self.handleImageFileRead(tool, vfs, path),
+            _ => toolError(
+                tool,
+                String::new(),
+                format!("Unsupported special file type: {fileExt}"),
+            ),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn handleImageFileRead(
+        &self,
+        tool: &AITool,
+        vfs: &VisualFileSystem,
+        path: &str,
+    ) -> ToolResult {
+        let physicalPath = match vfs.resolvePath(path) {
+            Ok(resolved) => resolved.physicalPath,
+            Err(error) => return toolError(tool, String::new(), error),
+        };
+        let content = match self.recognizeImageText(&physicalPath) {
+            Ok(ocrText) if ocrText.trim().is_empty() => "No text detected in image.".to_string(),
+            Ok(ocrText) => ocrText,
+            Err(error) => format!("Error extracting text from image: {error}"),
+        };
+        successData(
+            tool,
+            ToolResultData::FileContentData(FileContentData {
+                path: path.to_string(),
+                size: content.len() as i64,
+                content,
+            }),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    fn recognizeImageText(&self, imagePath: &str) -> Result<String, String> {
+        let Some(systemOperationHost) = self.systemOperationHost.clone() else {
+            return Err("SystemOperationHost is required for OCR".to_string());
+        };
+        let context = OperitApplicationContext {
+            systemOperationHost: Some(systemOperationHost),
+            ..OperitApplicationContext::new()
+        };
+        let text = OCRUtils::recognizeText(&context, imagePath, OCRQuality::LOW);
+        Ok(text)
     }
 
     #[allow(non_snake_case)]
@@ -1359,4 +1463,18 @@ fn addLineNumbers(content: &str, startLine: usize, totalLines: usize) -> String 
         ));
     }
     output
+}
+
+#[allow(non_snake_case)]
+fn fileExtension(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+#[allow(non_snake_case)]
+fn isSpecialFileType(fileExtension: &str) -> bool {
+    matches!(fileExtension, "jpg" | "jpeg" | "png" | "gif" | "bmp")
 }

@@ -7,6 +7,35 @@
   "packageManager": "Package manager",
   "market": "Market",
   "addAttachment": "Add attachment",
+  "attachmentPhoto": "Photo",
+  "attachmentCamera": "Camera",
+  "attachmentMemory": "Memory",
+  "attachmentFile": "File",
+  "attachmentScreenContent": "Screen content",
+  "attachmentNotifications": "Current notifications",
+  "attachmentLocation": "Current location",
+  "attachmentPackage": "Package",
+  "attachmentPackageSelectTitle": "Select package",
+  "attachmentPackageEmpty": "No available packages",
+  "attachmentPackageSearchPlaceholder": "Search package name or description",
+  "attachmentPackageSearchEmpty": "No matching packages",
+  "attachmentPackageKindPackage": "Package",
+  "attachmentPackageKindSkill": "Skill",
+  "attachmentPackageKindMcp": "MCP",
+  "attachmentCameraUnavailable": "Camera capture is not available in the Flutter client",
+  "attachmentMemoryUnavailable": "Memory folder selection is not available in the Flutter client",
+  "clearSearch": "Clear search",
+  "chatPendingQueueTitle": "Queued messages ({count})",
+  "@chatPendingQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatQueueAddMessage": "Queue message",
+  "chatQueueAdded": "Added to queue",
+  "chatPleaseCreateNewChat": "Please create a chat",
   "cancel": "Cancel",
   "send": "Send",
   "model": "Model",

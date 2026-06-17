@@ -7,9 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::app::{FocusArea, FullUpdateDownloadState, OperitTui};
 use super::helpers::{
-    centered_rect, render_message_lines, short_chat_label, transcript_max_scroll, wrap_approx_lines,
+    centered_rect, display_width, short_chat_label, transcript_max_scroll, wrap_approx_lines,
 };
+use super::pending_queue::{
+    pending_queue_preview_text, pending_queue_visible_items, pending_queue_visible_range,
+};
+use super::selection::{apply_transcript_selection, transcript_copy_line};
 use super::theme;
+use super::transcript::render_transcript_lines;
 
 const INPUT_PROMPT: &str = "> ";
 
@@ -142,19 +147,29 @@ impl OperitTui {
     }
 
     fn render_transcript(&mut self, frame: &mut Frame, area: Rect) {
+        self.transcript_area = area;
         let messages = self.current_messages();
         let is_loading = self.current_chat_is_loading();
         let input_state = self.current_chat_input_processing_state();
         let thinking_line = thinking_indicator_line();
         let content_width = area.width.saturating_sub(2).max(1) as usize;
-        let transcript_lines = render_message_lines(
+        let current_chat_id = self.current_chat_id_cache.clone();
+        let stream_markdown_state = current_chat_id
+            .as_ref()
+            .and_then(|chat_id| self.response_stream_markdown_by_chat_id.get(chat_id));
+        let mut transcript_lines = render_transcript_lines(
             &messages,
-            content_width,
+            current_chat_id.as_deref(),
             is_loading,
             &input_state,
             &thinking_line,
+            content_width,
             &mut self.typewriter_state,
+            &mut self.transcript_render_cache,
+            stream_markdown_state,
         );
+        self.transcript_copy_lines = transcript_lines.iter().map(transcript_copy_line).collect();
+        apply_transcript_selection(&mut transcript_lines, &self.transcript_selection);
         let max_scroll = transcript_max_scroll(&transcript_lines, area);
         self.transcript_viewport_height = area.height.saturating_sub(2).max(1);
         self.transcript_max_scroll = max_scroll;
@@ -172,10 +187,10 @@ impl OperitTui {
     }
 
     fn render_input(&self, frame: &mut Frame, area: Rect) {
-        let border_style = if self.focus == FocusArea::Input {
-            Style::default().fg(theme::ACCENT)
-        } else {
-            Style::default()
+        let border_style = match self.focus {
+            FocusArea::Input => Style::default().fg(theme::ACCENT),
+            FocusArea::Queue => Style::default().fg(theme::SELECTION_BG),
+            _ => Style::default(),
         };
         let input_block = Block::default()
             .borders(Borders::ALL)
@@ -186,32 +201,95 @@ impl OperitTui {
             .width
             .saturating_sub(prompt_width as u16)
             .saturating_sub(1) as usize;
-        let visible_text = self.input_view_text(text_width, inner.height as usize);
+        let queue_lines = self.pending_queue_lines(inner.width as usize);
+        let queue_height = queue_lines.len() as u16;
+        let input_height = inner.height.saturating_sub(queue_height).max(1) as usize;
+        let visible_text = self.input_view_text(text_width, input_height);
         let prompt_indent = " ".repeat(prompt_width);
-        let rendered_text = visible_text
-            .split('\n')
-            .enumerate()
-            .map(|(index, line)| {
-                if index == 0 {
-                    format!("{INPUT_PROMPT}{line}")
-                } else {
-                    format!("{prompt_indent}{line}")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let input = Paragraph::new(rendered_text)
+        let mut rendered_lines = queue_lines;
+        rendered_lines.extend(visible_text.split('\n').enumerate().map(|(index, line)| {
+            if index == 0 {
+                Line::from(format!("{INPUT_PROMPT}{line}"))
+            } else {
+                Line::from(format!("{prompt_indent}{line}"))
+            }
+        }));
+        let input = Paragraph::new(Text::from(rendered_lines))
             .block(input_block)
             .wrap(Wrap { trim: false });
         frame.render_widget(input, area);
 
         if self.focus == FocusArea::Input && !self.show_help {
-            let (cursor_x, cursor_y) = self.cursor_position(text_width, inner.height as usize);
+            let (cursor_x, cursor_y) = self.cursor_position(text_width, input_height);
             frame.set_cursor_position((
                 inner.x + prompt_width as u16 + cursor_x as u16,
-                inner.y + cursor_y as u16,
+                inner.y + queue_height + cursor_y as u16,
             ));
         }
+    }
+
+    fn pending_queue_lines(&self, width: usize) -> Vec<Line<'static>> {
+        if self.pending_queue_messages.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = vec![Line::from(Span::styled(
+            format!("Queue ({})", self.pending_queue_messages.len()),
+            Style::default()
+                .fg(theme::TEXT_SUBTLE)
+                .add_modifier(Modifier::BOLD),
+        ))];
+        let visible_range = pending_queue_visible_range(
+            self.pending_queue_messages.len(),
+            self.selected_pending_queue_index,
+        );
+        for (index, message) in self
+            .pending_queue_messages
+            .iter()
+            .enumerate()
+            .skip(visible_range.start)
+            .take(visible_range.len())
+        {
+            let prefix = format!(" #{} ", message.id);
+            let preview_width = width.saturating_sub(display_width(&prefix)).max(1);
+            let preview = pending_queue_preview_text(&message.text, preview_width);
+            let selected =
+                self.focus == FocusArea::Queue && index == self.selected_pending_queue_index;
+            let line_width = display_width(&prefix) + display_width(&preview);
+            let padding = " ".repeat(width.saturating_sub(line_width));
+            if selected {
+                let selected_style = Style::default()
+                    .fg(theme::SELECTION_TEXT)
+                    .bg(theme::SELECTION_BG);
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, selected_style),
+                    Span::styled(preview, selected_style),
+                    Span::styled(padding, selected_style),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(theme::ACCENT_STRONG)),
+                    Span::styled(preview, Style::default().fg(theme::TEXT_MUTED)),
+                    Span::raw(padding),
+                ]));
+            }
+        }
+        if self.pending_queue_messages.len() > pending_queue_visible_items() {
+            let hidden_before = visible_range.start;
+            let hidden_after = self
+                .pending_queue_messages
+                .len()
+                .saturating_sub(visible_range.end);
+            let hidden_label = match (hidden_before, hidden_after) {
+                (0, after) => format!(" +{after} below"),
+                (before, 0) => format!(" +{before} above"),
+                (before, after) => format!(" +{before} above / +{after} below"),
+            };
+            lines.push(Line::from(Span::styled(
+                hidden_label,
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )));
+        }
+        lines
     }
 
     fn input_panel_height(&self, area_width: u16, area_height: u16) -> u16 {
@@ -221,9 +299,14 @@ impl OperitTui {
             .saturating_sub(prompt_width)
             .saturating_sub(1)
             .max(1) as usize;
+        let queue_lines = self.pending_queue_panel_line_count();
+        let max_content_lines = area_height
+            .saturating_sub(2)
+            .saturating_sub(queue_lines)
+            .min(8)
+            .max(1);
         let content_lines = wrap_approx_lines(&self.input, text_width).len() as u16;
-        let max_content_lines = area_height.saturating_sub(6).min(8).max(1);
-        content_lines.min(max_content_lines).max(1) + 2
+        content_lines.min(max_content_lines).max(1) + queue_lines + 2
     }
 
     fn render_command_popup(&self, frame: &mut Frame, input_area: Rect) {
@@ -378,6 +461,7 @@ impl OperitTui {
             Line::from("PageUp/PageDown: scroll conversation by page"),
             Line::from("Ctrl+U/Ctrl+D: scroll conversation by half page"),
             Line::from("Ctrl+Home/Ctrl+End: top / bottom conversation"),
+            Line::from("Queue focus: Up/Down select | Enter/s send | e edit | Delete remove"),
             Line::from("Esc: cancel request / close help / clear status"),
             Line::from(""),
             Line::from("Local commands:"),
@@ -387,9 +471,10 @@ impl OperitTui {
             Line::from("/resume"),
             Line::from("/max"),
             Line::from("/model current | /model list | /model choose"),
-            Line::from("/model use <model-id>"),
+            Line::from("/model use <provider-id> <model-id>"),
             Line::from("/approval | /approval list|allow|ask|forbid"),
             Line::from("/approval tool <tool> <allow|ask|forbid|clear>"),
+            Line::from("/queue | /queue clear|delete|edit|send"),
             Line::from("/attach <path>"),
             Line::from("/attachments"),
             Line::from("/clear-attachments"),

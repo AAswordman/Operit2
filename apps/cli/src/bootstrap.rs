@@ -62,7 +62,7 @@ mod tests {
     use super::*;
     use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
     use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-    use serde_json::Value;
+    use operit_runtime::core::tools::ToolResultDataClasses::ToolResultData;
 
     #[test]
     fn direct_terminal_tool_chain_executes_visible_terminal() {
@@ -91,12 +91,10 @@ mod tests {
             }],
         });
         assert!(createResult.success, "{:?}", createResult.error);
-        let createJson: Value =
-            serde_json::from_str(&createResult.result).expect("create result json");
-        let sessionId = createJson["sessionId"]
-            .as_str()
-            .expect("session id")
-            .to_string();
+        let sessionId = match createResult.result {
+            ToolResultData::TerminalSessionCreationResultData(data) => data.sessionId,
+            data => panic!("create result data type mismatch: {}", data.toJson()),
+        };
 
         let executeResult = handler.executeTool(AITool {
             name: "execute_in_terminal_session".to_string(),
@@ -116,11 +114,14 @@ mod tests {
             ],
         });
         assert!(executeResult.success, "{:?}", executeResult.error);
-        let executeJson: Value =
-            serde_json::from_str(&executeResult.result).expect("execute result json");
-        assert_eq!(executeJson["output"].as_str(), Some(expectedOutput));
-        assert_eq!(executeJson["exitCode"].as_i64(), Some(0));
-        assert_eq!(executeJson["timedOut"].as_bool(), Some(false));
+        match executeResult.result {
+            ToolResultData::TerminalCommandResultData(data) => {
+                assert_eq!(data.output, expectedOutput);
+                assert_eq!(data.exitCode, 0);
+                assert_eq!(data.timedOut, false);
+            }
+            data => panic!("execute result data type mismatch: {}", data.toJson()),
+        }
 
         let screenResult = handler.executeTool(AITool {
             name: "get_terminal_session_screen".to_string(),
@@ -130,11 +131,12 @@ mod tests {
             }],
         });
         assert!(screenResult.success, "{:?}", screenResult.error);
-        let screenJson: Value =
-            serde_json::from_str(&screenResult.result).expect("screen result json");
-        assert_eq!(screenJson["commandRunning"].as_bool(), Some(false));
-        assert!(screenJson["content"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()));
+        match screenResult.result {
+            ToolResultData::TerminalSessionScreenResultData(data) => {
+                assert_eq!(data.commandRunning, false);
+                assert!(!data.content.is_empty());
+            }
+            data => panic!("screen result data type mismatch: {}", data.toJson()),
+        }
     }
 }

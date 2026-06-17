@@ -776,6 +776,40 @@ pub struct DeviceInfoData {
     pub additionalInfo: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OCRLanguage {
+    Latin,
+    Chinese,
+    Japanese,
+    Korean,
+}
+
+impl OCRLanguage {
+    pub fn asHostValue(self) -> &'static str {
+        match self {
+            OCRLanguage::Latin => "LATIN",
+            OCRLanguage::Chinese => "CHINESE",
+            OCRLanguage::Japanese => "JAPANESE",
+            OCRLanguage::Korean => "KOREAN",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OCRQuality {
+    Low,
+    High,
+}
+
+impl OCRQuality {
+    pub fn asHostValue(self) -> &'static str {
+        match self {
+            OCRQuality::Low => "LOW",
+            OCRQuality::High => "HIGH",
+        }
+    }
+}
+
 pub trait SystemOperationHost: Send + Sync {
     fn getSystemLanguageCode(&self) -> HostResult<String>;
     fn toast(&self, message: &str) -> HostResult<()>;
@@ -807,6 +841,13 @@ pub trait SystemOperationHost: Send + Sync {
         includeAddress: bool,
     ) -> HostResult<LocationData>;
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData>;
+    fn captureScreenshot(&self) -> HostResult<String>;
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: OCRLanguage,
+        quality: OCRQuality,
+    ) -> HostResult<String>;
 }
 
 pub trait FileSystemHost: Send + Sync {

@@ -7,11 +7,12 @@ use std::{env, path::PathBuf};
 
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
-    HostError, HostResult, LocationData, NotificationData, NotificationEntry, SystemOperationHost,
-    SystemSettingData,
+    HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
+    OCRQuality, SystemOperationHost, SystemSettingData,
 };
 use regex::Regex;
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Default)]
 pub struct LinuxSystemOperationHost;
@@ -167,6 +168,137 @@ impl SystemOperationHost for LinuxSystemOperationHost {
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData> {
         get_linux_device_info()
     }
+
+    fn captureScreenshot(&self) -> HostResult<String> {
+        capture_linux_screenshot()
+    }
+
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: OCRLanguage,
+        quality: OCRQuality,
+    ) -> HostResult<String> {
+        recognize_linux_text(imagePath, language, quality)
+    }
+}
+
+struct LinuxOcrImage {
+    path: PathBuf,
+    deleteOnDrop: bool,
+}
+
+impl Drop for LinuxOcrImage {
+    fn drop(&mut self) {
+        if self.deleteOnDrop {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn capture_linux_screenshot() -> HostResult<String> {
+    let outputPath = temp_capture_path("linux_screen")?;
+    let status = Command::new("gnome-screenshot")
+        .arg("-f")
+        .arg(&outputPath)
+        .status()
+        .map_err(|error| HostError::new(format!("Failed to capture Linux screenshot with gnome-screenshot: {error}")))?;
+    if !status.success() {
+        return Err(HostError::new(format!(
+            "Failed to capture Linux screenshot with gnome-screenshot: exited with {status}"
+        )));
+    }
+    validate_file_path(&outputPath, "Linux screenshot")
+}
+
+fn recognize_linux_text(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> HostResult<String> {
+    let preparedImage = prepare_linux_ocr_image(imagePath, quality)?;
+    let languageName = linux_tesseract_language(language);
+    let output = Command::new("tesseract")
+        .arg(&preparedImage.path)
+        .arg("stdout")
+        .arg("-l")
+        .arg(languageName)
+        .output()
+        .map_err(|error| HostError::new(format!("Failed to recognize Linux OCR text with tesseract: {error}")))?;
+    if !output.status.success() {
+        return Err(HostError::new(format!(
+            "Failed to recognize Linux OCR text with tesseract: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(normalize_ocr_output(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn prepare_linux_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<LinuxOcrImage> {
+    let sourcePath = Path::new(imagePath);
+    if imagePath.trim().is_empty() {
+        return Err(HostError::new("image_path is required"));
+    }
+    if !sourcePath.exists() {
+        return Err(HostError::new(format!("OCR image does not exist: {}", sourcePath.display())));
+    }
+    if !sourcePath.is_file() {
+        return Err(HostError::new(format!("OCR image is not a file: {}", sourcePath.display())));
+    }
+    if quality != OCRQuality::High {
+        return Ok(LinuxOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+    }
+
+    let (width, height) = image::image_dimensions(sourcePath).map_err(|error| {
+        HostError::new(format!("Failed to read OCR image dimensions {}: {error}", sourcePath.display()))
+    })?;
+    let newWidth = u64::from(width).saturating_mul(2);
+    let newHeight = u64::from(height).saturating_mul(2);
+    if u64::from(width) >= newWidth
+        || u64::from(height) >= newHeight
+        || newWidth > 4096
+        || newHeight > 4096
+    {
+        return Ok(LinuxOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+    }
+
+    let image = image::open(sourcePath)
+        .map_err(|error| HostError::new(format!("Failed to load OCR image {}: {error}", sourcePath.display())))?;
+    let resized = image.resize_exact(
+        newWidth as u32,
+        newHeight as u32,
+        image::imageops::FilterType::Triangle,
+    );
+    let tempPath = temp_capture_path("linux_ocr")?;
+    resized
+        .save_with_format(&tempPath, image::ImageFormat::Png)
+        .map_err(|error| HostError::new(format!("Failed to write OCR image {}: {error}", tempPath.display())))?;
+    Ok(LinuxOcrImage { path: tempPath, deleteOnDrop: true })
+}
+
+fn linux_tesseract_language(language: OCRLanguage) -> &'static str {
+    match language {
+        OCRLanguage::Latin => "eng",
+        OCRLanguage::Chinese => "chi_sim",
+        OCRLanguage::Japanese => "jpn",
+        OCRLanguage::Korean => "kor",
+    }
+}
+
+fn temp_capture_path(prefix: &str) -> HostResult<PathBuf> {
+    let tempDir = env::temp_dir().join("operit-runtime").join("temp");
+    fs::create_dir_all(&tempDir)
+        .map_err(|error| HostError::new(format!("Failed to create temporary directory {}: {error}", tempDir.display())))?;
+    Ok(tempDir.join(format!("{prefix}_{}.png", Uuid::new_v4())))
+}
+
+fn validate_file_path(path: &Path, operation: &str) -> HostResult<String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| HostError::new(format!("Failed to verify {operation} output {}: {error}", path.display())))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(HostError::new(format!("{operation} did not create a valid file: {}", path.display())));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn normalize_ocr_output(text: &str) -> String {
+    text.replace('\u{000c}', "").trim().to_string()
 }
 
 fn get_linux_system_language_code() -> HostResult<String> {

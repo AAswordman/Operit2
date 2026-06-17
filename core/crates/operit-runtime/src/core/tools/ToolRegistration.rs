@@ -494,6 +494,12 @@ fn registerSystemOperationTools(
         "device_info",
         SystemOperationToolOperation::GetDeviceInfo,
     );
+    registerSystemOperationTool(
+        handler,
+        &systemOperationTools,
+        "capture_screenshot",
+        SystemOperationToolOperation::CaptureScreenshot,
+    );
 }
 
 #[allow(non_snake_case)]
