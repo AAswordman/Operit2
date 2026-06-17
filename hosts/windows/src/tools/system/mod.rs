@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
-    HostError, HostResult, LocationData, NotificationData, NotificationEntry, SystemOperationHost,
-    SystemSettingData,
+    HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
+    OCRQuality, SystemOperationHost, SystemSettingData,
 };
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsSystemOperationHost;
@@ -152,6 +155,244 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData> {
         get_windows_device_info()
     }
+
+    fn captureScreenshot(&self) -> HostResult<String> {
+        capture_windows_screenshot()
+    }
+
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: OCRLanguage,
+        quality: OCRQuality,
+    ) -> HostResult<String> {
+        recognize_windows_text(imagePath, language, quality)
+    }
+}
+
+struct WindowsOcrImage {
+    path: PathBuf,
+    deleteOnDrop: bool,
+}
+
+impl Drop for WindowsOcrImage {
+    fn drop(&mut self) {
+        if self.deleteOnDrop {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn capture_windows_screenshot() -> HostResult<String> {
+    let outputPath = temp_capture_path("windows_screen")?;
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {{
+    $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+    $bitmap.Save({path}, [System.Drawing.Imaging.ImageFormat]::Png)
+}} finally {{
+    $graphics.Dispose()
+    $bitmap.Dispose()
+}}
+"#,
+        path = ps_string_literal(&outputPath.to_string_lossy()),
+    );
+    run_powershell_command(&script, "capture Windows screenshot")?;
+    validate_file_path(&outputPath, "Windows screenshot")
+}
+
+fn recognize_windows_text(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> HostResult<String> {
+    let preparedImage = prepare_windows_ocr_image(imagePath, quality)?;
+    let languageTag = windows_ocr_language_tag(language);
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+[Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime] > $null
+[Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType=WindowsRuntime] > $null
+[Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime] > $null
+[Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics.Imaging, ContentType=WindowsRuntime] > $null
+[Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType=WindowsRuntime] > $null
+[Windows.Media.Ocr.OcrResult, Windows.Media.Ocr, ContentType=WindowsRuntime] > $null
+[Windows.Globalization.Language, Windows.Globalization, ContentType=WindowsRuntime] > $null
+
+function Await-WinRtOperation {{
+    param(
+        [Parameter(Mandatory=$true)] $Operation,
+        [Parameter(Mandatory=$true)] [Type] $ResultType,
+        [Parameter(Mandatory=$true)] [int] $TimeoutMs,
+        [Parameter(Mandatory=$true)] [string] $OperationName
+    )
+    $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{
+        $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1
+    }} | Select-Object -First 1)
+    if ($null -eq $asTask) {{
+        throw "Windows Runtime AsTask bridge is unavailable."
+    }}
+    $task = $asTask.MakeGenericMethod($ResultType).Invoke($null, @($Operation))
+    if (-not $task.Wait($TimeoutMs)) {{
+        throw "$OperationName timed out."
+    }}
+    return $task.Result
+}}
+
+$stream = $null
+try {{
+    $file = Await-WinRtOperation `
+        -Operation ([Windows.Storage.StorageFile]::GetFileFromPathAsync({path})) `
+        -ResultType ([Windows.Storage.StorageFile]) `
+        -TimeoutMs 30000 `
+        -OperationName "Windows OCR file lookup"
+    $stream = Await-WinRtOperation `
+        -Operation ($file.OpenReadAsync()) `
+        -ResultType ([Windows.Storage.Streams.IRandomAccessStreamWithContentType]) `
+        -TimeoutMs 30000 `
+        -OperationName "Windows OCR file stream open"
+    $decoder = Await-WinRtOperation `
+        -Operation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) `
+        -ResultType ([Windows.Graphics.Imaging.BitmapDecoder]) `
+        -TimeoutMs 30000 `
+        -OperationName "Windows OCR bitmap decode"
+    $bitmap = Await-WinRtOperation `
+        -Operation ($decoder.GetSoftwareBitmapAsync()) `
+        -ResultType ([Windows.Graphics.Imaging.SoftwareBitmap]) `
+        -TimeoutMs 30000 `
+        -OperationName "Windows OCR software bitmap decode"
+    $ocrLanguage = [Windows.Globalization.Language]::new({languageTag})
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($ocrLanguage)
+    if ($null -eq $engine) {{
+        throw "Windows OCR language is not available: {languageTag}"
+    }}
+    $result = Await-WinRtOperation `
+        -Operation ($engine.RecognizeAsync($bitmap)) `
+        -ResultType ([Windows.Media.Ocr.OcrResult]) `
+        -TimeoutMs 30000 `
+        -OperationName "Windows OCR recognize"
+    [string]$result.Text
+}} finally {{
+    if ($null -ne $stream) {{
+        $stream.Dispose()
+    }}
+}}
+"#,
+        path = ps_string_literal(&windows_ocr_storage_path(&preparedImage.path)),
+        languageTag = ps_string_literal(languageTag),
+    );
+    let output = run_powershell_output(&script, "recognize Windows OCR text")?;
+    Ok(normalize_ocr_output(&output))
+}
+
+fn prepare_windows_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<WindowsOcrImage> {
+    let sourcePath = Path::new(imagePath);
+    if imagePath.trim().is_empty() {
+        return Err(HostError::new("image_path is required"));
+    }
+    if !sourcePath.exists() {
+        return Err(HostError::new(format!("OCR image does not exist: {}", sourcePath.display())));
+    }
+    if !sourcePath.is_file() {
+        return Err(HostError::new(format!("OCR image is not a file: {}", sourcePath.display())));
+    }
+    if quality != OCRQuality::High {
+        return Ok(WindowsOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+    }
+
+    let (width, height) = image::image_dimensions(sourcePath).map_err(|error| {
+        HostError::new(format!("Failed to read OCR image dimensions {}: {error}", sourcePath.display()))
+    })?;
+    let newWidth = u64::from(width).saturating_mul(2);
+    let newHeight = u64::from(height).saturating_mul(2);
+    if u64::from(width) >= newWidth
+        || u64::from(height) >= newHeight
+        || newWidth > 4096
+        || newHeight > 4096
+    {
+        return Ok(WindowsOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+    }
+
+    let image = image::open(sourcePath)
+        .map_err(|error| HostError::new(format!("Failed to load OCR image {}: {error}", sourcePath.display())))?;
+    let resized = image.resize_exact(
+        newWidth as u32,
+        newHeight as u32,
+        image::imageops::FilterType::Triangle,
+    );
+    let tempPath = temp_capture_path("windows_ocr")?;
+    resized
+        .save_with_format(&tempPath, image::ImageFormat::Png)
+        .map_err(|error| HostError::new(format!("Failed to write OCR image {}: {error}", tempPath.display())))?;
+    Ok(WindowsOcrImage { path: tempPath, deleteOnDrop: true })
+}
+
+fn windows_ocr_language_tag(language: OCRLanguage) -> &'static str {
+    match language {
+        OCRLanguage::Latin => "en-US",
+        OCRLanguage::Chinese => "zh-Hans",
+        OCRLanguage::Japanese => "ja",
+        OCRLanguage::Korean => "ko",
+    }
+}
+
+fn windows_ocr_storage_path(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\")
+}
+
+fn temp_capture_path(prefix: &str) -> HostResult<PathBuf> {
+    let tempDir = std::env::temp_dir().join("operit-runtime").join("temp");
+    fs::create_dir_all(&tempDir)
+        .map_err(|error| HostError::new(format!("Failed to create temporary directory {}: {error}", tempDir.display())))?;
+    Ok(tempDir.join(format!("{prefix}_{}.png", Uuid::new_v4())))
+}
+
+fn validate_file_path(path: &Path, operation: &str) -> HostResult<String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| HostError::new(format!("Failed to verify {operation} output {}: {error}", path.display())))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(HostError::new(format!("{operation} did not create a valid file: {}", path.display())));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn run_powershell_command(script: &str, operation: &str) -> HostResult<()> {
+    let output = Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg(script)
+        .output()
+        .map_err(|error| HostError::new(format!("Failed to {operation}: {error}")))?;
+    if !output.status.success() {
+        return Err(HostError::new(format!(
+            "Failed to {operation}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+fn run_powershell_output(script: &str, operation: &str) -> HostResult<String> {
+    let output = Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg(script)
+        .output()
+        .map_err(|error| HostError::new(format!("Failed to {operation}: {error}")))?;
+    if !output.status.success() {
+        return Err(HostError::new(format!(
+            "Failed to {operation}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn normalize_ocr_output(text: &str) -> String {
+    text.replace('\u{000c}', "").trim().to_string()
 }
 
 fn get_windows_system_language_code() -> HostResult<String> {

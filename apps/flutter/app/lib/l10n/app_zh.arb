@@ -7,6 +7,35 @@
   "packageManager": "包管理",
   "market": "市场",
   "addAttachment": "添加附件",
+  "attachmentPhoto": "照片",
+  "attachmentCamera": "拍照",
+  "attachmentMemory": "记忆",
+  "attachmentFile": "文件",
+  "attachmentScreenContent": "屏幕内容",
+  "attachmentNotifications": "当前通知",
+  "attachmentLocation": "当前位置",
+  "attachmentPackage": "包",
+  "attachmentPackageSelectTitle": "选择包",
+  "attachmentPackageEmpty": "暂无可用包",
+  "attachmentPackageSearchPlaceholder": "搜索包名、描述",
+  "attachmentPackageSearchEmpty": "没有匹配的包",
+  "attachmentPackageKindPackage": "包",
+  "attachmentPackageKindSkill": "技能",
+  "attachmentPackageKindMcp": "MCP",
+  "attachmentCameraUnavailable": "当前 Flutter 端没有相机采集能力",
+  "attachmentMemoryUnavailable": "当前 Flutter 端没有记忆文件夹选择器",
+  "clearSearch": "清空搜索",
+  "chatPendingQueueTitle": "待发送消息（{count}）",
+  "@chatPendingQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatQueueAddMessage": "加入队列",
+  "chatQueueAdded": "已加入发送队列",
+  "chatPleaseCreateNewChat": "请新建对话",
   "cancel": "取消",
   "send": "发送",
   "model": "模型",

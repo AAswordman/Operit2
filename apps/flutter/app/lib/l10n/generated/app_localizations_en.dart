@@ -30,6 +30,77 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addAttachment => 'Add attachment';
 
   @override
+  String get attachmentPhoto => 'Photo';
+
+  @override
+  String get attachmentCamera => 'Camera';
+
+  @override
+  String get attachmentMemory => 'Memory';
+
+  @override
+  String get attachmentFile => 'File';
+
+  @override
+  String get attachmentScreenContent => 'Screen content';
+
+  @override
+  String get attachmentNotifications => 'Current notifications';
+
+  @override
+  String get attachmentLocation => 'Current location';
+
+  @override
+  String get attachmentPackage => 'Package';
+
+  @override
+  String get attachmentPackageSelectTitle => 'Select package';
+
+  @override
+  String get attachmentPackageEmpty => 'No available packages';
+
+  @override
+  String get attachmentPackageSearchPlaceholder =>
+      'Search package name or description';
+
+  @override
+  String get attachmentPackageSearchEmpty => 'No matching packages';
+
+  @override
+  String get attachmentPackageKindPackage => 'Package';
+
+  @override
+  String get attachmentPackageKindSkill => 'Skill';
+
+  @override
+  String get attachmentPackageKindMcp => 'MCP';
+
+  @override
+  String get attachmentCameraUnavailable =>
+      'Camera capture is not available in the Flutter client';
+
+  @override
+  String get attachmentMemoryUnavailable =>
+      'Memory folder selection is not available in the Flutter client';
+
+  @override
+  String get clearSearch => 'Clear search';
+
+  @override
+  String chatPendingQueueTitle(int count) {
+    return 'Queued messages ($count)';
+  }
+
+  @override
+  String get chatQueueAddMessage => 'Queue message';
+
+  @override
+  String get chatQueueAdded => 'Added to queue';
+
+  @override
+  String get chatPleaseCreateNewChat => 'Please create a chat';
+
+  @override
   String get cancel => 'Cancel';
 
   @override

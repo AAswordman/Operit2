@@ -10,6 +10,9 @@ pub(super) const TEXT_MUTED: Color = Color::Rgb(148, 163, 184);
 pub(super) const TEXT_SUBTLE: Color = Color::Rgb(100, 116, 139);
 pub(super) const TEXT_INVERTED: Color = Color::Rgb(15, 23, 42);
 
+pub(super) const SELECTION_BG: Color = Color::Rgb(92, 92, 92);
+pub(super) const SELECTION_TEXT: Color = Color::Rgb(245, 245, 245);
+
 pub(super) const USER_CARD_BG: Color = Color::Rgb(55, 65, 81);
 pub(super) const TOOL_RESULT: Color = Color::Rgb(129, 140, 156);
 pub(super) const ERROR: Color = Color::Rgb(248, 113, 113);

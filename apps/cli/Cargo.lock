@@ -1728,6 +1728,7 @@ name = "operit-host-linux-native"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "image",
  "operit-host-api",
  "portable-pty",
  "regex",
@@ -1745,6 +1746,7 @@ name = "operit-host-windows-native"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "image",
  "operit-host-api",
  "portable-pty",
  "regex",

@@ -1,14 +1,14 @@
 use js_sys::{Array, Reflect};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
-    HostResult, LocationData, NotificationData, NotificationEntry, SystemOperationHost,
-    SystemSettingData,
+    HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage, OCRQuality,
+    SystemOperationHost, SystemSettingData,
 };
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
-    app_operation_data, call_system, js_error, js_string_array, js_string_map,
-    read_bool_property, read_f32_property, read_f64_property, read_i32_property, read_i64_property,
+    app_operation_data, call_system, js_error, js_string_array, js_string_map, read_bool_property,
+    read_f32_property, read_f64_property, read_i32_property, read_i64_property,
     read_optional_string_property, read_string_property, system_setting_data,
 };
 
@@ -72,11 +72,17 @@ impl SystemOperationHost for WebSystemOperationHost {
     }
 
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        app_operation_data(call_system("uninstallApp", &[JsValue::from_str(packageName)])?)
+        app_operation_data(call_system(
+            "uninstallApp",
+            &[JsValue::from_str(packageName)],
+        )?)
     }
 
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData> {
-        let value = call_system("listInstalledApps", &[JsValue::from_bool(includeSystemApps)])?;
+        let value = call_system(
+            "listInstalledApps",
+            &[JsValue::from_bool(includeSystemApps)],
+        )?;
         Ok(AppListData {
             includesSystemApps: read_bool_property(&value, "includesSystemApps")?,
             packages: js_string_array(
@@ -97,7 +103,10 @@ impl SystemOperationHost for WebSystemOperationHost {
     fn getNotifications(&self, limit: i32, includeOngoing: bool) -> HostResult<NotificationData> {
         let value = call_system(
             "getNotifications",
-            &[JsValue::from_f64(limit as f64), JsValue::from_bool(includeOngoing)],
+            &[
+                JsValue::from_f64(limit as f64),
+                JsValue::from_bool(includeOngoing),
+            ],
         )?;
         let notifications = Array::from(
             &Reflect::get(&value, &JsValue::from_str("notifications")).map_err(js_error)?,
@@ -133,7 +142,8 @@ impl SystemOperationHost for WebSystemOperationHost {
                 JsValue::from_bool(includeSystemApps),
             ],
         )?;
-        let entries = Array::from(&Reflect::get(&value, &JsValue::from_str("entries")).map_err(js_error)?);
+        let entries =
+            Array::from(&Reflect::get(&value, &JsValue::from_str("entries")).map_err(js_error)?);
         let mut parsed_entries = Vec::new();
         for index in 0..entries.length() {
             let entry = entries.get(index);
@@ -207,5 +217,28 @@ impl SystemOperationHost for WebSystemOperationHost {
                 "additionalInfo",
             )?,
         })
+    }
+
+    fn captureScreenshot(&self) -> HostResult<String> {
+        read_string_property(&call_system("captureScreenshot", &[])?, "path")
+    }
+
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: OCRLanguage,
+        quality: OCRQuality,
+    ) -> HostResult<String> {
+        read_string_property(
+            &call_system(
+                "recognizeText",
+                &[
+                    JsValue::from_str(imagePath),
+                    JsValue::from_str(language.asHostValue()),
+                    JsValue::from_str(quality.asHostValue()),
+                ],
+            )?,
+            "text",
+        )
     }
 }

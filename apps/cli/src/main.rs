@@ -3,12 +3,12 @@ use std::process::ExitCode;
 
 use operit_runtime::util::AppLogger::AppLogger;
 
+mod access;
 mod bootstrap;
 mod chat_runtime;
 mod cli;
 mod client_paths;
 mod core_proxy;
-mod access;
 mod tui;
 mod web_access_assets;
 

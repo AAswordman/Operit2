@@ -1,0 +1,5 @@
+<resources>
+    <string name="ocr_cannot_read_image">无法读取图像文件: %1$s</string>
+    <string name="ocr_cannot_decode_bitmap_from_uri">无法从URI解码Bitmap</string>
+    <string name="ocr_cannot_open_uri_stream">无法打开URI的输入流</string>
+</resources>

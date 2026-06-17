@@ -3,12 +3,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
 import '../PendingChatDraftHandler.dart';
+import '../components/AgentChatInputSection.dart';
 import '../components/ChatScreenContent.dart';
 import '../components/MessageEditorDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
@@ -43,6 +45,9 @@ class _ChatContentData {
     required this.selectedMessageIndices,
     required this.currentCharacterCardAvatarUri,
     required this.isPreparingChatSwitch,
+    required this.pendingQueueMessages,
+    required this.isPendingQueueExpanded,
+    required this.attachments,
   });
 
   final List<ChatUiMessage> messages;
@@ -57,6 +62,9 @@ class _ChatContentData {
   final Set<int> selectedMessageIndices;
   final String? currentCharacterCardAvatarUri;
   final bool isPreparingChatSwitch;
+  final List<PendingQueueMessageItem> pendingQueueMessages;
+  final bool isPendingQueueExpanded;
+  final List<AttachmentInfo> attachments;
 }
 
 class _AIChatScreenState extends State<AIChatScreen>
@@ -66,6 +74,9 @@ class _AIChatScreenState extends State<AIChatScreen>
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
+  final List<PendingQueueMessageItem> _pendingQueueMessages =
+      <PendingQueueMessageItem>[];
+  List<AttachmentInfo> _attachments = const <AttachmentInfo>[];
   late final ValueNotifier<_ChatContentData> _chatContentDataNotifier;
   late final ValueNotifier<bool> _autoScrollToBottomNotifier;
   late final ValueNotifier<String> _modelLabelNotifier;
@@ -111,6 +122,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   late bool _workspaceOpen;
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
+  bool _isPendingQueueExpanded = true;
+  int _nextPendingQueueId = 1;
+  bool _wasQueueBlocked = false;
+  bool _suppressNextAutoDequeue = false;
 
   @override
   void initState() {
@@ -133,6 +148,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     _inputFocusNode.addListener(_onInputFocusChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _consumePendingChatDraft();
+      _refreshAttachments();
     });
   }
 
@@ -185,6 +201,217 @@ class _AIChatScreenState extends State<AIChatScreen>
     _messageController.text = draft;
     _messageController.selection = TextSelection.collapsed(
       offset: draft.length,
+    );
+    _inputFocusNode.requestFocus();
+  }
+
+  bool get _isQueueBlocked {
+    return _loading || _inputProcessingState.isProcessing;
+  }
+
+  void _resetPendingQueueState() {
+    _pendingQueueMessages.clear();
+    _isPendingQueueExpanded = true;
+    _nextPendingQueueId = 1;
+    _wasQueueBlocked = false;
+    _suppressNextAutoDequeue = false;
+  }
+
+  void _syncPendingQueueAfterSnapshot() {
+    final queueBlocked = _isQueueBlocked;
+    if (_wasQueueBlocked && !queueBlocked) {
+      if (_suppressNextAutoDequeue) {
+        _suppressNextAutoDequeue = false;
+      } else {
+        _schedulePendingQueueAutoDequeue();
+      }
+    }
+    _wasQueueBlocked = queueBlocked;
+  }
+
+  void _schedulePendingQueueAutoDequeue() {
+    if (_pendingQueueMessages.isEmpty) {
+      return;
+    }
+    Future<void>.delayed(const Duration(milliseconds: 250), () {
+      if (!mounted || _isQueueBlocked || _pendingQueueMessages.isEmpty) {
+        return;
+      }
+      final nextMessage = _pendingQueueMessages.removeAt(0);
+      _publishChatContentData();
+      _sendQueuedItemNow(nextMessage, false);
+    });
+  }
+
+  void _enqueueDraftToPendingQueue() {
+    final draftText = _messageController.text.trim();
+    if (draftText.isEmpty) {
+      return;
+    }
+    _mutateChatContentData(() {
+      _pendingQueueMessages.add(
+        PendingQueueMessageItem(id: _nextPendingQueueId, text: draftText),
+      );
+      _nextPendingQueueId += 1;
+      _isPendingQueueExpanded = true;
+      _messageController.clear();
+    });
+    _showLocalToast(AppLocalizations.of(context)!.chatQueueAdded);
+  }
+
+  PendingQueueMessageItem? _removePendingQueueMessageById(int id) {
+    final index = _pendingQueueMessages.indexWhere((item) => item.id == id);
+    if (index < 0) {
+      return null;
+    }
+    final item = _pendingQueueMessages.removeAt(index);
+    _publishChatContentData();
+    return item;
+  }
+
+  void _deletePendingQueueMessage(int id) {
+    _removePendingQueueMessageById(id);
+  }
+
+  void _editPendingQueueMessage(int id) {
+    final item = _removePendingQueueMessageById(id);
+    if (item == null) {
+      return;
+    }
+    _messageController.text = item.text;
+    _messageController.selection = TextSelection.collapsed(
+      offset: item.text.length,
+    );
+    _inputFocusNode.requestFocus();
+  }
+
+  void _sendPendingQueueMessage(int id) {
+    final item = _removePendingQueueMessageById(id);
+    if (item != null) {
+      _sendQueuedItemNow(item, true).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('Failed to send queued message: $error\n$stackTrace');
+        return null;
+      });
+    }
+  }
+
+  Future<void> _sendQueuedItemNow(
+    PendingQueueMessageItem item,
+    bool cancelCurrentConversation,
+  ) async {
+    final shouldWaitForCancel = cancelCurrentConversation && _isQueueBlocked;
+    if (shouldWaitForCancel) {
+      _suppressNextAutoDequeue = true;
+    }
+    if (cancelCurrentConversation) {
+      await _viewModel.cancelCurrentMessage();
+    }
+    if (shouldWaitForCancel) {
+      await _waitUntilQueueUnblocked();
+    }
+    if (!mounted) {
+      return;
+    }
+    if (_currentChatId == null || _currentChatId!.trim().isEmpty) {
+      _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
+      return;
+    }
+    _inputFocusNode.unfocus();
+    _startSendMessageText(item.text);
+  }
+
+  Future<void> _waitUntilQueueUnblocked() async {
+    while (mounted && _isQueueBlocked) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  void _setPendingQueueExpanded(bool expanded) {
+    _mutateChatContentData(() {
+      _isPendingQueueExpanded = expanded;
+    });
+  }
+
+  void _showLocalToast(String message) {
+    if (!mounted || message.trim().isEmpty) {
+      return;
+    }
+    _toastMessage = message;
+    _toastMessageNotifier.value = message;
+  }
+
+  Future<void> _refreshAttachments() async {
+    final attachments = await _viewModel.attachments();
+    if (!mounted) {
+      return;
+    }
+    _attachments = attachments;
+    _publishChatContentData();
+  }
+
+  Future<void> _handleAttachImage() async {
+    const imageGroup = XTypeGroup(
+      label: 'image',
+      extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'heic'],
+    );
+    final files = await openFiles(
+      acceptedTypeGroups: const <XTypeGroup>[imageGroup],
+    );
+    await _handleSelectedAttachmentFiles(files);
+  }
+
+  Future<void> _handleAttachFile() async {
+    final files = await openFiles();
+    await _handleSelectedAttachmentFiles(files);
+  }
+
+  Future<void> _handleSelectedAttachmentFiles(List<XFile> files) async {
+    for (final file in files) {
+      await _viewModel.handleAttachment(file.path);
+    }
+    await _refreshAttachments();
+  }
+
+  Future<void> _handleSpecialAttachment(String filePath) async {
+    await _viewModel.handleAttachment(filePath);
+    await _refreshAttachments();
+  }
+
+  Future<void> _handleAttachPackage(String packageName) {
+    return _handleSpecialAttachment('package_attach:$packageName');
+  }
+
+  void _handleTakePhoto() {
+    _showLocalToast(AppLocalizations.of(context)!.attachmentCameraUnavailable);
+  }
+
+  void _handleAttachMemory() {
+    _showLocalToast(AppLocalizations.of(context)!.attachmentMemoryUnavailable);
+  }
+
+  Future<void> _removeAttachment(String filePath) async {
+    await _viewModel.removeAttachment(filePath);
+    await _refreshAttachments();
+  }
+
+  void _insertAttachmentReference(AttachmentInfo attachment) {
+    final reference = _viewModel.createAttachmentReference(attachment);
+    final value = _messageController.value;
+    final text = value.text;
+    final selection = value.selection;
+    final range = selection.isValid
+        ? selection
+        : TextSelection.collapsed(offset: text.length);
+    final nextText = text.replaceRange(range.start, range.end, reference);
+    _messageController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(
+        offset: range.start + reference.length,
+      ),
+      composing: TextRange.empty,
     );
     _inputFocusNode.requestFocus();
   }
@@ -355,6 +582,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     ChatViewModelSnapshot snapshot, {
     required bool keepPreparingChatSwitch,
   }) {
+    final pendingQueueChatChanged = _currentChatId != snapshot.currentChatId;
     final workspaceChanged =
         _currentChatId != snapshot.currentChatId ||
         _currentWorkspacePath != snapshot.currentWorkspacePath;
@@ -380,6 +608,9 @@ class _AIChatScreenState extends State<AIChatScreen>
       _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
       _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
       _isPreparingChatSwitch = keepPreparingChatSwitch;
+      if (pendingQueueChatChanged) {
+        _resetPendingQueueState();
+      }
       if (chatChanged) {
         _isMultiSelectMode = false;
         _selectedMessageIndices = const <int>{};
@@ -397,6 +628,7 @@ class _AIChatScreenState extends State<AIChatScreen>
       setState(() {});
       _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
     }
+    _syncPendingQueueAfterSnapshot();
   }
 
   void _jumpToBottomAfterPreparedSwitch() {
@@ -413,11 +645,28 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty) {
+    final hasAttachments = _attachments.isNotEmpty;
+    if (text.isEmpty && !hasAttachments) {
+      return;
+    }
+    if (_isQueueBlocked && text.isNotEmpty) {
+      _enqueueDraftToPendingQueue();
+      return;
+    }
+    if (_isQueueBlocked) {
+      return;
+    }
+    if (_currentChatId == null || _currentChatId!.trim().isEmpty) {
+      _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
       return;
     }
 
     _messageController.clear();
+    _inputFocusNode.unfocus();
+    _startSendMessageText(text);
+  }
+
+  void _startSendMessageText(String text) {
     _mutateChatContentData(() {
       _autoScrollToBottom = true;
       _autoScrollToBottomNotifier.value = true;
@@ -441,8 +690,9 @@ class _AIChatScreenState extends State<AIChatScreen>
       }
       _viewModel
           .sendUserMessage(text, replyToMessage: _replyToMessage)
-          .then((_) {
+          .then((_) async {
             _replyToMessage = null;
+            await _refreshAttachments();
             return null;
           })
           .catchError((Object error, StackTrace stackTrace) {
@@ -899,7 +1149,83 @@ class _AIChatScreenState extends State<AIChatScreen>
           selectedMessageIndices: data.selectedMessageIndices,
           isPreparingChatSwitch: data.isPreparingChatSwitch,
           onSendMessage: _sendMessage,
+          onQueueMessage: _enqueueDraftToPendingQueue,
           onCancelMessage: _cancelMessage,
+          pendingQueueMessages: data.pendingQueueMessages,
+          isPendingQueueExpanded: data.isPendingQueueExpanded,
+          onPendingQueueExpandedChange: _setPendingQueueExpanded,
+          onDeletePendingQueueMessage: _deletePendingQueueMessage,
+          onEditPendingQueueMessage: _editPendingQueueMessage,
+          onSendPendingQueueMessage: _sendPendingQueueMessage,
+          attachments: data.attachments,
+          onAttachImage: () {
+            _handleAttachImage().catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach image: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onTakePhoto: _handleTakePhoto,
+          onAttachMemory: _handleAttachMemory,
+          onAttachFile: () {
+            _handleAttachFile().catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach file: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onAttachScreenContent: () {
+            _handleSpecialAttachment('screen_capture').catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint(
+                'Failed to attach screen content: $error\n$stackTrace',
+              );
+              return null;
+            });
+          },
+          onAttachNotifications: () {
+            _handleSpecialAttachment('notifications_capture').catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach notifications: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onAttachLocation: () {
+            _handleSpecialAttachment('location_capture').catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach location: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onAttachPackage: (packageName) {
+            _handleAttachPackage(packageName).catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach package: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onRemoveAttachment: (filePath) {
+            _removeAttachment(filePath).catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to remove attachment: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onInsertAttachment: _insertAttachmentReference,
           onModelChanged: _setModelLabel,
           toastMessageListenable: _toastMessageNotifier,
           onDismissToast: _dismissToast,
@@ -966,6 +1292,11 @@ class _AIChatScreenState extends State<AIChatScreen>
       selectedMessageIndices: _selectedMessageIndices,
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
       isPreparingChatSwitch: _isPreparingChatSwitch,
+      pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(
+        _pendingQueueMessages,
+      ),
+      isPendingQueueExpanded: _isPendingQueueExpanded,
+      attachments: List<AttachmentInfo>.unmodifiable(_attachments),
     );
   }
 

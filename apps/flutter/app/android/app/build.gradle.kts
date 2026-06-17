@@ -67,6 +67,15 @@ flutter {
     source = "../.."
 }
 
+dependencies {
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.0")
+    implementation("com.google.mlkit:text-recognition-korean:16.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+}
+
 val operitBridgeCrate = project.layout.projectDirectory
     .dir("../../../native/operit-flutter-bridge")
     .asFile

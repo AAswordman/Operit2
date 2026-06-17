@@ -1,6 +1,7 @@
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, HostError, HostResult,
-    LocationData, NotificationData, SystemOperationHost, SystemSettingData,
+    LocationData, NotificationData, OCRLanguage, OCRQuality, SystemOperationHost,
+    SystemSettingData,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -111,5 +112,24 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         Err(HostError::new(
             "Android get_device_info requires the Android device info host bridge",
         ))
+    }
+
+    fn captureScreenshot(&self) -> HostResult<String> {
+        Err(HostError::new(
+            "Android capture_screenshot requires the Android screen capture host bridge",
+        ))
+    }
+
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: OCRLanguage,
+        quality: OCRQuality,
+    ) -> HostResult<String> {
+        Err(HostError::new(format!(
+            "Android OCR requires the Android OCR host bridge: path={imagePath}, language={}, quality={}",
+            language.asHostValue(),
+            quality.asHostValue()
+        )))
     }
 }

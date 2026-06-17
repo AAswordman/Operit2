@@ -42,6 +42,8 @@ use operit_host_android_native::{
     AndroidSystemOperationHost as NativeSystemOperationHost,
     AndroidTerminalHost as NativeTerminalHost,
 };
+#[cfg(target_os = "android")]
+use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
@@ -478,6 +480,184 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
     }
 }
 
+#[cfg(target_os = "android")]
+#[derive(Clone)]
+struct FlutterSystemOperationBridge {
+    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
+    native: NativeSystemOperationHost,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Debug, serde::Serialize)]
+struct PendingOCRRequest {
+    imagePath: String,
+    language: String,
+    quality: String,
+}
+
+#[cfg(target_os = "android")]
+impl FlutterSystemOperationBridge {
+    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
+        Self {
+            runtimeHostBridge,
+            native: NativeSystemOperationHost::new(),
+        }
+    }
+
+    fn bridge(&self) -> operit_host_api::HostResult<&FlutterRuntimeHostBridge> {
+        self.runtimeHostBridge
+            .as_ref()
+            .ok_or_else(|| operit_host_api::HostError::new("runtime host bridge is not installed"))
+    }
+
+    fn requestJson(
+        &self,
+        methodName: &str,
+        payloadJson: &str,
+    ) -> operit_host_api::HostResult<serde_json::Value> {
+        let resultJson = self
+            .bridge()?
+            .handleRequest(methodName, payloadJson)
+            .map_err(operit_host_api::HostError::new)?;
+        serde_json::from_str::<serde_json::Value>(&resultJson)
+            .map_err(|error| operit_host_api::HostError::new(error.to_string()))
+    }
+}
+
+#[cfg(target_os = "android")]
+impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
+    fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> {
+        self.native.getSystemLanguageCode()
+    }
+
+    fn toast(&self, message: &str) -> operit_host_api::HostResult<()> {
+        self.native.toast(message)
+    }
+
+    fn sendNotification(&self, title: &str, message: &str) -> operit_host_api::HostResult<()> {
+        self.native.sendNotification(title, message)
+    }
+
+    fn modifySystemSetting(
+        &self,
+        namespace: &str,
+        setting: &str,
+        value: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> {
+        self.native.modifySystemSetting(namespace, setting, value)
+    }
+
+    fn getSystemSetting(
+        &self,
+        namespace: &str,
+        setting: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> {
+        self.native.getSystemSetting(namespace, setting)
+    }
+
+    fn installApp(
+        &self,
+        path: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::AppOperationData> {
+        self.native.installApp(path)
+    }
+
+    fn uninstallApp(
+        &self,
+        packageName: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::AppOperationData> {
+        self.native.uninstallApp(packageName)
+    }
+
+    fn listInstalledApps(
+        &self,
+        includeSystemApps: bool,
+    ) -> operit_host_api::HostResult<operit_host_api::AppListData> {
+        self.native.listInstalledApps(includeSystemApps)
+    }
+
+    fn startApp(
+        &self,
+        packageName: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::AppOperationData> {
+        self.native.startApp(packageName)
+    }
+
+    fn stopApp(
+        &self,
+        packageName: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::AppOperationData> {
+        self.native.stopApp(packageName)
+    }
+
+    fn getNotifications(
+        &self,
+        limit: i32,
+        includeOngoing: bool,
+    ) -> operit_host_api::HostResult<operit_host_api::NotificationData> {
+        self.native.getNotifications(limit, includeOngoing)
+    }
+
+    fn getAppUsageTime(
+        &self,
+        packageName: &str,
+        sinceHours: i32,
+        limit: i32,
+        includeSystemApps: bool,
+    ) -> operit_host_api::HostResult<operit_host_api::AppUsageTimeResultData> {
+        self.native
+            .getAppUsageTime(packageName, sinceHours, limit, includeSystemApps)
+    }
+
+    fn getDeviceLocation(
+        &self,
+        timeout: i32,
+        highAccuracy: bool,
+        includeAddress: bool,
+    ) -> operit_host_api::HostResult<operit_host_api::LocationData> {
+        self.native
+            .getDeviceLocation(timeout, highAccuracy, includeAddress)
+    }
+
+    fn getDeviceInfo(&self) -> operit_host_api::HostResult<operit_host_api::DeviceInfoData> {
+        self.native.getDeviceInfo()
+    }
+
+    fn captureScreenshot(&self) -> operit_host_api::HostResult<String> {
+        let value = self.requestJson("systemCaptureScreenshot", "{}")?;
+        json_string_field(&value, "path")
+    }
+
+    fn recognizeText(
+        &self,
+        imagePath: &str,
+        language: operit_host_api::OCRLanguage,
+        quality: operit_host_api::OCRQuality,
+    ) -> operit_host_api::HostResult<String> {
+        let request = PendingOCRRequest {
+            imagePath: imagePath.to_string(),
+            language: language.asHostValue().to_string(),
+            quality: quality.asHostValue().to_string(),
+        };
+        let payloadJson = serde_json::to_string(&request)
+            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let value = self.requestJson("systemRecognizeText", &payloadJson)?;
+        json_string_field(&value, "text")
+    }
+}
+
+#[cfg(target_os = "android")]
+fn json_string_field(
+    value: &serde_json::Value,
+    fieldName: &str,
+) -> operit_host_api::HostResult<String> {
+    value
+        .get(fieldName)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| operit_host_api::HostError::new(format!("{fieldName} is missing")))
+}
+
 impl OperitFlutterBridge {
     fn new() -> Result<Self, String> {
         Self::new_with_storage_root(None)
@@ -513,6 +693,7 @@ impl OperitFlutterBridge {
             Arc::new(webVisitBridge),
             Some(Arc::new(browserAutomationBridge)),
             Some(Arc::new(composeDslWebViewBridge)),
+            runtimeHostBridge.clone(),
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost.clone(),
         )?;
@@ -933,6 +1114,9 @@ fn create_local_core(
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))] runtimeHostBridge: Option<
+        FlutterRuntimeHostBridge,
+    >,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
     let root_dir = match storage_root {
@@ -942,12 +1126,18 @@ fn create_local_core(
     let appFilesRoot = root_dir.clone();
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
+    #[cfg(target_os = "android")]
+    let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
+        Arc::new(FlutterSystemOperationBridge::new(runtimeHostBridge));
+    #[cfg(not(target_os = "android"))]
+    let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
+        Arc::new(NativeSystemOperationHost::new());
     let mut context =
         OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             webVisitHost,
             Arc::new(NativeHttpHost::new()),
-            Arc::new(NativeSystemOperationHost::new()),
+            systemOperationHost,
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
@@ -981,6 +1171,7 @@ fn create_local_core(
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    _runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
@@ -1016,6 +1207,7 @@ fn create_local_core(
     _webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     _composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    _runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))] _terminalHost: Arc<
         NativeTerminalHost,
     >,

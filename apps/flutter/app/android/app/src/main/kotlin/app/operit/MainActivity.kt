@@ -2,9 +2,15 @@ package app.operit
 
 import android.os.Build
 import android.os.Bundle
+import android.media.projection.MediaProjection
+import android.net.Uri
 import android.view.Display
 import android.view.View
 import android.graphics.Color
+import app.operit.core.tools.system.MediaProjectionCaptureManager
+import app.operit.core.tools.system.MediaProjectionHolder
+import app.operit.core.tools.system.ScreenCaptureActivity
+import app.operit.util.OCRUtils
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -15,6 +21,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val runtimeLock = Any()
@@ -25,6 +34,8 @@ class MainActivity : FlutterActivity() {
         }
     private var runtimeHandle: Long = 0
     private lateinit var runtimeChannel: MethodChannel
+    private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
+    private var cachedMediaProjection: MediaProjection? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +81,13 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        try {
+            cachedMediaProjectionCaptureManager?.release()
+            cachedMediaProjectionCaptureManager = null
+            cachedMediaProjection = null
+            MediaProjectionHolder.clear(applicationContext)
+        } catch (_: Exception) {
+        }
         runtimeExecutor.shutdownNow()
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
@@ -236,6 +254,11 @@ class MainActivity : FlutterActivity() {
     }
 
     fun handleRuntimeHostRequest(methodName: String, payloadJson: String): String {
+        when (methodName) {
+            "systemCaptureScreenshot" -> return systemCaptureScreenshot()
+            "systemRecognizeText" -> return systemRecognizeText(payloadJson)
+        }
+
         val latch = CountDownLatch(1)
         var response: String? = null
         var error: Throwable? = null
@@ -268,6 +291,146 @@ class MainActivity : FlutterActivity() {
         latch.await()
         error?.let { throw it }
         return response ?: throw IllegalStateException("runtime host handler returned empty response")
+    }
+
+    private fun systemCaptureScreenshot(): String {
+        val path = captureScreenshotToFile()
+        return JSONObject().put("path", path).toString()
+    }
+
+    private fun systemRecognizeText(payloadJson: String): String {
+        val request = JSONObject(payloadJson)
+        val imagePath = request.getString("imagePath")
+        val language = parseOcrLanguage(request.getString("language"))
+        val quality = parseOcrQuality(request.getString("quality"))
+        val text =
+            runBlocking(Dispatchers.IO) {
+                when (
+                    val result =
+                        OCRUtils.recognizeTextFromUri(
+                            context = applicationContext,
+                            uri = Uri.fromFile(File(imagePath)),
+                            language = language,
+                            quality = quality,
+                        )
+                ) {
+                    is OCRUtils.OCRResult.Success -> result.getFullText()
+                    is OCRUtils.OCRResult.Error -> throw IllegalStateException(result.message)
+                }
+            }
+        return JSONObject().put("text", text).toString()
+    }
+
+    private fun parseOcrLanguage(value: String): OCRUtils.Language {
+        return when (value) {
+            "LATIN" -> OCRUtils.Language.LATIN
+            "CHINESE" -> OCRUtils.Language.CHINESE
+            "JAPANESE" -> OCRUtils.Language.JAPANESE
+            "KOREAN" -> OCRUtils.Language.KOREAN
+            else -> throw IllegalArgumentException("Unsupported OCR language: $value")
+        }
+    }
+
+    private fun parseOcrQuality(value: String): OCRUtils.Quality {
+        return when (value) {
+            "LOW" -> OCRUtils.Quality.LOW
+            "HIGH" -> OCRUtils.Quality.HIGH
+            else -> throw IllegalArgumentException("Unsupported OCR quality: $value")
+        }
+    }
+
+    private fun captureScreenshotToFile(): String {
+        val screenshotDir = File(prepareAndroidRuntimePaths().storageRoot, "runtime/temp/clean_on_exit")
+        screenshotDir.mkdirs()
+
+        val shortName = System.currentTimeMillis().toString().takeLast(4)
+        val file = File(screenshotDir, "$shortName.png")
+
+        val manager = ensureMediaProjectionCaptureManager()
+            ?: throw IllegalStateException("Screenshot failed")
+
+        var success = false
+        var attempt = 0
+        while (!success && attempt < 3) {
+            success = manager.captureToFile(file)
+            if (!success) {
+                Thread.sleep(120)
+            }
+            attempt++
+        }
+
+        if (!success) {
+            throw IllegalStateException("Screenshot failed")
+        }
+        return file.absolutePath
+    }
+
+    private fun ensureMediaProjectionCaptureManager(): MediaProjectionCaptureManager? {
+        if (MediaProjectionHolder.mediaProjection == null) {
+            AndroidClientLogger.d(
+                applicationContext,
+                "OperitMainActivity",
+                "captureScreenshot: Requesting MediaProjection permission...",
+            )
+            val launchLatch = CountDownLatch(1)
+            runOnUiThread {
+                try {
+                    ScreenCaptureActivity.cleanStart(this)
+                } finally {
+                    launchLatch.countDown()
+                }
+            }
+            launchLatch.await()
+
+            var retries = 0
+            while (MediaProjectionHolder.mediaProjection == null && retries < 20) {
+                Thread.sleep(500)
+                retries++
+            }
+
+            if (MediaProjectionHolder.mediaProjection == null) {
+                AndroidClientLogger.w(
+                    applicationContext,
+                    "OperitMainActivity",
+                    "captureScreenshot: MediaProjection permission not granted or timed out",
+                )
+                return null
+            }
+        }
+
+        return try {
+            val projection = MediaProjectionHolder.mediaProjection ?: return null
+            val manager =
+                if (cachedMediaProjectionCaptureManager == null || cachedMediaProjection !== projection) {
+                    try {
+                        cachedMediaProjectionCaptureManager?.release()
+                    } catch (_: Exception) {
+                    }
+                    cachedMediaProjection = projection
+                    MediaProjectionCaptureManager(applicationContext, projection).also {
+                        cachedMediaProjectionCaptureManager = it
+                    }
+                } else {
+                    cachedMediaProjectionCaptureManager!!
+                }
+
+            manager.setupDisplay()
+            Thread.sleep(200)
+            manager
+        } catch (error: Exception) {
+            AndroidClientLogger.e(
+                applicationContext,
+                "OperitMainActivity",
+                "captureScreenshot: Error preparing MediaProjectionCaptureManager: ${error.message.orEmpty()}",
+            )
+            try {
+                cachedMediaProjectionCaptureManager?.release()
+            } catch (_: Exception) {
+            }
+            cachedMediaProjectionCaptureManager = null
+            cachedMediaProjection = null
+            null
+        }
     }
 
     private fun androidRuntimePaths(result: MethodChannel.Result) {
@@ -367,8 +530,20 @@ class MainActivity : FlutterActivity() {
 }
 
 object AndroidClientLogger {
+    fun d(context: android.content.Context, tag: String, message: String) {
+        write(context, "D", tag, message)
+    }
+
     fun i(context: android.content.Context, tag: String, message: String) {
         write(context, "I", tag, message)
+    }
+
+    fun w(context: android.content.Context, tag: String, message: String) {
+        write(context, "W", tag, message)
+    }
+
+    fun e(context: android.content.Context, tag: String, message: String) {
+        write(context, "E", tag, message)
     }
 
     @Synchronized

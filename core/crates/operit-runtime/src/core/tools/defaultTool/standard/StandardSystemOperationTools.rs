@@ -35,6 +35,7 @@ pub enum SystemOperationToolOperation {
     GetAppUsageTime,
     GetDeviceLocation,
     GetDeviceInfo,
+    CaptureScreenshot,
 }
 
 #[derive(Clone)]
@@ -315,6 +316,17 @@ impl StandardSystemOperationTools {
         }
     }
 
+    #[allow(non_snake_case)]
+    pub fn captureScreenshot(&self, tool: &AITool) -> ToolResult {
+        match self.host().and_then(|host| host.captureScreenshot()) {
+            Ok(path) => toolSuccess(tool, path),
+            Err(error) => toolError(
+                tool,
+                format!("Error capturing screenshot: {}", error.message),
+            ),
+        }
+    }
+
     fn host(&self) -> Result<&dyn SystemOperationHost, operit_host_api::HostError> {
         self.systemOperationHost.as_deref().ok_or_else(|| {
             operit_host_api::HostError::new(
@@ -346,6 +358,7 @@ impl ToolExecutor for SystemOperationToolExecutor {
             SystemOperationToolOperation::GetAppUsageTime => self.tools.getAppUsageTime(tool),
             SystemOperationToolOperation::GetDeviceLocation => self.tools.getDeviceLocation(tool),
             SystemOperationToolOperation::GetDeviceInfo => self.tools.getDeviceInfo(tool),
+            SystemOperationToolOperation::CaptureScreenshot => self.tools.captureScreenshot(tool),
         };
         vec![result]
     }
@@ -426,7 +439,8 @@ fn validateSystemOperationTool(
             }
         }
         SystemOperationToolOperation::ListInstalledApps
-        | SystemOperationToolOperation::GetDeviceInfo => {}
+        | SystemOperationToolOperation::GetDeviceInfo
+        | SystemOperationToolOperation::CaptureScreenshot => {}
     }
     ToolValidationResult {
         valid: true,

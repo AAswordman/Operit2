@@ -15,6 +15,7 @@ import 'WorkspaceFileModels.dart';
 typedef ChatMessageLocatorPreview = core_proxy.ChatMessageLocatorPreview;
 typedef WorkspaceFileChange = core_proxy.WorkspaceFileChange;
 typedef ChatResponseStreamEvent = core_proxy.MarkdownStreamEvent;
+typedef AttachmentInfo = core_proxy.AttachmentInfo;
 
 class ChatViewModel {
   ChatViewModel({this.bridge = const ProxyCoreRuntimeBridge()})
@@ -225,6 +226,7 @@ class ChatViewModel {
       );
     }
 
+    final attachments = await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: 'CHAT',
       roleCardIdOverride: null,
@@ -233,7 +235,7 @@ class ChatViewModel {
       proxySenderNameOverride: null,
       chatProviderIdOverride: providerId,
       chatModelIdOverride: modelId,
-      attachments: const <core_proxy.AttachmentInfo>[],
+      attachments: attachments,
       replyToMessage: replyToMessage?.toProxy(),
       turnOptions: const core_proxy.ChatTurnOptions(
         persistTurn: true,
@@ -242,10 +244,44 @@ class ChatViewModel {
         disableWarning: false,
       ),
     );
+    if (attachments.isNotEmpty) {
+      await _chat.clearAttachments();
+    }
   }
 
   Future<void> cancelCurrentMessage() {
     return _chat.cancelCurrentMessage();
+  }
+
+  Future<List<AttachmentInfo>> attachments() {
+    return _chat.attachments();
+  }
+
+  Future<void> handleAttachment(String filePath) {
+    return _chat.handleAttachment(filePath: filePath);
+  }
+
+  Future<void> removeAttachment(String filePath) {
+    return _chat.removeAttachment(filePath: filePath);
+  }
+
+  Future<void> clearAttachments() {
+    return _chat.clearAttachments();
+  }
+
+  String createAttachmentReference(AttachmentInfo attachment) {
+    final buffer = StringBuffer('<attachment ');
+    buffer.write('id="${attachment.filePath}" ');
+    buffer.write('filename="${attachment.fileName}" ');
+    buffer.write('type="${attachment.mimeType}" ');
+    if (attachment.fileSize > 0) {
+      buffer.write('size="${attachment.fileSize}" ');
+    }
+    if (attachment.content.isNotEmpty) {
+      buffer.write('content="${attachment.content}" ');
+    }
+    buffer.write('/>');
+    return buffer.toString();
   }
 
   Stream<ChatResponseStreamEvent> watchResponseStream(String chatId) {
@@ -363,14 +399,8 @@ class ChatViewModel {
     );
   }
 
-  Future<void> bindChatToWorkspace(
-    String chatId,
-    String workspace,
-  ) {
-    return _chat.bindChatToWorkspace(
-      chatId: chatId,
-      workspace: workspace,
-    );
+  Future<void> bindChatToWorkspace(String chatId, String workspace) {
+    return _chat.bindChatToWorkspace(chatId: chatId, workspace: workspace);
   }
 
   Future<List<WorkspaceFileEntry>> listWorkspaceFiles(

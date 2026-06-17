@@ -5,18 +5,55 @@ use operit_runtime::util::streamnative::NativeMarkdownStreamOperators::NativeMar
 use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use super::theme;
 
 const TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT: usize = 160;
 const TOOL_RESULT_INLINE_DETAIL_CHAR_LIMIT: usize = 80;
 const TOOL_RESULT_PREFIX_DISPLAY_WIDTH: usize = 8;
+const STREAMING_MARKDOWN_TAIL_BLOCKS: usize = 4;
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct MarkdownRenderCache {
+    blocks: HashMap<usize, CachedMarkdownBlock>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedMarkdownBlock {
+    key: MarkdownBlockRenderKey,
+    lines: Vec<Line<'static>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MarkdownBlockRenderKey {
+    content_width: usize,
+    node_hash: u64,
+}
 
 pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<Line<'static>> {
     let nodes = content.nativeMarkdownSplitByBlock();
+    render_markdown_nodes_lines(&nodes, content_width)
+}
+
+pub(super) fn render_markdown_lines_cached(
+    content: &str,
+    content_width: usize,
+    cache: &mut MarkdownRenderCache,
+    is_streaming: bool,
+) -> Vec<Line<'static>> {
+    let nodes = content.nativeMarkdownSplitByBlock();
+    render_markdown_nodes_lines_cached(&nodes, content_width, cache, is_streaming)
+}
+
+pub(super) fn render_markdown_nodes_lines(
+    nodes: &[MarkdownNodeStable],
+    content_width: usize,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut previous_kind: Option<RenderedBlockKind> = None;
-    for node in nodes.iter() {
+    for node in nodes {
         if is_blank_text_block(node) {
             continue;
         }
@@ -25,11 +62,58 @@ pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<
             lines.push(Line::from(""));
         }
         let before_len = lines.len();
-        render_block_node(node, content_width, &mut lines);
+        lines.extend(render_markdown_block_lines(node, content_width));
         if lines.len() > before_len {
             previous_kind = Some(kind);
         }
     }
+    if lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
+pub(super) fn render_markdown_nodes_lines_cached(
+    nodes: &[MarkdownNodeStable],
+    content_width: usize,
+    cache: &mut MarkdownRenderCache,
+    is_streaming: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut previous_kind: Option<RenderedBlockKind> = None;
+    let tail_start_index = if is_streaming {
+        streaming_tail_start_index(nodes)
+    } else {
+        nodes.len()
+    };
+    let mut live_indexes = HashSet::new();
+
+    for (index, node) in nodes.iter().enumerate() {
+        if is_blank_text_block(node) {
+            continue;
+        }
+        live_indexes.insert(index);
+        let kind = rendered_block_kind(node);
+        if should_insert_block_spacing(previous_kind, kind) && !last_line_is_blank(&lines) {
+            lines.push(Line::from(""));
+        }
+
+        let before_len = lines.len();
+        let block_lines = render_cached_markdown_block(
+            index,
+            node,
+            content_width,
+            cache,
+            index >= tail_start_index,
+        );
+        lines.extend(block_lines);
+        if lines.len() > before_len {
+            previous_kind = Some(kind);
+        }
+    }
+
+    cache.blocks.retain(|index, _| live_indexes.contains(index));
+
     if lines.is_empty() {
         lines.push(Line::from(""));
     }
@@ -46,6 +130,71 @@ enum RenderedBlockKind {
     HorizontalRule,
     Code,
     Other,
+}
+
+fn render_cached_markdown_block(
+    index: usize,
+    node: &MarkdownNodeStable,
+    content_width: usize,
+    cache: &mut MarkdownRenderCache,
+    render_live_tail: bool,
+) -> Vec<Line<'static>> {
+    let key = MarkdownBlockRenderKey {
+        content_width,
+        node_hash: stable_markdown_node_hash(node),
+    };
+    if !render_live_tail {
+        if let Some(cached) = cache.blocks.get(&index).filter(|cached| cached.key == key) {
+            return cached.lines.clone();
+        }
+    }
+    let lines = render_markdown_block_lines(node, content_width);
+    cache.blocks.insert(
+        index,
+        CachedMarkdownBlock {
+            key,
+            lines: lines.clone(),
+        },
+    );
+    lines
+}
+
+fn render_markdown_block_lines(
+    node: &MarkdownNodeStable,
+    content_width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    render_block_node(node, content_width, &mut lines);
+    lines
+}
+
+fn streaming_tail_start_index(nodes: &[MarkdownNodeStable]) -> usize {
+    let mut seen = 0usize;
+    for (index, node) in nodes.iter().enumerate().rev() {
+        if is_blank_text_block(node) {
+            continue;
+        }
+        seen += 1;
+        if seen == STREAMING_MARKDOWN_TAIL_BLOCKS {
+            return index;
+        }
+    }
+    0
+}
+
+fn stable_markdown_node_hash(node: &MarkdownNodeStable) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_markdown_node(node, &mut hasher);
+    hasher.finish()
+}
+
+fn hash_markdown_node(node: &MarkdownNodeStable, hasher: &mut impl Hasher) {
+    (node.r#type as i32).hash(hasher);
+    node.content.hash(hasher);
+    node.children.len().hash(hasher);
+    for child in &node.children {
+        hash_markdown_node(child, hasher);
+    }
 }
 
 fn rendered_block_kind(node: &MarkdownNodeStable) -> RenderedBlockKind {
@@ -443,26 +592,109 @@ fn render_media_link_xml(content: &str, lines: &mut Vec<Line<'static>>) {
 }
 
 fn tool_leading_symbol(tool_name: &str) -> &'static str {
-    if tool_name.contains("file") || tool_name.contains("read") || tool_name.contains("write") {
-        "▣"
-    } else if tool_name.contains("search")
-        || tool_name.contains("find")
-        || tool_name.contains("query")
-    {
-        "⌕"
-    } else if tool_name.contains("terminal")
-        || tool_name.contains("exec")
-        || tool_name.contains("command")
-        || tool_name.contains("shell")
-    {
-        ">"
-    } else if tool_name.contains("code") || tool_name.contains("ffmpeg") {
-        "{}"
-    } else if tool_name.contains("http") || tool_name.contains("web") || tool_name.contains("visit")
-    {
-        "◎"
-    } else {
-        "→"
+    if tool_name.split_once(':').is_some() {
+        return "→";
+    }
+    match tool_name {
+        "list_files"
+        | "read_file"
+        | "read_file_part"
+        | "read_file_full"
+        | "read_file_binary"
+        | "write_file"
+        | "write_file_binary"
+        | "delete_file"
+        | "file_exists"
+        | "move_file"
+        | "copy_file"
+        | "file_info"
+        | "create_file"
+        | "edit_file"
+        | "zip_files"
+        | "unzip_files"
+        | "open_file"
+        | "share_file"
+        | "download_file"
+        | "apply_file"
+        | "browser_file_upload"
+        | "read_environment_variable"
+        | "write_environment_variable" => "▣",
+        "search_tools" | "find_chat" | "query_memory" | "query_memory_links" => "⌕",
+        "get_terminal_info"
+        | "create_terminal_session"
+        | "execute_in_terminal_session"
+        | "execute_in_terminal_session_streaming"
+        | "execute_hidden_terminal_command"
+        | "close_terminal_session"
+        | "input_in_terminal_session"
+        | "get_terminal_session_screen"
+        | "execute_cli_command" => ">",
+        "browser_run_code" | "grep_code" => "{}",
+        "visit_web" | "http_request" => "◎",
+        "sleep"
+        | "use_package"
+        | "proxy"
+        | "package_proxy"
+        | "start_chat_service"
+        | "stop_chat_service"
+        | "create_new_chat"
+        | "list_chats"
+        | "agent_status"
+        | "switch_chat"
+        | "update_chat_title"
+        | "delete_chat"
+        | "send_message_to_ai"
+        | "send_message_to_ai_streaming"
+        | "list_character_cards"
+        | "get_chat_messages"
+        | "toast"
+        | "send_notification"
+        | "modify_system_setting"
+        | "get_system_setting"
+        | "install_app"
+        | "uninstall_app"
+        | "list_installed_apps"
+        | "start_app"
+        | "stop_app"
+        | "get_notifications"
+        | "get_app_usage_time"
+        | "get_device_location"
+        | "device_info"
+        | "make_directory"
+        | "find_files"
+        | "grep_context"
+        | "multipart_request"
+        | "manage_cookies"
+        | "browser_click"
+        | "browser_close"
+        | "browser_close_all"
+        | "browser_console_messages"
+        | "browser_drag"
+        | "browser_evaluate"
+        | "browser_fill_form"
+        | "browser_handle_dialog"
+        | "browser_hover"
+        | "browser_navigate"
+        | "browser_navigate_back"
+        | "browser_network_requests"
+        | "browser_press_key"
+        | "browser_resize"
+        | "browser_select_option"
+        | "browser_snapshot"
+        | "browser_tabs"
+        | "browser_take_screenshot"
+        | "browser_type"
+        | "browser_wait_for"
+        | "get_memory_by_title"
+        | "create_memory"
+        | "update_memory"
+        | "delete_memory"
+        | "move_memory"
+        | "update_user_preferences"
+        | "link_memories"
+        | "update_memory_link"
+        | "delete_memory_link" => "→",
+        _ => panic!("unclassified tool for tui display: {tool_name}"),
     }
 }
 

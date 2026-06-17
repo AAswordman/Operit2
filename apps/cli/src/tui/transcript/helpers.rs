@@ -6,10 +6,17 @@ use std::collections::HashSet;
 use operit_runtime::data::model::ChatMessage::ChatMessage;
 use operit_runtime::data::model::InputProcessingState::InputProcessingState;
 use operit_runtime::util::stream::HotStream::SharedStream;
+use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
+    MarkdownNodeStable, MarkdownProcessorType,
+};
 use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
-use super::markdown::render_markdown_lines;
+use super::markdown::{
+    render_markdown_lines, render_markdown_lines_cached, render_markdown_nodes_lines,
+    render_markdown_nodes_lines_cached, MarkdownRenderCache,
+};
+use super::selection::mark_soft_wrap_continuation;
 use super::theme;
 use super::typewriter::TypewriterState;
 
@@ -33,136 +40,230 @@ pub(super) fn render_message_lines(
 
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
-        let role = message.roleName.trim();
-        let sender = message_header_label(message.sender.as_str(), role);
-        let color = message_header_color(message.sender.as_str());
-        let block_style = message_block_style(message.sender.as_str());
-        let message_layout = message_layout(message.sender.as_str(), content_width);
-        let message_content_width = message_layout.content_width;
-        let mut meta = String::new();
-        if !message.provider.trim().is_empty() {
-            meta.push_str(&message.provider);
-        }
-        if !message.modelName.trim().is_empty() {
-            if !meta.is_empty() {
-                meta.push_str(" / ");
-            }
-            meta.push_str(&message.modelName);
-        }
-        if message.outputTokens > 0 {
-            if !meta.is_empty() {
-                meta.push_str(" / ");
-            }
-            meta.push_str(&format!("out={}", message.outputTokens));
-        }
-        let header_spans = if meta.is_empty() {
-            vec![Span::styled(
-                sender,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            )]
-        } else {
-            vec![
-                Span::styled(
-                    format!("{sender} "),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(meta, Style::default().fg(theme::TEXT_MUTED)),
-            ]
-        };
-        if message.sender == "user" {
-            append_message_gap(&mut lines);
-            append_user_message_card(&mut lines, header_spans, &message.content, content_width);
-            continue;
-        }
         append_message_gap(&mut lines);
+        lines.extend(render_transcript_message_lines(
+            message,
+            index,
+            messages.len(),
+            content_width,
+            is_loading,
+            thinking_line,
+            typewriter_state,
+        ));
+    }
+    if is_loading && matches!(messages.last(), Some(message) if message.sender == "user") {
+        append_message_gap(&mut lines);
+        lines.extend(render_loading_ai_placeholder_lines(
+            content_width,
+            thinking_line,
+        ));
+    }
+    lines.extend(render_input_error_lines(input_state));
+    lines
+}
+
+pub(super) fn render_transcript_message_lines(
+    message: &ChatMessage,
+    index: usize,
+    messages_len: usize,
+    content_width: usize,
+    is_loading: bool,
+    thinking_line: &Line<'static>,
+    typewriter_state: &mut TypewriterState,
+) -> Vec<Line<'static>> {
+    render_transcript_message_lines_with_cache(
+        message,
+        index,
+        messages_len,
+        content_width,
+        is_loading,
+        thinking_line,
+        typewriter_state,
+        None,
+        None,
+    )
+}
+
+pub(super) fn render_transcript_message_lines_with_cache(
+    message: &ChatMessage,
+    index: usize,
+    messages_len: usize,
+    content_width: usize,
+    is_loading: bool,
+    thinking_line: &Line<'static>,
+    typewriter_state: &mut TypewriterState,
+    stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
+    mut markdown_cache: Option<&mut MarkdownRenderCache>,
+) -> Vec<Line<'static>> {
+    let role = message.roleName.trim();
+    let sender = message_header_label(message.sender.as_str(), role);
+    let color = message_header_color(message.sender.as_str());
+    let block_style = message_block_style(message.sender.as_str());
+    let message_layout = message_layout(message.sender.as_str(), content_width);
+    let message_content_width = message_layout.content_width;
+    let mut meta = String::new();
+    if !message.provider.trim().is_empty() {
+        meta.push_str(&message.provider);
+    }
+    if !message.modelName.trim().is_empty() {
+        if !meta.is_empty() {
+            meta.push_str(" / ");
+        }
+        meta.push_str(&message.modelName);
+    }
+    if message.outputTokens > 0 {
+        if !meta.is_empty() {
+            meta.push_str(" / ");
+        }
+        meta.push_str(&format!("out={}", message.outputTokens));
+    }
+    let header_spans = if meta.is_empty() {
+        vec![Span::styled(
+            sender,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )]
+    } else {
+        vec![
+            Span::styled(
+                format!("{sender} "),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(meta, Style::default().fg(theme::TEXT_MUTED)),
+        ]
+    };
+    let mut lines = Vec::new();
+    if message.sender == "user" {
+        append_user_message_card(&mut lines, header_spans, &message.content, content_width);
+        return lines;
+    }
+    lines.push(style_message_line(
+        Line::from(header_spans),
+        message.sender.as_str(),
+        block_style,
+        message_layout,
+    ));
+    let is_streaming_message =
+        is_streaming_message_for_tui(message, index, messages_len, is_loading);
+    let full_content = if is_streaming_message && stream_markdown_nodes.is_some() {
+        message.content.clone()
+    } else if is_streaming_message {
+        message
+            .contentStream
+            .as_ref()
+            .map(|stream| stream.replay_cache().join(""))
+            .unwrap_or_else(|| message.content.clone())
+    } else if message.content.is_empty() {
+        String::new()
+    } else {
+        message.content.clone()
+    };
+    let split_content = split_thinking_for_tui(&full_content);
+    let display_is_thinking = split_content.visible.trim().is_empty() && split_content.has_thinking;
+    let display_content = if display_is_thinking {
+        if split_content.thinking.trim().is_empty() {
+            String::new()
+        } else {
+            format!("<thinking>{}</thinking>", split_content.thinking.trim())
+        }
+    } else if stream_markdown_nodes.is_some() && is_streaming_message {
+        split_content.visible.trim().to_string()
+    } else {
+        let typewriter_frame = typewriter_state.frame(
+            message.timestamp,
+            &split_content.visible,
+            is_streaming_message,
+        );
+        let mut rendered_content = typewriter_frame.content;
+        if let Some(pending_char) = typewriter_frame.pending_char {
+            if pending_char == '\n' || !pending_char.is_control() {
+                rendered_content.push(pending_char);
+            }
+        }
+        rendered_content.trim().to_string()
+    };
+    if display_content.is_empty() && display_is_thinking && message.sender == "ai" {
         lines.push(style_message_line(
-            Line::from(header_spans),
+            thinking_line.clone(),
             message.sender.as_str(),
             block_style,
             message_layout,
         ));
-        let is_streaming_message = message.sender == "ai"
-            && (message.contentStream.is_some() || (is_loading && index + 1 == messages.len()));
-        let full_content = if is_streaming_message {
-            message
-                .contentStream
-                .as_ref()
-                .map(|stream| stream.replay_cache().join(""))
-                .unwrap_or_else(|| message.content.clone())
-        } else if message.content.is_empty() {
-            String::new()
-        } else {
-            message.content.clone()
-        };
-        let split_content = split_thinking_for_tui(&full_content);
-        let display_is_thinking =
-            split_content.visible.trim().is_empty() && split_content.has_thinking;
-        let display_content = if display_is_thinking {
-            if split_content.thinking.trim().is_empty() {
-                String::new()
-            } else {
-                format!("<thinking>{}</thinking>", split_content.thinking.trim())
-            }
-        } else {
-            let typewriter_frame = typewriter_state.frame(
-                message.timestamp,
-                &split_content.visible,
-                is_streaming_message,
-            );
-            let mut rendered_content = typewriter_frame.content;
-            if let Some(pending_char) = typewriter_frame.pending_char {
-                if pending_char == '\n' || !pending_char.is_control() {
-                    rendered_content.push(pending_char);
-                }
-            }
-            rendered_content.trim().to_string()
-        };
-        if display_content.is_empty() && display_is_thinking && message.sender == "ai" {
+    } else if display_content.is_empty()
+        && is_loading
+        && index + 1 == messages_len
+        && message.sender == "ai"
+    {
+        lines.push(style_message_line(
+            thinking_line.clone(),
+            message.sender.as_str(),
+            block_style,
+            message_layout,
+        ));
+    } else {
+        let rendered_lines = render_message_markdown_lines(
+            &display_content,
+            message_content_width,
+            is_streaming_message,
+            stream_markdown_nodes,
+            markdown_cache.as_deref_mut(),
+        );
+        lines.extend(
+            wrap_message_lines(rendered_lines, message_content_width)
+                .into_iter()
+                .map(|line| {
+                    style_message_line(line, message.sender.as_str(), block_style, message_layout)
+                }),
+        );
+        if display_content.is_empty() {
             lines.push(style_message_line(
-                thinking_line.clone(),
+                Line::from(""),
                 message.sender.as_str(),
                 block_style,
                 message_layout,
             ));
-        } else if display_content.is_empty()
-            && is_loading
-            && index + 1 == messages.len()
-            && message.sender == "ai"
-        {
-            lines.push(style_message_line(
-                thinking_line.clone(),
-                message.sender.as_str(),
-                block_style,
-                message_layout,
-            ));
-        } else {
-            let rendered_lines = render_markdown_lines(&display_content, message_content_width);
-            lines.extend(
-                wrap_message_lines(rendered_lines, message_content_width)
-                    .into_iter()
-                    .map(|line| {
-                        style_message_line(
-                            line,
-                            message.sender.as_str(),
-                            block_style,
-                            message_layout,
-                        )
-                    }),
-            );
-            if display_content.is_empty() {
-                lines.push(style_message_line(
-                    Line::from(""),
-                    message.sender.as_str(),
-                    block_style,
-                    message_layout,
-                ));
-            }
         }
     }
-    if is_loading && matches!(messages.last(), Some(message) if message.sender == "user") {
-        let block_style = message_block_style("ai");
-        append_message_gap(&mut lines);
-        lines.push(style_message_line(
+    lines
+}
+
+fn render_message_markdown_lines(
+    display_content: &str,
+    message_content_width: usize,
+    is_streaming_message: bool,
+    stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
+    markdown_cache: Option<&mut MarkdownRenderCache>,
+) -> Vec<Line<'static>> {
+    if let Some(nodes) = stream_markdown_nodes {
+        let visible_nodes = visible_markdown_nodes_for_tui(nodes);
+        return match markdown_cache {
+            Some(cache) => render_markdown_nodes_lines_cached(
+                &visible_nodes,
+                message_content_width,
+                cache,
+                is_streaming_message,
+            ),
+            None => render_markdown_nodes_lines(&visible_nodes, message_content_width),
+        };
+    }
+
+    match markdown_cache {
+        Some(cache) => render_markdown_lines_cached(
+            display_content,
+            message_content_width,
+            cache,
+            is_streaming_message,
+        ),
+        None => render_markdown_lines(display_content, message_content_width),
+    }
+}
+
+pub(super) fn render_loading_ai_placeholder_lines(
+    content_width: usize,
+    thinking_line: &Line<'static>,
+) -> Vec<Line<'static>> {
+    let block_style = message_block_style("ai");
+    vec![
+        style_message_line(
             Line::from(Span::styled(
                 "Operit",
                 Style::default()
@@ -172,17 +273,20 @@ pub(super) fn render_message_lines(
             "ai",
             block_style,
             message_layout("ai", content_width),
-        ));
-        lines.push(style_message_line(
+        ),
+        style_message_line(
             thinking_line.clone(),
             "ai",
             block_style,
             message_layout("ai", content_width),
-        ));
-        lines.push(Line::from(""));
-    }
-    if let InputProcessingState::Error { message } = input_state {
-        lines.push(Line::from(vec![
+        ),
+        Line::from(""),
+    ]
+}
+
+pub(super) fn render_input_error_lines(input_state: &InputProcessingState) -> Vec<Line<'static>> {
+    match input_state {
+        InputProcessingState::Error { message } => vec![Line::from(vec![
             Span::styled(
                 "error: ",
                 Style::default()
@@ -190,9 +294,38 @@ pub(super) fn render_message_lines(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(message.clone(), Style::default().fg(theme::ERROR_DIM)),
-        ]));
+        ])],
+        _ => Vec::new(),
     }
-    lines
+}
+
+pub(super) fn is_streaming_message_for_tui(
+    message: &ChatMessage,
+    index: usize,
+    messages_len: usize,
+    is_loading: bool,
+) -> bool {
+    message.sender == "ai"
+        && (message.contentStream.is_some() || (is_loading && index + 1 == messages_len))
+}
+
+fn visible_markdown_nodes_for_tui(nodes: &[MarkdownNodeStable]) -> Vec<MarkdownNodeStable> {
+    nodes
+        .iter()
+        .filter(|node| !is_thinking_markdown_node(node))
+        .cloned()
+        .collect()
+}
+
+fn is_thinking_markdown_node(node: &MarkdownNodeStable) -> bool {
+    if node.r#type != MarkdownProcessorType::XmlBlock {
+        return false;
+    }
+    let raw_tag = ChatMarkupRegex::extract_opening_tag_name(&node.content);
+    matches!(
+        ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref()).as_deref(),
+        Some("think") | Some("thinking")
+    )
 }
 
 struct TuiThinkingSplit {
@@ -581,7 +714,7 @@ fn left_aligned_attachment_line(
     mut spans: Vec<Span<'static>>,
     layout: MessageLayout,
 ) -> Line<'static> {
-    let padding = layout.outer_indent + layout.inner_padding;
+    let padding = layout.outer_indent;
     if padding > 0 {
         spans.insert(0, Span::raw(" ".repeat(padding)));
     }
@@ -654,7 +787,7 @@ fn wrap_message_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'stat
     for line in lines {
         let mut current = Vec::new();
         let mut current_width = 0usize;
-        let mut emitted = false;
+        let mut emitted_count = 0usize;
         for span in line.spans {
             let style = span.style;
             let mut text = String::new();
@@ -662,28 +795,39 @@ fn wrap_message_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'stat
                 let ch_width = char_display_width(ch);
                 if current_width > 0 && current_width + ch_width > width {
                     push_wrapped_span(&mut current, &mut text, style);
-                    wrapped.push(Line::from(std::mem::take(&mut current)));
+                    push_wrapped_line(&mut wrapped, &mut current, &mut emitted_count);
                     current_width = 0;
-                    emitted = true;
                 }
                 text.push(ch);
                 current_width += ch_width;
                 if current_width >= width {
                     push_wrapped_span(&mut current, &mut text, style);
-                    wrapped.push(Line::from(std::mem::take(&mut current)));
+                    push_wrapped_line(&mut wrapped, &mut current, &mut emitted_count);
                     current_width = 0;
-                    emitted = true;
                 }
             }
             push_wrapped_span(&mut current, &mut text, style);
         }
         if !current.is_empty() {
-            wrapped.push(Line::from(current));
-        } else if !emitted {
+            push_wrapped_line(&mut wrapped, &mut current, &mut emitted_count);
+        } else if emitted_count == 0 {
             wrapped.push(Line::from(""));
         }
     }
     wrapped
+}
+
+fn push_wrapped_line(
+    wrapped: &mut Vec<Line<'static>>,
+    current: &mut Vec<Span<'static>>,
+    emitted_count: &mut usize,
+) {
+    let mut line = Line::from(std::mem::take(current));
+    if *emitted_count > 0 {
+        mark_soft_wrap_continuation(&mut line);
+    }
+    wrapped.push(line);
+    *emitted_count += 1;
 }
 
 fn push_wrapped_span(current: &mut Vec<Span<'static>>, text: &mut String, style: Style) {
@@ -914,6 +1058,27 @@ mod tests {
     }
 
     #[test]
+    fn workspace_attachment_chip_aligns_with_user_card_background_start() {
+        let layout = message_layout("user", 48);
+        let block_style = message_block_style("user");
+        let attachment_line = render_attachment_chip_lines(
+            &[UserAttachmentData {
+                file_name: "工作区状态".to_string(),
+                mime_type: "application/vnd.workspace-context+xml".to_string(),
+                file_size: 1,
+            }],
+            layout,
+        )
+        .remove(0);
+        let card_line = style_user_card_line(Line::from("Prompt"), block_style, layout);
+
+        assert_eq!(
+            first_user_card_bg_column(&attachment_line),
+            first_user_card_bg_column(&card_line)
+        );
+    }
+
+    #[test]
     fn ai_thinking_block_is_hidden_from_transcript() {
         let mut ai = ChatMessage::new_with_timestamp(
             "ai".to_string(),
@@ -1049,6 +1214,17 @@ mod tests {
                 }
             },
         )
+    }
+
+    fn first_user_card_bg_column(line: &Line<'static>) -> usize {
+        let mut column = 0usize;
+        for span in &line.spans {
+            if span.style.bg == Some(USER_CARD_BG) {
+                return column;
+            }
+            column += display_width(span.content.as_ref());
+        }
+        column
     }
 
     fn dump_buffer<F>(buffer: &Buffer, render_cell: F) -> String

@@ -140,6 +140,138 @@ abstract class AppLocalizations {
   /// **'Add attachment'**
   String get addAttachment;
 
+  /// No description provided for @attachmentPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo'**
+  String get attachmentPhoto;
+
+  /// No description provided for @attachmentCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera'**
+  String get attachmentCamera;
+
+  /// No description provided for @attachmentMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get attachmentMemory;
+
+  /// No description provided for @attachmentFile.
+  ///
+  /// In en, this message translates to:
+  /// **'File'**
+  String get attachmentFile;
+
+  /// No description provided for @attachmentScreenContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen content'**
+  String get attachmentScreenContent;
+
+  /// No description provided for @attachmentNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Current notifications'**
+  String get attachmentNotifications;
+
+  /// No description provided for @attachmentLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Current location'**
+  String get attachmentLocation;
+
+  /// No description provided for @attachmentPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Package'**
+  String get attachmentPackage;
+
+  /// No description provided for @attachmentPackageSelectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Select package'**
+  String get attachmentPackageSelectTitle;
+
+  /// No description provided for @attachmentPackageEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No available packages'**
+  String get attachmentPackageEmpty;
+
+  /// No description provided for @attachmentPackageSearchPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Search package name or description'**
+  String get attachmentPackageSearchPlaceholder;
+
+  /// No description provided for @attachmentPackageSearchEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching packages'**
+  String get attachmentPackageSearchEmpty;
+
+  /// No description provided for @attachmentPackageKindPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Package'**
+  String get attachmentPackageKindPackage;
+
+  /// No description provided for @attachmentPackageKindSkill.
+  ///
+  /// In en, this message translates to:
+  /// **'Skill'**
+  String get attachmentPackageKindSkill;
+
+  /// No description provided for @attachmentPackageKindMcp.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP'**
+  String get attachmentPackageKindMcp;
+
+  /// No description provided for @attachmentCameraUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera capture is not available in the Flutter client'**
+  String get attachmentCameraUnavailable;
+
+  /// No description provided for @attachmentMemoryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory folder selection is not available in the Flutter client'**
+  String get attachmentMemoryUnavailable;
+
+  /// No description provided for @clearSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get clearSearch;
+
+  /// No description provided for @chatPendingQueueTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued messages ({count})'**
+  String chatPendingQueueTitle(int count);
+
+  /// No description provided for @chatQueueAddMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Queue message'**
+  String get chatQueueAddMessage;
+
+  /// No description provided for @chatQueueAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added to queue'**
+  String get chatQueueAdded;
+
+  /// No description provided for @chatPleaseCreateNewChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Please create a chat'**
+  String get chatPleaseCreateNewChat;
+
   /// No description provided for @cancel.
   ///
   /// In en, this message translates to:

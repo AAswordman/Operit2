@@ -30,6 +30,74 @@ class AppLocalizationsZh extends AppLocalizations {
   String get addAttachment => '添加附件';
 
   @override
+  String get attachmentPhoto => '照片';
+
+  @override
+  String get attachmentCamera => '拍照';
+
+  @override
+  String get attachmentMemory => '记忆';
+
+  @override
+  String get attachmentFile => '文件';
+
+  @override
+  String get attachmentScreenContent => '屏幕内容';
+
+  @override
+  String get attachmentNotifications => '当前通知';
+
+  @override
+  String get attachmentLocation => '当前位置';
+
+  @override
+  String get attachmentPackage => '包';
+
+  @override
+  String get attachmentPackageSelectTitle => '选择包';
+
+  @override
+  String get attachmentPackageEmpty => '暂无可用包';
+
+  @override
+  String get attachmentPackageSearchPlaceholder => '搜索包名、描述';
+
+  @override
+  String get attachmentPackageSearchEmpty => '没有匹配的包';
+
+  @override
+  String get attachmentPackageKindPackage => '包';
+
+  @override
+  String get attachmentPackageKindSkill => '技能';
+
+  @override
+  String get attachmentPackageKindMcp => 'MCP';
+
+  @override
+  String get attachmentCameraUnavailable => '当前 Flutter 端没有相机采集能力';
+
+  @override
+  String get attachmentMemoryUnavailable => '当前 Flutter 端没有记忆文件夹选择器';
+
+  @override
+  String get clearSearch => '清空搜索';
+
+  @override
+  String chatPendingQueueTitle(int count) {
+    return '待发送消息（$count）';
+  }
+
+  @override
+  String get chatQueueAddMessage => '加入队列';
+
+  @override
+  String get chatQueueAdded => '已加入发送队列';
+
+  @override
+  String get chatPleaseCreateNewChat => '请新建对话';
+
+  @override
   String get cancel => '取消';
 
   @override

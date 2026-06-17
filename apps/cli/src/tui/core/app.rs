@@ -1,18 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
@@ -31,13 +32,23 @@ use operit_runtime::util::AppLogger::AppLogger;
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStage, ReleaseInfo,
 };
-use serde::Deserialize;
 
 use super::approval::TuiApprovalBridge;
 use super::helpers::{short_chat_label, split_command_line};
 use super::link_proxy_rs::TuiCore;
+use super::pending_queue::PendingQueueMessage;
+use super::selection::{
+    mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
+    TranscriptSelectionState,
+};
+use super::stream_markdown::TuiMarkdownStreamState;
+use super::transcript::TranscriptRenderCache;
 use super::typewriter::TypewriterState;
 use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
+
+const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
 pub(super) struct OperitTui {
     pub(super) core: TuiCore,
@@ -60,6 +71,14 @@ pub(super) struct OperitTui {
     pub(super) queued_attachment_paths: Vec<String>,
     pub(super) queued_inline_attachments: Vec<AttachmentInfo>,
     pub(super) queued_attachment_tokens: Vec<QueuedAttachmentToken>,
+    pub(super) pending_queue_chat_id: Option<String>,
+    pub(super) pending_queue_messages: VecDeque<PendingQueueMessage>,
+    pub(super) selected_pending_queue_index: usize,
+    pub(super) next_pending_queue_id: u64,
+    pub(super) was_pending_queue_blocked: bool,
+    pub(super) suppress_next_pending_queue_auto_send: bool,
+    pub(super) pending_queue_auto_send_at: Option<Instant>,
+    pub(super) pending_queue_manual_send: Option<PendingQueueMessage>,
     pub(super) paste_attachment_counter: usize,
     pub(super) status_message: String,
     pub(super) context_usage_label: String,
@@ -67,13 +86,19 @@ pub(super) struct OperitTui {
     pub(super) transcript_viewport_height: u16,
     pub(super) transcript_max_scroll: u16,
     pub(super) follow_transcript: bool,
+    pub(super) transcript_render_cache: TranscriptRenderCache,
+    pub(super) transcript_area: Rect,
+    pub(super) transcript_copy_lines: Vec<TranscriptCopyLine>,
+    pub(super) transcript_selection: TranscriptSelectionState,
     pub(super) show_chat_list: bool,
     pub(super) ctrl_c_pending: bool,
     pub(super) last_current_chat_loading: bool,
     pub(super) awaiting_runtime_loading: bool,
+    pub(super) last_runtime_status_refresh_at: Option<Instant>,
     pub(super) typewriter_state: TypewriterState,
     pub(super) response_stream_subscription_chat_ids: HashSet<String>,
     pub(super) response_stream_text_by_chat_id: HashMap<String, String>,
+    pub(super) response_stream_markdown_by_chat_id: HashMap<String, TuiMarkdownStreamState>,
     pub(super) response_stream_revision_tracker_by_chat_id:
         HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
@@ -160,20 +185,11 @@ pub(super) struct QueuedAttachmentToken {
     pub(super) kind: QueuedAttachmentTokenKind,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct ResponseStreamLinkEvent {
-    #[serde(rename = "chatId")]
-    chatId: String,
-    #[serde(rename = "type")]
-    event_type: String,
-    value: Option<String>,
-    id: Option<String>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusArea {
     Chats,
     ModelChooser,
+    Queue,
     Input,
 }
 
@@ -238,7 +254,7 @@ impl OperitTui {
         Ok(Self {
             core,
             initial_shell_args,
-            current_chat_id_cache,
+            current_chat_id_cache: current_chat_id_cache.clone(),
             current_messages_cache,
             current_chat_is_loading_cache,
             current_chat_input_processing_state_cache,
@@ -256,6 +272,14 @@ impl OperitTui {
             queued_attachment_paths: Vec::new(),
             queued_inline_attachments: Vec::new(),
             queued_attachment_tokens: Vec::new(),
+            pending_queue_chat_id: current_chat_id_cache.clone(),
+            pending_queue_messages: VecDeque::new(),
+            selected_pending_queue_index: 0,
+            next_pending_queue_id: 1,
+            was_pending_queue_blocked: false,
+            suppress_next_pending_queue_auto_send: false,
+            pending_queue_auto_send_at: None,
+            pending_queue_manual_send: None,
             paste_attachment_counter: 0,
             status_message,
             context_usage_label: String::new(),
@@ -263,13 +287,19 @@ impl OperitTui {
             transcript_viewport_height: 1,
             transcript_max_scroll: 0,
             follow_transcript: true,
+            transcript_render_cache: TranscriptRenderCache::default(),
+            transcript_area: Rect::default(),
+            transcript_copy_lines: Vec::new(),
+            transcript_selection: TranscriptSelectionState::default(),
             show_chat_list: false,
             ctrl_c_pending: false,
             last_current_chat_loading: false,
             awaiting_runtime_loading: false,
+            last_runtime_status_refresh_at: None,
             typewriter_state: TypewriterState::default(),
             response_stream_subscription_chat_ids: HashSet::new(),
             response_stream_text_by_chat_id: HashMap::new(),
+            response_stream_markdown_by_chat_id: HashMap::new(),
             response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
             show_help: false,
@@ -292,9 +322,20 @@ impl OperitTui {
             return Err(error);
         }
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)
-            .map_err(|error| error.to_string())
+        if let Err(error) = execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture
+        )
+        .map_err(|error| error.to_string())
         {
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                DisableBracketedPaste,
+                LeaveAlternateScreen
+            );
             let _ = disable_raw_mode();
             AppLogger::set_enable_console_logging(previous_console_logging);
             return Err(error);
@@ -303,23 +344,28 @@ impl OperitTui {
         let mut terminal = match Terminal::new(backend).map_err(|error| error.to_string()) {
             Ok(terminal) => terminal,
             Err(error) => {
+                let _ = execute!(
+                    io::stdout(),
+                    DisableMouseCapture,
+                    DisableBracketedPaste,
+                    LeaveAlternateScreen
+                );
                 let _ = disable_raw_mode();
                 AppLogger::set_enable_console_logging(previous_console_logging);
                 return Err(error);
             }
         };
         let result = self.run_loop(&mut terminal).await;
-        let cleanup_result = disable_raw_mode()
-            .map_err(|error| error.to_string())
-            .and_then(|_| {
-                execute!(
-                    terminal.backend_mut(),
-                    DisableBracketedPaste,
-                    LeaveAlternateScreen
-                )
-                .map_err(|error| error.to_string())
-            })
-            .and_then(|_| terminal.show_cursor().map_err(|error| error.to_string()));
+        let screen_result = execute!(
+            terminal.backend_mut(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            LeaveAlternateScreen
+        )
+        .map_err(|error| error.to_string());
+        let raw_mode_result = disable_raw_mode().map_err(|error| error.to_string());
+        let cursor_result = terminal.show_cursor().map_err(|error| error.to_string());
+        let cleanup_result = screen_result.and(raw_mode_result).and(cursor_result);
         AppLogger::set_enable_console_logging(previous_console_logging);
         result.and(cleanup_result)
     }
@@ -329,26 +375,126 @@ impl OperitTui {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<(), String> {
         while !self.should_quit {
+            self.ensure_pending_queue_chat_id();
             self.apply_pushed_events();
+            self.ensure_pending_queue_chat_id();
             self.sync_response_stream_subscriptions().await;
-            self.refresh_runtime_status().await;
+            self.refresh_runtime_status_if_due().await;
+            self.advance_pending_message_queue().await?;
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
 
-            if event::poll(Duration::from_millis(16)).map_err(|error| error.to_string())? {
-                match event::read().map_err(|error| error.to_string())? {
-                    Event::Key(key) => self.handle_key_event(key).await?,
-                    Event::Paste(text) => self.handle_paste(text).await?,
-                    _ => {}
-                }
+            self.handle_terminal_events(EVENT_POLL_INTERVAL).await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_terminal_events(&mut self, initial_poll: Duration) -> Result<(), String> {
+        if !event::poll(initial_poll).map_err(|error| error.to_string())? {
+            return Ok(());
+        }
+        for _ in 0..MAX_PENDING_TERMINAL_EVENTS_PER_FRAME {
+            let terminal_event = event::read().map_err(|error| error.to_string())?;
+            self.handle_terminal_event(terminal_event).await?;
+            if self.should_quit
+                || !event::poll(Duration::from_millis(0)).map_err(|error| error.to_string())?
+            {
+                break;
             }
         }
         Ok(())
     }
 
+    async fn handle_terminal_event(&mut self, terminal_event: Event) -> Result<(), String> {
+        match terminal_event {
+            Event::Key(key) => self.handle_key_event(key).await,
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse),
+            Event::Paste(text) => self.handle_paste(text).await,
+            _ => Ok(()),
+        }
+    }
+
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<(), String> {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll_transcript_up(self.terminal_wheel_step()),
+            MouseEventKind::ScrollDown => self.scroll_transcript_down(self.terminal_wheel_step()),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(position) = mouse_transcript_position(
+                    mouse,
+                    self.transcript_area,
+                    self.transcript_scroll,
+                    &self.transcript_copy_lines,
+                ) {
+                    self.transcript_selection.begin(position);
+                } else {
+                    self.transcript_selection.clear();
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(position) = mouse_drag_transcript_position(
+                    mouse,
+                    self.transcript_area,
+                    self.transcript_scroll,
+                    &self.transcript_copy_lines,
+                ) {
+                    self.transcript_selection.drag_to(position);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(position) = mouse_drag_transcript_position(
+                    mouse,
+                    self.transcript_area,
+                    self.transcript_scroll,
+                    &self.transcript_copy_lines,
+                ) {
+                    self.transcript_selection.end(position);
+                    self.copy_transcript_selection();
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => self.transcript_selection.clear(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn copy_transcript_selection(&mut self) -> bool {
+        let Some(text) = self
+            .transcript_selection
+            .selected_text(&self.transcript_copy_lines)
+        else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        match arboard::Clipboard::new() {
+            Ok(mut clipboard) => match clipboard.set_text(text) {
+                Ok(()) => {
+                    self.status_message = "selection copied".to_string();
+                    true
+                }
+                Err(error) => {
+                    self.status_message = format!("copy failed: {error}");
+                    true
+                }
+            },
+            Err(error) => {
+                self.status_message = format!("copy failed: {error}");
+                true
+            }
+        }
+    }
+
     async fn handle_key_event(&mut self, key: KeyEvent) -> Result<(), String> {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return Ok(());
+        }
+
+        if matches!(key.code, KeyCode::Char('c'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.copy_transcript_selection()
+        {
             return Ok(());
         }
 
@@ -424,6 +570,14 @@ impl OperitTui {
                 self.scroll_transcript_half_page_down();
                 return Ok(());
             }
+            (KeyCode::Up, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+                self.scroll_transcript_up(self.terminal_wheel_step());
+                return Ok(());
+            }
+            (KeyCode::Down, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+                self.scroll_transcript_down(self.terminal_wheel_step());
+                return Ok(());
+            }
             (KeyCode::Home, KeyModifiers::CONTROL) => {
                 self.scroll_transcript_to_top();
                 return Ok(());
@@ -458,15 +612,7 @@ impl OperitTui {
             (KeyCode::Tab, _)
                 if self.focus == FocusArea::Input && !self.command_suggestions().is_empty() => {}
             (KeyCode::Tab, _) => {
-                if !self.show_chat_list {
-                    self.focus = FocusArea::Input;
-                    return Ok(());
-                }
-                self.focus = match self.focus {
-                    FocusArea::Chats => FocusArea::Input,
-                    FocusArea::ModelChooser => FocusArea::Input,
-                    FocusArea::Input => FocusArea::Chats,
-                };
+                self.focus_next_area();
                 return Ok(());
             }
             _ => {}
@@ -475,6 +621,7 @@ impl OperitTui {
         match self.focus {
             FocusArea::Chats => self.handle_chat_list_key(key).await,
             FocusArea::ModelChooser => self.handle_model_chooser_key(key).await,
+            FocusArea::Queue => self.handle_pending_queue_key(key).await,
             FocusArea::Input => self.handle_input_key(key).await,
         }
     }
@@ -525,6 +672,14 @@ impl OperitTui {
 
     fn transcript_half_page_step(&self) -> u16 {
         (self.transcript_viewport_height / 2).max(1)
+    }
+
+    fn terminal_wheel_step(&self) -> u16 {
+        (self.transcript_viewport_height / 6).max(3)
+    }
+
+    fn should_arrow_scroll_transcript(&self) -> bool {
+        self.focus == FocusArea::Input && self.command_suggestions().is_empty()
     }
 
     async fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
@@ -721,7 +876,7 @@ impl OperitTui {
         Ok(())
     }
 
-    async fn cancel_current_request(&mut self) -> Result<(), String> {
+    pub(super) async fn cancel_current_request(&mut self) -> Result<(), String> {
         let chat_id = self.current_chat_id()?;
         self.core
             .chat_runtime_holder_main()
@@ -736,21 +891,25 @@ impl OperitTui {
     }
 
     pub(super) async fn submit_input(&mut self) -> Result<(), String> {
-        if self.current_chat_is_loading() {
-            self.status_message = "request already running".to_string();
-            return Ok(());
-        }
-
         let input = self.input.trim_end().to_string();
-        let has_queued_attachments =
-            !self.queued_attachment_paths.is_empty() || !self.queued_inline_attachments.is_empty();
-        if input.trim().is_empty() && !has_queued_attachments {
-            return Ok(());
-        }
         if input.starts_with('/') {
             self.input.clear();
             self.input_cursor = 0;
             self.handle_local_command(&input).await?;
+            return Ok(());
+        }
+
+        if self.current_chat_is_loading() {
+            if self.enqueue_pending_message_from_input() {
+                return Ok(());
+            }
+            self.status_message = "request already running".to_string();
+            return Ok(());
+        }
+
+        let has_queued_attachments =
+            !self.queued_attachment_paths.is_empty() || !self.queued_inline_attachments.is_empty();
+        if input.trim().is_empty() && !has_queued_attachments {
             return Ok(());
         }
 
@@ -781,7 +940,7 @@ impl OperitTui {
         Ok(())
     }
 
-    async fn begin_chat_message(
+    pub(super) async fn begin_chat_message(
         &mut self,
         send_args: ChatSendArgs,
         inline_attachments: Vec<AttachmentInfo>,
@@ -900,6 +1059,9 @@ impl OperitTui {
             "clear-attachments" => {
                 self.clear_queued_attachments();
                 self.status_message = "attachments cleared".to_string();
+            }
+            "queue" => {
+                self.handle_pending_queue_command(&parts[1..]).await?;
             }
             _ => {
                 self.status_message = format!("unknown command: /{command}");
@@ -1022,7 +1184,7 @@ impl OperitTui {
             Some("use") => self.use_chat_model(&args[1..]).await,
             Some("help") => {
                 self.status_message =
-                    "usage: /model current | /model list | /model choose | /model use <model-id>"
+                    "usage: /model current | /model list | /model choose | /model use <provider-id> <model-id>"
                         .to_string();
                 Ok(())
             }
@@ -1423,7 +1585,7 @@ impl OperitTui {
         Ok(())
     }
 
-    async fn refresh_chats(&mut self) {
+    pub(super) async fn refresh_chats(&mut self) {
         let current_chat_id = self.current_chat_id().ok();
         if let Ok(chat_histories) = self
             .core
@@ -1440,7 +1602,7 @@ impl OperitTui {
         }
     }
 
-    fn select_chat_by_id(&mut self, chat_id: &str) {
+    pub(super) fn select_chat_by_id(&mut self, chat_id: &str) {
         if let Some(index) = self.chats.iter().position(|item| item.id == chat_id) {
             self.selected_chat_index = index;
         }
@@ -1606,105 +1768,6 @@ impl OperitTui {
         }
     }
 
-    async fn sync_response_stream_subscriptions(&mut self) {
-        let Some(current_chat_id) = self.current_chat_id_cache.clone() else {
-            return;
-        };
-        if !self
-            .active_streaming_chat_ids_cache
-            .contains(&current_chat_id)
-        {
-            return;
-        }
-        if self
-            .response_stream_subscription_chat_ids
-            .contains(&current_chat_id)
-        {
-            return;
-        }
-        if !self
-            .current_messages_cache
-            .iter()
-            .rev()
-            .any(|message| message.sender == "ai")
-        {
-            return;
-        }
-        if self
-            .core
-            .watchMainChatResponseStream(current_chat_id.clone())
-            .await
-            .is_ok()
-        {
-            self.response_stream_subscription_chat_ids
-                .insert(current_chat_id);
-        }
-    }
-
-    fn apply_response_stream_event(&mut self, value: serde_json::Value) {
-        let Ok(event) = serde_json::from_value::<ResponseStreamLinkEvent>(value) else {
-            return;
-        };
-        match event.event_type.as_str() {
-            "chunk" => {
-                let Some(chunk) = event.value else {
-                    return;
-                };
-                let tracker = self
-                    .response_stream_revision_tracker_by_chat_id
-                    .entry(event.chatId.clone())
-                    .or_insert_with(|| TextStreamRevisionTracker::new(""));
-                let content = tracker.append(&chunk);
-                self.response_stream_text_by_chat_id
-                    .insert(event.chatId, content);
-            }
-            "savepoint" => {
-                let Some(id) = event.id else {
-                    return;
-                };
-                let tracker = self
-                    .response_stream_revision_tracker_by_chat_id
-                    .entry(event.chatId)
-                    .or_insert_with(|| TextStreamRevisionTracker::new(""));
-                tracker.savepoint(&id);
-            }
-            "rollback" => {
-                let Some(id) = event.id else {
-                    return;
-                };
-                if let Some(tracker) = self
-                    .response_stream_revision_tracker_by_chat_id
-                    .get_mut(&event.chatId)
-                {
-                    if let Some(content) = tracker.rollback(&id) {
-                        self.response_stream_text_by_chat_id
-                            .insert(event.chatId, content);
-                    }
-                }
-            }
-            "completed" => {}
-            _ => {}
-        }
-    }
-
-    fn retain_active_response_stream_state(&mut self) {
-        let active = &self.active_streaming_chat_ids_cache;
-        self.response_stream_subscription_chat_ids
-            .retain(|chat_id| active.contains(chat_id));
-        self.response_stream_text_by_chat_id
-            .retain(|chat_id, _| active.contains(chat_id));
-        self.response_stream_revision_tracker_by_chat_id
-            .retain(|chat_id, _| active.contains(chat_id));
-    }
-
-    fn update_current_chat_loading_from_streaming_ids(&mut self) {
-        self.current_chat_is_loading_cache = self
-            .current_chat_id_cache
-            .as_ref()
-            .map(|chat_id| self.active_streaming_chat_ids_cache.contains(chat_id))
-            .unwrap_or(false);
-    }
-
     pub(super) fn current_chat_id(&mut self) -> Result<String, String> {
         self.current_chat_id_cache
             .clone()
@@ -1742,6 +1805,20 @@ impl OperitTui {
 
     pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
         self.current_chat_input_processing_state_cache.clone()
+    }
+
+    async fn refresh_runtime_status_if_due(&mut self) {
+        let now = Instant::now();
+        let transition_pending = self.awaiting_runtime_loading
+            || self.last_current_chat_loading != self.raw_current_chat_is_loading();
+        let refresh_due = self
+            .last_runtime_status_refresh_at
+            .map(|last| now.saturating_duration_since(last) >= RUNTIME_STATUS_REFRESH_INTERVAL)
+            .unwrap_or(true);
+        if transition_pending || refresh_due {
+            self.last_runtime_status_refresh_at = Some(now);
+            self.refresh_runtime_status().await;
+        }
     }
 
     async fn refresh_runtime_status(&mut self) {
