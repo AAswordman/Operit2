@@ -37,8 +37,11 @@ impl UserMarkdownRepository {
     pub fn writeUserMarkdown(&self, content: String) -> Result<(), String> {
         let root = memoryStoreRootPath(&self.ownerKey)?;
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        fs::write(userMarkdownPath(&self.ownerKey)?, normalizeMarkdown(content))
-            .map_err(|error| error.to_string())
+        fs::write(
+            userMarkdownPath(&self.ownerKey)?,
+            normalizeMarkdown(content),
+        )
+        .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]

@@ -1531,10 +1531,6 @@ fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::Ch
     println!("displayOrder={}", chat.displayOrder);
     println!("workspace={}", chat.workspace.clone().unwrap_or_default());
     println!(
-        "workspaceEnv={}",
-        chat.workspaceEnv.clone().unwrap_or_default()
-    );
-    println!(
         "parentChatId={}",
         chat.parentChatId.clone().unwrap_or_default()
     );

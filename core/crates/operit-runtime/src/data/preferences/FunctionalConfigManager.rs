@@ -30,7 +30,10 @@ impl Default for FunctionModelBinding {
 
 impl FunctionModelBinding {
     pub fn new(providerId: String, modelId: String) -> Self {
-        Self { providerId, modelId }
+        Self {
+            providerId,
+            modelId,
+        }
     }
 }
 
@@ -132,13 +135,12 @@ impl FunctionalConfigManager {
         functionType: FunctionType,
     ) -> Result<FunctionModelBinding, FunctionalConfigError> {
         let binding = self.functionModelBindingFlow()?.first()?;
-        binding
-            .get(&functionType)
-            .cloned()
-            .ok_or_else(|| FunctionalConfigError::ModelConfigManager(format!(
+        binding.get(&functionType).cloned().ok_or_else(|| {
+            FunctionalConfigError::ModelConfigManager(format!(
                 "missing model binding: {}",
                 Self::functionTypeName(functionType)
-            )))
+            ))
+        })
     }
 
     pub fn setModelForFunction(
@@ -227,7 +229,9 @@ impl FunctionalConfigManager {
             "IMAGE_RECOGNITION" => Ok(FunctionType::IMAGE_RECOGNITION),
             "AUDIO_RECOGNITION" => Ok(FunctionType::AUDIO_RECOGNITION),
             "VIDEO_RECOGNITION" => Ok(FunctionType::VIDEO_RECOGNITION),
-            _ => Err(FunctionalConfigError::UnknownFunctionType(value.to_string())),
+            _ => Err(FunctionalConfigError::UnknownFunctionType(
+                value.to_string(),
+            )),
         }
     }
 }

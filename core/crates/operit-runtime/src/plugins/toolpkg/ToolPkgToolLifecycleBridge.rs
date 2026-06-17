@@ -77,9 +77,9 @@ impl AIToolHook for ToolLifecycleBridge {
             .as_ref()
             .map(|value| Value::String(value.clone()))
             .unwrap_or(Value::Null);
-        payload["resultText"] = Value::String(result.result.clone());
+        payload["resultText"] = Value::String(result.result.toString());
         payload["resultJson"] =
-            serde_json::from_str::<Value>(result.result.trim()).unwrap_or(Value::Null);
+            serde_json::from_str::<Value>(&result.result.toJson()).unwrap_or(Value::Null);
         deliver("tool_execution_result", payload);
     }
 

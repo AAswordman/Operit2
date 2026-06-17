@@ -239,16 +239,28 @@ class _ExecutionResultCard extends StatelessWidget {
               size: 20,
             ),
             const SizedBox(width: 10),
-            Expanded(
-              child: SelectableText(
-                result.success ? result.result : result.error ?? '',
-              ),
-            ),
+            Expanded(child: SelectableText(_toolResultText(result))),
           ],
         ),
       ),
     );
   }
+}
+
+String _toolResultText(
+  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result,
+) {
+  if (!result.success) {
+    return result.error ?? '';
+  }
+  final value = result.result;
+  if (value == null) {
+    return '';
+  }
+  if (value is String) {
+    return value;
+  }
+  return const JsonEncoder.withIndent('  ').convert(value);
 }
 
 class _MCPToolParameter {

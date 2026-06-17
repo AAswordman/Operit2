@@ -185,7 +185,8 @@ fn parseOperation(value: &str) -> Result<ProviderOperationSpec, String> {
         }
         "balance" => {
             result.amountJsonPath = optionalString(requiredOperationPart(&parts, 3, value)?);
-            result.amountCurrencyJsonPath = optionalString(requiredOperationPart(&parts, 4, value)?);
+            result.amountCurrencyJsonPath =
+                optionalString(requiredOperationPart(&parts, 4, value)?);
             requiredOperationPart(&parts, 5, value)?;
         }
         _ => return Err(format!("invalid provider operation type: {operationType}")),

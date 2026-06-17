@@ -366,12 +366,10 @@ class ChatViewModel {
   Future<void> bindChatToWorkspace(
     String chatId,
     String workspace,
-    String? workspaceEnv,
   ) {
     return _chat.bindChatToWorkspace(
       chatId: chatId,
       workspace: workspace,
-      workspaceEnv: workspaceEnv,
     );
   }
 

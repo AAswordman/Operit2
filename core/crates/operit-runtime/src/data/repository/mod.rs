@@ -14,10 +14,10 @@ pub mod MemoryRepository;
 pub mod RuntimeStorageRepository;
 #[path = "RuntimeTerminalService.rs"]
 pub mod RuntimeTerminalService;
-#[path = "UserMarkdownRepository.rs"]
-pub mod UserMarkdownRepository;
 #[path = "UIHierarchyManager.rs"]
 pub mod UIHierarchyManager;
+#[path = "UserMarkdownRepository.rs"]
+pub mod UserMarkdownRepository;
 #[path = "WorkflowRepository.rs"]
 pub mod WorkflowRepository;
 #[path = "WorkspaceService.rs"]
@@ -30,7 +30,7 @@ pub use MemoryAutoSaveCandidateRepository::*;
 pub use MemoryRepository::*;
 pub use RuntimeStorageRepository::*;
 pub use RuntimeTerminalService::*;
-pub use UserMarkdownRepository::*;
 pub use UIHierarchyManager::*;
+pub use UserMarkdownRepository::*;
 pub use WorkflowRepository::*;
 pub use WorkspaceService::*;

@@ -9,6 +9,7 @@ use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, Tool
 use crate::core::tools::javascript::JsToolManager::JsToolManager;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct LocalizedText {
@@ -147,7 +148,7 @@ impl PackageToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(
                     "Invalid package tool format. Expected 'packageName:toolName'".to_string(),
                 ),
@@ -160,7 +161,7 @@ impl PackageToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "Package mismatch: expected {}, got {}",
                     self.toolPackage.name, packageName
@@ -177,7 +178,7 @@ impl PackageToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "Tool '{}' not found in package '{}'",
                     toolName, self.toolPackage.name
@@ -194,7 +195,7 @@ impl PackageToolExecutor {
             .unwrap_or_else(|| ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some("The tool execution returned no results.".to_string()),
             })
     }
@@ -270,7 +271,7 @@ impl ToolExecutor for PackageToolExecutor {
             return vec![ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some("Tool not found in package for streaming".to_string()),
             }];
         };

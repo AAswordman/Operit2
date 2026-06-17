@@ -1026,7 +1026,6 @@ impl ChatHistoryManager {
             group,
             displayOrder: -timestamp,
             workspace: None,
-            workspaceEnv: None,
             parentChatId: None,
             characterCardName,
             characterGroupId,
@@ -1044,10 +1043,9 @@ impl ChatHistoryManager {
         &self,
         chatId: String,
         workspace: Option<String>,
-        workspaceEnv: Option<String>,
     ) -> ChatHistoryManagerResult<()> {
         self.chatDao
-            .updateChatWorkspace(&chatId, workspace, workspaceEnv, currentTimeMillis())?;
+            .updateChatWorkspace(&chatId, workspace, currentTimeMillis())?;
         self.recordChatMetadata(&chatId)?;
         Ok(())
     }
@@ -1142,7 +1140,6 @@ impl ChatHistoryManager {
             group: parentChat.group,
             displayOrder: -timestamp,
             workspace: parentChat.workspace,
-            workspaceEnv: parentChat.workspaceEnv,
             parentChatId: Some(parentChatId.clone()),
             characterCardName: parentChat.characterCardName,
             characterGroupId: parentChat.characterGroupId,

@@ -1,7 +1,7 @@
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::Value;
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::blocking::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::Value;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
@@ -57,37 +57,45 @@ impl ModelListFetcher {
         {
             let _ = provider;
             let _ = operation;
-            return Err("list_models http_json operation is not available in wasm runtime".to_string());
+            return Err(
+                "list_models http_json operation is not available in wasm runtime".to_string(),
+            );
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        if operation.handlerId != "http_json" {
-            return Err(format!("unsupported provider operation handler: {}", operation.handlerId));
-        }
-        if operation.method != "GET" {
-            return Err(format!("unsupported provider operation method: {}", operation.method));
-        }
+            if operation.handlerId != "http_json" {
+                return Err(format!(
+                    "unsupported provider operation handler: {}",
+                    operation.handlerId
+                ));
+            }
+            if operation.method != "GET" {
+                return Err(format!(
+                    "unsupported provider operation method: {}",
+                    operation.method
+                ));
+            }
 
-        let url = operationUrl(&provider.endpoint, &operation.path)?;
-        let headers = headers(provider, operation)?;
-        let response = thread::spawn(move || {
-            let response = Client::new()
-                .get(url)
-                .headers(headers)
-                .send()
-                .map_err(|error| error.to_string())?;
-            let status = response.status();
-            let body = response.text().map_err(|error| error.to_string())?;
-            Ok::<(reqwest::StatusCode, String), String>((status, body))
-        })
-        .join()
-        .map_err(|_| "list_models request thread panicked".to_string())??;
-        let (status, body) = response;
-        if !status.is_success() {
-            return Err(format!("list_models request failed: {status} {body}"));
-        }
-        serde_json::from_str(&body).map_err(|error| error.to_string())
+            let url = operationUrl(&provider.endpoint, &operation.path)?;
+            let headers = headers(provider, operation)?;
+            let response = thread::spawn(move || {
+                let response = Client::new()
+                    .get(url)
+                    .headers(headers)
+                    .send()
+                    .map_err(|error| error.to_string())?;
+                let status = response.status();
+                let body = response.text().map_err(|error| error.to_string())?;
+                Ok::<(reqwest::StatusCode, String), String>((status, body))
+            })
+            .join()
+            .map_err(|_| "list_models request thread panicked".to_string())??;
+            let (status, body) = response;
+            if !status.is_success() {
+                return Err(format!("list_models request failed: {status} {body}"));
+            }
+            serde_json::from_str(&body).map_err(|error| error.to_string())
         }
     }
 
@@ -127,7 +135,10 @@ fn operationUrl(endpoint: &str, path: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-fn headers(provider: &ProviderProfile, operation: &ProviderOperationSpec) -> Result<HeaderMap, String> {
+fn headers(
+    provider: &ProviderProfile,
+    operation: &ProviderOperationSpec,
+) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if operation.requiresApiKey {
@@ -175,9 +186,15 @@ fn apiKey(provider: &ProviderProfile) -> Result<String, String> {
 }
 
 #[allow(non_snake_case)]
-fn readPricing(item: &Value, operation: &ProviderOperationSpec) -> Result<Option<ModelPricing>, String> {
+fn readPricing(
+    item: &Value,
+    operation: &ProviderOperationSpec,
+) -> Result<Option<ModelPricing>, String> {
     let input = readOptionalF64(item, operation.result.inputPricePerTokenJsonPath.as_deref())?;
-    let output = readOptionalF64(item, operation.result.outputPricePerTokenJsonPath.as_deref())?;
+    let output = readOptionalF64(
+        item,
+        operation.result.outputPricePerTokenJsonPath.as_deref(),
+    )?;
     let currency = readOptionalString(item, operation.result.currencyJsonPath.as_deref())?;
     match (input, output, currency) {
         (Some(input), Some(output), Some(currency)) => Ok(Some(ModelPricing {
@@ -189,8 +206,11 @@ fn readPricing(item: &Value, operation: &ProviderOperationSpec) -> Result<Option
             )?
             .map(|value| value * 1_000_000.0),
             outputPricePerMillion: output * 1_000_000.0,
-            pricePerRequest: readOptionalF64(item, operation.result.pricePerRequestJsonPath.as_deref())?
-                .unwrap_or(0.0),
+            pricePerRequest: readOptionalF64(
+                item,
+                operation.result.pricePerRequestJsonPath.as_deref(),
+            )?
+            .unwrap_or(0.0),
             currency: parseCurrency(&currency)?,
         })),
         _ => Ok(None),
@@ -198,8 +218,12 @@ fn readPricing(item: &Value, operation: &ProviderOperationSpec) -> Result<Option
 }
 
 #[allow(non_snake_case)]
-fn readContext(item: &Value, operation: &ProviderOperationSpec) -> Result<Option<ModelContextSpec>, String> {
-    let maxContextLength = readOptionalF32(item, operation.result.maxContextLengthJsonPath.as_deref())?;
+fn readContext(
+    item: &Value,
+    operation: &ProviderOperationSpec,
+) -> Result<Option<ModelContextSpec>, String> {
+    let maxContextLength =
+        readOptionalF32(item, operation.result.maxContextLengthJsonPath.as_deref())?;
     match maxContextLength {
         Some(maxContextLength) => Ok(Some(ModelContextSpec {
             maxContextLength: maxContextLength / 1000.0,

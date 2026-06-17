@@ -330,7 +330,7 @@ fn print_cli_usage() {
     println!("operit2 cli workspace default-path <chat-id>");
     println!("operit2 cli workspace create-default <chat-id> [project-type]");
     println!("operit2 cli workspace bind-default <chat-id> [project-type]");
-    println!("operit2 cli workspace bind <chat-id> <workspace> [workspace-env]");
+    println!("operit2 cli workspace bind <chat-id> <workspace>");
     println!("operit2 cli workspace unbind <chat-id>");
     println!("operit2 cli workspace list");
     println!("operit2 cli workspace chats <workspace>");
@@ -574,10 +574,6 @@ fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::Ch
     println!("group={}", chat.group.clone().unwrap_or_default());
     println!("displayOrder={}", chat.displayOrder);
     println!("workspace={}", chat.workspace.clone().unwrap_or_default());
-    println!(
-        "workspaceEnv={}",
-        chat.workspaceEnv.clone().unwrap_or_default()
-    );
     println!(
         "parentChatId={}",
         chat.parentChatId.clone().unwrap_or_default()

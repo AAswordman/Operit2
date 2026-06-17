@@ -143,12 +143,13 @@ fn print_tool_execution_result(
 ) -> Result<(), String> {
     output.push_stdout_line(format!("toolName={}", result.toolName));
     output.push_stdout_line(format!("success={}", result.success));
+    let resultText = result.result.toString();
     if result.success {
-        output.push_stdout_line(&result.result);
+        output.push_stdout_line(&resultText);
         Ok(())
     } else {
-        if !result.result.trim().is_empty() {
-            output.push_stdout_line(&result.result);
+        if !resultText.trim().is_empty() {
+            output.push_stdout_line(&resultText);
         }
         match result.error.clone() {
             Some(error) => Err(error),

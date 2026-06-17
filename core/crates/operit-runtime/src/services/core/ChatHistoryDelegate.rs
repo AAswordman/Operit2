@@ -7,7 +7,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
 use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
-use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
 
@@ -254,7 +254,11 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn currentDisplayPageCount(&self) -> i32 {
-        if self.chatHistory.is_empty() { 1 } else { 1 }
+        if self.chatHistory.is_empty() {
+            1
+        } else {
+            1
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1047,22 +1051,12 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn bindChatToWorkspace(
-        &mut self,
-        chatId: String,
-        workspace: String,
-        workspaceEnv: Option<String>,
-    ) {
+    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) {
         self.chatHistoryManager
-            .updateChatWorkspace(
-                chatId.clone(),
-                Some(workspace.clone()),
-                workspaceEnv.clone(),
-            )
+            .updateChatWorkspace(chatId.clone(), Some(workspace.clone()))
             .expect("ChatHistoryManager.updateChatWorkspace must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.workspace = Some(workspace);
-            chat.workspaceEnv = workspaceEnv;
         }
         self.emitChatHistoriesState();
     }
@@ -1105,11 +1099,10 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
         self.chatHistoryManager
-            .updateChatWorkspace(chatId.clone(), None, None)
+            .updateChatWorkspace(chatId.clone(), None)
             .expect("ChatHistoryManager.updateChatWorkspace must succeed");
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.workspace = None;
-            chat.workspaceEnv = None;
         }
         self.emitChatHistoriesState();
     }
@@ -1132,7 +1125,7 @@ impl ChatHistoryDelegate {
         newWorkspace: String,
         newTitle: String,
     ) {
-        self.bindChatToWorkspace(chatId.clone(), newWorkspace, None);
+        self.bindChatToWorkspace(chatId.clone(), newWorkspace);
         self.updateChatTitle(chatId, newTitle);
     }
 

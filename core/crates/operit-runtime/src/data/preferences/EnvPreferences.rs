@@ -1,8 +1,8 @@
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
 use std::collections::BTreeMap;
-use crate::util::OperitPaths;
 
 #[derive(Clone)]
 pub struct EnvPreferences {
@@ -16,8 +16,7 @@ impl EnvPreferences {
     pub fn getInstance() -> Self {
         Self {
             dataStore: PreferencesDataStore::new(
-                OperitPaths::envPreferencesPath()
-                    .expect("env preferences path must be available"),
+                OperitPaths::envPreferencesPath().expect("env preferences path must be available"),
             ),
         }
     }

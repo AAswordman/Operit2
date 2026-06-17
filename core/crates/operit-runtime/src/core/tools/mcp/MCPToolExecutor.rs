@@ -7,6 +7,7 @@ use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, Tool
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolParameter::MCPToolParameter;
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct MCPToolExecutor {
@@ -178,7 +179,7 @@ impl MCPToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(
                     "Invalid MCP tool name format, should be 'server_name:tool_name'".to_string(),
                 ),
@@ -195,7 +196,7 @@ impl MCPToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(error),
             };
         };
@@ -203,7 +204,7 @@ impl MCPToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "MCP service '{serverName}' is not activated. Please use the 'use_package' tool with the package name '{serverName}' to activate it first."
                 )),
@@ -231,7 +232,7 @@ impl MCPToolExecutor {
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: true,
-                result: self.truncateResult(extractedContent),
+                result: stringResultData(self.truncateResult(extractedContent)),
                 error: None,
             };
         }
@@ -249,7 +250,7 @@ impl MCPToolExecutor {
         ToolResult {
             toolName: tool.name.clone(),
             success: false,
-            result: String::new(),
+            result: stringResultData(""),
             error: Some(errorMessage),
         }
     }

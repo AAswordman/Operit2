@@ -1267,6 +1267,7 @@ name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
  "operit-runtime",
+ "operit-store",
  "reqwest",
  "serde",
  "serde_json",

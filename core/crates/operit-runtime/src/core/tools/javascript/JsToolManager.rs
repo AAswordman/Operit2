@@ -11,6 +11,7 @@ use crate::core::tools::javascript::JsExecutionResultProtocol::{
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct JsToolManager {
@@ -316,7 +317,7 @@ impl JsToolManager {
         ToolResult {
             toolName: toolName.to_string(),
             success: true,
-            result: value.unwrap_or_else(|| "null".to_string()),
+            result: stringResultData(value.unwrap_or_else(|| "null".to_string())),
             error: None,
         }
     }
@@ -325,7 +326,7 @@ impl JsToolManager {
         ToolResult {
             toolName: toolName.to_string(),
             success: false,
-            result: String::new(),
+            result: stringResultData(""),
             error: Some(message),
         }
     }
@@ -335,7 +336,7 @@ impl JsToolManager {
         ToolResult {
             toolName: toolName.to_string(),
             success: false,
-            result: failure.dataText,
+            result: stringResultData(failure.dataText),
             error: Some(failure.message),
         }
     }

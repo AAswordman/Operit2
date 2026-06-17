@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::AIService::AiServiceError;
-use crate::data::model::ModelConfigData::{
-    ApiProviderType, ModelBuiltinTool, ResolvedModelConfig,
-};
+use crate::data::model::ModelConfigData::{ApiProviderType, ModelBuiltinTool, ResolvedModelConfig};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LlmRequestTraceContext {
@@ -576,7 +574,11 @@ impl AIServiceFactory {
         available_processors: i32,
     ) -> LlamaSessionConfig {
         let processor_count = available_processors.max(1);
-        let thread_count = config.localRuntime.llamaThreadCount.max(1).min(processor_count);
+        let thread_count = config
+            .localRuntime
+            .llamaThreadCount
+            .max(1)
+            .min(processor_count);
         LlamaSessionConfig {
             n_threads: thread_count,
             n_ctx: config.localRuntime.llamaContextSize.max(1),

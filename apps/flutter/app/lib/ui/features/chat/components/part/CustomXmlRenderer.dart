@@ -5,10 +5,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import 'DetailsTagRenderer.dart';
+import 'DialogComponents.dart';
 import 'FileDiffDisplay.dart';
 import 'FontTagRenderer.dart';
 import 'ToolDisplayComponents.dart';
@@ -44,9 +46,6 @@ class CustomXmlRenderer extends StatelessWidget {
     }
     if ((parsed.tagName == 'think' || parsed.tagName == 'thinking') &&
         !showThinkingProcess) {
-      return const SizedBox.shrink();
-    }
-    if (parsed.tagName == 'status' && parsed.attr('type') != 'warning') {
       return const SizedBox.shrink();
     }
     final pluginRender = XmlRenderPluginRegistry.renderIfMatched(
@@ -126,6 +125,7 @@ class CustomXmlRenderer extends StatelessWidget {
           isStreaming: isStreaming,
           textColor: textColor,
           backgroundColor: Theme.of(context).colorScheme.surface,
+          selectionRoot: false,
         );
       case 'details':
       case 'detail':
@@ -142,6 +142,7 @@ class CustomXmlRenderer extends StatelessWidget {
           isStreaming: isStreaming,
           textColor: textColor,
           backgroundColor: Theme.of(context).colorScheme.surface,
+          selectionRoot: false,
         );
     }
     return SelectableText(
@@ -441,31 +442,33 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            InkWell(
-              onTap: _handleHeaderTap,
-              borderRadius: BorderRadius.circular(6),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: <Widget>[
-                    AnimatedRotation(
-                      turns: _expanded ? 0.25 : 0,
-                      duration: _skipCollapseAnimationOnce
-                          ? Duration.zero
-                          : const Duration(milliseconds: 300),
-                      child: Icon(
-                        Icons.keyboard_arrow_right,
-                        size: 20,
-                        color: titleColor,
+            MessagePressShieldRegion(
+              child: InkWell(
+                onTap: _handleHeaderTap,
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: <Widget>[
+                      AnimatedRotation(
+                        turns: _expanded ? 0.25 : 0,
+                        duration: _skipCollapseAnimationOnce
+                            ? Duration.zero
+                            : const Duration(milliseconds: 300),
+                        child: Icon(
+                          Icons.keyboard_arrow_right,
+                          size: 20,
+                          color: titleColor,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    _ThinkingTitle(
-                      text: thinkingTitle,
-                      color: titleColor,
-                      streaming: widget.isStreaming,
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      _ThinkingTitle(
+                        text: thinkingTitle,
+                        color: titleColor,
+                        streaming: widget.isStreaming,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -503,35 +506,40 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                             padding: const EdgeInsetsDirectional.only(
                               start: 24,
                             ),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.translucent,
-                              onTap: _handleBodyTap,
-                              child: ConstrainedBox(
-                                constraints: renderFullHeight
-                                    ? const BoxConstraints()
-                                    : const BoxConstraints(maxHeight: 300),
-                                child: renderFullHeight
-                                    ? _ThinkMarkdownBody(
-                                        contentText: contentText,
-                                        contentStream: hasStreamingMarkdown
-                                            ? widget.markdownEventStream
-                                            : null,
-                                        textColor: widget.textColor,
-                                      )
-                                    : NotificationListener<ScrollNotification>(
-                                        onNotification:
-                                            _handleScrollNotification,
-                                        child: SingleChildScrollView(
-                                          controller: _scrollController,
-                                          child: _ThinkMarkdownBody(
-                                            contentText: contentText,
-                                            contentStream: hasStreamingMarkdown
-                                                ? widget.markdownEventStream
-                                                : null,
-                                            textColor: widget.textColor,
+                            child: MessagePressShieldRegion(
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.translucent,
+                                onTap: _handleBodyTap,
+                                child: ConstrainedBox(
+                                  constraints: renderFullHeight
+                                      ? const BoxConstraints()
+                                      : const BoxConstraints(maxHeight: 300),
+                                  child: renderFullHeight
+                                      ? _ThinkMarkdownBody(
+                                          contentText: contentText,
+                                          contentStream: hasStreamingMarkdown
+                                              ? widget.markdownEventStream
+                                              : null,
+                                          textColor: widget.textColor,
+                                        )
+                                      : NotificationListener<
+                                          ScrollNotification
+                                        >(
+                                          onNotification:
+                                              _handleScrollNotification,
+                                          child: SingleChildScrollView(
+                                            controller: _scrollController,
+                                            child: _ThinkMarkdownBody(
+                                              contentText: contentText,
+                                              contentStream:
+                                                  hasStreamingMarkdown
+                                                  ? widget.markdownEventStream
+                                                  : null,
+                                              textColor: widget.textColor,
+                                            ),
                                           ),
                                         ),
-                                      ),
+                                ),
                               ),
                             ),
                           ),
@@ -574,6 +582,7 @@ class _ThinkMarkdownBody extends StatelessWidget {
               isStreaming: false,
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
+              selectionRoot: false,
             )
           : StreamMarkdownRenderer(
               content: '',
@@ -581,6 +590,7 @@ class _ThinkMarkdownBody extends StatelessWidget {
               isStreaming: true,
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
+              selectionRoot: false,
             ),
     );
   }
@@ -767,7 +777,13 @@ class _StatusChip extends StatelessWidget {
     };
 
     if (statusType == 'warning') {
-      return _WarningStatusRow(text: statusContent, isStreaming: isStreaming);
+      final l10n = AppLocalizations.of(context)!;
+      return _WarningStatusRow(
+        summaryText: l10n.statusWarningAiErrorSummary,
+        detailText: statusContent,
+        detailTitle: l10n.statusWarningAiErrorDetailTitle,
+        isStreaming: isStreaming,
+      );
     }
 
     final backgroundColor = switch (statusType) {
@@ -848,43 +864,81 @@ class _StatusCard extends StatelessWidget {
 }
 
 class _WarningStatusRow extends StatelessWidget {
-  const _WarningStatusRow({required this.text, required this.isStreaming});
+  const _WarningStatusRow({
+    required this.summaryText,
+    required this.detailText,
+    required this.detailTitle,
+    required this.isStreaming,
+  });
 
-  final String text;
+  final String summaryText;
+  final String detailText;
+  final String detailTitle;
   final bool isStreaming;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: <Widget>[
-          Container(
-            width: 2,
-            height: 16,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.error.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(999),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text.isEmpty ? 'AI reported an error' : text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.error.withValues(alpha: 0.9),
+    final canOpenDetail = detailText.trim().isNotEmpty;
+    final row = SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 2,
+              height: 16,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.error.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(999),
               ),
             ),
-          ),
-          if (isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(left: 6),
-              child: StreamingCursor(),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                summaryText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error.withValues(alpha: 0.9),
+                ),
+              ),
             ),
-        ],
+            if (isStreaming)
+              const Padding(
+                padding: EdgeInsets.only(left: 6),
+                child: StreamingCursor(),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!canOpenDetail) {
+      return row;
+    }
+
+    return Semantics(
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            showDialog<void>(
+              context: context,
+              builder: (dialogContext) {
+                return ContentDetailDialog(
+                  title: detailTitle,
+                  content: detailText,
+                  icon: Icons.error,
+                  onDismiss: () => Navigator.of(dialogContext).pop(),
+                );
+              },
+            );
+          },
+          child: row,
+        ),
       ),
     );
   }

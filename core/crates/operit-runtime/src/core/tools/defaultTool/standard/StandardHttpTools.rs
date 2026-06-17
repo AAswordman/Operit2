@@ -14,7 +14,9 @@ use url::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{HttpResponseData, ToolResultData};
+use crate::core::tools::ToolResultDataClasses::{
+    stringResultData, HttpResponseData, ToolResultData,
+};
 
 #[derive(Clone, Debug)]
 struct CookieRecord {
@@ -186,7 +188,7 @@ impl StandardHttpTools {
     ) -> ToolResult {
         let url = request.url.clone();
         match self.httpHost.executeHttpRequest(request) {
-            Ok(response) => success(tool, responseToText(&url, response)),
+            Ok(response) => successData(tool, responseToData(&url, response)),
             Err(error) => toolError(tool, String::new(), format!("{messagePrefix}: {error}")),
         }
     }
@@ -678,7 +680,7 @@ fn cookiesMapForUrl(url: &str) -> HashMap<String, String> {
 }
 
 #[allow(non_snake_case)]
-fn responseToText(requestUrl: &str, response: HostHttpResponseData) -> String {
+fn responseToData(requestUrl: &str, response: HostHttpResponseData) -> ToolResultData {
     saveResponseCookies(requestUrl, &response.headers);
     let contentType = response
         .headers
@@ -699,7 +701,15 @@ fn responseToText(requestUrl: &str, response: HostHttpResponseData) -> String {
         size: response.body.len() as i32,
         cookies: cookiesMapForUrl(requestUrl),
     })
-    .toJson()
+}
+
+fn successData(tool: &AITool, data: ToolResultData) -> ToolResult {
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: data,
+        error: None,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -759,7 +769,7 @@ fn success(tool: &AITool, result: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result,
+        result: stringResultData(result),
         error: None,
     }
 }
@@ -769,7 +779,7 @@ fn errorResult(toolName: &str, message: &str) -> ToolResult {
     ToolResult {
         toolName: toolName.to_string(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(message.to_string()),
     }
 }
@@ -779,7 +789,7 @@ fn toolError(tool: &AITool, result: String, message: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result,
+        result: stringResultData(result),
         error: Some(message),
     }
 }

@@ -28,7 +28,6 @@ pub struct PrepareConversationHistoryRequest {
     pub processed_input: String,
     pub chat_id: Option<String>,
     pub workspace_path: Option<String>,
-    pub workspace_env: Option<String>,
     pub prompt_function_type: String,
     pub custom_system_prompt_template: Option<String>,
     pub role_card_id: Option<String>,
@@ -608,11 +607,6 @@ fn build_prepare_history_metadata(
         &mut metadata,
         "workspacePath",
         request.workspace_path.as_ref(),
-    );
-    insert_option(
-        &mut metadata,
-        "workspaceEnv",
-        request.workspace_env.as_ref(),
     );
     insert_option(
         &mut metadata,

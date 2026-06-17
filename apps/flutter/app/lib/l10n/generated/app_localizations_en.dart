@@ -82,6 +82,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get statusWarningAiErrorSummary => 'The AI made an error';
+
+  @override
+  String get statusWarningAiErrorDetailTitle => 'AI Error Reason';
+
+  @override
   String get toolRunning => 'Tool running...';
 
   @override

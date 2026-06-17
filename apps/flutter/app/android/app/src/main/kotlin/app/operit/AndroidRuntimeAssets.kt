@@ -382,6 +382,8 @@ $prootBindSetup
                     TERM=xterm-256color \
                     LANG=en_US.UTF-8 \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    PROMPT_COMMAND="${'$'}PROMPT_COMMAND" \
+                    PS1="${'$'}PS1" \
                     OPERIT_WORKING_DIR="${'$'}OPERIT_WORKING_DIR" \
                     COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                     /bin/bash -lc 'eval "${'$'}COMMAND_TO_EXEC"'
@@ -396,6 +398,8 @@ $prootBindSetup
                     TERM=xterm-256color \
                     LANG=en_US.UTF-8 \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    PROMPT_COMMAND="${'$'}PROMPT_COMMAND" \
+                    PS1="${'$'}PS1" \
                     OPERIT_WORKING_DIR="${'$'}OPERIT_WORKING_DIR" \
                     COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                     /bin/bash -lc 'eval "${'$'}COMMAND_TO_EXEC"'

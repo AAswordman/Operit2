@@ -8,16 +8,16 @@ use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolExecutor, ToolValidationResult,
 };
 use crate::core::tools::ToolResultDataClasses::{
-    LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData,
-    ToolResultData,
+    stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
+    MemoryQueryResultData, ToolResultData,
 };
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
+use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
+use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::util::OperitPaths::{
     characterMemoryOwnerKey, parseMemoryOwnerKey, sharedMemoryOwnerKey,
 };
-use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
-use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 
 const MAX_QUERY_SNAPSHOTS_PER_OWNER: usize = 32;
 const DEFAULT_RELEVANCE_THRESHOLD: f64 = 0.0;
@@ -155,14 +155,12 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
             startTime,
             endTime,
         ) {
-            Ok(ownerResults) => results.extend(
-                ownerResults
-                    .into_iter()
-                    .map(|memory| OwnedMemoryResult {
-                        ownerKey: ownerKey.clone(),
-                        memory,
-                    }),
-            ),
+            Ok(ownerResults) => {
+                results.extend(ownerResults.into_iter().map(|memory| OwnedMemoryResult {
+                    ownerKey: ownerKey.clone(),
+                    memory,
+                }))
+            }
             Err(error) => {
                 return errorResult(tool, &format!("Failed to execute memory query: {error}"))
             }
@@ -940,20 +938,25 @@ fn success(tool: &AITool, result: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result,
+        result: stringResultData(result),
         error: None,
     }
 }
 
 fn successData(tool: &AITool, data: ToolResultData) -> ToolResult {
-    success(tool, data.toJson())
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: data,
+        error: None,
+    }
 }
 
 fn errorResult(tool: &AITool, message: &str) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(message.to_string()),
     }
 }

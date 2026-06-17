@@ -42,8 +42,7 @@ class WorkspacePanel extends StatefulWidget {
   onWriteWorkspaceFileBytes;
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
-  final Future<void> Function(String workspace, String? workspaceEnv)
-  onBindWorkspace;
+  final Future<void> Function(String workspace) onBindWorkspace;
   final VoidCallback onRevealRequested;
 
   @override

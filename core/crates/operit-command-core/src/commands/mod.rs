@@ -86,8 +86,9 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
     );
     output.push_stdout_line("operit2 plugin <help|list|more|load|show|import|enable|disable>");
-    output
-        .push_stdout_line("operit2 skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
+    output.push_stdout_line(
+        "operit2 skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>",
+    );
     output
         .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
     output.push_stdout_line(

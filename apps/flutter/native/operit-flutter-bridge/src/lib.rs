@@ -939,6 +939,7 @@ fn create_local_core(
         Some(root_dir) => root_dir,
         None => default_native_storage_root()?,
     };
+    let appFilesRoot = root_dir.clone();
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let mut context =
@@ -950,7 +951,8 @@ fn create_local_core(
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
-        );
+        )
+        .withAppFilesRoot(appFilesRoot);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
@@ -991,7 +993,8 @@ fn create_local_core(
             Arc::new(NativeManagedRuntimeHost::new()),
             runtimeStorageHost,
             runtimeSqliteHost,
-        );
+        )
+        .withAppFilesRoot(NativeRuntimeStorageHost::defaultRoot());
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }

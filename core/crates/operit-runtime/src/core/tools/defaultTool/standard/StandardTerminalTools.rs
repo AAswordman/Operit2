@@ -120,7 +120,7 @@ impl StandardTerminalTools {
         let start = ToolResult {
             toolName: tool.name.clone(),
             success: true,
-            result: ToolResultData::TerminalStreamEventData(startData).toJson(),
+            result: ToolResultData::TerminalStreamEventData(startData),
             error: Some(String::new()),
         };
         match self
@@ -406,19 +406,29 @@ fn toolSuccess(tool: &AITool, result: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result,
+        result: ToolResultData::StringResultData(StringResultData { value: result }),
         error: None,
     }
 }
 
 #[allow(non_snake_case)]
 fn toolSuccessData(tool: &AITool, data: ToolResultData) -> ToolResult {
-    toolSuccess(tool, data.toJson())
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: data,
+        error: None,
+    }
 }
 
 #[allow(non_snake_case)]
 fn toolSuccessStringData(tool: &AITool, data: StringResultData) -> ToolResult {
-    toolSuccess(tool, data.value)
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: ToolResultData::StringResultData(data),
+        error: None,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -426,7 +436,9 @@ fn toolError(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: ToolResultData::StringResultData(StringResultData {
+            value: String::new(),
+        }),
         error: Some(error),
     }
 }

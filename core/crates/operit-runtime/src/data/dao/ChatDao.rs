@@ -49,10 +49,10 @@ impl ChatDao {
             r#"
                 INSERT OR REPLACE INTO chats (
                     id, title, createdAt, updatedAt, inputTokens, outputTokens,
-                    currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
+                    currentWindowSize, "group", displayOrder, workspace,
                     parentChatId, characterCardName, characterGroupId, locked, pinned
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                 "#,
             sqliteParams![
                 chat.id,
@@ -65,7 +65,6 @@ impl ChatDao {
                 chat.group,
                 chat.displayOrder,
                 chat.workspace,
-                chat.workspaceEnv,
                 chat.parentChatId,
                 chat.characterCardName,
                 chat.characterGroupId,
@@ -111,12 +110,11 @@ impl ChatDao {
         &self,
         chatId: &str,
         workspace: Option<String>,
-        workspaceEnv: Option<String>,
         timestamp: i64,
     ) -> Result<(), SqliteStoreError> {
         self.execute(
-            "UPDATE chats SET workspace = ?2, workspaceEnv = ?3, updatedAt = ?4 WHERE id = ?1",
-            sqliteParams![chatId, workspace, workspaceEnv, timestamp],
+            "UPDATE chats SET workspace = ?2, updatedAt = ?3 WHERE id = ?1",
+            sqliteParams![chatId, workspace, timestamp],
         )
     }
 
@@ -125,12 +123,11 @@ impl ChatDao {
         chatId: &str,
         title: String,
         workspace: Option<String>,
-        workspaceEnv: Option<String>,
         timestamp: i64,
     ) -> Result<(), SqliteStoreError> {
         self.execute(
-            "UPDATE chats SET title = ?2, workspace = ?3, workspaceEnv = ?4, updatedAt = ?5 WHERE id = ?1",
-            sqliteParams![chatId, title, workspace, workspaceEnv, timestamp],
+            "UPDATE chats SET title = ?2, workspace = ?3, updatedAt = ?4 WHERE id = ?1",
+            sqliteParams![chatId, title, workspace, timestamp],
         )
     }
 
@@ -235,12 +232,11 @@ impl ChatDao {
                         "group" = ?8,
                         displayOrder = ?9,
                         workspace = ?10,
-                        workspaceEnv = ?11,
-                        parentChatId = ?12,
-                        characterCardName = ?13,
-                        characterGroupId = ?14,
-                        locked = ?15,
-                        pinned = ?16
+                        parentChatId = ?11,
+                        characterCardName = ?12,
+                        characterGroupId = ?13,
+                        locked = ?14,
+                        pinned = ?15
                     WHERE id = ?1
                     "#,
                     sqliteParams![
@@ -254,7 +250,6 @@ impl ChatDao {
                         chat.group,
                         chat.displayOrder,
                         chat.workspace,
-                        chat.workspaceEnv,
                         chat.parentChatId,
                         chat.characterCardName,
                         chat.characterGroupId,
@@ -702,7 +697,6 @@ pub fn mapChatEntity(row: &SqliteRow) -> Result<ChatEntity, SqliteStoreError> {
         group: row.get("group")?,
         displayOrder: row.get("displayOrder")?,
         workspace: row.get("workspace")?,
-        workspaceEnv: row.get("workspaceEnv")?,
         parentChatId: row.get("parentChatId")?,
         characterCardName: row.get("characterCardName")?,
         characterGroupId: row.get("characterGroupId")?,

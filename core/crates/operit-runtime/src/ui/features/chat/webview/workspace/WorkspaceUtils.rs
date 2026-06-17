@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::fs;
 
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde_json::{json, Value};
 
+use crate::core::files::PathMapper::PathMapper;
 use crate::ui::features::chat::webview::workspace::WorkspaceTemplateAssets::WORKSPACE_TEMPLATE_ASSETS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,7 +27,6 @@ pub fn createAndGetDefaultWorkspace(
     projectType: Option<String>,
 ) -> Result<String, String> {
     let projectType = resolveProjectType(projectType)?;
-    let workspacePath = getWorkspacePath(&chatId);
     let workspaceRelativePath = getWorkspaceRelativePath(&chatId);
 
     if let Some(templateName) = projectType.templateName() {
@@ -35,27 +34,32 @@ pub fn createAndGetDefaultWorkspace(
     }
     createProjectConfigIfNeeded(&workspaceRelativePath, projectType)?;
 
-    Ok(workspacePath.to_string_lossy().to_string())
+    PathMapper::workspacePath(&chatId)
 }
 
 #[allow(non_snake_case)]
 pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String> {
-    let workspacePath = getWorkspacePath(&chatId);
     let workspaceRelativePath = getWorkspaceRelativePath(&chatId);
-    defaultRuntimeStorageHost()
+    let storage = defaultRuntimeStorageHost();
+    storage
         .delete(&workspaceRelativePath, true)
         .map_err(|error| error.to_string())?;
-    Ok(workspacePath.to_string_lossy().to_string())
-}
-
-#[allow(non_snake_case)]
-pub fn getWorkspacePath(chatId: &str) -> PathBuf {
-    RuntimeStorePaths::default().workspace_path(chatId)
+    ensureWorkspaceDirExists(&workspaceRelativePath)?;
+    PathMapper::workspacePath(&chatId)
 }
 
 #[allow(non_snake_case)]
 fn getWorkspaceRelativePath(chatId: &str) -> String {
     format!("{WORKSPACE_DIR_PATH}/{chatId}")
+}
+
+#[allow(non_snake_case)]
+fn ensureWorkspaceDirExists(workspaceRelativePath: &str) -> Result<(), String> {
+    let storage = defaultRuntimeStorageHost();
+    let root = storage
+        .rootDir()
+        .expect("RuntimeStorageHost root must be configured for WorkspaceUtils");
+    fs::create_dir_all(root.join(workspaceRelativePath)).map_err(|error| error.to_string())
 }
 
 #[allow(non_snake_case)]

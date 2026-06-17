@@ -447,14 +447,9 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn bindChatToWorkspace(
-        &mut self,
-        chatId: String,
-        workspace: String,
-        workspaceEnv: Option<String>,
-    ) {
+    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) {
         self.chatHistoryDelegate
-            .bindChatToWorkspace(chatId, workspace, workspaceEnv);
+            .bindChatToWorkspace(chatId, workspace);
     }
 
     #[allow(non_snake_case)]
@@ -477,7 +472,7 @@ impl ChatServiceCore {
             WorkspaceUtils::createAndGetDefaultWorkspace(chatId.clone(), projectType)
                 .expect("WorkspaceUtils.createAndGetDefaultWorkspace must succeed");
         self.chatHistoryDelegate
-            .bindChatToWorkspace(chatId, workspacePath.clone(), None);
+            .bindChatToWorkspace(chatId, workspacePath.clone());
         workspacePath
     }
 
@@ -499,18 +494,18 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     pub fn previewWorkspaceChangesForMessage(&mut self, index: usize) -> Vec<WorkspaceFileChange> {
-        let Some((chatId, workspacePath, workspaceEnv, rewindTimestamp)) =
+        let Some((chatId, workspacePath, rewindTimestamp)) =
             self.resolveWorkspaceRewindTarget(index)
         else {
             return Vec::new();
         };
         WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext())
-            .previewChangesForRewind(workspacePath, workspaceEnv, rewindTimestamp, Some(chatId))
+            .previewChangesForRewind(workspacePath, rewindTimestamp, Some(chatId))
     }
 
     #[allow(non_snake_case)]
     pub fn rewindWorkspaceForMessage(&mut self, index: usize) -> bool {
-        let Some((chatId, workspacePath, workspaceEnv, rewindTimestamp)) =
+        let Some((chatId, workspacePath, rewindTimestamp)) =
             self.resolveWorkspaceRewindTarget(index)
         else {
             return false;
@@ -518,7 +513,6 @@ impl ChatServiceCore {
         WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext()).syncState(
             workspacePath,
             rewindTimestamp,
-            workspaceEnv,
             Some(chatId),
         );
         true
@@ -587,10 +581,7 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    fn resolveWorkspaceRewindTarget(
-        &self,
-        index: usize,
-    ) -> Option<(String, String, Option<String>, i64)> {
+    fn resolveWorkspaceRewindTarget(&self, index: usize) -> Option<(String, String, i64)> {
         let chatId = self.chatHistoryDelegate.currentChatId.clone()?;
         if index >= self.chatHistoryDelegate.chatHistory.len() {
             return None;
@@ -609,12 +600,7 @@ impl ChatServiceCore {
             .workspace
             .clone()
             .filter(|value| !value.trim().is_empty())?;
-        Some((
-            chatId,
-            workspacePath,
-            currentChat.workspaceEnv.clone(),
-            rewindTimestamp,
-        ))
+        Some((chatId, workspacePath, rewindTimestamp))
     }
 
     pub fn resetTokenStatistics(&mut self) {}

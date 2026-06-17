@@ -51,7 +51,10 @@ impl ToolPkgLoader {
                 )
             },
             |packageName, error| {
-                AppLogger::e(TAG, &format!("ToolPkg package load error [{packageName}]: {error}"));
+                AppLogger::e(
+                    TAG,
+                    &format!("ToolPkg package load error [{packageName}]: {error}"),
+                );
             },
         )
     }

@@ -6,10 +6,8 @@ use operit_runtime::data::model::Memory::Memory;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_runtime::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
 use operit_runtime::data::repository::MemoryRepository::MemoryRepository;
-use operit_runtime::util::OperitPaths::{
-    characterMemoryOwnerKey, sharedMemoryOwnerKey,
-};
 use operit_runtime::data::repository::UserMarkdownRepository::UserMarkdownRepository;
+use operit_runtime::util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 pub fn run_memory_command(
     _context: OperitApplicationContext,
@@ -57,7 +55,10 @@ fn run_character_memory_command(
     }
 }
 
-fn run_shared_memory_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+fn run_shared_memory_command(
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.is_empty() {
         print_shared_memory_usage(output);
         return Ok(());
@@ -82,14 +83,17 @@ fn run_shared_memory_command(args: &[String], output: &mut CoreCommandOutput) ->
             Ok(())
         }
         "rename" => {
-            let id = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 memory shared rename <shared-id> <name>".to_string())?;
+            let id = args.get(1).ok_or_else(|| {
+                "usage: operit2 memory shared rename <shared-id> <name>".to_string()
+            })?;
             let name = args
                 .get(2)
-                .ok_or_else(|| "usage: operit2 memory shared rename <shared-id> <name>".to_string())?
+                .ok_or_else(|| {
+                    "usage: operit2 memory shared rename <shared-id> <name>".to_string()
+                })?
                 .clone();
-            let store = SharedMemoryStoreManager::getInstance().renameSharedMemoryStore(id, name)?;
+            let store =
+                SharedMemoryStoreManager::getInstance().renameSharedMemoryStore(id, name)?;
             output.push_stdout_line(format!("renamed={}", store.id));
             Ok(())
         }
@@ -173,11 +177,12 @@ fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Resul
         .map_err(|error| error.to_string())?;
     output.push_stdout_line(format!(
         "unmounted={}",
-        originalLen != CharacterCardManager::getInstance()
-            .getCharacterCard(&characterId)
-            .map_err(|error| error.to_string())?
-            .sharedMemoryMounts
-            .len()
+        originalLen
+            != CharacterCardManager::getInstance()
+                .getCharacterCard(&characterId)
+                .map_err(|error| error.to_string())?
+                .sharedMemoryMounts
+                .len()
     ));
     Ok(())
 }
@@ -237,7 +242,8 @@ fn run_item_command(
             let query = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 memory <owner> item search <query>".to_string())?;
-            for memory in memory_repository(ownerKey).searchMemories(query, None, 0.0, None, None)?
+            for memory in
+                memory_repository(ownerKey).searchMemories(query, None, 0.0, None, None)?
             {
                 print_memory_item_line(&memory, output);
             }
@@ -282,7 +288,10 @@ fn run_item_command(
             Ok(())
         }
         "delete" => {
-            let id = parse_i64_arg(args.get(1), "usage: operit2 memory <owner> item delete <id>")?;
+            let id = parse_i64_arg(
+                args.get(1),
+                "usage: operit2 memory <owner> item delete <id>",
+            )?;
             output.push_stdout_line(format!(
                 "deleted={}",
                 memory_repository(ownerKey).deleteMemory(id)?
@@ -321,9 +330,8 @@ fn run_item_command(
 
 fn run_graph_command(ownerKey: &str, output: &mut CoreCommandOutput) -> Result<(), String> {
     let graph = memory_repository(ownerKey).getMemoryGraph()?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(&graph).map_err(|error| error.to_string())?,
-    );
+    output
+        .push_stdout_line(serde_json::to_string_pretty(&graph).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -436,7 +444,9 @@ fn print_item_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 memory <owner> item list");
     output.push_stdout_line("operit2 memory <owner> item search <query>");
     output.push_stdout_line("operit2 memory <owner> item show <title>");
-    output.push_stdout_line("operit2 memory <owner> item create <title> <content> [folder] [tags-csv]");
+    output.push_stdout_line(
+        "operit2 memory <owner> item create <title> <content> [folder] [tags-csv]",
+    );
     output.push_stdout_line("operit2 memory <owner> item delete <id>");
     output.push_stdout_line("operit2 memory <owner> item move <ids-csv> <folder>");
 }

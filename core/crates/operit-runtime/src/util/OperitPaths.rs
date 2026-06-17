@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use operit_store::RuntimeStorePaths::default_data_dir;
 use operit_store::RuntimeStorageLayout as Layout;
+use operit_store::RuntimeStorePaths::default_data_dir;
 
 #[derive(Debug, Clone, Default)]
 pub struct OperitPaths;
@@ -42,8 +42,7 @@ pub const API_PREFERENCES_PATH: &str = Layout::API_PREFERENCES_PATH;
 pub const ENV_PREFERENCES_PATH: &str = Layout::ENV_PREFERENCES_PATH;
 pub const GITHUB_AUTH_PREFERENCES_PATH: &str = Layout::GITHUB_AUTH_PREFERENCES_PATH;
 pub const MODEL_CONFIGS_PREFERENCES_PATH: &str = Layout::MODEL_CONFIGS_PREFERENCES_PATH;
-pub const FUNCTIONAL_CONFIGS_PREFERENCES_PATH: &str =
-    Layout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH;
+pub const FUNCTIONAL_CONFIGS_PREFERENCES_PATH: &str = Layout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH;
 pub const PACKAGE_MANAGER_PREFERENCES_PATH: &str = Layout::PACKAGE_MANAGER_PREFERENCES_PATH;
 pub const CURRENT_CHAT_ID_PREFERENCES_PATH: &str = Layout::CURRENT_CHAT_ID_PREFERENCES_PATH;
 pub const SQLITE_DATABASE_PATH: &str = Layout::SQLITE_DATABASE_PATH;
@@ -88,7 +87,9 @@ pub fn pluginConfigDir(pluginId: &str) -> Result<PathBuf, String> {
     }
     let safeBaseName = sanitizePluginConfigDirName(trimmed);
     if safeBaseName.is_empty() {
-        return Err(format!("plugin id cannot be mapped to a config path: {trimmed}"));
+        return Err(format!(
+            "plugin id cannot be mapped to a config path: {trimmed}"
+        ));
     }
     let safeName = if safeBaseName == trimmed {
         safeBaseName

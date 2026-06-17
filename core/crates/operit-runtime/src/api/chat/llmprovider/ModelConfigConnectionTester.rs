@@ -60,10 +60,8 @@ impl ModelConfigConnectionTester {
         let mut items = Vec::new();
 
         let mut serviceManager = MultiServiceManager::new(rootDir.clone());
-        let bundleResult = serviceManager.createTransientServiceBundleForModel(
-            providerId.to_string(),
-            modelId.to_string(),
-        );
+        let bundleResult = serviceManager
+            .createTransientServiceBundleForModel(providerId.to_string(), modelId.to_string());
         let (configForTest, parameters, serviceHandle) = match bundleResult {
             Ok(bundle) => bundle,
             Err(error) => {

@@ -14,8 +14,7 @@ class WorkspaceSetupContent extends StatefulWidget {
   });
 
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
-  final Future<void> Function(String workspace, String? workspaceEnv)
-  onBindWorkspace;
+  final Future<void> Function(String workspace) onBindWorkspace;
 
   @override
   State<WorkspaceSetupContent> createState() => _WorkspaceSetupContentState();
@@ -205,7 +204,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
       return;
     }
     await _runWorkspaceAction(() {
-      return widget.onBindWorkspace(selectedPath, null);
+      return widget.onBindWorkspace(selectedPath);
     });
   }
 }

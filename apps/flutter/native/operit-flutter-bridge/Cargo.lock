@@ -1415,6 +1415,7 @@ name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
  "operit-runtime",
+ "operit-store",
  "reqwest",
  "serde",
  "serde_json",
@@ -1476,6 +1477,7 @@ dependencies = [
 name = "operit-host-android-native"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "libc",
  "operit-host-api",
  "operit-host-linux-native",
@@ -1497,6 +1499,7 @@ dependencies = [
 name = "operit-host-linux-native"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "operit-host-api",
  "portable-pty",
  "regex",
@@ -1522,6 +1525,7 @@ dependencies = [
 name = "operit-host-windows-native"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "operit-host-api",
  "portable-pty",
  "regex",

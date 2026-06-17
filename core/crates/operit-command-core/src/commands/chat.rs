@@ -753,10 +753,6 @@ fn print_chat_history_header(chat: &ChatHistory, output: &mut CoreCommandOutput)
         chat.workspace.clone().unwrap_or_default()
     ));
     output.push_stdout_line(format!(
-        "workspaceEnv={}",
-        chat.workspaceEnv.clone().unwrap_or_default()
-    ));
-    output.push_stdout_line(format!(
         "parentChatId={}",
         chat.parentChatId.clone().unwrap_or_default()
     ));

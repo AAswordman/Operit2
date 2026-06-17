@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::api::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
@@ -16,12 +16,14 @@ use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use crate::util::stream::HotStream::StreamStart;
 use crate::util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
+use crate::util::AppLogger::AppLogger;
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_store::PreferencesDataStore::FlowLike;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
+const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
 
 pub struct AIMessageManager;
 
@@ -36,7 +38,6 @@ pub struct BuildUserMessageContentRequest {
     pub proxySenderName: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableDirectImageProcessing: bool,
     pub enableDirectAudioProcessing: bool,
@@ -51,7 +52,6 @@ pub struct SendMessageRequest<'a> {
     pub messageContent: String,
     pub chatHistory: Vec<ChatMessage>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
     pub enableMemoryAutoUpdate: bool,
@@ -79,7 +79,6 @@ pub struct StableContextWindowRequest<'a> {
     pub messageContent: String,
     pub chatHistory: Vec<ChatMessage>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub roleCardId: Option<String>,
     pub currentRoleName: Option<String>,
@@ -105,7 +104,18 @@ pub fn messageTimingNow() -> MessageTiming {
     MessageTiming { startedAtMs }
 }
 
-pub fn logMessageTiming(_stage: &str, _startTimeMs: MessageTiming, _details: Option<String>) {}
+pub fn logMessageTiming(stage: &str, startTimeMs: MessageTiming, details: Option<String>) {
+    let now = operit_host_api::TimeUtils::currentTimeMillis() as u64;
+    let elapsed = now.saturating_sub(startTimeMs.startedAtMs);
+    let suffix = details
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!(", {value}"))
+        .unwrap_or_default();
+    AppLogger::d(
+        MESSAGE_PROCESS_TIMING_TAG,
+        &format!("{stage} 耗时={elapsed}ms{suffix}"),
+    );
+}
 
 impl AIMessageManager {
     pub fn initialize() {
@@ -145,11 +155,7 @@ impl AIMessageManager {
                         .to_ascii_lowercase()
                         .contains("<workspace_attachment") =>
             {
-                let workspaceEnv = match request.workspaceEnv {
-                    Some(value) => value,
-                    None => String::new(),
-                };
-                format!("<workspace_attachment>{workspaceEnv}</workspace_attachment>")
+                format!("<workspace_attachment>{path}</workspace_attachment>")
             }
             _ => String::new(),
         };
@@ -270,7 +276,6 @@ impl AIMessageManager {
         options.chatId = request.chatId;
         options.chatHistory = memoryForRequest;
         options.workspacePath = request.workspacePath;
-        options.workspaceEnv = request.workspaceEnv;
         options.promptFunctionType = request.promptFunctionType;
         options.enableThinking = request.enableThinking;
         options.enableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
@@ -312,11 +317,8 @@ impl AIMessageManager {
                 ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
             ],
         );
-        let result = request
-            .enhancedAiService
-            .sendMessage(options)
-            .await
-            .map(|stream| {
+        match request.enhancedAiService.sendMessage(options).await {
+            Ok(stream) => {
                 let shared = share_revisable(
                     ActiveChatTextStream {
                         chatKey: chatKey.clone(),
@@ -326,25 +328,25 @@ impl AIMessageManager {
                     StreamStart::Lazily,
                 );
                 Self::rememberActiveResponseStream(chatKey.clone(), shared.clone());
-                shared
-            });
-        if result.is_err() {
-            ChainLogger::error(
-                SEND_CHAIN,
-                "send.provider.error",
-                &[("chatKey", chatKey.clone())],
-            );
-            Self::forgetActiveChatKey(&chatKey);
-            Self::forgetActiveEnhancedAiService(&chatKey);
-            Self::forgetActiveResponseStream(&chatKey);
-        } else {
-            ChainLogger::info(
-                RECEIVE_CHAIN,
-                "receive.provider.stream.ready",
-                &[("chatKey", chatKey.clone())],
-            );
+                ChainLogger::info(
+                    RECEIVE_CHAIN,
+                    "receive.provider.stream.ready",
+                    &[("chatKey", chatKey.clone())],
+                );
+                Ok(shared)
+            }
+            Err(error) => {
+                ChainLogger::error(
+                    SEND_CHAIN,
+                    "send.provider.error",
+                    &[("chatKey", chatKey.clone()), ("error", error.to_string())],
+                );
+                Self::forgetActiveChatKey(&chatKey);
+                Self::forgetActiveEnhancedAiService(&chatKey);
+                Self::forgetActiveResponseStream(&chatKey);
+                Err(error)
+            }
         }
-        result
     }
 
     #[allow(non_snake_case)]
@@ -483,7 +485,6 @@ impl AIMessageManager {
                 memory,
                 request.chatId,
                 request.workspacePath,
-                request.workspaceEnv,
                 request.promptFunctionType,
                 request.roleCardId,
                 request.groupOrchestrationMode,

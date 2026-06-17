@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
@@ -38,6 +39,7 @@ pub struct OperitApplicationContext {
     pub externalRuntimeEventHost: Option<Arc<dyn ExternalRuntimeEventHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
+    pub appFilesRoot: Option<PathBuf>,
 }
 
 impl OperitApplicationContext {
@@ -56,6 +58,7 @@ impl OperitApplicationContext {
             externalRuntimeEventHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
+            appFilesRoot: None,
         }
     }
 
@@ -76,6 +79,7 @@ impl OperitApplicationContext {
             externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
+            appFilesRoot: None,
         }
     }
 
@@ -99,6 +103,7 @@ impl OperitApplicationContext {
             externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
+            appFilesRoot: None,
         }
     }
 
@@ -123,6 +128,7 @@ impl OperitApplicationContext {
             externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
+            appFilesRoot: None,
         }
     }
 
@@ -151,12 +157,19 @@ impl OperitApplicationContext {
             externalRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
+            appFilesRoot: None,
         }
     }
 
     #[allow(non_snake_case)]
     pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
         self.coreCommandExecutor = Some(executor);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withAppFilesRoot(mut self, appFilesRoot: PathBuf) -> Self {
+        self.appFilesRoot = Some(appFilesRoot);
         self
     }
 

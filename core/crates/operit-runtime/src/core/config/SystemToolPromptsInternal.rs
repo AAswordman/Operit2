@@ -62,7 +62,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "file path", true, None),
-                        param("environment", "string", "optional, same as read_file environment", false, None),
                         param("type", "string", "operation type: replace | delete | create", true, None),
                         param("old", "string", "the exact content to be matched and replaced/deleted (required for replace/delete)", false, None),
                         param("new", "string", "the new content to insert (required for replace/create)", false, None)
@@ -677,14 +676,12 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "copy_file",
-                    "Copy a file or directory. Supports cross-environment copying between Android and Linux.",
+                    "Copy a file or directory through VFS paths.",
                     "",
                     vec![
                         param("source", "string", "source path", true, None),
                         param("destination", "string", "destination path", true, None),
-                        param("recursive", "boolean", "boolean", false, Some("false".to_string())),
-                        param("source_environment", "string", "optional, \"android\" or \"linux\"", false, Some("\"android\"".to_string())),
-                        param("dest_environment", "string", "optional, \"android\" or \"linux\". For cross-environment copy (e.g., Android → Linux or Linux → Android), specify both source_environment and dest_environment", false, Some("\"android\"".to_string()))
+                        param("recursive", "boolean", "boolean", false, Some("false".to_string()))
                     ],
                     "",
                     "",
@@ -902,7 +899,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "file path", true, None),
-                        param("environment", "string", "optional, \"android\" (default) or \"linux\"", false, None),
                         param("text_only", "boolean", "optional", false, Some("false".to_string()))
                     ],
                     "",
@@ -913,8 +909,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "Read binary file and return base64 content.",
                     "",
                     vec![
-                        param("path", "string", "file path", true, None),
-                        param("environment", "string", "optional, \"android\" (default) or \"linux\"", false, None)
+                        param("path", "string", "file path", true, None)
                     ],
                     "",
                     "",
@@ -926,8 +921,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("path", "string", "file path", true, None),
                         param("content", "string", "file content", true, None),
-                        param("append", "boolean", "optional", false, Some("false".to_string())),
-                        param("environment", "string", "optional, \"android\" (default) or \"linux\"", false, None)
+                        param("append", "boolean", "optional", false, Some("false".to_string()))
                     ],
                     "",
                     "",
@@ -938,8 +932,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "file path", true, None),
-                        param("base64Content", "string", "base64 encoded content", true, None),
-                        param("environment", "string", "optional, \"android\" (default) or \"linux\"", false, None)
+                        param("base64Content", "string", "base64 encoded content", true, None)
                     ],
                     "",
                     "",
@@ -1271,7 +1264,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "文件路径", true, None),
-                        param("environment", "string", "可选，同 read_file 的 environment", false, None),
                         param("type", "string", "操作类型：replace | delete | create", true, None),
                         param("old", "string", "用于匹配/替换/删除的原始内容（replace/delete必填）", false, None),
                         param("new", "string", "要插入的新内容（replace/create必填）", false, None)
@@ -1886,14 +1878,12 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "copy_file",
-                    "复制文件或目录。支持Android和Linux之间的跨环境复制。",
+                    "通过 VFS 路径复制文件或目录。",
                     "",
                     vec![
                         param("source", "string", "源路径", true, None),
                         param("destination", "string", "目标路径", true, None),
-                        param("recursive", "boolean", "布尔值", false, Some("false".to_string())),
-                        param("source_environment", "string", "可选，\"android\"或\"linux\"", false, Some("\"android\"".to_string())),
-                        param("dest_environment", "string", "可选，\"android\"或\"linux\"。跨环境复制（如Android → Linux或Linux → Android）时，需指定source_environment和dest_environment", false, Some("\"android\"".to_string()))
+                        param("recursive", "boolean", "布尔值", false, Some("false".to_string()))
                     ],
                     "",
                     "",
@@ -2111,7 +2101,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "文件路径", true, None),
-                        param("environment", "string", "可选，\"android\"（默认）或 \"linux\"", false, None),
                         param("text_only", "boolean", "可选", false, Some("false".to_string()))
                     ],
                     "",
@@ -2122,8 +2111,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "读取二进制文件并返回 Base64 内容。",
                     "",
                     vec![
-                        param("path", "string", "文件路径", true, None),
-                        param("environment", "string", "可选，\"android\"（默认）或 \"linux\"", false, None)
+                        param("path", "string", "文件路径", true, None)
                     ],
                     "",
                     "",
@@ -2135,8 +2123,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("path", "string", "文件路径", true, None),
                         param("content", "string", "文件内容", true, None),
-                        param("append", "boolean", "可选", false, Some("false".to_string())),
-                        param("environment", "string", "可选，\"android\"（默认）或 \"linux\"", false, None)
+                        param("append", "boolean", "可选", false, Some("false".to_string()))
                     ],
                     "",
                     "",
@@ -2147,8 +2134,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "文件路径", true, None),
-                        param("base64Content", "string", "Base64 编码内容", true, None),
-                        param("environment", "string", "可选，\"android\"（默认）或 \"linux\"", false, None)
+                        param("base64Content", "string", "Base64 编码内容", true, None)
                     ],
                     "",
                     "",

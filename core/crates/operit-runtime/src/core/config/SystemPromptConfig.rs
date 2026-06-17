@@ -126,7 +126,6 @@ pub struct WorkspaceRuleFile {
 pub struct SystemPromptOptions {
     pub chat_id: Option<String>,
     pub workspace_path: Option<String>,
-    pub workspace_env: Option<String>,
     pub saf_bookmark_names: Vec<String>,
     pub use_english: bool,
     pub custom_system_prompt_template: String,
@@ -155,7 +154,6 @@ impl Default for SystemPromptOptions {
         Self {
             chat_id: None,
             workspace_path: None,
-            workspace_env: None,
             saf_bookmark_names: Vec::new(),
             use_english: false,
             custom_system_prompt_template: String::new(),
@@ -248,12 +246,8 @@ impl SystemPromptConfig {
 
         let workspace_guidelines = getWorkspaceGuidelines(
             options.workspace_path.as_deref(),
-            options.workspace_env.as_deref(),
             options.use_english,
             options.workspace_rule_file.as_ref(),
-            &options.external_storage_path,
-            &options.app_files_path,
-            &options.host_environment,
         );
 
         let mut prompt = template_to_use
@@ -389,10 +383,6 @@ impl SystemPromptConfig {
             (
                 "workspacePath".to_string(),
                 json!(options.base.workspace_path),
-            ),
-            (
-                "workspaceEnv".to_string(),
-                json!(options.base.workspace_env),
             ),
             (
                 "hostEnvironment".to_string(),
@@ -565,12 +555,8 @@ fn buildWorkspaceRuleFileSection(
 #[allow(non_snake_case)]
 fn getWorkspaceGuidelines(
     workspace_path: Option<&str>,
-    workspace_env: Option<&str>,
     use_english: bool,
     workspace_rule_file: Option<&WorkspaceRuleFile>,
-    external_storage_path: &str,
-    app_files_path: &str,
-    host_environment: &HostEnvironmentDescriptor,
 ) -> String {
     let Some(workspace_path) = workspace_path else {
         return String::new();
@@ -578,32 +564,14 @@ fn getWorkspaceGuidelines(
     if workspace_path.trim().is_empty() {
         return String::new();
     }
-    let env_label = workspace_env
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(host_environment.id.as_str());
     let base_guidelines = if use_english {
-        if host_environment.usesEnvironmentParameter {
-            format!(
-                "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}` (environment={env_label}).\n- Treat this exact path as the base path for all workspace file operations.\n- When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `{workspace_path}`.\n- When operating on workspace files via tools, always pass `environment=\"{env_label}\"` together with the workspace path.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- Terminal mount note: common mounts include `{external_storage_path} -> /sdcard`, `{external_storage_path} -> {external_storage_path}`, and app sandbox `{app_files_path} -> same path`.\n- If the workspace is under mounted paths, execute workspace files directly in the Linux terminal environment; do not copy files before execution.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
-            )
-        } else {
-            format!(
-                "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}` on {}.\n- Treat this exact path as the base path for all workspace file operations.\n- When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `{workspace_path}`.\n- File tools operate directly on this host; omit environment parameters.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes.",
-                host_environment.displayName
-            )
-        }
+        format!(
+            "WORKSPACE GUIDELINES:\n- The current workspace root is `{workspace_path}`.\n- Treat this exact VFS path as the base path for all workspace file operations.\n- File tools accept VFS paths only. Use absolute paths rooted at `{workspace_path}` for workspace files.\n- The workspace collection is under `/app/workspaces`; `/workspace` points to the bound workspace.\n- Root listing always shows `/app` and `/workspace`; `/mnt` is listed when this host has mounted external entries.\n- `/sdcard` and `/data` are hidden Android aliases that can be opened directly on Android hosts.\n- Relative paths are only for file contents or project-internal references, not for tool parameters.\n- **Best Practice for Code Modifications**: Before modifying any file, use `grep_code` and `grep_context` to locate and understand relevant code with surrounding context. This ensures you understand the codebase structure before making changes."
+        )
     } else {
-        if host_environment.usesEnvironmentParameter {
-            format!(
-                "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`（environment={env_label}）。\n- 所有工作区文件操作都要把这个精确路径当作根路径。\n- 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `{workspace_path}` 为根的绝对路径。\n- 通过工具操作工作区文件时，每次都必须同时传入 `environment=\"{env_label}\"` 和对应的工作区路径。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- 终端挂载说明：常见挂载包括 `{external_storage_path} -> /sdcard`、`{external_storage_path} -> {external_storage_path}`，以及应用沙箱 `{app_files_path} -> 同路径`。\n- 若工作区位于已挂载路径中，直接在 Linux 终端环境中执行工作区文件；无需先复制再执行。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
-            )
-        } else {
-            format!(
-                "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`（{}）。\n- 所有工作区文件操作都要把这个精确路径当作根路径。\n- 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `{workspace_path}` 为根的绝对路径。\n- 文件工具直接作用于当前 Host；不要传入 environment 参数。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。",
-                host_environment.displayName
-            )
-        }
+        format!(
+            "工作区指南：\n- 当前工作区根目录是 `{workspace_path}`。\n- 所有工作区文件操作都要把这个精确 VFS 路径当作根路径。\n- 文件工具只接受 VFS 路径；操作工作区文件时，请使用以 `{workspace_path}` 为根的绝对路径。\n- 工作区集合位于 `/app/workspaces`；`/workspace` 指向当前绑定工作区。\n- 根目录列表固定展示 `/app` 和 `/workspace`；当前 Host 存在外部挂载项时才展示 `/mnt`。\n- `/sdcard` 和 `/data` 是 Android 隐藏别名，只在 Android Host 上可直接访问。\n- 相对路径只用于文件内容里的项目内部引用，不用于工具参数。\n- **代码修改最佳实践**：修改任何文件之前，建议组合使用 `grep_code` 与 `grep_context` 定位并理解相关代码及其上下文，避免在未理解项目结构时盲改。"
+        )
     };
     let rule_section = buildWorkspaceRuleFileSection(workspace_rule_file, use_english);
     if rule_section.is_empty() {

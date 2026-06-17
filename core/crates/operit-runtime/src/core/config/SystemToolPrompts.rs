@@ -545,40 +545,20 @@ fn join_non_empty_lines(lines: Vec<String>) -> String {
 
 #[allow(non_snake_case)]
 fn hostPromptHeader(host_environment: &HostEnvironmentDescriptor, use_english: bool) -> String {
-    let examples = host_environment.examplePaths.join(", ");
+    let headerPaths = hostHeaderVfsPaths(host_environment);
+    let separator = if use_english { ", " } else { "、" };
+    let pathList = formatBacktickedPaths(&headerPaths, separator);
     if use_english {
-        let environment_rule = if host_environment.usesEnvironmentParameter {
-            format!(
-                "- File tools accept an `environment` parameter. {}",
-                host_environment.environmentParameterDescriptionEn
-            )
-        } else {
-            "- File tools operate directly on this host; omit environment parameters.".to_string()
-        };
         format!(
-            "Current file host: {} (`{}`).\n- {}\n- Example absolute paths: {}.\n{}",
+            "Current file VFS host: {} (`{}`).\n- Use VFS paths only: {pathList}.\n- When `/mnt` is listed, it contains the mounted entries available on this host.\n- Hidden Android aliases `/sdcard` and `/data` can be opened directly on Android hosts but are not listed at root.",
             host_environment.displayName,
-            host_environment.id,
-            host_environment.pathStyleDescriptionEn,
-            examples,
-            environment_rule
+            host_environment.id
         )
     } else {
-        let environment_rule = if host_environment.usesEnvironmentParameter {
-            format!(
-                "- 文件工具可以使用 `environment` 参数。{}",
-                host_environment.environmentParameterDescriptionCn
-            )
-        } else {
-            "- 文件工具直接作用于当前 Host；不要传入 environment 参数。".to_string()
-        };
         format!(
-            "当前文件 Host：{}（`{}`）。\n- {}\n- 绝对路径示例：{}。\n{}",
+            "当前文件 VFS Host：{}（`{}`）。\n- 只使用 VFS 路径：{pathList}。\n- 当 `/mnt` 出现在根目录时，其中只包含当前 Host 已挂载入口。\n- Android 隐藏别名 `/sdcard` 和 `/data` 可在 Android Host 上直接访问，但不会在根目录列表展示。",
             host_environment.displayName,
-            host_environment.id,
-            host_environment.pathStyleDescriptionCn,
-            examples,
-            environment_rule
+            host_environment.id
         )
     }
 }
@@ -589,43 +569,27 @@ fn applyHostEnvironmentToTool(
     host_environment: &HostEnvironmentDescriptor,
     use_english: bool,
 ) {
-    if !host_environment.usesEnvironmentParameter {
-        tool.parameters_structured.retain(|parameter| {
-            !matches!(
-                parameter.name.as_str(),
-                "environment" | "source_environment" | "dest_environment"
-            )
-        });
-    }
+    tool.parameters_structured.retain(|parameter| {
+        !matches!(
+            parameter.name.as_str(),
+            "environment" | "source_environment" | "dest_environment"
+        )
+    });
 
     for parameter in &mut tool.parameters_structured {
         match parameter.name.as_str() {
             "path" | "source" | "destination" | "folder_path" => {
                 parameter.description = hostPathParameterDescription(host_environment, use_english);
             }
-            "environment" => {
-                parameter.description = if use_english {
-                    host_environment.environmentParameterDescriptionEn.clone()
-                } else {
-                    host_environment.environmentParameterDescriptionCn.clone()
-                };
-            }
-            "source_environment" | "dest_environment" => {
-                parameter.description = if use_english {
-                    host_environment.environmentParameterDescriptionEn.clone()
-                } else {
-                    host_environment.environmentParameterDescriptionCn.clone()
-                };
-            }
             _ => {}
         }
     }
 
-    if !host_environment.usesEnvironmentParameter && tool.name == "copy_file" {
+    if tool.name == "copy_file" {
         tool.description = if use_english {
-            "Copy a file or directory on the current file host.".to_string()
+            "Copy a file or directory through VFS paths.".to_string()
         } else {
-            "在当前文件 Host 内复制文件或目录。".to_string()
+            "通过 VFS 路径复制文件或目录。".to_string()
         };
     }
 }
@@ -636,57 +600,58 @@ fn hostPathParameterDescription(
     use_english: bool,
 ) -> String {
     let examples = host_environment.examplePaths.join(", ");
+    let vfsExamples = hostToolPathExamples(host_environment).join(", ");
     if use_english {
-        format!(
-            "absolute {} path, e.g. {}",
-            host_environment.displayName, examples
-        )
+        format!("VFS path, e.g. {vfsExamples}. Host examples: {examples}")
     } else {
-        format!(
-            "{} 绝对路径，例如 {}",
-            host_environment.displayName, examples
-        )
+        let vfsExamplesCn = hostToolPathExamples(host_environment).join("、");
+        format!("VFS 路径，例如 {vfsExamplesCn}。Host 示例：{examples}")
     }
 }
 
 #[allow(non_snake_case)]
-fn buildSafBookmarksSectionEn(saf_bookmark_names: &[String]) -> String {
-    let names: BTreeSet<String> = saf_bookmark_names
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    if names.is_empty() {
-        return String::new();
+fn hostHeaderVfsPaths(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
+    let mut paths = vec!["/app", "/workspace", "/app/workspaces"];
+    match host_environment.id.as_str() {
+        "windows" => paths.push("/mnt/windows/<drive>"),
+        "android" => paths.push("/mnt/android/sdcard"),
+        "linux" => paths.push("/mnt/linux"),
+        "web" => {}
+        _ => {}
     }
-    let listed = names
-        .into_iter()
-        .map(|name| format!("repo:{name}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "\n\n**Attached Local Storage Repository:**\n- environment (optional): you can also use `environment=\"repo:<repositoryName>\"` to operate in an attached local storage repository.\n- Paths are absolute (e.g., `/`, `/work/index.html`).\n- Available repositories: {listed}"
-    )
+    paths
 }
 
 #[allow(non_snake_case)]
-fn buildSafBookmarksSectionCn(saf_bookmark_names: &[String]) -> String {
-    let names: BTreeSet<String> = saf_bookmark_names
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    if names.is_empty() {
-        return String::new();
+fn hostToolPathExamples(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
+    let mut paths = vec!["/workspace", "/app/files"];
+    match host_environment.id.as_str() {
+        "windows" => paths.push("/mnt/windows/d"),
+        "android" => paths.push("/mnt/android/sdcard"),
+        "linux" => paths.push("/mnt/linux"),
+        "web" => {}
+        _ => {}
     }
-    let listed = names
-        .into_iter()
-        .map(|name| format!("repo:{name}"))
+    paths
+}
+
+#[allow(non_snake_case)]
+fn formatBacktickedPaths(paths: &[&str], separator: &str) -> String {
+    paths
+        .iter()
+        .map(|path| format!("`{path}`"))
         .collect::<Vec<_>>()
-        .join("、");
-    format!(
-        "\n\n**附加本地储存仓库：**\n- environment（可选）：也可以使用 `environment=\"repo:<仓库名>\"` 在附加本地储存仓库中操作。\n- 路径使用绝对路径（例如 `/`、`/work/index.html`）。\n- 当前可用仓库：{listed}"
-    )
+        .join(separator)
+}
+
+#[allow(non_snake_case)]
+fn buildSafBookmarksSectionEn(_saf_bookmark_names: &[String]) -> String {
+    String::new()
+}
+
+#[allow(non_snake_case)]
+fn buildSafBookmarksSectionCn(_saf_bookmark_names: &[String]) -> String {
+    String::new()
 }
 
 #[allow(non_snake_case)]
@@ -957,47 +922,45 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
 
 fn file_system_tools_en() -> SystemToolPromptCategory {
     category("File System Tools", vec![
-        tool("list_files", "List files in a directory.", vec![param("path", "string", "e.g. \"/sdcard/Download\"", true, None), param("environment", "string", "optional, same as read_file environment", false, None)]),
+        tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/workspace\" or \"/mnt/android/sdcard/Download\"", true, None)]),
         tool("read_file", "Read the content of a file. For image files (jpg, jpeg, png, gif, bmp), it automatically extracts text using OCR.", vec![
-            param("path", "string", "file path", true, None),
-            param("environment", "string", "optional, execution environment. Values: \"android\" (default, Android file system) | \"linux\" (local Ubuntu 24 terminal environment via proot; Linux paths like /home/... /etc/hosts) | \"repo:<repositoryName>\" (attached local storage repository)", false, None),
+            param("path", "string", "VFS file path", true, None),
             param("intent", "string", "optional, your question about the media/file (used for backend recognition)", false, None),
             param("direct_image", "boolean", "optional, when true: return an <link type=\"image\"> tag for models that support vision", false, None),
             param("direct_audio", "boolean", "optional, when true: return an <link type=\"audio\"> tag for models that support audio", false, None),
             param("direct_video", "boolean", "optional, when true: return an <link type=\"video\"> tag for models that support video", false, None),
         ]),
-        tool("read_file_part", "Read file content by line range.", vec![param("path", "string", "file path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("start_line", "integer", "starting line number, 1-indexed", false, Some("1")), param("end_line", "integer", "ending line number, 1-indexed, inclusive, optional", false, Some("start_line + 99"))]),
-        tool("create_file", "Create a new file by delegating to apply_file with type=create.", vec![param("path", "string", "file path", true, None), param("new", "string", "full file content for the new file", true, None), param("environment", "string", "optional, same as read_file environment", false, None)]),
-        tool("edit_file", "Edit an existing file by delegating to apply_file with type=replace.", vec![param("path", "string", "file path", true, None), param("old", "string", "the exact content to be matched and replaced", true, None), param("new", "string", "the new content to insert", true, None), param("environment", "string", "optional, same as read_file environment", false, None)]),
-        tool("delete_file", "Delete a file or directory.", vec![param("path", "string", "target path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("recursive", "boolean", "boolean", false, Some("false"))]),
-        tool("make_directory", "Create a directory.", vec![param("path", "string", "directory path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("create_parents", "boolean", "boolean", false, Some("false"))]),
-        tool("find_files", "Search for files matching a pattern.", vec![param("path", "string", "search path, for Android use /sdcard/..., for Linux use /home/... or /etc/...", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("pattern", "string", "search pattern, e.g. \"*.jpg\"", true, None), param("max_depth", "integer", "optional, controls depth of subdirectory search, -1=unlimited", false, None), param("use_path_pattern", "boolean", "boolean", false, Some("false")), param("case_insensitive", "boolean", "boolean", false, Some("false"))]),
-        tool("grep_code", "Search code content matching a regex pattern in files. Returns matches with surrounding context lines.", vec![param("path", "string", "search path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("pattern", "string", "regex pattern", true, None), param("file_pattern", "string", "file filter", false, Some("\"*\"")), param("case_insensitive", "boolean", "boolean", false, Some("false")), param("context_lines", "integer", "lines of context before/after match", false, Some("3")), param("max_results", "integer", "max matches", false, Some("100"))]),
-        tool("grep_context", "Search for relevant content based on intent/context understanding. Supports directory and file modes. Uses semantic relevance scoring.", vec![param("path", "string", "directory or file path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("intent", "string", "intent or context description string", true, None), param("file_pattern", "string", "file filter for directory mode", false, Some("\"*\"")), param("max_results", "integer", "maximum items to return", false, Some("10"))]),
-        tool("download_file", "Download a file from the internet. Two modes: (1) Provide `url` + `destination`. (2) Provide `visit_key` + (`link_number` or `image_number`) + `destination` to download an item by index from a previous `visit_web` result.", vec![param("url", "string", "optional, file URL. If omitted, use visit_key + link_number/image_number to download from a previous visit_web result", false, None), param("visit_key", "string", "optional, visitKey from a previous visit_web result", false, None), param("link_number", "integer", "optional, 1-based link index from Results (use with visit_key)", false, None), param("image_number", "integer", "optional, 1-based image index from Images (use with visit_key)", false, None), param("destination", "string", "save path", true, None), param("environment", "string", "optional, same as read_file environment", false, None), param("headers", "string", "optional HTTP headers as JSON object string, e.g. {\"Referer\":\"...\"}", false, None)]),
+        tool("read_file_part", "Read file content by line range.", vec![param("path", "string", "VFS file path", true, None), param("start_line", "integer", "starting line number, 1-indexed", false, Some("1")), param("end_line", "integer", "ending line number, 1-indexed, inclusive, optional", false, Some("start_line + 99"))]),
+        tool("create_file", "Create a new file by delegating to apply_file with type=create.", vec![param("path", "string", "VFS file path", true, None), param("new", "string", "full file content for the new file", true, None)]),
+        tool("edit_file", "Edit an existing file by delegating to apply_file with type=replace.", vec![param("path", "string", "VFS file path", true, None), param("old", "string", "the exact content to be matched and replaced", true, None), param("new", "string", "the new content to insert", true, None)]),
+        tool("delete_file", "Delete a file or directory.", vec![param("path", "string", "target VFS path", true, None), param("recursive", "boolean", "boolean", false, Some("false"))]),
+        tool("make_directory", "Create a directory.", vec![param("path", "string", "VFS directory path", true, None), param("create_parents", "boolean", "boolean", false, Some("false"))]),
+        tool("find_files", "Search for files matching a pattern.", vec![param("path", "string", "VFS search path", true, None), param("pattern", "string", "search pattern, e.g. \"*.jpg\"", true, None), param("max_depth", "integer", "optional, controls depth of subdirectory search, -1=unlimited", false, None), param("use_path_pattern", "boolean", "boolean", false, Some("false")), param("case_insensitive", "boolean", "boolean", false, Some("false"))]),
+        tool("grep_code", "Search code content matching a regex pattern in files. Returns matches with surrounding context lines.", vec![param("path", "string", "VFS search path", true, None), param("pattern", "string", "regex pattern", true, None), param("file_pattern", "string", "file filter", false, Some("\"*\"")), param("case_insensitive", "boolean", "boolean", false, Some("false")), param("context_lines", "integer", "lines of context before/after match", false, Some("3")), param("max_results", "integer", "max matches", false, Some("100"))]),
+        tool("grep_context", "Search for relevant content based on intent/context understanding. Supports directory and file modes. Uses semantic relevance scoring.", vec![param("path", "string", "VFS directory or file path", true, None), param("intent", "string", "intent or context description string", true, None), param("file_pattern", "string", "file filter for directory mode", false, Some("\"*\"")), param("max_results", "integer", "maximum items to return", false, Some("10"))]),
+        tool("download_file", "Download a file from the internet. Two modes: (1) Provide `url` + `destination`. (2) Provide `visit_key` + (`link_number` or `image_number`) + `destination` to download an item by index from a previous `visit_web` result.", vec![param("url", "string", "optional, file URL. If omitted, use visit_key + link_number/image_number to download from a previous visit_web result", false, None), param("visit_key", "string", "optional, visitKey from a previous visit_web result", false, None), param("link_number", "integer", "optional, 1-based link index from Results (use with visit_key)", false, None), param("image_number", "integer", "optional, 1-based image index from Images (use with visit_key)", false, None), param("destination", "string", "destination VFS path", true, None), param("headers", "string", "optional HTTP headers as JSON object string, e.g. {\"Referer\":\"...\"}", false, None)]),
     ])
 }
 
 fn file_system_tools_cn() -> SystemToolPromptCategory {
     category("文件系统工具", vec![
-        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "例如\"/sdcard/Download\"", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None)]),
+        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/workspace\" 或 \"/mnt/android/sdcard/Download\"", true, None)]),
         tool("read_file", "读取文件内容。对于图片文件(jpg, jpeg, png, gif, bmp)，自动使用OCR提取文本。", vec![
-            param("path", "string", "文件路径", true, None),
-            param("environment", "string", "可选，执行环境。取值：\"android\"（默认，Android文件系统）| \"linux\"（本地Ubuntu 24终端环境，通过proot实现）| \"repo:<仓库名>\"（附加本地储存仓库）", false, None),
+            param("path", "string", "VFS 文件路径", true, None),
             param("intent", "string", "可选，用户对媒体/文件的问题（用于后端识别模型）", false, None),
             param("direct_image", "boolean", "可选，为true时：返回<link type=\"image\">标签供支持识图的模型直接查看", false, None),
             param("direct_audio", "boolean", "可选，为true时：返回<link type=\"audio\">标签供支持音频的模型直接处理", false, None),
             param("direct_video", "boolean", "可选，为true时：返回<link type=\"video\">标签供支持视频的模型直接处理", false, None),
         ]),
-        tool("read_file_part", "按行号范围读取文件内容。", vec![param("path", "string", "文件路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("start_line", "integer", "起始行号，从1开始", false, Some("1")), param("end_line", "integer", "结束行号，从1开始，包括该行，可选", false, Some("start_line + 99"))]),
-        tool("create_file", "通过委托给 apply_file 且 type=create 来创建新文件。", vec![param("path", "string", "文件路径", true, None), param("new", "string", "新文件的完整内容", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None)]),
-        tool("edit_file", "通过委托给 apply_file 且 type=replace 来编辑已存在文件。", vec![param("path", "string", "文件路径", true, None), param("old", "string", "用于匹配并替换的原始内容", true, None), param("new", "string", "要插入的新内容", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None)]),
-        tool("delete_file", "删除文件或目录。", vec![param("path", "string", "目标路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("recursive", "boolean", "布尔值", false, Some("false"))]),
-        tool("make_directory", "创建目录。", vec![param("path", "string", "目录路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("create_parents", "boolean", "布尔值", false, Some("false"))]),
-        tool("find_files", "搜索匹配模式的文件。", vec![param("path", "string", "搜索路径，Android用/sdcard/...，Linux用/home/...或/etc/...", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("pattern", "string", "搜索模式，例如\"*.jpg\"", true, None), param("max_depth", "integer", "可选，控制子目录搜索深度，-1=无限", false, None), param("use_path_pattern", "boolean", "布尔值", false, Some("false")), param("case_insensitive", "boolean", "布尔值", false, Some("false"))]),
-        tool("grep_code", "在文件中搜索匹配正则表达式的代码内容，返回带上下文的匹配结果。", vec![param("path", "string", "搜索路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("pattern", "string", "正则表达式模式", true, None), param("file_pattern", "string", "文件过滤", false, Some("\"*\"")), param("case_insensitive", "boolean", "布尔值", false, Some("false")), param("context_lines", "integer", "匹配行前后的上下文行数", false, Some("3")), param("max_results", "integer", "最大匹配数", false, Some("100"))]),
-        tool("grep_context", "基于意图/上下文理解搜索相关内容。支持目录模式和文件模式，使用语义相关性评分。", vec![param("path", "string", "目录或文件路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("intent", "string", "意图或上下文描述字符串", true, None), param("file_pattern", "string", "目录模式下的文件过滤", false, Some("\"*\"")), param("max_results", "integer", "返回的最大项数", false, Some("10"))]),
-        tool("download_file", "从互联网下载文件。有两种用法：1）提供 `url` + `destination` 直接下载。2）提供 `visit_key` +（`link_number` 或 `image_number`）+ `destination`，从上一次 `visit_web` 的 Results/Images 编号中按序号下载。", vec![param("url", "string", "可选, 文件URL。不传时可使用 visit_key + link_number/image_number 从上一次 visit_web 结果按编号下载", false, None), param("visit_key", "string", "可选, 上一次 visit_web 返回的 visitKey", false, None), param("link_number", "integer", "可选, 整数, Results 中的链接编号（从1开始，需要配合 visit_key）", false, None), param("image_number", "integer", "可选, 整数, Images 中的图片编号（从1开始，需要配合 visit_key）", false, None), param("destination", "string", "保存路径", true, None), param("environment", "string", "可选，同 read_file 的 environment", false, None), param("headers", "string", "可选：HTTP请求头，JSON对象字符串，例如{\"Referer\":\"...\"}", false, None)]),
+        tool("read_file_part", "按行号范围读取文件内容。", vec![param("path", "string", "VFS 文件路径", true, None), param("start_line", "integer", "起始行号，从1开始", false, Some("1")), param("end_line", "integer", "结束行号，从1开始，包括该行，可选", false, Some("start_line + 99"))]),
+        tool("create_file", "通过委托给 apply_file 且 type=create 来创建新文件。", vec![param("path", "string", "VFS 文件路径", true, None), param("new", "string", "新文件的完整内容", true, None)]),
+        tool("edit_file", "通过委托给 apply_file 且 type=replace 来编辑已存在文件。", vec![param("path", "string", "VFS 文件路径", true, None), param("old", "string", "用于匹配并替换的原始内容", true, None), param("new", "string", "要插入的新内容", true, None)]),
+        tool("delete_file", "删除文件或目录。", vec![param("path", "string", "目标 VFS 路径", true, None), param("recursive", "boolean", "布尔值", false, Some("false"))]),
+        tool("make_directory", "创建目录。", vec![param("path", "string", "VFS 目录路径", true, None), param("create_parents", "boolean", "布尔值", false, Some("false"))]),
+        tool("find_files", "搜索匹配模式的文件。", vec![param("path", "string", "VFS 搜索路径", true, None), param("pattern", "string", "搜索模式，例如\"*.jpg\"", true, None), param("max_depth", "integer", "可选，控制子目录搜索深度，-1=无限", false, None), param("use_path_pattern", "boolean", "布尔值", false, Some("false")), param("case_insensitive", "boolean", "布尔值", false, Some("false"))]),
+        tool("grep_code", "在文件中搜索匹配正则表达式的代码内容，返回带上下文的匹配结果。", vec![param("path", "string", "VFS 搜索路径", true, None), param("pattern", "string", "正则表达式模式", true, None), param("file_pattern", "string", "文件过滤", false, Some("\"*\"")), param("case_insensitive", "boolean", "布尔值", false, Some("false")), param("context_lines", "integer", "匹配行前后的上下文行数", false, Some("3")), param("max_results", "integer", "最大匹配数", false, Some("100"))]),
+        tool("grep_context", "基于意图/上下文理解搜索相关内容。支持目录模式和文件模式，使用语义相关性评分。", vec![param("path", "string", "VFS 目录或文件路径", true, None), param("intent", "string", "意图或上下文描述字符串", true, None), param("file_pattern", "string", "目录模式下的文件过滤", false, Some("\"*\"")), param("max_results", "integer", "返回的最大项数", false, Some("10"))]),
+        tool("download_file", "从互联网下载文件。有两种用法：1）提供 `url` + `destination` 直接下载。2）提供 `visit_key` +（`link_number` 或 `image_number`）+ `destination`，从上一次 `visit_web` 的 Results/Images 编号中按序号下载。", vec![param("url", "string", "可选, 文件URL。不传时可使用 visit_key + link_number/image_number 从上一次 visit_web 结果按编号下载", false, None), param("visit_key", "string", "可选, 上一次 visit_web 返回的 visitKey", false, None), param("link_number", "integer", "可选, 整数, Results 中的链接编号（从1开始，需要配合 visit_key）", false, None), param("image_number", "integer", "可选, 整数, Images 中的图片编号（从1开始，需要配合 visit_key）", false, None), param("destination", "string", "保存到的 VFS 路径", true, None), param("headers", "string", "可选：HTTP请求头，JSON对象字符串，例如{\"Referer\":\"...\"}", false, None)]),
     ])
 }
 

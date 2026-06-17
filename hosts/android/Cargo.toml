@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+base64 = "0.22"
 libc = "0.2"
 operit-host-api = { path = "../../core/crates/operit-host-api" }
 operit-host-linux-native = { path = "../linux" }

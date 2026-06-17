@@ -196,10 +196,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     }
 
     Widget wrapNode(Widget child) {
-      if (widget.isStreaming) {
-        return child;
-      }
-      return SelectionArea(child: child);
+      return child;
     }
 
     _RevealSegment directReveal() {
@@ -446,10 +443,7 @@ class _MarkdownTextState extends State<_MarkdownText>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: widgets,
     );
-    if (widget.isStreaming) {
-      return content;
-    }
-    return SelectionArea(child: content);
+    return content;
   }
 }
 
@@ -780,11 +774,48 @@ class _TypewriterMarkdownRichText extends StatelessWidget {
             onLinkClick: onLinkClick,
           )
         : span;
+    final pressShield = MessagePressShield.maybeOf(context);
+    Widget wrapWithInteractiveShield(Widget child, double maxWidth) {
+      if (pressShield == null || !_containsInteractiveSpan(richSpan)) {
+        return child;
+      }
+      return Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) {
+          final painter = TextPainter(
+            text: richSpan,
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout(maxWidth: maxWidth);
+          if (_isInteractiveSpanHit(
+            span: richSpan,
+            painter: painter,
+            position: event.localPosition,
+          )) {
+            pressShield.shieldPointer(event.pointer);
+          }
+        },
+        onPointerUp: (event) => pressShield.unshieldPointer(event.pointer),
+        onPointerCancel: (event) => pressShield.unshieldPointer(event.pointer),
+        child: child,
+      );
+    }
+
     if (revealLength >= text.length && !showCursor) {
-      return Text.rich(richSpan, style: style);
+      return LayoutBuilder(
+        builder: (context, constraints) => wrapWithInteractiveShield(
+          Text.rich(richSpan, style: style),
+          constraints.maxWidth,
+        ),
+      );
     }
     if (_containsWidgetSpan(richSpan)) {
-      return Text.rich(richSpan, style: style);
+      return LayoutBuilder(
+        builder: (context, constraints) => wrapWithInteractiveShield(
+          Text.rich(richSpan, style: style),
+          constraints.maxWidth,
+        ),
+      );
     }
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -797,30 +828,33 @@ class _TypewriterMarkdownRichText extends StatelessWidget {
         final cursorPosition = showCursor
             ? _cursorPositionForReveal(painter, revealLength)
             : null;
-        return SizedBox(
-          width: constraints.maxWidth,
-          height: painter.height,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              CustomPaint(
-                size: Size(constraints.maxWidth, painter.height),
-                painter: _RevealTextPainter(
-                  span: richSpan,
-                  textDirection: textDirection,
-                  textScaler: MediaQuery.textScalerOf(context),
-                  maxWidth: constraints.maxWidth,
-                  revealLength: revealLength,
+        return wrapWithInteractiveShield(
+          SizedBox(
+            width: constraints.maxWidth,
+            height: painter.height,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                CustomPaint(
+                  size: Size(constraints.maxWidth, painter.height),
+                  painter: _RevealTextPainter(
+                    span: richSpan,
+                    textDirection: textDirection,
+                    textScaler: MediaQuery.textScalerOf(context),
+                    maxWidth: constraints.maxWidth,
+                    revealLength: revealLength,
+                  ),
                 ),
-              ),
-              if (cursorPosition != null)
-                Positioned(
-                  left: cursorPosition.dx,
-                  top: cursorPosition.dy,
-                  child: const StreamingCursor(),
-                ),
-            ],
+                if (cursorPosition != null)
+                  Positioned(
+                    left: cursorPosition.dx,
+                    top: cursorPosition.dy,
+                    child: const StreamingCursor(),
+                  ),
+              ],
+            ),
           ),
+          constraints.maxWidth,
         );
       },
     );
@@ -878,6 +912,38 @@ bool _containsWidgetSpan(InlineSpan span) {
     return children.any(_containsWidgetSpan);
   }
   return false;
+}
+
+bool _containsInteractiveSpan(InlineSpan span) {
+  if (span is TextSpan) {
+    if (span.recognizer != null) {
+      return true;
+    }
+    final children = span.children;
+    if (children == null) {
+      return false;
+    }
+    return children.any(_containsInteractiveSpan);
+  }
+  if (span is WidgetSpan) {
+    return false;
+  }
+  return false;
+}
+
+bool _isInteractiveSpanHit({
+  required InlineSpan span,
+  required TextPainter painter,
+  required Offset position,
+}) {
+  final ui.GlyphInfo? glyph = painter.getClosestGlyphForOffset(position);
+  if (glyph == null || !glyph.graphemeClusterLayoutBounds.contains(position)) {
+    return false;
+  }
+  final hitSpan = span.getSpanForPosition(
+    TextPosition(offset: glyph.graphemeClusterCodeUnitRange.start),
+  );
+  return hitSpan is TextSpan && hitSpan.recognizer != null;
 }
 
 class _RevealTextPainter extends CustomPainter {

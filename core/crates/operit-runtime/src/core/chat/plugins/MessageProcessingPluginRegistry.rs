@@ -1,6 +1,6 @@
 use super::super::hooks::PromptTurn::PromptTurn;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 use crate::util::stream::HotStream::MutableSharedStreamImpl;
+use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct MessageProcessingHookParams {

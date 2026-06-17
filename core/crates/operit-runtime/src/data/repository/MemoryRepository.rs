@@ -558,7 +558,8 @@ impl MemoryRepository {
             let Some(targetMemory) = memoryByObjectId.get(&link.targetMemoryId) else {
                 continue;
             };
-            if !memoryUuids.contains(&sourceMemory.uuid) || !memoryUuids.contains(&targetMemory.uuid)
+            if !memoryUuids.contains(&sourceMemory.uuid)
+                || !memoryUuids.contains(&targetMemory.uuid)
             {
                 continue;
             }

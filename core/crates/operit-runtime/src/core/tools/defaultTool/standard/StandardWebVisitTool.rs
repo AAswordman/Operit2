@@ -8,7 +8,9 @@ use reqwest::Url;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{LinkData, ToolResultData, VisitWebResultData};
+use crate::core::tools::ToolResultDataClasses::{
+    stringResultData, LinkData, ToolResultData, VisitWebResultData,
+};
 
 #[derive(Clone)]
 pub struct StandardWebVisitTool {
@@ -261,7 +263,7 @@ fn toolResultFromVisitWebData(tool: &AITool, result: VisitWebResultData) -> Tool
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result: ToolResultData::VisitWebResultData(result).toJson(),
+        result: ToolResultData::VisitWebResultData(result),
         error: None,
     }
 }
@@ -367,7 +369,7 @@ fn toolError(tool: &AITool, result: String, message: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result,
+        result: stringResultData(result),
         error: Some(message),
     }
 }

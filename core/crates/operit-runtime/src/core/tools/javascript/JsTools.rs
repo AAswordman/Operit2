@@ -3,128 +3,136 @@ pub fn getJsToolsDefinition() -> &'static str {
     r#"
         var Tools = {
             Files: {
-                list: function(path, environment) {
+                list: function(path) {
                     var params = { path: path };
-                    if (environment) params.environment = environment;
                     return toolCall("list_files", params);
                 },
                 read: function(pathOrOptions) {
-                    var params = typeof pathOrOptions === 'string' ? { path: pathOrOptions } : (pathOrOptions || {});
+                    var params = typeof pathOrOptions === 'string' ? { path: pathOrOptions } : {
+                        path: (pathOrOptions || {}).path,
+                        intent: (pathOrOptions || {}).intent,
+                        direct_image: (pathOrOptions || {}).direct_image
+                    };
                     return toolCall("read_file_full", params);
                 },
-                readBinary: function(path, environment) {
+                readBinary: function(path) {
                     var params = { path: path };
-                    if (environment) params.environment = environment;
                     return toolCall("read_file_binary", params);
                 },
-                readPart: function(path, startLine, endLine, environment) {
+                readPart: function(path, startLine, endLine) {
                     var params = { path: path };
                     if (startLine !== undefined) params.start_line = String(startLine);
                     if (endLine !== undefined) params.end_line = String(endLine);
-                    if (environment) params.environment = environment;
                     return toolCall("read_file_part", params);
                 },
-                write: function(path, content, append, environment) {
+                write: function(path, content, append) {
                     var params = { path: path, content: content };
                     if (append !== undefined) params.append = append ? "true" : "false";
-                    if (environment) params.environment = environment;
                     return toolCall("write_file", params);
                 },
-                writeBinary: function(path, base64Content, environment) {
+                writeBinary: function(path, base64Content) {
                     var params = { path: path, base64Content: base64Content };
-                    if (environment) params.environment = environment;
                     return toolCall("write_file_binary", params);
                 },
-                deleteFile: function(path, recursive, environment) {
+                deleteFile: function(path, recursive) {
                     var params = { path: path };
                     if (recursive !== undefined) params.recursive = recursive ? "true" : "false";
-                    if (environment) params.environment = environment;
                     return toolCall("delete_file", params);
                 },
-                exists: function(path, environment) {
+                exists: function(path) {
                     var params = { path: path };
-                    if (environment) params.environment = environment;
                     return toolCall("file_exists", params);
                 },
-                move: function(source, destination, environment) {
+                move: function(source, destination) {
                     var params = { source: source, destination: destination };
-                    if (environment) params.environment = environment;
                     return toolCall("move_file", params);
                 },
-                copy: function(source, destination, recursive, sourceEnvironment, destEnvironment) {
+                copy: function(source, destination, recursive) {
                     var params = { source: source, destination: destination };
                     if (recursive !== undefined) params.recursive = recursive ? "true" : "false";
-                    if (sourceEnvironment) params.source_environment = sourceEnvironment;
-                    if (destEnvironment) params.dest_environment = destEnvironment;
                     return toolCall("copy_file", params);
                 },
-                mkdir: function(path, createParents, environment) {
+                mkdir: function(path, createParents) {
                     var params = { path: path };
                     if (createParents !== undefined) params.create_parents = createParents ? "true" : "false";
-                    if (environment) params.environment = environment;
                     return toolCall("make_directory", params);
                 },
-                find: function(path, pattern, options, environment) {
-                    var params = Object.assign({ path: path, pattern: pattern }, options || {});
-                    if (environment) params.environment = environment;
+                find: function(path, pattern, options) {
+                    options = options || {};
+                    var params = { path: path, pattern: pattern };
+                    if (options.max_depth !== undefined) params.max_depth = options.max_depth;
+                    if (options.use_path_pattern !== undefined) params.use_path_pattern = options.use_path_pattern;
+                    if (options.case_insensitive !== undefined) params.case_insensitive = options.case_insensitive;
                     return toolCall("find_files", params);
                 },
                 grep: function(path, pattern, options) {
-                    return toolCall("grep_code", Object.assign({ path: path, pattern: pattern }, options || {}));
+                    options = options || {};
+                    var params = { path: path, pattern: pattern };
+                    if (options.file_pattern !== undefined) params.file_pattern = options.file_pattern;
+                    if (options.case_insensitive !== undefined) params.case_insensitive = options.case_insensitive;
+                    if (options.context_lines !== undefined) params.context_lines = options.context_lines;
+                    if (options.max_results !== undefined) params.max_results = options.max_results;
+                    return toolCall("grep_code", params);
                 },
                 grepContext: function(path, intent, options) {
-                    return toolCall("grep_context", Object.assign({ path: path, intent: intent }, options || {}));
+                    options = options || {};
+                    var params = { path: path, intent: intent };
+                    if (options.file_pattern !== undefined) params.file_pattern = options.file_pattern;
+                    if (options.max_results !== undefined) params.max_results = options.max_results;
+                    return toolCall("grep_context", params);
                 },
-                info: function(path, environment) {
+                info: function(path) {
                     var params = { path: path };
-                    if (environment) params.environment = environment;
                     return toolCall("file_info", params);
                 },
-                create: function(path, newContent, environment) {
+                create: function(path, newContent) {
                     var params = { path: path, new: newContent };
-                    if (environment) params.environment = environment;
                     return toolCall("create_file", params);
                 },
-                edit: function(path, oldContent, newContent, environment) {
+                edit: function(path, oldContent, newContent) {
                     var params = { path: path, old: oldContent, new: newContent };
-                    if (environment) params.environment = environment;
                     return toolCall("edit_file", params);
                 },
-                zip: function(source, destination, environment, includeRootDirectory) {
+                zip: function(source, destination, includeRootDirectory) {
                     var params = { source: source, destination: destination };
-                    if (environment) params.environment = environment;
                     if (includeRootDirectory !== undefined) params.include_root_directory = includeRootDirectory ? "true" : "false";
                     return toolCall("zip_files", params);
                 },
-                unzip: function(source, destination, environment) {
+                unzip: function(source, destination) {
                     var params = { source: source, destination: destination };
-                    if (environment) params.environment = environment;
                     return toolCall("unzip_files", params);
                 },
-                open: function(path, environment) {
+                open: function(path) {
                     var params = { path: path };
-                    if (environment) params.environment = environment;
                     return toolCall("open_file", params);
                 },
-                share: function(path, title, environment) {
+                share: function(path, title) {
                     var params = { path: path };
                     if (title) params.title = title;
-                    if (environment) params.environment = environment;
                     return toolCall("share_file", params);
                 },
-                download: function(urlOrOptions, destination, environment, headers) {
-                    var params = typeof urlOrOptions === 'string' ? { url: urlOrOptions } : (urlOrOptions || {});
+                download: function(urlOrOptions, destination, headers) {
+                    var params = {};
+                    if (typeof urlOrOptions === 'string') {
+                        params.url = urlOrOptions;
+                    } else {
+                        var options = urlOrOptions || {};
+                        if (options.url !== undefined) params.url = options.url;
+                        if (options.visit_key !== undefined) params.visit_key = options.visit_key;
+                        if (options.link_number !== undefined) params.link_number = options.link_number;
+                        if (options.image_number !== undefined) params.image_number = options.image_number;
+                        if (options.destination !== undefined) params.destination = options.destination;
+                        if (options.headers !== undefined) params.headers = options.headers;
+                    }
                     if (destination !== undefined && destination !== null) params.destination = destination;
-                    if (environment) params.environment = environment;
                     if (headers !== undefined && headers !== null && typeof headers === 'object') params.headers = JSON.stringify(headers);
                     if (params.headers !== undefined && params.headers !== null && typeof params.headers === 'object') params.headers = JSON.stringify(params.headers);
                     return toolCall("download_file", params);
                 },
-                apply: function(path, type, oldContent, newContent, environment) {
+                apply: function(path, type, oldContent, newContent) {
                     var params = { path: path, type: type };
                     if (oldContent !== undefined && oldContent !== null) params.old = String(oldContent);
                     if (newContent !== undefined && newContent !== null) params.new = String(newContent);
-                    if (environment) params.environment = environment;
                     return toolCall("apply_file", params);
                 }
             },

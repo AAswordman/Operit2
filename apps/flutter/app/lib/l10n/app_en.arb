@@ -43,6 +43,8 @@
       }
     }
   },
+  "statusWarningAiErrorSummary": "The AI made an error",
+  "statusWarningAiErrorDetailTitle": "AI Error Reason",
   "toolRunning": "Tool running...",
   "toolRunningWithName": "{toolName}: Tool running...",
   "@toolRunningWithName": {

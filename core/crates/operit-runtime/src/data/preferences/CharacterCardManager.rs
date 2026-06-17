@@ -934,8 +934,10 @@ impl CharacterCardManager {
         }
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_shared_memory_mounts")),
-            serde_json::to_string(&normalizeSharedMemoryMounts(card.sharedMemoryMounts.clone()))
-                .expect("shared memory mounts must serialize"),
+            serde_json::to_string(&normalizeSharedMemoryMounts(
+                card.sharedMemoryMounts.clone(),
+            ))
+            .expect("shared memory mounts must serialize"),
         );
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_tool_access_config_json")),
@@ -1188,7 +1190,11 @@ fn normalizeSharedMemoryMounts(
     let mut result = Vec::new();
     for mount in mounts {
         let sharedMemoryId = mount.sharedMemoryId.trim();
-        if sharedMemoryId.is_empty() || result.iter().any(|entry: &CharacterSharedMemoryMount| entry.sharedMemoryId == sharedMemoryId) {
+        if sharedMemoryId.is_empty()
+            || result
+                .iter()
+                .any(|entry: &CharacterSharedMemoryMount| entry.sharedMemoryId == sharedMemoryId)
+        {
             continue;
         }
         result.push(CharacterSharedMemoryMount {

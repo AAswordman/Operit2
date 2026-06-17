@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
-use crate::util::OperitPaths;
 
 pub struct ApiPreferences {
     apiDataStore: PreferencesDataStore,

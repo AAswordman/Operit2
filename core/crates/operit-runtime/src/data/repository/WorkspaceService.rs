@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
@@ -10,6 +9,8 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::files::PathMapper::PathMapper;
+use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::data::dao::ChatDao::ChatDao;
 use crate::data::db::AppDatabase::AppDatabase;
 
@@ -46,6 +47,9 @@ pub struct WorkspaceManagementSummary {
 pub struct WorkspaceService {
     chatDao: ChatDao,
     fileSystemHost: Arc<dyn FileSystemHost>,
+    runtimeStoreRoot: std::path::PathBuf,
+    appFilesRoot: Option<std::path::PathBuf>,
+    workspaceCollectionRoot: std::path::PathBuf,
 }
 
 impl WorkspaceService {
@@ -53,12 +57,22 @@ impl WorkspaceService {
     pub fn getInstance(context: &OperitApplicationContext) -> Self {
         let database = AppDatabase::getDatabase(RuntimeStorePaths::default())
             .expect("AppDatabase must initialize for WorkspaceService");
+        let runtimeStoreRoot = context
+            .runtimeStorageHost
+            .as_ref()
+            .and_then(|host| host.rootDir())
+            .expect("RuntimeStorageHost root must be configured for WorkspaceService");
+        let workspaceCollectionRoot =
+            RuntimeStorePaths::new(runtimeStoreRoot.clone()).workspace_dir();
         Self {
             chatDao: database.chatDao(),
             fileSystemHost: context
                 .fileSystemHost
                 .clone()
                 .expect("FileSystemHost must be configured for WorkspaceService"),
+            runtimeStoreRoot,
+            appFilesRoot: context.appFilesRoot.clone(),
+            workspaceCollectionRoot,
         }
     }
 
@@ -69,25 +83,22 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let directoryPath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
-        let entries = self
-            .fileSystemHost
-            .listFiles(&directoryPath)
-            .map_err(|error| error.message)?;
-        let mut workspaceEntries = entries
-            .into_iter()
-            .map(|entry| {
-                let childRelativePath = joinRelativePath(&relativePath, &entry.name);
-                WorkspaceFileEntry {
-                    name: entry.name,
-                    path: self.resolveWorkspacePath(&workspaceRoot, &childRelativePath),
-                    relativePath: childRelativePath,
-                    isDirectory: entry.isDirectory,
-                    size: entry.size,
-                    lastModified: entry.lastModified,
-                }
-            })
-            .collect::<Vec<_>>();
+        let directoryPath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
+        let vfs = self.vfsForWorkspace(&workspaceRoot);
+        let entries = vfs.listFiles(&directoryPath)?;
+        let mut workspaceEntries = Vec::new();
+        for entry in entries {
+            let childRelativePath = joinRelativePath(&relativePath, &entry.name)?;
+            let path = self.resolveWorkspacePath(&workspaceRoot, &childRelativePath)?;
+            workspaceEntries.push(WorkspaceFileEntry {
+                name: entry.name,
+                path,
+                relativePath: childRelativePath,
+                isDirectory: entry.isDirectory,
+                size: entry.size,
+                lastModified: entry.lastModified,
+            });
+        }
         workspaceEntries.sort_by(|left, right| {
             left.isDirectory
                 .cmp(&right.isDirectory)
@@ -104,10 +115,8 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<String, String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
-        self.fileSystemHost
-            .readFile(&filePath)
-            .map_err(|error| error.message)
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
+        self.vfsForWorkspace(&workspaceRoot).readFile(&filePath)
     }
 
     #[allow(non_snake_case)]
@@ -117,11 +126,10 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<WorkspaceFileBytes, String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
         let bytes = self
-            .fileSystemHost
-            .readFileBytes(&filePath)
-            .map_err(|error| error.message)?;
+            .vfsForWorkspace(&workspaceRoot)
+            .readFileBytes(&filePath)?;
         Ok(WorkspaceFileBytes {
             base64Content: STANDARD.encode(bytes),
         })
@@ -135,10 +143,9 @@ impl WorkspaceService {
         content: String,
     ) -> Result<(), String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
-        self.fileSystemHost
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
+        self.vfsForWorkspace(&workspaceRoot)
             .writeFile(&filePath, &content, false)
-            .map_err(|error| error.message)
     }
 
     #[allow(non_snake_case)]
@@ -149,22 +156,19 @@ impl WorkspaceService {
         base64Content: String,
     ) -> Result<(), String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
-        self.fileSystemHost
+        self.vfsForWorkspace(&workspaceRoot)
             .writeFileBytes(&filePath, &bytes)
-            .map_err(|error| error.message)
     }
 
     #[allow(non_snake_case)]
     pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
         let workspaceRoot = self.workspaceRoot(chatId)?;
-        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath);
-        self.fileSystemHost
-            .openFile(&filePath)
-            .map_err(|error| error.message)
+        let filePath = self.resolveWorkspacePath(&workspaceRoot, &relativePath)?;
+        self.vfsForWorkspace(&workspaceRoot).openFile(&filePath)
     }
 
     #[allow(non_snake_case)]
@@ -173,8 +177,7 @@ impl WorkspaceService {
             .chatDao
             .getAllChatsDirectly()
             .map_err(|error| error.to_string())?;
-        let workspaceRoot = RuntimeStorePaths::default().workspace_dir();
-        let workspaceRootText = workspaceRoot.to_string_lossy().to_string();
+        let workspaceRootText = PathMapper::workspaceCollectionPath().to_string();
         let mut boundWorkspaceNames = std::collections::HashSet::new();
         let mut boundChatCount = 0i32;
 
@@ -187,15 +190,16 @@ impl WorkspaceService {
                 continue;
             }
             boundChatCount += 1;
-            let workspacePath = PathBuf::from(workspace);
-            let Ok(relativePath) = workspacePath.strip_prefix(&workspaceRoot) else {
+            let Some(relativePath) =
+                PathMapper::relativePath(PathMapper::workspaceCollectionPath(), workspace)?
+            else {
                 continue;
             };
-            let components = relativePath.components().collect::<Vec<_>>();
-            if components.len() != 1 {
+            let components = relativePath.split('/').collect::<Vec<_>>();
+            if components.len() != 1 || components[0].is_empty() {
                 continue;
             }
-            boundWorkspaceNames.insert(components[0].as_os_str().to_string_lossy().to_string());
+            boundWorkspaceNames.insert(components[0].to_string());
         }
 
         let mut unboundWorkspaces = Vec::new();
@@ -211,7 +215,7 @@ impl WorkspaceService {
                 continue;
             }
             unboundWorkspaces.push(WorkspaceManagementEntry {
-                fullPath: workspaceRoot.join(&name).to_string_lossy().to_string(),
+                fullPath: PathMapper::workspacePath(&name)?,
                 name,
                 size: entry.size,
             });
@@ -239,7 +243,9 @@ impl WorkspaceService {
         for workspaceName in workspaceNames {
             validateWorkspaceName(&workspaceName)?;
             if !unboundNames.contains(&workspaceName) {
-                return Err(format!("workspace is not an unbound runtime workspace: {workspaceName}"));
+                return Err(format!(
+                    "workspace is not an unbound runtime workspace: {workspaceName}"
+                ));
             }
             storage
                 .delete(&format!("{WORKSPACE_DIR_PATH}/{workspaceName}"), true)
@@ -263,36 +269,37 @@ impl WorkspaceService {
     }
 
     #[allow(non_snake_case)]
-    fn resolveWorkspacePath(&self, workspaceRoot: &str, relativePath: &str) -> String {
-        let trimmedRelativePath = normalizeRelativePath(relativePath);
-        if trimmedRelativePath.is_empty() {
-            return workspaceRoot.to_string();
-        }
-        PathBuf::from(workspaceRoot)
-            .join(trimmedRelativePath)
-            .to_string_lossy()
-            .to_string()
+    fn vfsForWorkspace(&self, workspaceRoot: &str) -> VisualFileSystem {
+        VisualFileSystem::new(
+            self.fileSystemHost.clone(),
+            PathMapper::new(
+                self.runtimeStoreRoot.clone(),
+                self.appFilesRoot.clone(),
+                self.workspaceCollectionRoot.clone(),
+                Some(workspaceRoot.to_string()),
+            ),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    fn resolveWorkspacePath(
+        &self,
+        workspaceRoot: &str,
+        relativePath: &str,
+    ) -> Result<String, String> {
+        PathMapper::joinVfsPath(workspaceRoot, relativePath)
     }
 }
 
 #[allow(non_snake_case)]
-fn joinRelativePath(parent: &str, child: &str) -> String {
-    let parent = normalizeRelativePath(parent);
-    let child = normalizeRelativePath(child);
+fn joinRelativePath(parent: &str, child: &str) -> Result<String, String> {
+    let parent = PathMapper::normalizeRelativePath(parent)?;
+    let child = PathMapper::normalizeRelativePath(child)?;
     if parent.is_empty() {
-        child
+        Ok(child)
     } else {
-        format!("{parent}/{child}")
+        Ok(format!("{parent}/{child}"))
     }
-}
-
-#[allow(non_snake_case)]
-fn normalizeRelativePath(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim()
-        .trim_start_matches('/')
-        .trim_end_matches('/')
-        .to_string()
 }
 
 #[allow(non_snake_case)]

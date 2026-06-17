@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
 use serde::{Deserialize, Serialize};
-use crate::util::OperitPaths;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitHubUser {

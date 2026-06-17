@@ -44,10 +44,10 @@ pub mod PromptTagManager;
 pub mod PromptVersionManager;
 #[path = "RemoteAnnouncementPreferences.rs"]
 pub mod RemoteAnnouncementPreferences;
-#[path = "SkillVisibilityPreferences.rs"]
-pub mod SkillVisibilityPreferences;
 #[path = "SharedMemoryStoreManager.rs"]
 pub mod SharedMemoryStoreManager;
+#[path = "SkillVisibilityPreferences.rs"]
+pub mod SkillVisibilityPreferences;
 #[path = "ToolCollapseMode.rs"]
 pub mod ToolCollapseMode;
 #[path = "UserPreferencesManager.rs"]
@@ -79,8 +79,8 @@ pub use PreferenceStorageManager::*;
 pub use PromptTagManager::*;
 pub use PromptVersionManager::*;
 pub use RemoteAnnouncementPreferences::*;
-pub use SkillVisibilityPreferences::*;
 pub use SharedMemoryStoreManager::*;
+pub use SkillVisibilityPreferences::*;
 pub use ToolCollapseMode::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;

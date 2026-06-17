@@ -3,12 +3,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 
-use operit_store::PreferencesDataStore::MutableStateFlow;
 use operit_store::PreferencesDataStore::mutableStateFlow;
+use operit_store::PreferencesDataStore::MutableStateFlow;
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ConversationMarkupManager;
+use crate::api::chat::enhance::ConversationMarkupManager::{
+    ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
+    ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
+};
 use crate::api::chat::enhance::ConversationService::{
     ConversationService, HistoryHookContext, PrepareConversationHistoryRequest,
     PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
@@ -17,10 +20,10 @@ use crate::api::chat::enhance::MultiServiceManager::{MultiServiceManager, Shared
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
-use crate::api::chat::library::MemoryLibrary::{MemoryLibrary, promptTurnsToMemoryPairs};
+use crate::api::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
 use crate::api::chat::llmprovider::AIService::{
-    AiServiceError, SendMessageRequest, SharedAiResponseStream, TokenCounts,
-    response_stream_from_chunks,
+    response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
+    TokenCounts,
 };
 use crate::core::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -29,10 +32,10 @@ use crate::core::config::SystemPromptConfig::{
     ToolExposureMode as SystemToolExposureMode,
 };
 use crate::core::config::SystemToolPrompts::SystemToolPrompts;
-use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::ModelConfigData::ResolvedModelConfig;
@@ -40,15 +43,15 @@ use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::util::OperitPaths::characterMemoryOwnerKey;
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::data::skill::SkillRepository::SkillRepository;
-use crate::util::AppLogger::AppLogger;
-use crate::util::ChatMarkupRegex::{ChatMarkupRegex, attr_value};
-use crate::util::ChatUtils::ChatUtils;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
-use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, with_event_channel_shared};
+use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
 use crate::util::stream::Stream::{FnStream, Stream};
+use crate::util::AppLogger::AppLogger;
+use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+use crate::util::ChatUtils::ChatUtils;
+use crate::util::OperitPaths::characterMemoryOwnerKey;
 
 const TAG: &str = "EnhancedAIService";
 
@@ -113,7 +116,6 @@ pub struct SendMessageOptions {
     pub chatId: Option<String>,
     pub chatHistory: Vec<PromptTurn>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub functionType: FunctionType,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
@@ -146,7 +148,6 @@ impl SendMessageOptions {
             chatId: None,
             chatHistory: Vec::new(),
             workspacePath: None,
-            workspaceEnv: None,
             functionType: FunctionType::CHAT,
             promptFunctionType: PromptFunctionType::CHAT,
             enableThinking: false,
@@ -437,7 +438,6 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             base: SystemPromptOptions {
                 chat_id: request.chat_id.clone(),
                 workspace_path: request.workspace_path.clone(),
-                workspace_env: request.workspace_env.clone(),
                 use_english,
                 custom_system_prompt_template,
                 enable_tools: true,
@@ -621,14 +621,12 @@ impl EnhancedAIService {
         chatId: Option<String>,
         roleCardId: Option<String>,
         workspacePath: Option<String>,
-        workspaceEnv: Option<String>,
         enableThinking: bool,
         stream: bool,
         isSubTask: bool,
     ) -> HashMap<String, Value> {
         HashMap::from([
             ("workspacePath".to_string(), json!(workspacePath)),
-            ("workspaceEnv".to_string(), json!(workspaceEnv)),
             ("enableThinking".to_string(), json!(enableThinking)),
             ("stream".to_string(), json!(stream)),
             ("isSubTask".to_string(), json!(isSubTask)),
@@ -656,7 +654,6 @@ impl EnhancedAIService {
         processedInput: String,
         chatId: Option<String>,
         workspacePath: Option<String>,
-        workspaceEnv: Option<String>,
         promptFunctionType: PromptFunctionType,
         customSystemPromptTemplate: Option<String>,
         roleCardId: Option<String>,
@@ -688,7 +685,6 @@ impl EnhancedAIService {
                 processed_input: processedInput,
                 chat_id: chatId,
                 workspace_path: workspacePath,
-                workspace_env: workspaceEnv,
                 prompt_function_type: prompt_function_type_name(&promptFunctionType).to_string(),
                 custom_system_prompt_template: customSystemPromptTemplate,
                 role_card_id: roleCardId,
@@ -803,7 +799,6 @@ impl EnhancedAIService {
         chatHistory: Vec<PromptTurn>,
         chatId: Option<String>,
         workspacePath: Option<String>,
-        workspaceEnv: Option<String>,
         promptFunctionType: PromptFunctionType,
         roleCardId: Option<String>,
         enableGroupOrchestrationHint: bool,
@@ -820,7 +815,6 @@ impl EnhancedAIService {
             message.clone(),
             chatId.clone(),
             workspacePath,
-            workspaceEnv,
             promptFunctionType.clone(),
             None,
             roleCardId.clone(),
@@ -872,8 +866,15 @@ impl EnhancedAIService {
     pub fn invalidateExecutionContext(
         &mut self,
         context: &mut MessageExecutionContext,
-        _reason: String,
+        reason: String,
     ) {
+        AppLogger::d(
+            TAG,
+            &format!(
+                "执行上下文已失效: id={}, reason={}",
+                context.executionId, reason
+            ),
+        );
         context.isConversationActive = false;
         if let Some(active) = self
             .shared_state()
@@ -885,6 +886,7 @@ impl EnhancedAIService {
     }
 
     pub fn invalidateAllExecutionContexts(&mut self, reason: String) {
+        AppLogger::d(TAG, &format!("准备失效全部执行上下文: reason={}", reason));
         let ids = self
             .shared_state()
             .active_execution_contexts
@@ -995,10 +997,12 @@ impl EnhancedAIService {
             .as_ref()
             .map(|card| card.id.clone())
             .ok_or_else(|| {
-                AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
+                AiServiceError::RequestFailed(
+                    "roleCardId is required to resolve USER.md".to_string(),
+                )
             })?;
-        let userOwnerKey = characterMemoryOwnerKey(&activeCardId)
-            .map_err(AiServiceError::RequestFailed)?;
+        let userOwnerKey =
+            characterMemoryOwnerKey(&activeCardId).map_err(AiServiceError::RequestFailed)?;
         let userPreferencesText = UserMarkdownRepository::new(userOwnerKey)
             .readUserMarkdown()
             .map_err(AiServiceError::RequestFailed)?;
@@ -1095,7 +1099,6 @@ impl EnhancedAIService {
             .unwrap_or_else(|| "__DEFAULT_CHAT__".to_string());
         let chatHistory = options.chatHistory.clone();
         let workspacePath = options.workspacePath.clone();
-        let workspaceEnv = options.workspaceEnv.clone();
         let functionType = options.functionType.clone();
         let promptFunctionType = options.promptFunctionType.clone();
         let enableThinking = options.enableThinking;
@@ -1120,6 +1123,14 @@ impl EnhancedAIService {
         let onNonFatalError = options.onNonFatalError;
         let onTokenLimitExceeded = options.onTokenLimitExceeded;
         let onToolInvocation = options.onToolInvocation;
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage调用开始: 功能类型={}, 提示词类型={}",
+                function_type_name(&functionType),
+                prompt_function_type_name(&promptFunctionType)
+            ),
+        );
 
         {
             let mut shared = self.shared_state();
@@ -1155,13 +1166,13 @@ impl EnhancedAIService {
             });
         }
 
+        let startTime = crate::core::chat::AIMessageManager::messageTimingNow();
         lifecycle.push(SendMessageLifecycleStage::PrepareConversationHistory);
         let preparedHistory = self.prepareConversationHistory(
             execContext.conversationHistory.clone(),
             message.clone(),
             chatId.clone(),
             workspacePath.clone(),
-            workspaceEnv.clone(),
             promptFunctionType.clone(),
             customSystemPromptTemplate.clone(),
             roleCardId.clone(),
@@ -1173,6 +1184,16 @@ impl EnhancedAIService {
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
             &runtime,
+        );
+        let tAfterPrepareHistory = crate::core::chat::AIMessageManager::messageTimingNow();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage本地耗时: prepareConversationHistory={}ms",
+                tAfterPrepareHistory
+                    .startedAtMs
+                    .saturating_sub(startTime.startedAtMs)
+            ),
         );
         lifecycle.push(SendMessageLifecycleStage::SyncPreparedHistoryToExecutionContext);
         execContext.conversationHistory.clear();
@@ -1194,6 +1215,16 @@ impl EnhancedAIService {
             chatModelIdOverride.clone(),
             &runtime,
         );
+        let tAfterModelParams = crate::core::chat::AIMessageManager::messageTimingNow();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage本地耗时: getModelParametersForFunction={}ms",
+                tAfterModelParams
+                    .startedAtMs
+                    .saturating_sub(tAfterPrepareHistory.startedAtMs)
+            ),
+        );
         lifecycle.push(SendMessageLifecycleStage::ClearPerRequestTokenCounts);
         {
             let mut shared = self.shared_state();
@@ -1212,12 +1243,32 @@ impl EnhancedAIService {
             chatModelIdOverride.clone(),
             &runtime,
         );
+        let tAfterGetTools = crate::core::chat::AIMessageManager::messageTimingNow();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage本地耗时: getAvailableToolsForFunction={}ms",
+                tAfterGetTools
+                    .startedAtMs
+                    .saturating_sub(tAfterModelParams.startedAtMs)
+            ),
+        );
         lifecycle.push(SendMessageLifecycleStage::GetAIServiceForFunction);
         let serviceForFunction = self.getAIServiceForFunction(
             functionType.clone(),
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
             &mut runtime,
+        );
+        let tAfterGetService = crate::core::chat::AIMessageManager::messageTimingNow();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage本地耗时: getAIServiceForFunction={}ms",
+                tAfterGetService
+                    .startedAtMs
+                    .saturating_sub(tAfterGetTools.startedAtMs)
+            ),
         );
         let mut finalProcessedInput = message.clone();
         let mut finalPreparedHistory = preparedHistory;
@@ -1238,7 +1289,6 @@ impl EnhancedAIService {
                     chatId.clone(),
                     roleCardId.clone(),
                     workspacePath.clone(),
-                    workspaceEnv.clone(),
                     enableThinking,
                     stream,
                     isSubTask,
@@ -1290,6 +1340,18 @@ impl EnhancedAIService {
                 true,
             )
             .await?;
+        let tBeforeRequest = crate::core::chat::AIMessageManager::messageTimingNow();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "sendMessage请求前准备耗时: {}ms, 流式输出: {}",
+                tBeforeRequest
+                    .startedAtMs
+                    .saturating_sub(startTime.startedAtMs),
+                stream
+            ),
+        );
+        let requestStartTime = crate::core::chat::AIMessageManager::messageTimingNow();
         let _ = requestWindowSize;
 
         lifecycle.push(SendMessageLifecycleStage::SendMessageRequest);
@@ -1322,7 +1384,7 @@ impl EnhancedAIService {
         };
         let mut provider_stream = {
             let mut service = serviceForFunction.lock().await;
-            service
+            match service
                 .send_message(SendMessageRequest {
                     chat_history: requestHistory.clone(),
                     model_parameters: modelParameters.clone(),
@@ -1334,7 +1396,22 @@ impl EnhancedAIService {
                     on_non_fatal_error: providerOnNonFatalError,
                     on_tool_invocation: onToolInvocation.clone(),
                 })
-                .await?
+                .await
+            {
+                Ok(stream) => stream,
+                Err(error) => {
+                    self.invalidateExecutionContext(
+                        &mut execContext,
+                        "sendMessage.provider.error".to_string(),
+                    );
+                    AppLogger::e(TAG, &format!("发送消息时发生错误: {}", error));
+                    if !isSubTask {
+                        self.stopAiService(characterName.clone(), avatarUri.clone());
+                    }
+                    self.unregisterExecutionContext(&execContext);
+                    return Err(error);
+                }
+            }
         };
         lifecycle.push(SendMessageLifecycleStage::StartAssistantResponseRound);
         self.startAssistantResponseRound(&mut execContext);
@@ -1351,6 +1428,8 @@ impl EnhancedAIService {
         let mut responseChunks = Vec::new();
         let mut totalChars = 0;
         let mut isFirstChunk = true;
+        let mut chunkCount = 0;
+        let mut lastLogTime = crate::core::chat::AIMessageManager::messageTimingNow().startedAtMs;
         provider_stream.collect(&mut |content| {
             if isFirstChunk {
                 if !isSubTask {
@@ -1359,8 +1438,26 @@ impl EnhancedAIService {
                     });
                 }
                 isFirstChunk = false;
+                crate::core::chat::AIMessageManager::logMessageTiming(
+                    "enhanced.sendMessage.firstResponseChunk",
+                    requestStartTime.clone(),
+                    Some(format!(
+                        "functionType={}, stream={}",
+                        function_type_name(&functionType),
+                        stream
+                    )),
+                );
             }
+            chunkCount += 1;
             totalChars += content.len() as i32;
+            let currentTime = crate::core::chat::AIMessageManager::messageTimingNow().startedAtMs;
+            if currentTime.saturating_sub(lastLogTime) > 5000 {
+                AppLogger::d(
+                    TAG,
+                    &format!("已接收 {} 个内容块，总计 {} 个字符", chunkCount, totalChars),
+                );
+                lastLogTime = currentTime;
+            }
             execContext.streamBuffer.push_str(&content);
             execContext
                 .roundManager
@@ -1379,6 +1476,19 @@ impl EnhancedAIService {
                 service.output_token_count(),
             )
         };
+        AppLogger::d(
+            TAG,
+            &format!(
+                "provider send_message end chatId={} providerModel={} inputTokens={} outputTokens={} cachedInputTokens={} chunkCount={} totalChars={}",
+                logChatId,
+                providerModel,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                chunkCount,
+                totalChars
+            ),
+        );
         {
             let mut shared = self.shared_state();
             shared.accumulated_input_token_count += inputTokens;
@@ -1389,36 +1499,84 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
+        let (
+            accumulatedInputTokenCount,
+            accumulatedOutputTokenCount,
+            accumulatedCachedInputTokenCount,
+        ) = {
+            let shared = self.shared_state();
+            (
+                shared.accumulated_input_token_count,
+                shared.accumulated_output_token_count,
+                shared.accumulated_cached_input_token_count,
+            )
+        };
+        AppLogger::d(
+            TAG,
+            &format!(
+                "Token count updated for {}. Input: {}, Output: {}, CachedInput: {}. Turn Accumulated: {}, {}, {}",
+                function_type_name(&functionType),
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                accumulatedInputTokenCount,
+                accumulatedOutputTokenCount,
+                accumulatedCachedInputTokenCount
+            ),
+        );
+        crate::core::chat::AIMessageManager::logMessageTiming(
+            "enhanced.sendMessage.streamComplete",
+            requestStartTime.clone(),
+            Some(format!(
+                "functionType={}, totalChars={}, stream={}",
+                function_type_name(&functionType),
+                totalChars,
+                stream
+            )),
+        );
         let _ = totalChars;
 
         lifecycle.push(SendMessageLifecycleStage::ProcessStreamCompletion);
-        self.processStreamCompletion(
-            &responseStream,
-            &mut execContext,
-            functionType,
-            promptFunctionType,
-            enableThinking,
-            enableMemoryAutoUpdate,
-            onNonFatalError,
-            onTokenLimitExceeded,
-            maxTokens,
-            tokenUsageThreshold,
-            isSubTask,
-            characterName.clone(),
-            avatarUri.clone(),
-            roleCardId,
-            chatId.clone(),
-            onToolInvocation,
-            notifyReplyOverride,
-            chatProviderIdOverride.clone(),
-            chatModelIdOverride,
-            stream,
-            enableGroupOrchestrationHint,
-            disableWarning,
-            callbacks,
-            &mut runtime,
-        )
-        .await?;
+        if let Err(error) = self
+            .processStreamCompletion(
+                &responseStream,
+                &mut execContext,
+                functionType,
+                promptFunctionType,
+                enableThinking,
+                enableMemoryAutoUpdate,
+                onNonFatalError,
+                onTokenLimitExceeded,
+                maxTokens,
+                tokenUsageThreshold,
+                isSubTask,
+                characterName.clone(),
+                avatarUri.clone(),
+                roleCardId,
+                chatId.clone(),
+                onToolInvocation,
+                notifyReplyOverride,
+                chatProviderIdOverride.clone(),
+                chatModelIdOverride,
+                stream,
+                enableGroupOrchestrationHint,
+                disableWarning,
+                callbacks,
+                &mut runtime,
+            )
+            .await
+        {
+            self.invalidateExecutionContext(
+                &mut execContext,
+                "processStreamCompletion.error".to_string(),
+            );
+            AppLogger::e(TAG, &format!("处理流完成时发生错误: {}", error));
+            if !isSubTask {
+                self.stopAiService(characterName.clone(), avatarUri.clone());
+            }
+            self.unregisterExecutionContext(&execContext);
+            return Err(error);
+        }
 
         if enableMemoryAutoUpdate && !isSubTask {
             let memoryContent = execContext.roundManager.getDisplayContent();
@@ -1734,7 +1892,7 @@ impl EnhancedAIService {
                 return Ok(());
             }
             let pureThinkingWarning = ConversationMarkupManager::createWarningStatus(
-                "enhanced_pure_thinking_only_warning",
+                ENHANCED_PURE_THINKING_ONLY_WARNING,
             );
             context
                 .roundManager
@@ -1835,7 +1993,7 @@ impl EnhancedAIService {
                 return Ok(());
             }
             let warningStatus = ConversationMarkupManager::createWarningStatus(
-                "enhanced_truncated_tool_call_warning",
+                ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
             );
             let warningDisplayContent = format!("\n{warningStatus}");
             context.roundManager.appendContent(&warningDisplayContent);
@@ -2262,6 +2420,7 @@ impl EnhancedAIService {
         self.multi_service_manager.cancelAllStreaming().await;
         self.input_processing_state
             .set_value(InputProcessingState::Idle);
+        AppLogger::d(TAG, "Conversation canceled");
         {
             let mut shared = self.shared_state();
             shared.per_request_token_counts = None;
@@ -2275,6 +2434,7 @@ impl EnhancedAIService {
             shared.current_complete_callback_registered = false;
         }
         self.stopAiService(None, None);
+        AppLogger::d(TAG, "Conversation cancellation complete");
     }
 
     pub fn cancelAllToolExecutions(&mut self) {

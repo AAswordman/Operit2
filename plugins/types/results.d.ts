@@ -49,7 +49,6 @@ export interface FileEntry {
 }
 
 export interface FileExistsData {
-    env: 'android' | 'linux';
     path: string;
     exists: boolean;
     isDirectory?: boolean;
@@ -60,7 +59,6 @@ export interface FileExistsData {
  * Detailed file information data
  */
 export interface FileInfoData {
-    env: 'android' | 'linux';
     path: string;
     exists: boolean;
     fileType: string;  // "file", "directory", or "other"
@@ -76,7 +74,6 @@ export interface FileInfoData {
  * Directory listing data
  */
 export interface DirectoryListingData {
-    env: 'android' | 'linux';
     path: string;
     entries: FileEntry[];
     toString(): string;
@@ -86,7 +83,6 @@ export interface DirectoryListingData {
  * File content data
  */
 export interface FileContentData {
-    env: 'android' | 'linux';
     path: string;
     content: string;
     size: number;
@@ -97,7 +93,6 @@ export interface FileContentData {
  * Binary file content data (Base64 encoded)
  */
 export interface BinaryFileContentData {
-    env: 'android' | 'linux';
     path: string;
     /** Base64 encoded content of the file */
     contentBase64: string;
@@ -110,7 +105,6 @@ export interface BinaryFileContentData {
  * File part content data
  */
 export interface FilePartContentData {
-    env: 'android' | 'linux';
     path: string;
     content: string;
     partIndex: number;
@@ -125,7 +119,6 @@ export interface FilePartContentData {
  * File operation data
  */
 export interface FileOperationData {
-    env: 'android' | 'linux';
     operation: string;
     path: string;
     successful: boolean;
@@ -146,7 +139,6 @@ export interface FileApplyResultData {
  * Find files result data
  */
 export interface FindFilesResultData {
-    env: 'android' | 'linux';
     path: string;
     pattern: string;
     files: string[];
@@ -174,7 +166,6 @@ export interface GrepFileMatch {
  * Grep search result data
  */
 export interface GrepResultData {
-    env: 'android' | 'linux';
     searchPath: string;
     pattern: string;
     filePattern?: string;

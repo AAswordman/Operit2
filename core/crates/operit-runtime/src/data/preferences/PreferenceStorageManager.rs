@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use crate::util::OperitPaths;
 
 pub struct PreferenceStorageManager {}
 

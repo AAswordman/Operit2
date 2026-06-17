@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
+import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 
 const Duration _groupFadeDuration = Duration(milliseconds: 800);
@@ -329,39 +330,41 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            InkWell(
-              onTap: () {
-                setState(() {
-                  final nextExpanded = !_expanded;
-                  _expanded = nextExpanded;
-                  _userOverride = nextExpanded;
-                });
-              },
-              borderRadius: BorderRadius.circular(6),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: <Widget>[
-                    AnimatedRotation(
-                      turns: _expanded ? 0.25 : 0,
-                      duration: widget.forceExpandGroups
-                          ? _instantDuration
-                          : _arrowRotationDuration,
-                      child: Icon(
-                        Icons.keyboard_arrow_right,
-                        size: 18,
-                        color: widget.textColor.withValues(alpha: 0.7),
+            MessagePressShieldRegion(
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    final nextExpanded = !_expanded;
+                    _expanded = nextExpanded;
+                    _userOverride = nextExpanded;
+                  });
+                },
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: <Widget>[
+                      AnimatedRotation(
+                        turns: _expanded ? 0.25 : 0,
+                        duration: widget.forceExpandGroups
+                            ? _instantDuration
+                            : _arrowRotationDuration,
+                        child: Icon(
+                          Icons.keyboard_arrow_right,
+                          size: 18,
+                          color: widget.textColor.withValues(alpha: 0.7),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      titleText,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: widget.textColor.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.w500,
+                      const SizedBox(width: 6),
+                      Text(
+                        titleText,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: widget.textColor.withValues(alpha: 0.7),
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

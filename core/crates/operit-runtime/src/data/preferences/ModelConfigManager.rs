@@ -2,17 +2,17 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
     ModelConfigConnectionTester, ModelConnectionTestReport,
 };
+use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
+use crate::data::model::ModelCatalog::ModelCatalog;
 use crate::data::model::ModelConfigData::{
     default_deepseek_provider, ApiProviderType, AvailableProviderModel,
     AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
     ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
     ProviderProfile, ResolvedModelConfig,
 };
-use crate::data::model::ModelCatalog::ModelCatalog;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
@@ -44,10 +44,7 @@ pub enum ModelConfigError {
     #[error("invalid provider type: {0}")]
     InvalidProviderType(String),
     #[error("available provider model not found: {providerId}:{modelId}")]
-    AvailableProviderModelNotFound {
-        providerId: String,
-        modelId: String,
-    },
+    AvailableProviderModelNotFound { providerId: String, modelId: String },
     #[error("model list fetch error: {0}")]
     ModelListFetch(String),
     #[error("connection test error: {0}")]
@@ -146,7 +143,10 @@ impl ModelConfigManager {
         Ok(summaries)
     }
 
-    pub fn getProviderCatalogEntries(&self) -> Result<Vec<crate::data::model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError> {
+    pub fn getProviderCatalogEntries(
+        &self,
+    ) -> Result<Vec<crate::data::model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError>
+    {
         ModelCatalog::providers().map_err(ModelConfigError::ModelListFetch)
     }
 
@@ -224,11 +224,10 @@ impl ModelConfigManager {
         let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog)
             .map_err(ModelConfigError::ModelListFetch)?;
         for remoteModel in remoteModels {
-            if !models.iter().any(|model| {
-                model
-                    .modelId
-                    .eq_ignore_ascii_case(&remoteModel.modelId)
-            }) {
+            if !models
+                .iter()
+                .any(|model| model.modelId.eq_ignore_ascii_case(&remoteModel.modelId))
+            {
                 models.push(remoteModel);
             }
         }
@@ -289,7 +288,11 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    pub fn getModelProfile(&self, providerId: &str, modelId: &str) -> Result<ModelProfile, ModelConfigError> {
+    pub fn getModelProfile(
+        &self,
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<ModelProfile, ModelConfigError> {
         let (_, model) = self.findModel(providerId, modelId)?;
         Ok(model)
     }
@@ -404,12 +407,14 @@ impl ModelConfigManager {
         model: &ModelProfile,
     ) -> Result<ResolvedModelConfig, ModelConfigError> {
         let catalogModel = match &model.catalogKey {
-            Some(key) => Some(ModelCatalog::model(&key.providerTypeId, &key.modelId).map_err(
-                |_| ModelConfigError::CatalogModelNotFound {
-                    providerTypeId: key.providerTypeId.clone(),
-                    modelId: key.modelId.clone(),
-                },
-            )?),
+            Some(key) => Some(
+                ModelCatalog::model(&key.providerTypeId, &key.modelId).map_err(|_| {
+                    ModelConfigError::CatalogModelNotFound {
+                        providerTypeId: key.providerTypeId.clone(),
+                        modelId: key.modelId.clone(),
+                    }
+                })?,
+            ),
             None => None,
         };
 
@@ -433,14 +438,11 @@ impl ModelConfigManager {
         let capabilities = match &model.capabilitiesOverride {
             Some(capabilities) => capabilities.clone(),
             None => match &catalogModel {
-                Some(entry) => entry.capabilities.clone().ok_or_else(|| {
-                    ModelConfigError::MissingModelCapabilities(model.id.clone())
-                })?,
-                None => {
-                    return Err(ModelConfigError::MissingModelCapabilities(
-                        model.id.clone(),
-                    ))
-                }
+                Some(entry) => entry
+                    .capabilities
+                    .clone()
+                    .ok_or_else(|| ModelConfigError::MissingModelCapabilities(model.id.clone()))?,
+                None => return Err(ModelConfigError::MissingModelCapabilities(model.id.clone())),
             },
         };
         let builtinTools = match &model.builtinToolsOverride {
@@ -491,7 +493,9 @@ impl ModelConfigManager {
         preferences: &Preferences,
     ) -> Result<Vec<String>, PreferencesDataStoreError> {
         match preferences.get(&Self::PROVIDER_LIST_KEY()) {
-            Some(providerList) if !providerList.is_empty() => Ok(serde_json::from_str(providerList)?),
+            Some(providerList) if !providerList.is_empty() => {
+                Ok(serde_json::from_str(providerList)?)
+            }
             _ => Ok(Vec::new()),
         }
     }
@@ -508,10 +512,7 @@ impl ModelConfigManager {
         Ok(serde_json::from_str(providerJson)?)
     }
 
-    fn saveProviderToDataStore(
-        &self,
-        provider: &ProviderProfile,
-    ) -> Result<(), ModelConfigError> {
+    fn saveProviderToDataStore(&self, provider: &ProviderProfile) -> Result<(), ModelConfigError> {
         let providerKey = self.providerKey(&provider.id);
         let encodedProvider = serde_json::to_string(provider)?;
         self.modelConfigDataStore.edit(|preferences| {
@@ -594,7 +595,9 @@ impl ModelConfigManager {
                 return Ok((provider.clone(), model.clone()));
             }
         }
-        Err(ModelConfigError::ModelNotFound(format!("{providerId}:{modelId}")))
+        Err(ModelConfigError::ModelNotFound(format!(
+            "{providerId}:{modelId}"
+        )))
     }
 
     fn providerKey(&self, providerId: &str) -> operit_store::PreferencesDataStore::PreferencesKey {
@@ -607,7 +610,6 @@ impl ModelConfigManager {
             operit_host_api::TimeUtils::currentTimeMillis()
         )
     }
-
 }
 
 #[cfg(test)]

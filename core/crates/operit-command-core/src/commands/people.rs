@@ -437,8 +437,7 @@ fn print_character_card(card: &CharacterCard) {
     println!("chatModelId={chatModelId}");
     println!(
         "sharedMemoryMounts={}",
-        serde_json::to_string(&card.sharedMemoryMounts)
-            .expect("sharedMemoryMounts must serialize")
+        serde_json::to_string(&card.sharedMemoryMounts).expect("sharedMemoryMounts must serialize")
     );
     println!(
         "toolAccessConfig={}",

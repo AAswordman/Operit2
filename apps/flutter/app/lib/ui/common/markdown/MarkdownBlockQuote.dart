@@ -42,6 +42,7 @@ class MarkdownBlockQuote extends StatelessWidget {
         isStreaming: isStreaming,
         textColor: textColor,
         backgroundColor: backgroundColor,
+        selectionRoot: false,
       ),
     );
   }

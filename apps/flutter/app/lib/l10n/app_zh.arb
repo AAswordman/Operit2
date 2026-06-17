@@ -43,6 +43,8 @@
       }
     }
   },
+  "statusWarningAiErrorSummary": "AI犯了一个错误",
+  "statusWarningAiErrorDetailTitle": "AI错误原因",
   "toolRunning": "工具执行中...",
   "toolRunningWithName": "{toolName}: 工具执行中...",
   "@toolRunningWithName": {

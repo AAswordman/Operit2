@@ -4,13 +4,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::mcp::MCPManager::MCPManager;
+use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
+use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
-use crate::core::tools::mcp::MCPManager::MCPManager;
-use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
-use crate::core::tools::packTool::PackageManager::PackageManager;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 use crate::util::ChainLogger::{self, TOOL_CHAIN};
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -40,6 +41,36 @@ pub struct AIToolHandlerState {
 }
 
 impl AIToolHandler {
+    fn truncateLogValue(value: &str, maxChars: usize) -> String {
+        let mut truncated = String::new();
+        for character in value.chars().take(maxChars) {
+            truncated.push(character);
+        }
+        if value.chars().count() > maxChars {
+            truncated.push_str("...");
+        }
+        truncated
+    }
+
+    fn summarizeToolParameters(tool: &AITool) -> String {
+        if tool.parameters.is_empty() {
+            return String::new();
+        }
+        let mut parts = Vec::new();
+        for parameter in tool.parameters.iter().take(3) {
+            parts.push(format!(
+                "{}={}",
+                parameter.name,
+                Self::truncateLogValue(&parameter.value, 120)
+            ));
+        }
+        let mut summary = parts.join(", ");
+        if tool.parameters.len() > 3 {
+            summary.push_str(", ...");
+        }
+        Self::truncateLogValue(&summary, 320)
+    }
+
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
@@ -422,12 +453,14 @@ impl AIToolHandler {
         &mut self,
         tool: &AITool,
     ) -> Option<Vec<ToolResult>> {
+        let parameterSummary = Self::summarizeToolParameters(tool);
         ChainLogger::info(
             TOOL_CHAIN,
             "tool.stream.request",
             &[
                 ("tool", tool.name.clone()),
                 ("parameterCount", tool.parameters.len().to_string()),
+                ("parameters", parameterSummary.clone()),
             ],
         );
         if !self.getToolExecutorOrActivate(&tool.name) {
@@ -455,11 +488,15 @@ impl AIToolHandler {
         };
 
         let validationResult = executor.validateParameters(tool);
+        let startMs = operit_host_api::TimeUtils::currentTimeMillis();
         let collected = if validationResult.valid {
             ChainLogger::info(
                 TOOL_CHAIN,
                 "tool.stream.start",
-                &[("tool", tool.name.clone())],
+                &[
+                    ("tool", tool.name.clone()),
+                    ("parameters", parameterSummary.clone()),
+                ],
             );
             executor.invokeAndStream(tool)
         } else {
@@ -474,7 +511,7 @@ impl AIToolHandler {
             vec![ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "Invalid parameters: {}",
                     validationResult.errorMessage
@@ -487,14 +524,76 @@ impl AIToolHandler {
             .expect("AIToolHandler mutex poisoned")
             .availableTools
             .insert(tool.name.clone(), executor);
-        ChainLogger::info(
-            TOOL_CHAIN,
-            "tool.stream.done",
-            &[
-                ("tool", tool.name.clone()),
-                ("resultCount", collected.len().to_string()),
-            ],
-        );
+        let elapsedMs = operit_host_api::TimeUtils::currentTimeMillis().saturating_sub(startMs);
+        let finalResult = collected.last().cloned();
+        if let Some(finalResult) = finalResult {
+            if finalResult.success {
+                ChainLogger::info(
+                    TOOL_CHAIN,
+                    "tool.stream.done",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultCount", collected.len().to_string()),
+                        ("elapsedMs", elapsedMs.to_string()),
+                        (
+                            "resultChars",
+                            ChainLogger::lenField(&finalResult.result.toString()),
+                        ),
+                    ],
+                );
+            } else if let Some(error) = finalResult.error.clone() {
+                ChainLogger::error(
+                    TOOL_CHAIN,
+                    "tool.stream.error",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultCount", collected.len().to_string()),
+                        ("elapsedMs", elapsedMs.to_string()),
+                        ("parameters", parameterSummary.clone()),
+                        ("error", error),
+                        (
+                            "resultChars",
+                            ChainLogger::lenField(&finalResult.result.toString()),
+                        ),
+                    ],
+                );
+            } else {
+                ChainLogger::error(
+                    TOOL_CHAIN,
+                    "tool.stream.error",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultCount", collected.len().to_string()),
+                        ("elapsedMs", elapsedMs.to_string()),
+                        ("parameters", parameterSummary.clone()),
+                        (
+                            "resultChars",
+                            ChainLogger::lenField(&finalResult.result.toString()),
+                        ),
+                    ],
+                );
+            }
+        } else {
+            ChainLogger::error(
+                TOOL_CHAIN,
+                "tool.stream.empty_result",
+                &[
+                    ("tool", tool.name.clone()),
+                    ("elapsedMs", elapsedMs.to_string()),
+                ],
+            );
+        }
+        if elapsedMs >= 3000 {
+            ChainLogger::warn(
+                TOOL_CHAIN,
+                "tool.stream.slow",
+                &[
+                    ("tool", tool.name.clone()),
+                    ("elapsedMs", elapsedMs.to_string()),
+                    ("parameters", parameterSummary.clone()),
+                ],
+            );
+        }
         Some(collected)
     }
 
@@ -520,7 +619,7 @@ impl AIToolHandler {
             let notFoundResult = ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!("Tool not found: {}", tool.name)),
             };
             self.notifyToolExecutionResult(&tool, &notFoundResult);
@@ -539,7 +638,7 @@ impl AIToolHandler {
             let validationFailedResult = ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(validationError.clone()),
             };
             self.notifyToolExecutionResult(&tool, &validationFailedResult);
@@ -583,7 +682,10 @@ impl AIToolHandler {
                 "tool.execute.done",
                 &[
                     ("tool", tool.name.clone()),
-                    ("resultChars", ChainLogger::lenField(&result.result)),
+                    (
+                        "resultChars",
+                        ChainLogger::lenField(&result.result.toString()),
+                    ),
                 ],
             );
         } else {
@@ -594,7 +696,10 @@ impl AIToolHandler {
                     &[
                         ("tool", tool.name.clone()),
                         ("error", error.clone()),
-                        ("resultChars", ChainLogger::lenField(&result.result)),
+                        (
+                            "resultChars",
+                            ChainLogger::lenField(&result.result.toString()),
+                        ),
                     ],
                 );
             } else {
@@ -603,7 +708,10 @@ impl AIToolHandler {
                     "tool.execute.error",
                     &[
                         ("tool", tool.name.clone()),
-                        ("resultChars", ChainLogger::lenField(&result.result)),
+                        (
+                            "resultChars",
+                            ChainLogger::lenField(&result.result.toString()),
+                        ),
                     ],
                 );
             }

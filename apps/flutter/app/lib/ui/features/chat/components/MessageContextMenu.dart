@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../common/interactions/MessagePressShield.dart';
 import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
 
@@ -65,8 +66,11 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
   Offset? _menuPosition;
   Offset? _longPressStartPosition;
+  int? _longPressPointer;
   Timer? _longPressTimer;
   bool _isPressing = false;
+  final MessagePressShieldController _pressShieldController =
+      MessagePressShieldController();
 
   bool get _isActionable {
     return widget.message.sender == 'user' || widget.message.sender == 'ai';
@@ -74,21 +78,28 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
   @override
   Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _isActionable ? _handlePointerDown : null,
-      onPointerMove: _isActionable ? _handlePointerMove : null,
-      onPointerUp: _isActionable ? (_) => _cancelLongPressTimer() : null,
-      onPointerCancel: _isActionable ? (_) => _cancelLongPressTimer() : null,
-      child: GestureDetector(
+    return MessagePressShield(
+      controller: _pressShieldController,
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        onSecondaryTapDown: _isActionable
-            ? (details) {
-                _menuPosition = details.globalPosition;
-              }
+        onPointerDown: _isActionable ? _handlePointerDown : null,
+        onPointerMove: _isActionable ? _handlePointerMove : null,
+        onPointerUp: _isActionable
+            ? (event) => _cancelLongPress(pointer: event.pointer)
             : null,
-        onSecondaryTap: _isActionable ? _showContextMenu : null,
-        child: _PressFeedback(isPressing: _isPressing, child: widget.child),
+        onPointerCancel: _isActionable
+            ? (event) => _cancelLongPress(pointer: event.pointer)
+            : null,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onSecondaryTapDown: _isActionable
+              ? (details) {
+                  _menuPosition = details.globalPosition;
+                }
+              : null,
+          onSecondaryTap: _isActionable ? _showContextMenu : null,
+          child: _PressFeedback(isPressing: _isPressing, child: widget.child),
+        ),
       ),
     );
   }
@@ -97,33 +108,51 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     if (event.buttons != kPrimaryButton) {
       return;
     }
+    _longPressPointer = event.pointer;
     _longPressStartPosition = event.position;
     _menuPosition = event.position;
-    _setPressing(true);
-    _longPressTimer?.cancel();
-    _longPressTimer = Timer(_longPressDuration, () {
-      _longPressTimer = null;
-      if (!mounted) {
+    scheduleMicrotask(() {
+      if (!mounted || _longPressPointer != event.pointer) {
         return;
       }
-      _showContextMenu();
+      if (_pressShieldController.isPointerShielded(event.pointer)) {
+        _longPressPointer = null;
+        _longPressStartPosition = null;
+        return;
+      }
+      _setPressing(true);
+      _longPressTimer?.cancel();
+      _longPressTimer = Timer(_longPressDuration, () {
+        _longPressTimer = null;
+        if (!mounted) {
+          return;
+        }
+        _showContextMenu();
+      });
     });
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
+    if (_longPressPointer != event.pointer) {
+      return;
+    }
     final startPosition = _longPressStartPosition;
     if (startPosition == null) {
       return;
     }
     if ((event.position - startPosition).distance > _longPressMoveTolerance) {
-      _cancelLongPressTimer();
+      _cancelLongPress(pointer: event.pointer);
     }
   }
 
-  void _cancelLongPressTimer() {
+  void _cancelLongPress({int? pointer}) {
+    if (pointer != null && _longPressPointer != pointer) {
+      return;
+    }
     _longPressTimer?.cancel();
     _longPressTimer = null;
     _longPressStartPosition = null;
+    _longPressPointer = null;
     _setPressing(false);
   }
 
@@ -136,14 +165,8 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     });
   }
 
-  @override
-  void dispose() {
-    _cancelLongPressTimer();
-    super.dispose();
-  }
-
   Future<void> _showContextMenu() async {
-    _cancelLongPressTimer();
+    _cancelLongPress();
     final position = _menuPosition;
     if (position == null) {
       return;
@@ -164,6 +187,12 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       return;
     }
     await _handleAction(action);
+  }
+
+  @override
+  void dispose() {
+    _cancelLongPress();
+    super.dispose();
   }
 
   List<PopupMenuEntry<_MessageMenuAction>> _menuItems(BuildContext context) {

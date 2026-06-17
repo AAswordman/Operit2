@@ -10,8 +10,9 @@ use operit_host_api::{
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::tools::ToolResultDataClasses::{
-    AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoResultData,
-    LocationData, Notification, NotificationData, SystemSettingData, ToolResultData,
+    stringResultData, AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData,
+    DeviceInfoResultData, LocationData, Notification, NotificationData, SystemSettingData,
+    ToolResultData,
 };
 
 #[derive(Clone)]
@@ -462,14 +463,19 @@ fn toolSuccess(tool: &AITool, result: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result,
+        result: stringResultData(result),
         error: None,
     }
 }
 
 #[allow(non_snake_case)]
 fn toolSuccessData(tool: &AITool, data: ToolResultData) -> ToolResult {
-    toolSuccess(tool, data.toJson())
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: data,
+        error: None,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -477,7 +483,7 @@ fn toolError(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(error),
     }
 }

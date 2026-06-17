@@ -69,8 +69,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onActivateCurrentTab;
   final VoidCallback onCloseCurrentTab;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
-  final Future<void> Function(String workspace, String? workspaceEnv)
-  onBindWorkspace;
+  final Future<void> Function(String workspace) onBindWorkspace;
 
   @override
   Widget build(BuildContext context) {

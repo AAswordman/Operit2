@@ -36,6 +36,10 @@ use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
+use crate::core::tools::ToolResultDataClasses::{
+    stringResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
+    SleepResultData, ToolResultData,
+};
 use crate::data::preferences::EnvPreferences::EnvPreferences;
 
 #[allow(non_snake_case)]
@@ -66,11 +70,10 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                 ToolResult {
                     toolName: tool.name.clone(),
                     success: true,
-                    result: serde_json::json!({
-                        "requestedMs": durationMs,
-                        "sleptMs": sleptMs
-                    })
-                    .to_string(),
+                    result: ToolResultData::SleepResultData(SleepResultData {
+                        requestedMs: durationMs,
+                        sleptMs,
+                    }),
                     error: None,
                 }
             }),
@@ -186,7 +189,11 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                 ToolResult {
                     toolName: tool.name.clone(),
                     success: true,
-                    result: CliToolModeSupport::formatSearchResults(&query, &results, useEnglish),
+                    result: stringResultData(CliToolModeSupport::formatSearchResults(
+                        &query,
+                        &results,
+                        useEnglish,
+                    )),
                     error: None,
                 }
             }),
@@ -266,7 +273,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                     return ToolResult {
                         toolName: resolvedInvocation.targetToolName,
                         success: false,
-                        result: String::new(),
+                        result: stringResultData(""),
                         error: Some(CliToolModeSupport::buildRoleAccessDeniedMessage(useEnglish)),
                     };
                 }
@@ -286,7 +293,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                     return ToolResult {
                         toolName: proxiedTool.name,
                         success: false,
-                        result: String::new(),
+                        result: stringResultData(""),
                         error: Some(errorMessage),
                     };
                 }
@@ -661,7 +668,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
                     Ok(output) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
-                        result: output,
+                        result: stringResultData(output),
                         error: None,
                     },
                     Err(error) => toolErrorResult(tool, error),
@@ -679,28 +686,44 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
             }),
             invoke: Arc::new(|tool| {
                 let key = requiredParameterValue(tool, "key");
+                if key.trim().is_empty() {
+                    return ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: ToolResultData::EnvironmentVariableReadResultData(
+                            EnvironmentVariableReadResultData {
+                                key: String::new(),
+                                value: None,
+                                exists: false,
+                            },
+                        ),
+                        error: Some("Missing required parameter: key".to_string()),
+                    };
+                }
                 let envPreferences = EnvPreferences::getInstance();
                 match envPreferences.getEnv(&key) {
                     Ok(value) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
-                        result: serde_json::json!({
-                            "key": key,
-                            "value": value,
-                            "exists": value.is_some()
-                        })
-                        .to_string(),
+                        result: ToolResultData::EnvironmentVariableReadResultData(
+                            EnvironmentVariableReadResultData {
+                                key,
+                                exists: value.is_some(),
+                                value,
+                            },
+                        ),
                         error: None,
                     },
                     Err(error) => ToolResult {
                         toolName: tool.name.clone(),
                         success: false,
-                        result: serde_json::json!({
-                            "key": key,
-                            "value": null,
-                            "exists": false
-                        })
-                        .to_string(),
+                        result: ToolResultData::EnvironmentVariableReadResultData(
+                            EnvironmentVariableReadResultData {
+                                key,
+                                value: None,
+                                exists: false,
+                            },
+                        ),
                         error: Some(error.to_string()),
                     },
                 }
@@ -723,8 +746,25 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
                     .find(|parameter| parameter.name == "value")
                     .map(|parameter| parameter.value.clone())
                     .unwrap_or_default();
+                let cleared = value.trim().is_empty();
+                if key.trim().is_empty() {
+                    return ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: ToolResultData::EnvironmentVariableWriteResultData(
+                            EnvironmentVariableWriteResultData {
+                                key: String::new(),
+                                requestedValue: String::new(),
+                                value: None,
+                                exists: false,
+                                cleared: false,
+                            },
+                        ),
+                        error: Some("Missing required parameter: key".to_string()),
+                    };
+                }
                 let envPreferences = EnvPreferences::getInstance();
-                let writeResult = if value.trim().is_empty() {
+                let writeResult = if cleared {
                     envPreferences.removeEnv(&key)
                 } else {
                     envPreferences.setEnv(&key, value.trim())
@@ -733,14 +773,15 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
                     return ToolResult {
                         toolName: tool.name.clone(),
                         success: false,
-                        result: serde_json::json!({
-                            "key": key,
-                            "requestedValue": value,
-                            "value": null,
-                            "exists": false,
-                            "cleared": value.trim().is_empty()
-                        })
-                        .to_string(),
+                        result: ToolResultData::EnvironmentVariableWriteResultData(
+                            EnvironmentVariableWriteResultData {
+                                key,
+                                requestedValue: value.clone(),
+                                value: None,
+                                exists: false,
+                                cleared,
+                            },
+                        ),
                         error: Some(error.to_string()),
                     };
                 }
@@ -749,27 +790,29 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &OperitApplicatio
                     Ok(current) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
-                        result: serde_json::json!({
-                            "key": key,
-                            "requestedValue": value,
-                            "value": current,
-                            "exists": current.is_some(),
-                            "cleared": value.trim().is_empty()
-                        })
-                        .to_string(),
+                        result: ToolResultData::EnvironmentVariableWriteResultData(
+                            EnvironmentVariableWriteResultData {
+                                key,
+                                requestedValue: value,
+                                exists: current.is_some(),
+                                value: current,
+                                cleared,
+                            },
+                        ),
                         error: None,
                     },
                     Err(error) => ToolResult {
                         toolName: tool.name.clone(),
                         success: false,
-                        result: serde_json::json!({
-                            "key": key,
-                            "requestedValue": value,
-                            "value": null,
-                            "exists": false,
-                            "cleared": value.trim().is_empty()
-                        })
-                        .to_string(),
+                        result: ToolResultData::EnvironmentVariableWriteResultData(
+                            EnvironmentVariableWriteResultData {
+                                key,
+                                requestedValue: value.clone(),
+                                value: None,
+                                exists: false,
+                                cleared,
+                            },
+                        ),
                         error: Some(error.to_string()),
                     },
                 }
@@ -1155,7 +1198,7 @@ fn toolErrorResult(tool: &AITool, error: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(error),
     }
 }

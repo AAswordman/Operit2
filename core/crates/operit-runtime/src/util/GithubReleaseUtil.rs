@@ -142,13 +142,13 @@ impl GithubReleaseUtil {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        let owner = repoOwner.to_string();
-        let repo = repoName.to_string();
-        tokio::task::spawn_blocking(move || {
-            Self::fetchLatestReleaseInfoBlocking(&owner, &repo, target)
-        })
-        .await
-        .map_err(|error| error.to_string())?
+            let owner = repoOwner.to_string();
+            let repo = repoName.to_string();
+            tokio::task::spawn_blocking(move || {
+                Self::fetchLatestReleaseInfoBlocking(&owner, &repo, target)
+            })
+            .await
+            .map_err(|error| error.to_string())?
         }
     }
 
@@ -167,21 +167,23 @@ impl GithubReleaseUtil {
             let _ = packageFileName;
             let _ = workDir;
             let _ = onEvent;
-            return Err("full update package download is not available in wasm runtime".to_string());
+            return Err(
+                "full update package download is not available in wasm runtime".to_string(),
+            );
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        tokio::task::spawn_blocking(move || {
-            Self::downloadAndPrepareFullUpdateBlocking(
-                &packageUrl,
-                &packageFileName,
-                &workDir,
-                onEvent,
-            )
-        })
-        .await
-        .map_err(|error| error.to_string())?
+            tokio::task::spawn_blocking(move || {
+                Self::downloadAndPrepareFullUpdateBlocking(
+                    &packageUrl,
+                    &packageFileName,
+                    &workDir,
+                    onEvent,
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())?
         }
     }
 
@@ -215,54 +217,56 @@ impl GithubReleaseUtil {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        let targetAssetName = target.assetName()?;
-        let url =
-            format!("{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=1");
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|error| error.to_string())?;
-        let mut request = client
-            .get(url)
-            .header(USER_AGENT, "Operit-MCP-Client")
-            .header(ACCEPT, "application/vnd.github.v3+json");
-        if let Some(authHeader) = GitHubAuthPreferences::getInstance().getAuthorizationHeader() {
-            request = request.header("Authorization", authHeader);
-        }
-        let response = request.send().map_err(|error| error.to_string())?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!(
-                "HTTP {}: {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("")
-            ));
-        }
-        let releases = response
-            .json::<Vec<GitHubRelease>>()
-            .map_err(|error| error.to_string())?;
-        let latestRelease = releases
-            .into_iter()
-            .next()
-            .ok_or_else(|| format!("No releases found for {repoOwner}/{repoName}"))?;
-        let packageAsset = latestRelease
-            .assets
-            .iter()
-            .find(|asset| asset.name == targetAssetName)
-            .ok_or_else(|| {
-                format!(
-                    "Release {} is missing asset {}",
-                    latestRelease.tag_name, targetAssetName
-                )
-            })?;
-        Ok(ReleaseInfo {
-            version: latestRelease.tag_name.trim_start_matches('v').to_string(),
-            assetName: packageAsset.name.clone(),
-            downloadUrl: packageAsset.browser_download_url.clone(),
-            releaseNotes: latestRelease.body.unwrap_or_default(),
-            releasePageUrl: latestRelease.html_url,
-        })
+            let targetAssetName = target.assetName()?;
+            let url = format!(
+                "{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=1"
+            );
+            let client = Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|error| error.to_string())?;
+            let mut request = client
+                .get(url)
+                .header(USER_AGENT, "Operit-MCP-Client")
+                .header(ACCEPT, "application/vnd.github.v3+json");
+            if let Some(authHeader) = GitHubAuthPreferences::getInstance().getAuthorizationHeader()
+            {
+                request = request.header("Authorization", authHeader);
+            }
+            let response = request.send().map_err(|error| error.to_string())?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(format!(
+                    "HTTP {}: {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("")
+                ));
+            }
+            let releases = response
+                .json::<Vec<GitHubRelease>>()
+                .map_err(|error| error.to_string())?;
+            let latestRelease = releases
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("No releases found for {repoOwner}/{repoName}"))?;
+            let packageAsset = latestRelease
+                .assets
+                .iter()
+                .find(|asset| asset.name == targetAssetName)
+                .ok_or_else(|| {
+                    format!(
+                        "Release {} is missing asset {}",
+                        latestRelease.tag_name, targetAssetName
+                    )
+                })?;
+            Ok(ReleaseInfo {
+                version: latestRelease.tag_name.trim_start_matches('v').to_string(),
+                assetName: packageAsset.name.clone(),
+                downloadUrl: packageAsset.browser_download_url.clone(),
+                releaseNotes: latestRelease.body.unwrap_or_default(),
+                releasePageUrl: latestRelease.html_url,
+            })
         }
     }
 
@@ -281,25 +285,27 @@ impl GithubReleaseUtil {
             let _ = packageFileName;
             let _ = workDir;
             let _ = onEvent;
-            return Err("full update package download is not available in wasm runtime".to_string());
+            return Err(
+                "full update package download is not available in wasm runtime".to_string(),
+            );
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        if workDir.exists() {
-            fs::remove_dir_all(workDir).map_err(|error| error.to_string())?;
-        }
-        fs::create_dir_all(workDir).map_err(|error| error.to_string())?;
-        validatePackageFileName(packageFileName)?;
-        let packageFile = workDir.join(packageFileName);
-        onEvent(FullUpdateProgressEvent::StageChanged {
-            stage: FullUpdateStage::DownloadingPackage,
-            message: "Downloading full update package".to_string(),
-        });
-        let totalBytes = fetchContentLength(packageUrl)?;
-        verifyRangeDownloadSupported(packageUrl)?;
-        downloadToFileMultiThread(packageUrl, &packageFile, totalBytes, onEvent)?;
-        Ok(packageFile)
+            if workDir.exists() {
+                fs::remove_dir_all(workDir).map_err(|error| error.to_string())?;
+            }
+            fs::create_dir_all(workDir).map_err(|error| error.to_string())?;
+            validatePackageFileName(packageFileName)?;
+            let packageFile = workDir.join(packageFileName);
+            onEvent(FullUpdateProgressEvent::StageChanged {
+                stage: FullUpdateStage::DownloadingPackage,
+                message: "Downloading full update package".to_string(),
+            });
+            let totalBytes = fetchContentLength(packageUrl)?;
+            verifyRangeDownloadSupported(packageUrl)?;
+            downloadToFileMultiThread(packageUrl, &packageFile, totalBytes, onEvent)?;
+            Ok(packageFile)
         }
     }
 }

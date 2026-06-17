@@ -978,12 +978,12 @@ class _AIChatScreenState extends State<AIChatScreen>
     _viewModel.requestMainStateRefresh();
   }
 
-  Future<void> _bindWorkspace(String workspace, String? workspaceEnv) async {
+  Future<void> _bindWorkspace(String workspace) async {
     final chatId = _currentChatId;
     if (chatId == null) {
       throw StateError('No current chat');
     }
-    await _viewModel.bindChatToWorkspace(chatId, workspace, workspaceEnv);
+    await _viewModel.bindChatToWorkspace(chatId, workspace);
     _viewModel.requestMainStateRefresh();
   }
 }

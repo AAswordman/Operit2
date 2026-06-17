@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 operit-runtime = { path = "../operit-runtime" }
+operit-store = { path = "../operit-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }

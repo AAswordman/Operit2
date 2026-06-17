@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::api::chat::enhance::ConversationMarkupManager::ToolResult;
@@ -7,8 +6,11 @@ use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParam
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::core::files::PathMapper::PathMapper;
+use operit_runtime::core::files::VisualFileSystem::VisualFileSystem;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::Deserialize;
 
 pub fn run_workspace_command(
@@ -30,7 +32,7 @@ pub fn run_workspace_command(
         "list" => list_workspaces(application, output),
         "chats" => list_workspace_chats(application, &args[1..], output),
         "commands" => list_workspace_commands(application, &args[1..], output),
-        "commands-path" => list_workspace_commands_path(&args[1..], output),
+        "commands-path" => list_workspace_commands_path(application, &args[1..], output),
         "run" => run_workspace_shortcut(application, &args[1..], output),
         "run-path" => run_workspace_shortcut_path(application, &args[1..], output),
         _ => {
@@ -48,8 +50,8 @@ fn default_workspace_path(
     let chatId = args
         .get(0)
         .ok_or_else(|| "usage: operit2 workspace default-path <chat-id>".to_string())?;
-    let path = WorkspaceUtils::getWorkspacePath(chatId);
-    output.push_stdout_line(path.to_string_lossy().to_string());
+    let path = PathMapper::workspacePath(chatId)?;
+    output.push_stdout_line(path);
     Ok(())
 }
 
@@ -81,7 +83,7 @@ fn bind_default_workspace(
     application
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)
-        .bindChatToWorkspace(chatId.clone(), workspacePath.clone(), None);
+        .bindChatToWorkspace(chatId.clone(), workspacePath.clone());
     output.push_stdout_line(format!("workspace bound: {chatId}\t{workspacePath}"));
     Ok(())
 }
@@ -93,22 +95,17 @@ fn bind_workspace(
 ) -> Result<(), String> {
     let chatId = args
         .get(0)
-        .ok_or_else(|| {
-            "usage: operit2 workspace bind <chat-id> <workspace> [workspace-env]".to_string()
-        })?
+        .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?
         .clone();
     let workspace = args
         .get(1)
         .cloned()
         .and_then(nonBlankString)
-        .ok_or_else(|| {
-            "usage: operit2 workspace bind <chat-id> <workspace> [workspace-env]".to_string()
-        })?;
-    let workspaceEnv = args.get(2).cloned().and_then(nonBlankString);
+        .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?;
     application
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)
-        .bindChatToWorkspace(chatId.clone(), workspace.clone(), workspaceEnv);
+        .bindChatToWorkspace(chatId.clone(), workspace.clone());
     output.push_stdout_line(format!("workspace bound: {chatId}\t{workspace}"));
     Ok(())
 }
@@ -134,7 +131,7 @@ fn list_workspaces(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let mut workspaces = BTreeMap::<String, (usize, String)>::new();
+    let mut workspaces = BTreeMap::<String, usize>::new();
     for chat in application
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)
@@ -144,12 +141,11 @@ fn list_workspaces(
         let Some(workspace) = chat.workspace else {
             continue;
         };
-        let workspaceEnv = chat.workspaceEnv.unwrap_or_default();
-        let entry = workspaces.entry(workspace).or_insert((0, workspaceEnv));
-        entry.0 += 1;
+        let entry = workspaces.entry(workspace).or_insert(0);
+        *entry += 1;
     }
-    for (workspace, (chatCount, workspaceEnv)) in workspaces {
-        output.push_stdout_line(format!("{workspace}\t{workspaceEnv}\t{chatCount}"));
+    for (workspace, chatCount) in workspaces {
+        output.push_stdout_line(format!("{workspace}\t{chatCount}"));
     }
     Ok(())
 }
@@ -172,12 +168,7 @@ fn list_workspace_chats(
         .into_iter()
         .filter(|chat| chat.workspace.as_deref() == Some(workspace.as_str()))
     {
-        output.push_stdout_line(format!(
-            "{}\t{}\t{}",
-            chat.id,
-            chat.title,
-            chat.workspaceEnv.unwrap_or_default()
-        ));
+        output.push_stdout_line(format!("{}\t{}", chat.id, chat.title));
     }
     Ok(())
 }
@@ -191,10 +182,11 @@ fn list_workspace_commands(
         .get(0)
         .ok_or_else(|| "usage: operit2 workspace commands <chat-id>".to_string())?;
     let workspacePath = workspace_path_for_chat(application, chatId)?;
-    list_commands_at_path(&workspacePath, output)
+    list_commands_at_path(&application.applicationContext, &workspacePath, output)
 }
 
 fn list_workspace_commands_path(
+    application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -203,7 +195,7 @@ fn list_workspace_commands_path(
         .cloned()
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace commands-path <workspace>".to_string())?;
-    list_commands_at_path(&workspacePath, output)
+    list_commands_at_path(&application.applicationContext, &workspacePath, output)
 }
 
 fn run_workspace_shortcut(
@@ -264,11 +256,40 @@ fn workspace_path_for_chat(
         .ok_or_else(|| format!("chat has no workspace: {chatId}"))
 }
 
+#[allow(non_snake_case)]
+fn vfsForWorkspace(
+    context: &OperitApplicationContext,
+    workspacePath: &str,
+) -> Result<VisualFileSystem, String> {
+    let runtimeStoreRoot = context
+        .runtimeStorageHost
+        .as_ref()
+        .and_then(|host| host.rootDir())
+        .ok_or_else(|| {
+            "RuntimeStorageHost root is not configured for workspace commands".to_string()
+        })?;
+    let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+    Ok(VisualFileSystem::new(
+        context
+            .fileSystemHost
+            .clone()
+            .ok_or_else(|| "FileSystemHost is not registered for workspace commands".to_string())?,
+        PathMapper::new(
+            runtimeStoreRoot,
+            context.appFilesRoot.clone(),
+            runtimeStorePaths.workspace_dir(),
+            Some(workspacePath.to_string()),
+        ),
+    ))
+}
+
 fn list_commands_at_path(
+    context: &OperitApplicationContext,
     workspacePath: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let config = WorkspaceConfigReader::readConfig(workspacePath)?;
+    let vfs = vfsForWorkspace(context, workspacePath)?;
+    let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     for command in config.commands {
         output.push_stdout_line(format!(
             "{}\t{}\t{}\t{}\t{}\t{}",
@@ -289,7 +310,8 @@ fn run_command_at_path(
     commandId: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let config = WorkspaceConfigReader::readConfig(workspacePath)?;
+    let vfs = vfsForWorkspace(&context, workspacePath)?;
+    let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     let command = config
         .commands
         .into_iter()
@@ -316,12 +338,11 @@ fn execute_workspace_tool(
     toolName: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let workspaceDir = Path::new(workspacePath);
     let mut parameters = Vec::new();
     for (name, value) in &command.toolParameters {
         parameters.push(ToolParameter {
             name: name.clone(),
-            value: resolve_workspace_tool_parameter_value(name, value, workspaceDir),
+            value: resolve_workspace_tool_parameter_value(name, value, workspacePath)?,
         });
     }
 
@@ -347,7 +368,8 @@ fn execute_workspace_shell_command(
     let terminalInfo = terminalHost
         .terminalInfo()
         .map_err(|error| format!("failed to read terminal info: {}", error.message))?;
-    let workingDir = workspace_command_working_dir(workspacePath, &command.workingDir);
+    let vfs = vfsForWorkspace(context, workspacePath)?;
+    let workingDir = workspace_command_working_dir(&vfs, workspacePath, &command.workingDir)?;
     let sessionName = workspace_command_session_name(workspacePath, command);
     let session = terminalHost
         .createOrGetSession(&sessionName, &terminalInfo.defaultType)
@@ -381,33 +403,63 @@ fn execute_workspace_shell_command(
 fn resolve_workspace_tool_parameter_value(
     name: &str,
     rawValue: &str,
-    workspaceDir: &Path,
-) -> String {
-    let workspacePath = workspaceDir.to_string_lossy();
+    workspacePath: &str,
+) -> Result<String, String> {
     let expanded = rawValue
-        .replace("$WORKSPACE", workspacePath.as_ref())
-        .replace("${WORKSPACE}", workspacePath.as_ref());
+        .replace("$WORKSPACE", workspacePath)
+        .replace("${WORKSPACE}", workspacePath);
 
     if !is_path_like_tool_parameter(name) {
-        return expanded;
+        return Ok(expanded);
     }
 
     let trimmed = expanded.trim();
-    if trimmed.is_empty() || trimmed.contains("://") {
-        return expanded;
+    if trimmed.is_empty() || hasUriScheme(trimmed) {
+        return Ok(expanded);
     }
 
-    let file = PathBuf::from(trimmed);
-    if file.is_absolute() {
-        return trimmed.to_string();
+    if startsWithHostDrivePath(trimmed) {
+        return Err(format!(
+            "workspace tool parameter `{name}` must use a VFS path; use /mnt/windows/<drive>/... for Windows host paths"
+        ));
     }
 
-    workspaceDir.join(trimmed).to_string_lossy().to_string()
+    if PathMapper::normalizeVfsPath(trimmed).is_ok() {
+        return Ok(trimmed.to_string());
+    }
+
+    PathMapper::joinVfsPath(workspacePath, trimmed)
 }
 
 fn is_path_like_tool_parameter(name: &str) -> bool {
-    let lowered = name.to_lowercase();
-    lowered.contains("path") || lowered.contains("file") || lowered.contains("dir")
+    name.split(['_', '-'])
+        .map(|part| part.to_ascii_lowercase())
+        .any(|part| matches!(part.as_str(), "path" | "file" | "dir" | "directory"))
+}
+
+#[allow(non_snake_case)]
+fn hasUriScheme(value: &str) -> bool {
+    let Some(colonIndex) = value.find(':') else {
+        return false;
+    };
+    if colonIndex == 0 {
+        return false;
+    }
+    let scheme = &value[..colonIndex];
+    if !scheme
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
+    {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    bytes.get(colonIndex + 1) == Some(&b'/') && bytes.get(colonIndex + 2) == Some(&b'/')
+}
+
+#[allow(non_snake_case)]
+fn startsWithHostDrivePath(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn print_tool_execution_result(
@@ -416,12 +468,13 @@ fn print_tool_execution_result(
 ) -> Result<(), String> {
     output.push_stdout_line(format!("toolName={}", result.toolName));
     output.push_stdout_line(format!("success={}", result.success));
+    let resultText = result.result.toString();
     if result.success {
-        output.push_stdout_line(&result.result);
+        output.push_stdout_line(&resultText);
         Ok(())
     } else {
-        if !result.result.trim().is_empty() {
-            output.push_stdout_line(&result.result);
+        if !resultText.trim().is_empty() {
+            output.push_stdout_line(&resultText);
         }
         match result.error.clone() {
             Some(error) => Err(error),
@@ -430,29 +483,36 @@ fn print_tool_execution_result(
     }
 }
 
-fn workspace_command_working_dir(workspacePath: &str, workingDir: &str) -> String {
-    let workspaceDir = Path::new(workspacePath);
+fn workspace_command_working_dir(
+    vfs: &VisualFileSystem,
+    workspacePath: &str,
+    workingDir: &str,
+) -> Result<String, String> {
     let trimmed = workingDir.trim();
-    if trimmed.is_empty() || trimmed == "." {
-        return workspaceDir.to_string_lossy().to_string();
-    }
-    let configuredDir = PathBuf::from(trimmed);
-    if configuredDir.is_absolute() {
-        return configuredDir.to_string_lossy().to_string();
-    }
-    workspaceDir
-        .join(configuredDir)
-        .to_string_lossy()
-        .to_string()
+    let workingDirPath = if trimmed.is_empty() || trimmed == "." {
+        workspacePath.to_string()
+    } else if startsWithHostDrivePath(trimmed) {
+        return Err(
+            "workspace command workingDir must use a VFS path or a path relative to the workspace"
+                .to_string(),
+        );
+    } else if PathMapper::normalizeVfsPath(trimmed).is_ok() {
+        trimmed.to_string()
+    } else {
+        PathMapper::joinVfsPath(workspacePath, trimmed)?
+    };
+    Ok(vfs.resolvePath(&workingDirPath)?.physicalPath)
 }
 
 fn workspace_command_session_name(workspacePath: &str, command: &CommandConfig) -> String {
     if let Some(sessionTitle) = command.sessionTitle.clone().and_then(nonBlankString) {
         return sessionTitle;
     }
-    let name = Path::new(workspacePath)
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
+    let name = workspacePath
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .map(|value| value.to_string())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| workspacePath.to_string());
     if command.usesDedicatedSession {
@@ -488,7 +548,7 @@ fn print_workspace_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 workspace default-path <chat-id>");
     output.push_stdout_line("operit2 workspace create-default <chat-id> [project-type]");
     output.push_stdout_line("operit2 workspace bind-default <chat-id> [project-type]");
-    output.push_stdout_line("operit2 workspace bind <chat-id> <workspace> [workspace-env]");
+    output.push_stdout_line("operit2 workspace bind <chat-id> <workspace>");
     output.push_stdout_line("operit2 workspace unbind <chat-id>");
     output.push_stdout_line("operit2 workspace list");
     output.push_stdout_line("operit2 workspace chats <workspace>");
@@ -644,12 +704,13 @@ struct WorkspaceConfigReader;
 
 impl WorkspaceConfigReader {
     #[allow(non_snake_case)]
-    fn readConfig(workspacePath: &str) -> Result<WorkspaceConfig, String> {
-        let configFile = Path::new(workspacePath).join(".operit").join("config.json");
-        let content = std::fs::read_to_string(&configFile)
-            .map_err(|error| format!("failed to read {}: {error}", configFile.display()))?;
+    fn readConfig(vfs: &VisualFileSystem, workspacePath: &str) -> Result<WorkspaceConfig, String> {
+        let configFile = PathMapper::joinVfsPath(workspacePath, ".operit/config.json")?;
+        let content = vfs
+            .readFile(&configFile)
+            .map_err(|error| format!("failed to read {configFile}: {error}"))?;
         serde_json::from_str::<WorkspaceConfig>(&content)
-            .map_err(|error| format!("failed to parse {}: {error}", configFile.display()))
+            .map_err(|error| format!("failed to parse {configFile}: {error}"))
     }
 }
 

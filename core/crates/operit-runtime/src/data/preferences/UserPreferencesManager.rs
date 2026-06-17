@@ -1,8 +1,8 @@
 use crate::util::LocaleUtils::LanguageCodes;
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
-use crate::util::OperitPaths;
 
 #[derive(Clone)]
 pub struct UserPreferencesManager {
@@ -27,7 +27,10 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn initializeIfNeeded(&self, _defaultProfileName: &str) -> Result<(), PreferencesDataStoreError> {
+    pub fn initializeIfNeeded(
+        &self,
+        _defaultProfileName: &str,
+    ) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.data()?;
         Ok(())
     }
@@ -53,7 +56,6 @@ impl UserPreferencesManager {
     pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
         self.appLanguage().first()
     }
-
 }
 
 impl PreferencesManager {
@@ -85,5 +87,4 @@ impl PreferencesManager {
     ) -> Result<(), PreferencesDataStoreError> {
         self.inner.initializeIfNeeded(defaultProfileName)
     }
-
 }

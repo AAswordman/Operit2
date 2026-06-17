@@ -11,9 +11,9 @@ use crate::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::core::tools::ToolResultDataClasses::{
-    AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData, ChatCreationResultData,
-    ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData, ChatMessageInfo,
-    ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
+    stringResultData, AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData,
+    ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData,
+    ChatMessageInfo, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
     ChatTitleUpdateResultData, MessageSendResultData, ToolResultData,
 };
 use crate::data::model::AttachmentInfo::AttachmentInfo;
@@ -809,7 +809,7 @@ fn successData(tool: &AITool, value: ToolResultData) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: true,
-        result: value.toJson(),
+        result: value,
         error: None,
     }
 }
@@ -818,7 +818,7 @@ fn toolError(tool: &AITool, message: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(message),
     }
 }

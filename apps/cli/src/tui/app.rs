@@ -711,7 +711,7 @@ impl OperitTui {
         let chat_id = self.current_chat_id()?;
         self.core
             .chat_runtime_holder_main()
-            .bindChatToWorkspace(chat_id.clone(), prompt.path.clone(), None)
+            .bindChatToWorkspace(chat_id.clone(), prompt.path.clone())
             .await
             .map_err(|error| error.to_string())?;
         self.refresh_core_snapshot().await?;

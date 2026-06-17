@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use serde::{Deserialize, Serialize};
 
 use crate::core::tools::skill::SkillPackage::SkillPackage;
 use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
@@ -15,7 +16,7 @@ pub struct SkillManager {
     paths: RuntimeStorePaths,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundledExternalSkillCandidate {
     pub name: String,
     pub description: String,
@@ -155,6 +156,11 @@ impl SkillManager {
 
     #[allow(non_snake_case)]
     pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
+        let loadedSkillNames = self
+            .getAvailableSkills()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let mut grouped = BTreeMap::<String, Vec<_>>::new();
         for asset in BUNDLED_EXTERNAL_SKILL_ASSETS {
             grouped
@@ -165,7 +171,7 @@ impl SkillManager {
 
         grouped
             .into_iter()
-            .map(|(assetName, assets)| {
+            .filter_map(|(assetName, assets)| {
                 let mut name = assetName.clone();
                 let mut description = String::new();
                 for asset in assets {
@@ -181,7 +187,11 @@ impl SkillManager {
                         break;
                     }
                 }
-                BundledExternalSkillCandidate { name, description }
+                if loadedSkillNames.contains(&name) {
+                    None
+                } else {
+                    Some(BundledExternalSkillCandidate { name, description })
+                }
             })
             .collect()
     }
@@ -224,7 +234,10 @@ impl SkillManager {
 
         let skills = self.getAvailableSkills();
         let Some(skill) = skills.get(skillName) else {
-            return Err(format!("Skill '{}' was not loaded after creation", skillName));
+            return Err(format!(
+                "Skill '{}' was not loaded after creation",
+                skillName
+            ));
         };
         Ok(skill.clone())
     }

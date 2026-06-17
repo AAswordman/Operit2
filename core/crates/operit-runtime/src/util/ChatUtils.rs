@@ -1,4 +1,5 @@
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
+use regex::Regex;
 
 pub struct ChatUtils;
 
@@ -34,29 +35,29 @@ impl ChatUtils {
     }
 
     pub fn remove_thinking_content(content: &str) -> String {
-        let mut ranges = ChatMarkupRegex::think_ranges(content);
-        ranges.extend(ChatMarkupRegex::search_ranges(content));
-        remove_ranges(content, ranges).trim().to_string()
+        let think_pattern =
+            Regex::new(r"(?s)<think(?:ing)?>.*?(</think(?:ing)?>|\z)").expect("think regex");
+        let search_pattern = Regex::new(r"(?s)<search>.*?(</search>|\z)").expect("search regex");
+        search_pattern
+            .replace_all(&think_pattern.replace_all(content, ""), "")
+            .trim()
+            .to_string()
     }
 
     pub fn extract_thinking_content(content: &str) -> (String, String) {
-        let mut thinking = Vec::new();
-        for (start, end) in ChatMarkupRegex::think_ranges(content) {
-            let raw = &content[start..end];
-            let body = raw
-                .split_once('>')
-                .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| body))
-                .unwrap_or("");
-            let trimmed = body.trim();
-            if !trimmed.is_empty() {
-                thinking.push(trimmed.to_string());
-            }
-        }
-
-        let mut ranges = ChatMarkupRegex::think_ranges(content);
-        ranges.extend(ChatMarkupRegex::search_ranges(content));
-        let content_without_think = remove_ranges(content, ranges).trim().to_string();
-        (content_without_think, thinking.join("\n"))
+        let think_pattern =
+            Regex::new(r"(?s)<think(?:ing)?>(.*?)</think(?:ing)?>").expect("think regex");
+        let thinking = think_pattern
+            .captures_iter(content)
+            .map(|capture| capture.get(1).map(|value| value.as_str()).unwrap_or("").trim())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let search_pattern = Regex::new(r"(?s)<search>.*?(</search>|\z)").expect("search regex");
+        let content_without_think = search_pattern
+            .replace_all(&think_pattern.replace_all(content, ""), "")
+            .trim()
+            .to_string();
+        (content_without_think, thinking)
     }
 
     pub fn estimate_token_count(text: &str) -> usize {
@@ -112,16 +113,37 @@ fn strip_markdown_fence(text: &str) -> &str {
     text[start..end].trim()
 }
 
-fn remove_ranges(content: &str, mut ranges: Vec<(usize, usize)>) -> String {
-    ranges.sort_by_key(|range| range.0);
-    let mut out = String::new();
-    let mut cursor = 0;
-    for (start, end) in ranges {
-        if start >= cursor {
-            out.push_str(&content[cursor..start]);
-            cursor = end.min(content.len());
-        }
+#[cfg(test)]
+mod tests {
+    use super::ChatUtils;
+
+    #[test]
+    fn remove_thinking_content_mirrors_kt_pure_thinking_detection() {
+        assert_eq!(ChatUtils::remove_thinking_content("<think>abc</think>"), "");
+        assert_eq!(
+            ChatUtils::remove_thinking_content("<thinking>abc</thinking>"),
+            ""
+        );
+        assert_eq!(ChatUtils::remove_thinking_content("<think>abc"), "");
+        assert_eq!(
+            ChatUtils::remove_thinking_content("<think>abc</think>\n正文"),
+            "正文"
+        );
+        assert_eq!(
+            ChatUtils::remove_thinking_content("<search>source</search>\n正文"),
+            "正文"
+        );
     }
-    out.push_str(&content[cursor..]);
-    out
+
+    #[test]
+    fn extract_thinking_content_mirrors_kt_closed_think_extraction() {
+        assert_eq!(
+            ChatUtils::extract_thinking_content("<think>a</think>\n正文<search>x"),
+            ("正文".to_string(), "a".to_string())
+        );
+        assert_eq!(
+            ChatUtils::extract_thinking_content("<think>a</think><thinking>b</thinking>正文"),
+            ("正文".to_string(), "a\nb".to_string())
+        );
+    }
 }

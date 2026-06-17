@@ -9,6 +9,7 @@ use crate::core::tools::climode::CliToolModeSupport::{
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 use crate::data::preferences::CharacterCardToolAccessResolver::{
     CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
 };
@@ -108,7 +109,7 @@ impl ToolExecutionManager {
             return vec![ToolResult {
                 toolName: invocation.tool.name.clone(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "Invalid parameters: {}",
                     validationResult.errorMessage
@@ -148,7 +149,7 @@ impl ToolExecutionManager {
                     Some(ToolResult {
                         toolName: resolvedTarget.displayName,
                         success: false,
-                        result: String::new(),
+                        result: stringResultData(""),
                         error: Some("Character card tool access denied.".to_string()),
                     }),
                 );
@@ -171,7 +172,7 @@ impl ToolExecutionManager {
                         Some(ToolResult {
                             toolName: resolvedTarget.displayName,
                             success: false,
-                            result: String::new(),
+                            result: stringResultData(""),
                             error: Some(error),
                         }),
                     );
@@ -184,7 +185,7 @@ impl ToolExecutionManager {
                         Some(ToolResult {
                             toolName: resolvedTarget.displayName,
                             success: false,
-                            result: String::new(),
+                            result: stringResultData(""),
                             error: Some(message),
                         }),
                     );
@@ -265,7 +266,7 @@ impl ToolExecutionManager {
                 let deniedResult = ToolResult {
                     toolName: Self::resolveToolTarget(&invocation.tool).displayName,
                     success: false,
-                    result: String::new(),
+                    result: stringResultData(""),
                     error: Some("Character card tool access denied.".to_string()),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
@@ -303,7 +304,7 @@ impl ToolExecutionManager {
                 let deniedResult = ToolResult {
                     toolName: displayToolName,
                     success: false,
-                    result: String::new(),
+                    result: stringResultData(""),
                     error: Some(errorMessage),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
@@ -328,7 +329,7 @@ impl ToolExecutionManager {
                 let emptyResult = ToolResult {
                     toolName: displayToolName,
                     success: false,
-                    result: String::new(),
+                    result: stringResultData(""),
                     error: Some("The tool execution returned no results.".to_string()),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &emptyResult);
@@ -339,7 +340,7 @@ impl ToolExecutionManager {
                     .iter()
                     .map(|item| {
                         if item.success {
-                            item.result.trim().to_string()
+                            item.result.toString().trim().to_string()
                         } else {
                             format!(
                                 "Step error: {}",
@@ -356,7 +357,7 @@ impl ToolExecutionManager {
                 let finalResult = ToolResult {
                     toolName: displayToolName,
                     success: last.success,
-                    result: combinedResultString,
+                    result: stringResultData(combinedResultString),
                     error: last.error.clone(),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &finalResult);
@@ -606,7 +607,7 @@ impl ToolExecutionManager {
                 toolName.to_string()
             },
             success: false,
-            result: String::new(),
+            result: stringResultData(""),
             error: Some(denied),
         })
     }

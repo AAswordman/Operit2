@@ -230,6 +230,18 @@ abstract class AppLocalizations {
   /// **'Processing tool result: {toolName}'**
   String processingToolResult(String toolName);
 
+  /// No description provided for @statusWarningAiErrorSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'The AI made an error'**
+  String get statusWarningAiErrorSummary;
+
+  /// No description provided for @statusWarningAiErrorDetailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'AI Error Reason'**
+  String get statusWarningAiErrorDetailTitle;
+
   /// No description provided for @toolRunning.
   ///
   /// In en, this message translates to:

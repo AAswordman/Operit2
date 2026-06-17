@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../common/interactions/MessagePressShield.dart';
+
 class CanvasToolSummaryRow extends StatelessWidget {
   const CanvasToolSummaryRow({
     super.key,
@@ -65,11 +67,13 @@ class CanvasToolSummaryRow extends StatelessWidget {
     if (onClick == null) {
       return SizedBox(width: double.infinity, child: row);
     }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onClick,
-        child: SizedBox(width: double.infinity, child: row),
+    return MessagePressShieldRegion(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onClick,
+          child: SizedBox(width: double.infinity, child: row),
+        ),
       ),
     );
   }
@@ -134,18 +138,20 @@ class CanvasToolResultRow extends StatelessWidget {
               ),
             ),
             if (onCopyClick != null)
-              Semantics(
-                button: true,
-                label: '$semanticDescription, copy',
-                child: InkResponse(
-                  onTap: onCopyClick,
-                  radius: 16,
-                  child: Padding(
-                    padding: const EdgeInsets.all(5),
-                    child: Icon(
-                      Icons.content_copy,
-                      size: 14,
-                      color: theme.colorScheme.primary.withValues(alpha: 0.6),
+              MessagePressShieldRegion(
+                child: Semantics(
+                  button: true,
+                  label: '$semanticDescription, copy',
+                  child: InkResponse(
+                    onTap: onCopyClick,
+                    radius: 16,
+                    child: Padding(
+                      padding: const EdgeInsets.all(5),
+                      child: Icon(
+                        Icons.content_copy,
+                        size: 14,
+                        color: theme.colorScheme.primary.withValues(alpha: 0.6),
+                      ),
                     ),
                   ),
                 ),
@@ -158,11 +164,13 @@ class CanvasToolResultRow extends StatelessWidget {
     if (onClick == null) {
       return SizedBox(width: double.infinity, child: row);
     }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onClick,
-        child: SizedBox(width: double.infinity, child: row),
+    return MessagePressShieldRegion(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onClick,
+          child: SizedBox(width: double.infinity, child: row),
+        ),
       ),
     );
   }

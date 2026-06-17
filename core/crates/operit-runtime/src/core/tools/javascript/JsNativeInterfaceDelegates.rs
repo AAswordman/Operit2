@@ -4,6 +4,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::core::tools::ToolResultDataClasses::ToolResultData;
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
 use aes::{Aes128, Aes192, Aes256};
 use base64::Engine;
@@ -13,6 +14,13 @@ use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 use md5::{Digest, Md5};
 
 const BINARY_HANDLE_PREFIX: &str = "@binary_handle:";
+const BINARY_DATA_THRESHOLD: usize = 32 * 1024;
+
+#[allow(non_snake_case)]
+struct SerializedToolResultData {
+    data: serde_json::Value,
+    dataType: Option<&'static str>,
+}
 
 #[derive(Clone, Debug)]
 struct ParsedToolCall {
@@ -371,6 +379,7 @@ fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
 fn serializeToolExecutionResult(
     result: &crate::api::chat::enhance::ConversationMarkupManager::ToolResult,
 ) -> String {
+    let serializedData = serializeToolResultData(&result.result);
     let mut object = serde_json::Map::new();
     object.insert(
         "success".to_string(),
@@ -382,17 +391,54 @@ fn serializeToolExecutionResult(
             serde_json::Value::String(result.error.clone().unwrap_or_default()),
         );
     }
-    object.insert("data".to_string(), serializeToolResultData(&result.result));
+    object.insert("data".to_string(), serializedData.data);
+    if let Some(dataType) = serializedData.dataType {
+        object.insert(
+            "dataType".to_string(),
+            serde_json::Value::String(dataType.to_string()),
+        );
+    }
     serde_json::Value::Object(object).to_string()
 }
 
 #[allow(non_snake_case)]
-fn serializeToolResultData(result: &str) -> serde_json::Value {
-    match serde_json::from_str::<serde_json::Value>(result) {
-        Ok(serde_json::Value::Object(object)) if object.contains_key("__type") => {
-            serde_json::Value::Object(object)
+fn serializeToolResultData(result: &ToolResultData) -> SerializedToolResultData {
+    match result {
+        ToolResultData::BinaryResultData(data) => {
+            let encodedData = if data.value.len() > BINARY_DATA_THRESHOLD {
+                let handle = uuid::Uuid::new_v4().to_string();
+                binaryDataRegistry()
+                    .lock()
+                    .expect("binary data registry mutex poisoned")
+                    .insert(handle.clone(), data.value.clone());
+                format!("{BINARY_HANDLE_PREFIX}{handle}")
+            } else {
+                base64::engine::general_purpose::STANDARD.encode(&data.value)
+            };
+            SerializedToolResultData {
+                data: serde_json::Value::String(encodedData),
+                dataType: Some("base64"),
+            }
         }
-        _ => serde_json::Value::String(result.to_string()),
+        ToolResultData::StringResultData(data) => SerializedToolResultData {
+            data: serde_json::Value::String(data.value.clone()),
+            dataType: None,
+        },
+        ToolResultData::BooleanResultData(data) => SerializedToolResultData {
+            data: serde_json::Value::Bool(data.value),
+            dataType: None,
+        },
+        ToolResultData::IntResultData(data) => SerializedToolResultData {
+            data: serde_json::Value::Number(serde_json::Number::from(data.value)),
+            dataType: None,
+        },
+        _ => {
+            let jsonString = result.toJson();
+            SerializedToolResultData {
+                data: serde_json::from_str(&jsonString).expect("ToolResultData JSON parse failed"),
+                dataType: None,
+            }
+        }
     }
 }
 
@@ -417,4 +463,86 @@ pub fn callToolSync(
     let mut handler = toolHandler.clone();
     let result = handler.executeTool(parsed.aiTool);
     serializeToolExecutionResult(&result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{serializeToolExecutionResult, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
+    use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
+    use crate::core::tools::ToolResultDataClasses::{
+        BinaryResultData, StringResultData, TerminalCommandResultData, ToolResultData,
+    };
+    use serde_json::Value;
+
+    fn successResult(result: ToolResultData) -> ToolResult {
+        ToolResult {
+            toolName: "test_tool".to_string(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn string_result_data_stays_literal_string_for_js_tool_result() {
+        let payload = r#"{"__type":"PackageOwnedType","value":"plain package json"}"#;
+        let result = successResult(ToolResultData::StringResultData(StringResultData {
+            value: payload.to_string(),
+        }));
+
+        let serialized: Value =
+            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+
+        assert_eq!(serialized["success"], Value::Bool(true));
+        assert_eq!(serialized["data"], Value::String(payload.to_string()));
+        assert!(serialized.get("dataType").is_none());
+    }
+
+    #[test]
+    fn structured_result_data_serializes_json_object_for_js_tool_result() {
+        let result = successResult(ToolResultData::TerminalCommandResultData(
+            TerminalCommandResultData {
+                command: "Write-Output ok".to_string(),
+                output: "ok\n".to_string(),
+                exitCode: 0,
+                sessionId: "session-1".to_string(),
+                timedOut: false,
+            },
+        ));
+
+        let serialized: Value =
+            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+
+        assert_eq!(serialized["success"], Value::Bool(true));
+        assert_eq!(serialized["data"]["__type"], "TerminalCommandResultData");
+        assert_eq!(serialized["data"]["command"], "Write-Output ok");
+        assert!(serialized.get("dataType").is_none());
+    }
+
+    #[test]
+    fn binary_result_data_serializes_base64_metadata_for_js_tool_result() {
+        let result = successResult(ToolResultData::BinaryResultData(BinaryResultData {
+            value: b"hello".to_vec(),
+        }));
+
+        let serialized: Value =
+            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+
+        assert_eq!(serialized["data"], "aGVsbG8=");
+        assert_eq!(serialized["dataType"], "base64");
+    }
+
+    #[test]
+    fn large_binary_result_data_serializes_handle_for_js_tool_result() {
+        let result = successResult(ToolResultData::BinaryResultData(BinaryResultData {
+            value: vec![7; BINARY_DATA_THRESHOLD + 1],
+        }));
+
+        let serialized: Value =
+            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+        let data = serialized["data"].as_str().expect("binary handle");
+
+        assert!(data.starts_with(BINARY_HANDLE_PREFIX));
+        assert_eq!(serialized["dataType"], "base64");
+    }
 }

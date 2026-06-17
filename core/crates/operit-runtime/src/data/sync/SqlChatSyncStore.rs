@@ -398,7 +398,7 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
         .queryRows(
             r#"
             SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
-                currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
+                currentWindowSize, "group", displayOrder, workspace,
                 parentChatId, characterCardName, characterGroupId, locked, pinned
             FROM sync_sql_chat_rows
             WHERE opId = ?1
@@ -419,12 +419,11 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
                 group: row.get(7)?,
                 displayOrder: row.get(8)?,
                 workspace: row.get(9)?,
-                workspaceEnv: row.get(10)?,
-                parentChatId: row.get(11)?,
-                characterCardName: row.get(12)?,
-                characterGroupId: row.get(13)?,
-                locked: row.get(14)?,
-                pinned: row.get(15)?,
+                parentChatId: row.get(10)?,
+                characterCardName: row.get(11)?,
+                characterGroupId: row.get(12)?,
+                locked: row.get(13)?,
+                pinned: row.get(14)?,
             })
         })
         .collect()
@@ -604,10 +603,10 @@ fn insertChatSyncRow(
         r#"
         INSERT INTO sync_sql_chat_rows (
             opId, id, title, createdAt, updatedAt, inputTokens, outputTokens,
-            currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
+            currentWindowSize, "group", displayOrder, workspace,
             parentChatId, characterCardName, characterGroupId, locked, pinned
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         "#,
         sqliteParams![
             opId,
@@ -621,7 +620,6 @@ fn insertChatSyncRow(
             chat.group,
             chat.displayOrder,
             chat.workspace,
-            chat.workspaceEnv,
             chat.parentChatId,
             chat.characterCardName,
             chat.characterGroupId,
@@ -802,10 +800,10 @@ fn upsertChat(
         r#"
         INSERT INTO chats (
             id, title, createdAt, updatedAt, inputTokens, outputTokens,
-            currentWindowSize, "group", displayOrder, workspace, workspaceEnv,
+            currentWindowSize, "group", displayOrder, workspace,
             parentChatId, characterCardName, characterGroupId, locked, pinned
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             createdAt = excluded.createdAt,
@@ -816,7 +814,6 @@ fn upsertChat(
             "group" = excluded."group",
             displayOrder = excluded.displayOrder,
             workspace = excluded.workspace,
-            workspaceEnv = excluded.workspaceEnv,
             parentChatId = excluded.parentChatId,
             characterCardName = excluded.characterCardName,
             characterGroupId = excluded.characterGroupId,
@@ -834,7 +831,6 @@ fn upsertChat(
             chat.group,
             chat.displayOrder,
             chat.workspace,
-            chat.workspaceEnv,
             chat.parentChatId,
             chat.characterCardName,
             chat.characterGroupId,

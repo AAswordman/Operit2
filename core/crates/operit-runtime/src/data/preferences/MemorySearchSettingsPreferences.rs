@@ -1,8 +1,8 @@
 use crate::data::model::MemorySearchConfig::MemorySearchConfig;
+use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
-use crate::util::OperitPaths;
 
 #[derive(Clone)]
 pub struct MemorySearchSettingsPreferences {

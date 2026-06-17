@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::core::chat::AIMessageManager::{
-    AIMessageManager, BuildUserMessageContentRequest, SendMessageRequest as AIMessageSendRequest,
-    StableContextWindowRequest, logMessageTiming, messageTimingNow,
+    logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
+    SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
 use crate::core::tools::ToolProgressBus::ToolProgressBus;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
@@ -24,12 +24,12 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
-use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use crate::util::stream::HotStream::SharedStream;
 use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
 use crate::util::stream::Stream::Stream;
 use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
+use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -87,7 +87,6 @@ pub struct BuildUserMessageContentForSendRequest {
     pub proxySenderNameOverride: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub chatId: String,
     pub roleCardId: String,
@@ -99,7 +98,6 @@ pub struct BuildUserMessageContentForGroupOrchestrationRequest {
     pub messageText: String,
     pub attachments: Vec<AttachmentInfo>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub chatId: String,
     pub roleCardId: String,
@@ -112,7 +110,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub messageText: String,
     pub chatHistory: Vec<ChatMessage>,
     pub workspacePath: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub roleCardId: String,
     pub currentRoleName: Option<String>,
@@ -460,7 +457,6 @@ impl MessageProcessingDelegate {
             proxySenderNameOverride: None,
             attachments: request.attachments,
             workspacePath: request.workspacePath,
-            workspaceEnv: request.workspaceEnv,
             replyToMessage: request.replyToMessage,
             chatId: request.chatId,
             roleCardId: request.roleCardId,
@@ -528,7 +524,6 @@ impl MessageProcessingDelegate {
                 proxySenderName: request.proxySenderNameOverride,
                 attachments: request.attachments,
                 workspacePath: request.workspacePath,
-                workspaceEnv: request.workspaceEnv,
                 replyToMessage: request.replyToMessage,
                 enableDirectImageProcessing,
                 enableDirectAudioProcessing,
@@ -598,6 +593,36 @@ impl MessageProcessingDelegate {
             .unwrap_or(0);
         aiMessage.completedAt = completedElapsed;
         aiMessage
+    }
+
+    #[allow(non_snake_case)]
+    fn persistStreamingSnapshot(
+        chatHistoryDelegate: &mut ChatHistoryDelegate,
+        turnOptions: &ChatTurnOptions,
+        chatId: &str,
+        aiMessage: &ChatMessage,
+        contentSnapshot: String,
+        lastStreamingPersistAt: &Arc<Mutex<i64>>,
+    ) {
+        if !turnOptions.persistTurn {
+            return;
+        }
+        let now = messageTimingNow().startedAtMs as i64;
+        let mut lastPersistAt = lastStreamingPersistAt
+            .lock()
+            .expect("streaming persist timestamp mutex poisoned");
+        if now - *lastPersistAt < STREAM_PERSIST_INTERVAL_MS {
+            return;
+        }
+        *lastPersistAt = now;
+        drop(lastPersistAt);
+        chatHistoryDelegate.addMessageToChat(
+            ChatMessage {
+                content: contentSnapshot,
+                ..aiMessage.clone()
+            },
+            Some(chatId.to_string()),
+        );
     }
 
     #[allow(non_snake_case)]
@@ -802,7 +827,6 @@ impl MessageProcessingDelegate {
                 proxySenderNameOverride: request.proxySenderNameOverride.clone(),
                 attachments: request.attachments.clone(),
                 workspacePath: request.workspacePath.clone(),
-                workspaceEnv: request.workspaceEnv.clone(),
                 replyToMessage: request.replyToMessage.clone(),
                 chatId: chatId.clone(),
                 roleCardId: request.roleCardId.clone(),
@@ -877,7 +901,6 @@ impl MessageProcessingDelegate {
                 WorkspaceBackupManager::getInstance(workspaceToolHookHandler.getContext())
                     .createWorkspaceToolHookSession(
                         workspacePath,
-                        request.workspaceEnv.clone(),
                         userMessage.timestamp,
                         Some(chatId.clone()),
                     );
@@ -942,7 +965,6 @@ impl MessageProcessingDelegate {
         };
         let calculateNextWindowSize = {
             let workspacePath = request.workspacePath.clone();
-            let workspaceEnv = request.workspaceEnv.clone();
             let promptFunctionType = request.promptFunctionType.clone();
             let roleCardId = request.roleCardId.clone();
             let currentRoleName = currentRoleName.clone();
@@ -975,7 +997,6 @@ impl MessageProcessingDelegate {
                             messageContent: String::new(),
                             chatHistory: chatHistoryDelegate.getRuntimeChatHistory(chatId),
                             workspacePath,
-                            workspaceEnv,
                             promptFunctionType,
                             roleCardId: Some(roleCardId),
                             currentRoleName: Some(currentRoleName),
@@ -999,7 +1020,6 @@ impl MessageProcessingDelegate {
             messageContent: requestMessageContent,
             chatHistory: request.chatHistory,
             workspacePath: request.workspacePath.clone(),
-            workspaceEnv: request.workspaceEnv.clone(),
             promptFunctionType: request.promptFunctionType.clone(),
             enableThinking: request.enableThinking,
             enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
@@ -1099,6 +1119,8 @@ impl MessageProcessingDelegate {
             });
         let workerWorkspaceToolHookSession = workspaceToolHookSession.clone();
         let mut workerWorkspaceToolHookHandler = workspaceToolHookHandler.clone();
+        let workerEventChatHistoryDelegate = workerChatHistoryDelegate.clone_for_core();
+        let workerStreamingSnapshotPersistAt = Arc::new(Mutex::new(0i64));
         if userMessageAdded {
             userMessage.sentAt = workerRequestSentAt;
             request
@@ -1124,6 +1146,11 @@ impl MessageProcessingDelegate {
                 "receive.stream.collect.start",
                 &[("chatId", workerChatId.clone())],
             );
+            let mut workerEventChatHistoryDelegate = workerEventChatHistoryDelegate;
+            let workerEventTurnOptions = workerTurnOptions.clone();
+            let workerEventAiMessage = workerAiMessage.clone();
+            let workerEventChatId = workerChatId.clone();
+            let workerEventSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
             let eventWorker = std::thread::spawn(move || {
                 let mut events = workerEventCollector;
                 events.collect(&mut |event| match event.event_type {
@@ -1134,7 +1161,16 @@ impl MessageProcessingDelegate {
                     }
                     TextStreamEventType::Rollback => {
                         if let Ok(mut tracker) = workerEventTracker.lock() {
-                            let _ = tracker.rollback(&event.id);
+                            if let Some(snapshot) = tracker.rollback(&event.id) {
+                                MessageProcessingDelegate::persistStreamingSnapshot(
+                                    &mut workerEventChatHistoryDelegate,
+                                    &workerEventTurnOptions,
+                                    &workerEventChatId,
+                                    &workerEventAiMessage,
+                                    snapshot,
+                                    &workerEventSnapshotPersistAt,
+                                );
+                            }
                         }
                     }
                 });
@@ -1154,7 +1190,15 @@ impl MessageProcessingDelegate {
                 } else {
                     workerAiMessage.content.clone()
                 };
-                workerAiMessage.content = content;
+                workerAiMessage.content = content.clone();
+                MessageProcessingDelegate::persistStreamingSnapshot(
+                    &mut workerChatHistoryDelegate,
+                    &workerTurnOptions,
+                    &workerChatId,
+                    &workerAiMessage,
+                    content,
+                    &workerStreamingSnapshotPersistAt,
+                );
             });
             if let Some(session) = workerWorkspaceToolHookSession.as_ref() {
                 workerWorkspaceToolHookHandler.removeToolHook(session.hookId());
@@ -1261,7 +1305,6 @@ impl MessageProcessingDelegate {
                 messageText: request.requestMessageContent,
                 chatHistory: request.requestHistory,
                 workspacePath: request.workspacePath,
-                workspaceEnv: None,
                 promptFunctionType: request.promptFunctionType,
                 roleCardId: request.roleCardId,
                 currentRoleName: Some(request.currentRoleName),

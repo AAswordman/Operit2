@@ -2,13 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::{FileSystemHost, FindFilesRequest};
+use operit_host_api::FindFilesRequest;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::AITool;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::files::PathMapper::PathMapper;
+use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::core::tools::AIToolHook::AIToolHook;
 use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
 
@@ -17,7 +20,7 @@ const OBJECTS_DIR_NAME: &str = "objects";
 const CHAT_BACKUPS_DIR_NAME: &str = "chats";
 const CURRENT_STATE_FILE_NAME: &str = "current_state.json";
 
-const WORKSPACE_MUTATING_TOOLS: [&str; 8] = [
+const WORKSPACE_MUTATING_TOOLS: [&str; 9] = [
     "apply_file",
     "create_file",
     "edit_file",
@@ -26,6 +29,7 @@ const WORKSPACE_MUTATING_TOOLS: [&str; 8] = [
     "move_file",
     "delete_file",
     "copy_file",
+    "make_directory",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,7 +83,6 @@ pub struct WorkspaceToolHookSession {
     id: String,
     manager: WorkspaceBackupManager,
     workspacePath: String,
-    workspaceEnv: Option<String>,
     messageTimestamp: i64,
     chatScopeId: Option<String>,
     closed: AtomicBool,
@@ -100,7 +103,6 @@ impl WorkspaceBackupManager {
     pub fn createWorkspaceToolHookSession(
         &self,
         workspacePath: String,
-        workspaceEnv: Option<String>,
         messageTimestamp: i64,
         chatId: Option<String>,
     ) -> Arc<WorkspaceToolHookSession> {
@@ -111,7 +113,6 @@ impl WorkspaceBackupManager {
             ),
             manager: self.clone(),
             workspacePath,
-            workspaceEnv,
             messageTimestamp,
             chatScopeId: chatId,
             closed: AtomicBool::new(false),
@@ -126,19 +127,8 @@ impl WorkspaceBackupManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn syncState(
-        &self,
-        workspacePath: String,
-        messageTimestamp: i64,
-        workspaceEnv: Option<String>,
-        chatId: Option<String>,
-    ) {
-        self.syncStateProvider(
-            &workspacePath,
-            workspaceEnv.as_deref(),
-            messageTimestamp,
-            chatId.as_deref(),
-        );
+    pub fn syncState(&self, workspacePath: String, messageTimestamp: i64, chatId: Option<String>) {
+        self.syncStateProvider(&workspacePath, messageTimestamp, chatId.as_deref());
     }
 
     #[allow(non_snake_case)]
@@ -146,31 +136,22 @@ impl WorkspaceBackupManager {
         &self,
         workspacePath: String,
         targetTimestamp: i64,
-        workspaceEnv: Option<String>,
         chatId: Option<String>,
     ) -> Vec<WorkspaceFileChange> {
-        self.previewChangesProvider(
-            &workspacePath,
-            workspaceEnv.as_deref(),
-            targetTimestamp,
-            chatId.as_deref(),
-        )
+        self.previewChangesProvider(&workspacePath, targetTimestamp, chatId.as_deref())
     }
 
     #[allow(non_snake_case)]
     pub fn previewChangesForRewind(
         &self,
         workspacePath: String,
-        workspaceEnv: Option<String>,
         rewindTimestamp: i64,
         chatId: Option<String>,
     ) -> Vec<WorkspaceFileChange> {
-        let Some(host) = self.host() else {
-            return Vec::new();
-        };
+        let vfs = self.vfsForWorkspace(&workspacePath);
         let backupRootDir = joinPath(&workspacePath, BACKUP_DIR_NAME);
         let backupDir = resolveChatBackupDir(&backupRootDir, chatId.as_deref());
-        let existingBackups = listBackupsInBackupDir(host.as_ref(), &backupDir);
+        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
         let newerBackups = existingBackups
             .into_iter()
             .filter(|timestamp| *timestamp > rewindTimestamp)
@@ -178,53 +159,66 @@ impl WorkspaceBackupManager {
         let Some(restoreTimestamp) = newerBackups.first().copied() else {
             return Vec::new();
         };
-        self.previewChangesProvider(
-            &workspacePath,
-            workspaceEnv.as_deref(),
-            restoreTimestamp,
-            chatId.as_deref(),
-        )
+        self.previewChangesProvider(&workspacePath, restoreTimestamp, chatId.as_deref())
     }
 
-    fn host(&self) -> Option<Arc<dyn FileSystemHost>> {
-        self.context.fileSystemHost.clone()
+    #[allow(non_snake_case)]
+    fn vfsForWorkspace(&self, workspacePath: &str) -> VisualFileSystem {
+        let runtimeStoreRoot = self
+            .context
+            .runtimeStorageHost
+            .as_ref()
+            .and_then(|host| host.rootDir())
+            .expect("RuntimeStorageHost root must be configured for WorkspaceBackupManager");
+        let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+        VisualFileSystem::new(
+            self.context
+                .fileSystemHost
+                .clone()
+                .expect("FileSystemHost must be configured for WorkspaceBackupManager"),
+            PathMapper::new(
+                runtimeStoreRoot,
+                self.context.appFilesRoot.clone(),
+                runtimeStorePaths.workspace_dir(),
+                Some(workspacePath.to_string()),
+            ),
+        )
     }
 
     fn initializeHookSessionProvider(
         &self,
         workspacePath: &str,
-        workspaceEnv: Option<&str>,
         messageTimestamp: i64,
         chatId: Option<&str>,
     ) -> Option<HookSessionInit> {
-        let host = self.host()?;
-        let workspaceInfo = host.fileExists(workspacePath).ok()?;
+        let vfs = self.vfsForWorkspace(workspacePath);
+        let workspaceInfo = vfs.fileExists(workspacePath).ok()?;
         if !workspaceInfo.exists || !workspaceInfo.isDirectory {
             return None;
         }
 
         let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
-        ensureDirectory(host.as_ref(), &backupRootDir);
+        ensureDirectory(&vfs, &backupRootDir);
         let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
-        ensureDirectory(host.as_ref(), &backupDir);
+        ensureDirectory(&vfs, &backupDir);
         let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        ensureDirectory(host.as_ref(), &objectsDir);
+        ensureDirectory(&vfs, &objectsDir);
 
-        let existingBackups = listBackupsInBackupDir(host.as_ref(), &backupDir);
+        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
         let targetManifestPath = joinPath(&backupDir, &format!("{messageTimestamp}.json"));
-        let hasTargetManifest = host
+        let hasTargetManifest = vfs
             .fileExists(&targetManifestPath)
             .map(|value| value.exists)
             .unwrap_or(false);
-        let gitignoreRules = self.loadGitignoreRulesProvider(workspacePath, workspaceEnv);
+        let gitignoreRules = self.loadGitignoreRulesProvider(&vfs, workspacePath);
 
-        let mut currentState = self.loadCurrentStateManifestProvider(&backupDir);
+        let mut currentState = self.loadCurrentStateManifestProvider(&vfs, &backupDir);
         if currentState.is_none() && hasTargetManifest {
-            currentState = self.loadBackupManifestProvider(&backupDir, messageTimestamp);
+            currentState = self.loadBackupManifestProvider(&vfs, &backupDir, messageTimestamp);
         }
         if currentState.is_none() {
             if let Some(latestTimestamp) = existingBackups.last().copied() {
-                currentState = self.loadBackupManifestProvider(&backupDir, latestTimestamp);
+                currentState = self.loadBackupManifestProvider(&vfs, &backupDir, latestTimestamp);
             }
         }
         let currentState = currentState.unwrap_or_else(|| BackupManifest {
@@ -235,6 +229,7 @@ impl WorkspaceBackupManager {
 
         if !hasTargetManifest {
             self.writeBackupManifestProvider(
+                &vfs,
                 &backupDir,
                 messageTimestamp,
                 &BackupManifest {
@@ -243,7 +238,7 @@ impl WorkspaceBackupManager {
                 },
             );
         }
-        self.saveCurrentStateManifestProvider(&backupDir, &currentState);
+        self.saveCurrentStateManifestProvider(&vfs, &backupDir, &currentState);
 
         Some(HookSessionInit {
             backupDir,
@@ -253,40 +248,45 @@ impl WorkspaceBackupManager {
         })
     }
 
-    fn loadCurrentStateManifestProvider(&self, backupDir: &str) -> Option<BackupManifest> {
+    fn loadCurrentStateManifestProvider(
+        &self,
+        vfs: &VisualFileSystem,
+        backupDir: &str,
+    ) -> Option<BackupManifest> {
         let statePath = joinPath(backupDir, CURRENT_STATE_FILE_NAME);
-        let content = self.host()?.readFile(&statePath).ok()?;
+        let content = vfs.readFile(&statePath).ok()?;
         if content.trim().is_empty() {
             return None;
         }
         serde_json::from_str(&content).ok()
     }
 
-    fn saveCurrentStateManifestProvider(&self, backupDir: &str, manifest: &BackupManifest) {
-        let Some(host) = self.host() else {
-            return;
-        };
+    fn saveCurrentStateManifestProvider(
+        &self,
+        vfs: &VisualFileSystem,
+        backupDir: &str,
+        manifest: &BackupManifest,
+    ) {
         let statePath = joinPath(backupDir, CURRENT_STATE_FILE_NAME);
         let content = serde_json::to_string(manifest).expect("BackupManifest must serialize");
-        let _ = host.writeFile(&statePath, &content, false);
+        let _ = vfs.writeFile(&statePath, &content, false);
     }
 
     fn writeBackupManifestProvider(
         &self,
+        vfs: &VisualFileSystem,
         backupDir: &str,
         timestamp: i64,
         manifest: &BackupManifest,
     ) {
-        let Some(host) = self.host() else {
-            return;
-        };
         let manifestPath = joinPath(backupDir, &format!("{timestamp}.json"));
         let content = serde_json::to_string(manifest).expect("BackupManifest must serialize");
-        let _ = host.writeFile(&manifestPath, &content, false);
+        let _ = vfs.writeFile(&manifestPath, &content, false);
     }
 
     fn refreshPathInStateProvider(
         &self,
+        vfs: &VisualFileSystem,
         workspacePath: &str,
         targetPath: &str,
         objectsDir: &str,
@@ -294,9 +294,6 @@ impl WorkspaceBackupManager {
         files: &mut BTreeMap<String, String>,
         stats: &mut BTreeMap<String, FileStat>,
     ) {
-        let Some(host) = self.host() else {
-            return;
-        };
         let normalizedTargetPath = targetPath.trim().trim_end_matches('/');
         let relativeTarget = match makeRelativePath(workspacePath, normalizedTargetPath) {
             Some(value) => value,
@@ -305,7 +302,7 @@ impl WorkspaceBackupManager {
 
         removePathFromState(&relativeTarget, files, stats);
 
-        let Ok(existsData) = host.fileExists(normalizedTargetPath) else {
+        let Ok(existsData) = vfs.fileExists(normalizedTargetPath) else {
             return;
         };
         if !existsData.exists {
@@ -314,6 +311,7 @@ impl WorkspaceBackupManager {
 
         if existsData.isDirectory {
             let childFiles = self.listWorkspaceTextFilesUnderPathProvider(
+                vfs,
                 workspacePath,
                 normalizedTargetPath,
                 gitignoreRules,
@@ -322,7 +320,8 @@ impl WorkspaceBackupManager {
                 let Some(relativeChildPath) = makeRelativePath(workspacePath, &childPath) else {
                     continue;
                 };
-                let Some((hash, stat)) = self.snapshotFileForStateProvider(&childPath, objectsDir)
+                let Some((hash, stat)) =
+                    self.snapshotFileForStateProvider(vfs, &childPath, objectsDir)
                 else {
                     continue;
                 };
@@ -341,7 +340,7 @@ impl WorkspaceBackupManager {
         }
 
         if let Some((hash, stat)) =
-            self.snapshotFileForStateProvider(normalizedTargetPath, objectsDir)
+            self.snapshotFileForStateProvider(vfs, normalizedTargetPath, objectsDir)
         {
             files.insert(relativeTarget.clone(), hash);
             stats.insert(relativeTarget, stat);
@@ -350,14 +349,12 @@ impl WorkspaceBackupManager {
 
     fn listWorkspaceTextFilesUnderPathProvider(
         &self,
+        vfs: &VisualFileSystem,
         workspacePath: &str,
         startPath: &str,
         gitignoreRules: &[String],
     ) -> Vec<String> {
-        let Some(host) = self.host() else {
-            return Vec::new();
-        };
-        let Ok(allFiles) = host.findFiles(FindFilesRequest {
+        let Ok(allFiles) = vfs.findFiles(FindFilesRequest {
             path: startPath.to_string(),
             pattern: "*".to_string(),
             maxDepth: -1,
@@ -385,13 +382,13 @@ impl WorkspaceBackupManager {
 
     fn snapshotFileForStateProvider(
         &self,
+        vfs: &VisualFileSystem,
         filePath: &str,
         objectsDir: &str,
     ) -> Option<(String, FileStat)> {
-        let host = self.host()?;
-        let bytes = host.readFileBytes(filePath).ok()?;
+        let bytes = vfs.readFileBytes(filePath).ok()?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        let info = host.fileInfo(filePath).ok();
+        let info = vfs.fileInfo(filePath).ok();
         let stat = FileStat {
             size: info
                 .as_ref()
@@ -404,25 +401,26 @@ impl WorkspaceBackupManager {
         };
 
         let objectPath = buildShardedObjectPath(objectsDir, &hash);
-        let objectExists = host
+        let objectExists = vfs
             .fileExists(&objectPath)
             .map(|value| value.exists)
             .unwrap_or(false);
         if !objectExists {
             let bucketDir = joinPath(objectsDir, &objectBucketPrefix(&hash));
-            ensureDirectory(host.as_ref(), &bucketDir);
-            let _ = host.writeFileBytes(&objectPath, &bytes);
+            ensureDirectory(vfs, &bucketDir);
+            let _ = vfs.writeFileBytes(&objectPath, &bytes);
         }
         Some((hash, stat))
     }
 
     fn loadBackupManifestProvider(
         &self,
+        vfs: &VisualFileSystem,
         backupDir: &str,
         targetTimestamp: i64,
     ) -> Option<BackupManifest> {
         let manifestPath = joinPath(backupDir, &format!("{targetTimestamp}.json"));
-        let content = self.host()?.readFile(&manifestPath).ok()?;
+        let content = vfs.readFile(&manifestPath).ok()?;
         if content.trim().is_empty() {
             return None;
         }
@@ -431,14 +429,11 @@ impl WorkspaceBackupManager {
 
     fn loadGitignoreRulesProvider(
         &self,
+        vfs: &VisualFileSystem,
         workspacePath: &str,
-        _workspaceEnv: Option<&str>,
     ) -> Vec<String> {
-        let Some(host) = self.host() else {
-            return GitIgnoreFilter::defaultRules();
-        };
         let gitignorePath = joinPath(workspacePath, ".gitignore");
-        match host.readFile(&gitignorePath) {
+        match vfs.readFile(&gitignorePath) {
             Ok(content) if !content.trim().is_empty() => {
                 GitIgnoreFilter::buildRulesFromContent(&content)
             }
@@ -446,17 +441,9 @@ impl WorkspaceBackupManager {
         }
     }
 
-    fn syncStateProvider(
-        &self,
-        workspacePath: &str,
-        workspaceEnv: Option<&str>,
-        messageTimestamp: i64,
-        chatId: Option<&str>,
-    ) {
-        let Some(host) = self.host() else {
-            return;
-        };
-        let Ok(exists) = host.fileExists(workspacePath) else {
+    fn syncStateProvider(&self, workspacePath: &str, messageTimestamp: i64, chatId: Option<&str>) {
+        let vfs = self.vfsForWorkspace(workspacePath);
+        let Ok(exists) = vfs.fileExists(workspacePath) else {
             return;
         };
         if !exists.exists || !exists.isDirectory {
@@ -464,24 +451,24 @@ impl WorkspaceBackupManager {
         }
 
         let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
-        ensureDirectory(host.as_ref(), &backupRootDir);
+        ensureDirectory(&vfs, &backupRootDir);
         let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
-        ensureDirectory(host.as_ref(), &backupDir);
+        ensureDirectory(&vfs, &backupDir);
         let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        ensureDirectory(host.as_ref(), &objectsDir);
+        ensureDirectory(&vfs, &objectsDir);
 
-        let existingBackups = listBackupsInBackupDir(host.as_ref(), &backupDir);
-        let mut currentState = self.loadCurrentStateManifestProvider(&backupDir);
+        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
+        let mut currentState = self.loadCurrentStateManifestProvider(&vfs, &backupDir);
         if currentState.is_none() {
             if let Some(latestTimestamp) = existingBackups.last().copied() {
-                currentState = self.loadBackupManifestProvider(&backupDir, latestTimestamp);
+                currentState = self.loadBackupManifestProvider(&vfs, &backupDir, latestTimestamp);
             }
             let currentStateValue = currentState.clone().unwrap_or_else(|| BackupManifest {
                 timestamp: messageTimestamp,
                 files: BTreeMap::new(),
                 fileStats: BTreeMap::new(),
             });
-            self.saveCurrentStateManifestProvider(&backupDir, &currentStateValue);
+            self.saveCurrentStateManifestProvider(&vfs, &backupDir, &currentStateValue);
             currentState = Some(currentStateValue);
         }
 
@@ -494,10 +481,11 @@ impl WorkspaceBackupManager {
             .filter(|timestamp| *timestamp > messageTimestamp)
             .collect::<Vec<_>>();
         if let Some(restoreTimestamp) = newerBackups.first().copied() {
-            let targetManifest = self.loadBackupManifestProvider(&backupDir, restoreTimestamp);
+            let targetManifest =
+                self.loadBackupManifestProvider(&vfs, &backupDir, restoreTimestamp);
             self.restoreFromManifestsProvider(
+                &vfs,
                 workspacePath,
-                workspaceEnv,
                 &objectsDir,
                 &currentStateValue,
                 targetManifest.as_ref(),
@@ -507,23 +495,24 @@ impl WorkspaceBackupManager {
                 files: BTreeMap::new(),
                 fileStats: BTreeMap::new(),
             });
-            self.saveCurrentStateManifestProvider(&backupDir, &restoredState);
+            self.saveCurrentStateManifestProvider(&vfs, &backupDir, &restoredState);
             for timestamp in newerBackups {
-                let _ = host.deleteFile(&joinPath(&backupDir, &format!("{timestamp}.json")), false);
+                let _ = vfs.deleteFile(&joinPath(&backupDir, &format!("{timestamp}.json")), false);
             }
             return;
         }
 
         if existingBackups.contains(&messageTimestamp) {
             if let Some(existingManifest) =
-                self.loadBackupManifestProvider(&backupDir, messageTimestamp)
+                self.loadBackupManifestProvider(&vfs, &backupDir, messageTimestamp)
             {
-                self.saveCurrentStateManifestProvider(&backupDir, &existingManifest);
+                self.saveCurrentStateManifestProvider(&vfs, &backupDir, &existingManifest);
             }
             return;
         }
 
         self.writeBackupManifestProvider(
+            &vfs,
             &backupDir,
             messageTimestamp,
             &BackupManifest {
@@ -535,15 +524,12 @@ impl WorkspaceBackupManager {
 
     fn restoreFromManifestsProvider(
         &self,
+        vfs: &VisualFileSystem,
         workspacePath: &str,
-        _workspaceEnv: Option<&str>,
         objectsDir: &str,
         currentState: &BackupManifest,
         targetManifest: Option<&BackupManifest>,
     ) {
-        let Some(host) = self.host() else {
-            return;
-        };
         let targetFiles = targetManifest
             .map(|manifest| manifest.files.clone())
             .unwrap_or_default();
@@ -552,18 +538,17 @@ impl WorkspaceBackupManager {
                 continue;
             }
             let currentFilePath = joinPath(workspacePath, relativePath);
-            let _ = host.deleteFile(&currentFilePath, false);
+            let _ = vfs.deleteFile(&currentFilePath, false);
         }
 
         for (relativePath, hash) in targetFiles {
             if currentState.files.get(&relativePath) == Some(&hash) {
                 continue;
             }
-            let Some(objectPath) = resolveObjectPathForRead(host.as_ref(), objectsDir, &hash)
-            else {
+            let Some(objectPath) = resolveObjectPathForRead(vfs, objectsDir, &hash) else {
                 continue;
             };
-            let Ok(bytes) = host.readFileBytes(&objectPath) else {
+            let Ok(bytes) = vfs.readFileBytes(&objectPath) else {
                 continue;
             };
             let targetPath = joinPath(workspacePath, &relativePath);
@@ -572,30 +557,24 @@ impl WorkspaceBackupManager {
                 .map(|(parent, _)| parent)
                 .unwrap_or("");
             if !parent.is_empty() {
-                ensureDirectory(host.as_ref(), parent);
+                ensureDirectory(vfs, parent);
             }
-            let _ = host.writeFileBytes(&targetPath, &bytes);
+            let _ = vfs.writeFileBytes(&targetPath, &bytes);
         }
     }
 
-    fn loadCurrentStateForDiffProvider(&self, backupDir: &str) -> BackupManifest {
-        if let Some(currentState) = self.loadCurrentStateManifestProvider(backupDir) {
+    fn loadCurrentStateForDiffProvider(
+        &self,
+        vfs: &VisualFileSystem,
+        backupDir: &str,
+    ) -> BackupManifest {
+        if let Some(currentState) = self.loadCurrentStateManifestProvider(vfs, backupDir) {
             return currentState;
         }
 
-        let Some(host) = self.host() else {
-            return BackupManifest {
-                timestamp: currentTimeMillis(),
-                files: BTreeMap::new(),
-                fileStats: BTreeMap::new(),
-            };
-        };
-        if let Some(latestTimestamp) = listBackupsInBackupDir(host.as_ref(), backupDir)
-            .last()
-            .copied()
-        {
+        if let Some(latestTimestamp) = listBackupsInBackupDir(vfs, backupDir).last().copied() {
             if let Some(latestManifest) =
-                self.loadBackupManifestProvider(backupDir, latestTimestamp)
+                self.loadBackupManifestProvider(vfs, backupDir, latestTimestamp)
             {
                 return latestManifest;
             }
@@ -608,15 +587,24 @@ impl WorkspaceBackupManager {
         }
     }
 
-    fn readTextFromObjectHashProvider(&self, objectsDir: &str, hash: &str) -> Option<String> {
-        let host = self.host()?;
-        let objectPath = resolveObjectPathForRead(host.as_ref(), objectsDir, hash)?;
-        let bytes = host.readFileBytes(&objectPath).ok()?;
+    fn readTextFromObjectHashProvider(
+        &self,
+        vfs: &VisualFileSystem,
+        objectsDir: &str,
+        hash: &str,
+    ) -> Option<String> {
+        let objectPath = resolveObjectPathForRead(vfs, objectsDir, hash)?;
+        let bytes = vfs.readFileBytes(&objectPath).ok()?;
         String::from_utf8(bytes).ok()
     }
 
-    fn estimateLineCountFromHashProvider(&self, objectsDir: &str, hash: &str) -> i32 {
-        let Some(text) = self.readTextFromObjectHashProvider(objectsDir, hash) else {
+    fn estimateLineCountFromHashProvider(
+        &self,
+        vfs: &VisualFileSystem,
+        objectsDir: &str,
+        hash: &str,
+    ) -> i32 {
+        let Some(text) = self.readTextFromObjectHashProvider(vfs, objectsDir, hash) else {
             return 0;
         };
         normalizeTextLinesForDiff(&text).len() as i32
@@ -624,6 +612,7 @@ impl WorkspaceBackupManager {
 
     fn estimateChangedLinesBetweenHashesProvider(
         &self,
+        vfs: &VisualFileSystem,
         objectsDir: &str,
         currentHash: &str,
         targetHash: &str,
@@ -631,10 +620,12 @@ impl WorkspaceBackupManager {
         if currentHash == targetHash {
             return 0;
         }
-        let Some(currentText) = self.readTextFromObjectHashProvider(objectsDir, currentHash) else {
+        let Some(currentText) = self.readTextFromObjectHashProvider(vfs, objectsDir, currentHash)
+        else {
             return 0;
         };
-        let Some(targetText) = self.readTextFromObjectHashProvider(objectsDir, targetHash) else {
+        let Some(targetText) = self.readTextFromObjectHashProvider(vfs, objectsDir, targetHash)
+        else {
             return 0;
         };
         estimateChangedLines(&currentText, &targetText)
@@ -643,14 +634,11 @@ impl WorkspaceBackupManager {
     fn previewChangesProvider(
         &self,
         workspacePath: &str,
-        _workspaceEnv: Option<&str>,
         targetTimestamp: i64,
         chatId: Option<&str>,
     ) -> Vec<WorkspaceFileChange> {
-        let Some(host) = self.host() else {
-            return Vec::new();
-        };
-        let Ok(exists) = host.fileExists(workspacePath) else {
+        let vfs = self.vfsForWorkspace(workspacePath);
+        let Ok(exists) = vfs.fileExists(workspacePath) else {
             return Vec::new();
         };
         if !exists.exists || !exists.isDirectory {
@@ -660,9 +648,9 @@ impl WorkspaceBackupManager {
         let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
         let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
         let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        let currentState = self.loadCurrentStateForDiffProvider(&backupDir);
+        let currentState = self.loadCurrentStateForDiffProvider(&vfs, &backupDir);
         let targetManifest = self
-            .loadBackupManifestProvider(&backupDir, targetTimestamp)
+            .loadBackupManifestProvider(&vfs, &backupDir, targetTimestamp)
             .unwrap_or_else(|| BackupManifest {
                 timestamp: targetTimestamp,
                 files: BTreeMap::new(),
@@ -675,7 +663,8 @@ impl WorkspaceBackupManager {
 
         for (relativePath, currentHash) in &currentFiles {
             let Some(targetHash) = targetFiles.get(relativePath) else {
-                let deletedLines = self.estimateLineCountFromHashProvider(&objectsDir, currentHash);
+                let deletedLines =
+                    self.estimateLineCountFromHashProvider(&vfs, &objectsDir, currentHash);
                 changes.push(WorkspaceFileChange {
                     path: relativePath.clone(),
                     changeType: ChangeType::DELETED,
@@ -686,6 +675,7 @@ impl WorkspaceBackupManager {
 
             if targetHash != currentHash {
                 let changedLines = self.estimateChangedLinesBetweenHashesProvider(
+                    &vfs,
                     &objectsDir,
                     currentHash,
                     targetHash,
@@ -704,7 +694,7 @@ impl WorkspaceBackupManager {
             if currentFiles.contains_key(relativePath) {
                 continue;
             }
-            let addedLines = self.estimateLineCountFromHashProvider(&objectsDir, targetHash);
+            let addedLines = self.estimateLineCountFromHashProvider(&vfs, &objectsDir, targetHash);
             changes.push(WorkspaceFileChange {
                 path: relativePath.clone(),
                 changeType: ChangeType::ADDED,
@@ -737,8 +727,9 @@ impl WorkspaceToolHookSession {
         if let (Some(backupDir), Some(currentState)) =
             (state.backupDir.as_deref(), state.currentState.as_ref())
         {
+            let vfs = self.manager.vfsForWorkspace(&self.workspacePath);
             self.manager
-                .saveCurrentStateManifestProvider(backupDir, currentState);
+                .saveCurrentStateManifestProvider(&vfs, backupDir, currentState);
         }
     }
 }
@@ -752,8 +743,7 @@ impl AIToolHook for WorkspaceToolHookSession {
         if self.closed.load(Ordering::SeqCst) || !isWorkspaceMutatingTool(&tool.name) {
             return;
         }
-        let affectedPaths =
-            extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
+        let affectedPaths = extractWorkspaceAffectedPaths(tool, &self.workspacePath);
         if affectedPaths.is_empty() {
             return;
         }
@@ -767,7 +757,6 @@ impl AIToolHook for WorkspaceToolHookSession {
         }
         let Some(init) = self.manager.initializeHookSessionProvider(
             &self.workspacePath,
-            self.workspaceEnv.as_deref(),
             self.messageTimestamp,
             self.chatScopeId.as_deref(),
         ) else {
@@ -787,8 +776,7 @@ impl AIToolHook for WorkspaceToolHookSession {
         {
             return;
         }
-        let affectedPaths =
-            extractWorkspaceAffectedPaths(tool, &self.workspacePath, self.workspaceEnv.as_deref());
+        let affectedPaths = extractWorkspaceAffectedPaths(tool, &self.workspacePath);
         if affectedPaths.is_empty() {
             return;
         }
@@ -814,8 +802,10 @@ impl AIToolHook for WorkspaceToolHookSession {
         for path in affectedPaths {
             distinctPaths.insert(path);
         }
+        let vfs = self.manager.vfsForWorkspace(&self.workspacePath);
         for affectedPath in distinctPaths {
             self.manager.refreshPathInStateProvider(
+                &vfs,
                 &self.workspacePath,
                 &affectedPath,
                 &objectsDir,
@@ -837,66 +827,20 @@ fn isWorkspaceMutatingTool(toolName: &str) -> bool {
     WORKSPACE_MUTATING_TOOLS.contains(&toolName)
 }
 
-fn isEnvironmentMatchForWorkspace(toolEnv: Option<&str>, workspaceEnv: Option<&str>) -> bool {
-    let normalizedToolEnv = toolEnv.unwrap_or("").trim();
-    let normalizedWorkspaceEnv = workspaceEnv.unwrap_or("").trim();
-    if normalizedWorkspaceEnv.is_empty() {
-        return normalizedToolEnv.is_empty() || normalizedToolEnv.eq_ignore_ascii_case("android");
-    }
-    normalizedToolEnv.eq_ignore_ascii_case(normalizedWorkspaceEnv)
-}
-
-fn extractWorkspaceAffectedPaths(
-    tool: &AITool,
-    workspacePath: &str,
-    workspaceEnv: Option<&str>,
-) -> Vec<String> {
+fn extractWorkspaceAffectedPaths(tool: &AITool, workspacePath: &str) -> Vec<String> {
     let mut result = Vec::<String>::new();
-    let defaultEnvironment = toolParam(tool, "environment");
     match tool.name.as_str() {
         "apply_file" | "create_file" | "edit_file" | "delete_file" | "write_file"
-        | "write_file_binary" => {
-            collectWorkspacePath(
-                &mut result,
-                toolParam(tool, "path"),
-                defaultEnvironment,
-                workspacePath,
-                workspaceEnv,
-            );
+        | "write_file_binary" | "make_directory" => {
+            collectWorkspacePath(&mut result, toolParam(tool, "path"), workspacePath);
         }
         "move_file" => {
-            collectWorkspacePath(
-                &mut result,
-                toolParam(tool, "source"),
-                defaultEnvironment,
-                workspacePath,
-                workspaceEnv,
-            );
-            collectWorkspacePath(
-                &mut result,
-                toolParam(tool, "destination"),
-                defaultEnvironment,
-                workspacePath,
-                workspaceEnv,
-            );
+            collectWorkspacePath(&mut result, toolParam(tool, "source"), workspacePath);
+            collectWorkspacePath(&mut result, toolParam(tool, "destination"), workspacePath);
         }
         "copy_file" => {
-            let sourceEnvironment = toolParam(tool, "source_environment").or(defaultEnvironment);
-            let destinationEnvironment = toolParam(tool, "dest_environment").or(defaultEnvironment);
-            collectWorkspacePath(
-                &mut result,
-                toolParam(tool, "source"),
-                sourceEnvironment,
-                workspacePath,
-                workspaceEnv,
-            );
-            collectWorkspacePath(
-                &mut result,
-                toolParam(tool, "destination"),
-                destinationEnvironment,
-                workspacePath,
-                workspaceEnv,
-            );
+            collectWorkspacePath(&mut result, toolParam(tool, "source"), workspacePath);
+            collectWorkspacePath(&mut result, toolParam(tool, "destination"), workspacePath);
         }
         _ => {}
     }
@@ -910,25 +854,21 @@ fn toolParam<'a>(tool: &'a AITool, name: &str) -> Option<&'a str> {
         .map(|parameter| parameter.value.as_str())
 }
 
-fn collectWorkspacePath(
-    result: &mut Vec<String>,
-    path: Option<&str>,
-    toolEnv: Option<&str>,
-    workspacePath: &str,
-    workspaceEnv: Option<&str>,
-) {
+fn collectWorkspacePath(result: &mut Vec<String>, path: Option<&str>, workspacePath: &str) {
     let Some(rawPath) = path else {
         return;
     };
-    let mut normalizedPath = rawPath.trim().trim_end_matches('/').to_string();
-    if normalizedPath.is_empty() || !isEnvironmentMatchForWorkspace(toolEnv, workspaceEnv) {
+    let normalizedPath = rawPath.trim().trim_end_matches('/').to_string();
+    if normalizedPath.is_empty() {
         return;
     }
-    if makeRelativePath(workspacePath, &normalizedPath).is_none()
+    let normalizedPath = if makeRelativePath(workspacePath, &normalizedPath).is_none()
         && !startsWithAbsoluteRoot(&normalizedPath)
     {
-        normalizedPath = joinPath(workspacePath, &normalizedPath);
-    }
+        joinPath(workspacePath, &normalizedPath)
+    } else {
+        normalizedPath
+    };
     let Some(relativePath) = makeRelativePath(workspacePath, &normalizedPath) else {
         return;
     };
@@ -943,8 +883,8 @@ fn startsWithAbsoluteRoot(path: &str) -> bool {
     normalized.starts_with('/') || normalized.as_bytes().get(1) == Some(&b':')
 }
 
-fn listBackupsInBackupDir(host: &dyn FileSystemHost, backupDir: &str) -> Vec<i64> {
-    let Ok(entries) = host.listFiles(backupDir) else {
+fn listBackupsInBackupDir(vfs: &VisualFileSystem, backupDir: &str) -> Vec<i64> {
+    let Ok(entries) = vfs.listFiles(backupDir) else {
         return Vec::new();
     };
     let mut timestamps = entries
@@ -961,8 +901,8 @@ fn listBackupsInBackupDir(host: &dyn FileSystemHost, backupDir: &str) -> Vec<i64
     timestamps
 }
 
-fn ensureDirectory(host: &dyn FileSystemHost, path: &str) {
-    let _ = host.makeDirectory(path, true);
+fn ensureDirectory(vfs: &VisualFileSystem, path: &str) {
+    let _ = vfs.makeDirectory(path, true);
 }
 
 fn normalizeChatScope(chatId: Option<&str>) -> String {
@@ -1010,18 +950,19 @@ fn makeRelativePath(root: &str, fullPath: &str) -> Option<String> {
         return None;
     }
     let normalizedFullPath = GitIgnoreFilter::normalizePath(fullPath);
-    if normalizedFullPath == normalizedRoot {
+    makeRelativePathForNormalizedRoot(&normalizedRoot, &normalizedFullPath)
+        .or_else(|| makeRelativePathForNormalizedRoot("/workspace", &normalizedFullPath))
+}
+
+fn makeRelativePathForNormalizedRoot(root: &str, fullPath: &str) -> Option<String> {
+    if fullPath == root {
         return Some(String::new());
     }
-    let prefix = format!("{normalizedRoot}/");
-    if !normalizedFullPath.starts_with(&prefix) {
+    let prefix = format!("{root}/");
+    if !fullPath.starts_with(&prefix) {
         return None;
     }
-    Some(
-        normalizedFullPath[prefix.len()..]
-            .trim_start_matches('/')
-            .to_string(),
-    )
+    Some(fullPath[prefix.len()..].trim_start_matches('/').to_string())
 }
 
 fn objectBucketPrefix(hash: &str) -> String {
@@ -1041,12 +982,12 @@ fn buildLegacyObjectPath(objectsDir: &str, hash: &str) -> String {
 }
 
 fn resolveObjectPathForRead(
-    host: &dyn FileSystemHost,
+    vfs: &VisualFileSystem,
     objectsDir: &str,
     hash: &str,
 ) -> Option<String> {
     let sharded = buildShardedObjectPath(objectsDir, hash);
-    if host
+    if vfs
         .fileExists(&sharded)
         .map(|value| value.exists)
         .unwrap_or(false)
@@ -1054,7 +995,7 @@ fn resolveObjectPathForRead(
         return Some(sharded);
     }
     let legacy = buildLegacyObjectPath(objectsDir, hash);
-    if host
+    if vfs
         .fileExists(&legacy)
         .map(|value| value.exists)
         .unwrap_or(false)

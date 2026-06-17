@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct StandardBrowserAutomationTools {
@@ -32,7 +33,7 @@ impl StandardBrowserAutomationTools {
             Ok(response) => ToolResult {
                 toolName: tool.name.clone(),
                 success: true,
-                result: response.output,
+                result: stringResultData(response.output),
                 error: None,
             },
             Err(error) => toolError(tool, error.message),
@@ -135,7 +136,7 @@ fn toolError(tool: &AITool, message: String) -> ToolResult {
     ToolResult {
         toolName: tool.name.clone(),
         success: false,
-        result: String::new(),
+        result: stringResultData(""),
         error: Some(message),
     }
 }

@@ -63,6 +63,7 @@ class _DetailsTagRendererState extends State<DetailsTagRenderer> {
                       isStreaming: widget.isStreaming,
                       textColor: widget.textColor.withValues(alpha: 0.85),
                       backgroundColor: Theme.of(context).colorScheme.surface,
+                      selectionRoot: false,
                     ),
                   )
                 : const SizedBox.shrink(

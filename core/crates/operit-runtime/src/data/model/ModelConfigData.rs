@@ -290,8 +290,10 @@ impl Default for ModelSummarySettings {
         Self {
             enableSummary: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY,
             summaryTokenThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD,
-            enableSummaryByMessageCount: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
-            summaryMessageCountThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
+            enableSummaryByMessageCount:
+                ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
+            summaryMessageCountThreshold:
+                ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
         }
     }
 }

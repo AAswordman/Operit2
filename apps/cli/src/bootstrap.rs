@@ -56,3 +56,85 @@ pub(crate) fn create_cli_application() -> OperitApplication {
 pub(crate) fn create_local_core() -> LocalCoreProxy {
     LocalCoreProxy::new(create_cli_application())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
+    use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+    use serde_json::Value;
+
+    #[test]
+    fn direct_terminal_tool_chain_executes_visible_terminal() {
+        let application = create_cli_application();
+        let mut handler = AIToolHandler::getInstance(application.applicationContext.clone());
+        handler.registerDefaultTools();
+
+        #[cfg(windows)]
+        let (sessionName, command, expectedOutput) = (
+            "direct-tool-visible-powershell",
+            "Write-Output direct-tool-ok",
+            "direct-tool-ok",
+        );
+        #[cfg(target_os = "linux")]
+        let (sessionName, command, expectedOutput) = (
+            "direct-tool-visible-linux",
+            "printf 'direct-tool-ok\\n'; [ -t 0 ] && echo tty=yes || echo tty=no",
+            "direct-tool-ok\ntty=yes",
+        );
+
+        let createResult = handler.executeTool(AITool {
+            name: "create_terminal_session".to_string(),
+            parameters: vec![ToolParameter {
+                name: "session_name".to_string(),
+                value: sessionName.to_string(),
+            }],
+        });
+        assert!(createResult.success, "{:?}", createResult.error);
+        let createJson: Value =
+            serde_json::from_str(&createResult.result).expect("create result json");
+        let sessionId = createJson["sessionId"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        let executeResult = handler.executeTool(AITool {
+            name: "execute_in_terminal_session".to_string(),
+            parameters: vec![
+                ToolParameter {
+                    name: "session_id".to_string(),
+                    value: sessionId.clone(),
+                },
+                ToolParameter {
+                    name: "command".to_string(),
+                    value: command.to_string(),
+                },
+                ToolParameter {
+                    name: "timeout_ms".to_string(),
+                    value: "3000".to_string(),
+                },
+            ],
+        });
+        assert!(executeResult.success, "{:?}", executeResult.error);
+        let executeJson: Value =
+            serde_json::from_str(&executeResult.result).expect("execute result json");
+        assert_eq!(executeJson["output"].as_str(), Some(expectedOutput));
+        assert_eq!(executeJson["exitCode"].as_i64(), Some(0));
+        assert_eq!(executeJson["timedOut"].as_bool(), Some(false));
+
+        let screenResult = handler.executeTool(AITool {
+            name: "get_terminal_session_screen".to_string(),
+            parameters: vec![ToolParameter {
+                name: "session_id".to_string(),
+                value: sessionId,
+            }],
+        });
+        assert!(screenResult.success, "{:?}", screenResult.error);
+        let screenJson: Value =
+            serde_json::from_str(&screenResult.result).expect("screen result json");
+        assert_eq!(screenJson["commandRunning"].as_bool(), Some(false));
+        assert!(screenJson["content"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+    }
+}

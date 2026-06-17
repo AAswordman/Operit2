@@ -15,7 +15,6 @@ pub struct ChatHistory {
     pub group: Option<String>,
     pub displayOrder: i64,
     pub workspace: Option<String>,
-    pub workspaceEnv: Option<String>,
     pub parentChatId: Option<String>,
     pub characterCardName: Option<String>,
     pub characterGroupId: Option<String>,

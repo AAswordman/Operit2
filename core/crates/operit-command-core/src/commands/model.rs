@@ -88,7 +88,11 @@ pub fn run_model_command(
         }
         "provider-list" => {
             core.initialize()?;
-            for provider in core.modelManager().getProviderProfiles().map_err(|error| error.to_string())? {
+            for provider in core
+                .modelManager()
+                .getProviderProfiles()
+                .map_err(|error| error.to_string())?
+            {
                 println!(
                     "{}\t{}\t{}\t{}\t{}",
                     provider.id,
@@ -101,7 +105,8 @@ pub fn run_model_command(
         }
         "provider-show" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-show <provider-id>")?;
+            let providerId =
+                requiredArg(args, 1, "usage: operit2 model provider-show <provider-id>")?;
             let provider = core
                 .modelManager()
                 .getProviderProfile(providerId)
@@ -113,7 +118,10 @@ pub fn run_model_command(
             println!("endpoint={}", provider.endpoint);
             println!("apiKeyLength={}", provider.apiKey.len());
             println!("useMultipleApiKeys={}", provider.useMultipleApiKeys);
-            println!("apiKeyPool={}", serde_json::to_string(&provider.apiKeyPool).map_err(|error| error.to_string())?);
+            println!(
+                "apiKeyPool={}",
+                serde_json::to_string(&provider.apiKeyPool).map_err(|error| error.to_string())?
+            );
             println!("currentKeyIndex={}", provider.currentKeyIndex);
             println!("keyRotationMode={}", provider.keyRotationMode);
             println!("customHeaders={}", provider.customHeaders);
@@ -125,9 +133,24 @@ pub fn run_model_command(
         }
         "provider-create" => {
             core.initialize()?;
-            let name = requiredArg(args, 1, "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>")?.to_string();
-            let providerTypeId = requiredArg(args, 2, "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>")?.to_string();
-            let endpoint = requiredArg(args, 3, "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>")?.to_string();
+            let name = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>",
+            )?
+            .to_string();
+            let providerTypeId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>",
+            )?
+            .to_string();
+            let endpoint = requiredArg(
+                args,
+                3,
+                "usage: operit2 model provider-create <name> <provider-type-id> <endpoint>",
+            )?
+            .to_string();
             let providerId = core
                 .modelManager()
                 .createProvider(name, providerTypeId, endpoint)
@@ -136,8 +159,17 @@ pub fn run_model_command(
         }
         "provider-set-key" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-set-key <provider-id> <api-key>")?;
-            let apiKey = requiredArg(args, 2, "usage: operit2 model provider-set-key <provider-id> <api-key>")?.to_string();
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-set-key <provider-id> <api-key>",
+            )?;
+            let apiKey = requiredArg(
+                args,
+                2,
+                "usage: operit2 model provider-set-key <provider-id> <api-key>",
+            )?
+            .to_string();
             let manager = core.modelManager();
             let mut provider = manager
                 .getProviderProfile(providerId)
@@ -150,8 +182,17 @@ pub fn run_model_command(
         }
         "provider-set-endpoint" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-set-endpoint <provider-id> <endpoint>")?;
-            let endpoint = requiredArg(args, 2, "usage: operit2 model provider-set-endpoint <provider-id> <endpoint>")?.to_string();
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-set-endpoint <provider-id> <endpoint>",
+            )?;
+            let endpoint = requiredArg(
+                args,
+                2,
+                "usage: operit2 model provider-set-endpoint <provider-id> <endpoint>",
+            )?
+            .to_string();
             let manager = core.modelManager();
             let mut provider = manager
                 .getProviderProfile(providerId)
@@ -164,7 +205,11 @@ pub fn run_model_command(
         }
         "provider-model-available-list" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-model-available-list <provider-id>")?;
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-model-available-list <provider-id>",
+            )?;
             let mut models = core
                 .modelManager()
                 .getAvailableProviderModels(providerId)
@@ -184,8 +229,17 @@ pub fn run_model_command(
         }
         "provider-model-add" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-model-add <provider-id> <model-id>")?;
-            let modelId = requiredArg(args, 2, "usage: operit2 model provider-model-add <provider-id> <model-id>")?.to_string();
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-model-add <provider-id> <model-id>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model provider-model-add <provider-id> <model-id>",
+            )?
+            .to_string();
             let modelId = core
                 .modelManager()
                 .addProviderModelFromAvailable(providerId, modelId)
@@ -194,8 +248,17 @@ pub fn run_model_command(
         }
         "provider-model-create" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model provider-model-create <provider-id> <model-id>")?;
-            let modelId = requiredArg(args, 2, "usage: operit2 model provider-model-create <provider-id> <model-id>")?.to_string();
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model provider-model-create <provider-id> <model-id>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model provider-model-create <provider-id> <model-id>",
+            )?
+            .to_string();
             let modelId = core
                 .modelManager()
                 .createProviderModel(providerId, modelId)
@@ -247,23 +310,50 @@ pub fn run_model_command(
             println!("customHeaders={}", config.customHeaders);
             println!("requestLimitPerMinute={}", config.requestLimitPerMinute);
             println!("maxConcurrentRequests={}", config.maxConcurrentRequests);
-            println!("supportsStructuredTools={}", config.request.supportsStructuredTools);
+            println!(
+                "supportsStructuredTools={}",
+                config.request.supportsStructuredTools
+            );
             println!("maxContextLength={}", config.context.maxContextLength);
-            println!("enableMaxContextMode={}", config.context.enableMaxContextMode);
+            println!(
+                "enableMaxContextMode={}",
+                config.context.enableMaxContextMode
+            );
             println!("directImage={}", config.capabilities.directImage);
             println!("directAudio={}", config.capabilities.directAudio);
             println!("directVideo={}", config.capabilities.directVideo);
             println!("toolCall={}", config.capabilities.toolCall);
-            println!("builtinTools={}", serde_json::to_string(&config.builtinTools).map_err(|error| error.to_string())?);
+            println!(
+                "builtinTools={}",
+                serde_json::to_string(&config.builtinTools).map_err(|error| error.to_string())?
+            );
             println!("enableSummary={}", config.summary.enableSummary);
-            println!("summaryTokenThreshold={}", config.summary.summaryTokenThreshold);
-            println!("enableSummaryByMessageCount={}", config.summary.enableSummaryByMessageCount);
-            println!("summaryMessageCountThreshold={}", config.summary.summaryMessageCountThreshold);
-            println!("parameters={}", serde_json::to_string(&config.parameters).map_err(|error| error.to_string())?);
+            println!(
+                "summaryTokenThreshold={}",
+                config.summary.summaryTokenThreshold
+            );
+            println!(
+                "enableSummaryByMessageCount={}",
+                config.summary.enableSummaryByMessageCount
+            );
+            println!(
+                "summaryMessageCountThreshold={}",
+                config.summary.summaryMessageCountThreshold
+            );
+            println!(
+                "parameters={}",
+                serde_json::to_string(&config.parameters).map_err(|error| error.to_string())?
+            );
             if let Some(pricing) = config.pricing {
                 println!("billingMode={:?}", pricing.billingMode);
                 println!("inputPricePerMillion={}", pricing.inputPricePerMillion);
-                println!("cachedInputPricePerMillion={}", pricing.cachedInputPricePerMillion.map(|value| value.to_string()).unwrap_or_default());
+                println!(
+                    "cachedInputPricePerMillion={}",
+                    pricing
+                        .cachedInputPricePerMillion
+                        .map(|value| value.to_string())
+                        .unwrap_or_default()
+                );
                 println!("outputPricePerMillion={}", pricing.outputPricePerMillion);
                 println!("pricePerRequest={}", pricing.pricePerRequest);
                 println!("currency={}", pricing.currency.code());
@@ -271,8 +361,12 @@ pub fn run_model_command(
         }
         "use" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model use <provider-id> <model-id>")?.to_string();
-            let modelId = requiredArg(args, 2, "usage: operit2 model use <provider-id> <model-id>")?.to_string();
+            let providerId =
+                requiredArg(args, 1, "usage: operit2 model use <provider-id> <model-id>")?
+                    .to_string();
+            let modelId =
+                requiredArg(args, 2, "usage: operit2 model use <provider-id> <model-id>")?
+                    .to_string();
             core.functionalManager()
                 .setModelForFunction(FunctionType::CHAT, providerId.clone(), modelId.clone())
                 .map_err(|error| error.to_string())?;
@@ -301,9 +395,21 @@ pub fn run_model_command(
         }
         "parameters" => {
             core.initialize()?;
-            let providerId = requiredArg(args, 1, "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>")?;
-            let modelId = requiredArg(args, 2, "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>")?;
-            let parametersJson = requiredArg(args, 3, "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>")?;
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>",
+            )?;
+            let parametersJson = requiredArg(
+                args,
+                3,
+                "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>",
+            )?;
             let parameters =
                 serde_json::from_str::<Vec<ModelParameter<serde_json::Value>>>(parametersJson)
                     .map_err(|error| error.to_string())?;
@@ -329,7 +435,10 @@ pub fn run_model_command(
             println!("providerId={}", config.providerId);
             println!("modelId={}", config.modelId);
             println!("maxContextLength={}", config.context.maxContextLength);
-            println!("enableMaxContextMode={}", config.context.enableMaxContextMode);
+            println!(
+                "enableMaxContextMode={}",
+                config.context.enableMaxContextMode
+            );
         }
         "context-set" => {
             core.initialize()?;
@@ -366,9 +475,18 @@ pub fn run_model_command(
             println!("providerId={}", config.providerId);
             println!("modelId={}", config.modelId);
             println!("enableSummary={}", config.summary.enableSummary);
-            println!("summaryTokenThreshold={}", config.summary.summaryTokenThreshold);
-            println!("enableSummaryByMessageCount={}", config.summary.enableSummaryByMessageCount);
-            println!("summaryMessageCountThreshold={}", config.summary.summaryMessageCountThreshold);
+            println!(
+                "summaryTokenThreshold={}",
+                config.summary.summaryTokenThreshold
+            );
+            println!(
+                "enableSummaryByMessageCount={}",
+                config.summary.enableSummaryByMessageCount
+            );
+            println!(
+                "summaryMessageCountThreshold={}",
+                config.summary.summaryMessageCountThreshold
+            );
         }
         "summary-set" => {
             core.initialize()?;
@@ -464,7 +582,10 @@ pub fn run_model_command(
                 core.functionalManager()
                     .resetFunctionConfig(functionType.clone())
                     .map_err(|error| error.to_string())?;
-                println!("function mapping reset: {}", functionTypeName(&functionType));
+                println!(
+                    "function mapping reset: {}",
+                    functionTypeName(&functionType)
+                );
             } else {
                 core.functionalManager()
                     .resetAllFunctionConfigs()

@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -27,8 +27,8 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::util::ChainLogger::{self, SEND_CHAIN};
 use crate::util::stream::Stream::Stream;
+use crate::util::ChainLogger::{self, SEND_CHAIN};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {
@@ -159,7 +159,6 @@ impl MessageCoordinationDelegate {
                 .map(|id| self.chatHistoryDelegate.getRuntimeChatHistory(id))
                 .unwrap_or_default(),
             workspacePath: currentChat.clone().and_then(|chat| chat.workspace),
-            workspaceEnv: currentChat.and_then(|chat| chat.workspaceEnv),
             promptFunctionType,
             roleCardId,
             currentRoleName,
@@ -481,7 +480,6 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
-        let workspaceEnv = currentChat.clone().and_then(|chat| chat.workspaceEnv);
         let roleCardId = match roleCardIdOverride
             .clone()
             .map(|value| value.trim().to_string())
@@ -523,7 +521,6 @@ impl MessageCoordinationDelegate {
                 messageText,
                 chatHistory: runtimeChatHistory,
                 workspacePath,
-                workspaceEnv,
                 promptFunctionType,
                 roleCardId,
                 currentRoleName: None,
@@ -752,7 +749,6 @@ impl MessageCoordinationDelegate {
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
-        let workspaceEnv = currentChat.and_then(|chat| chat.workspaceEnv);
         if !self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
             let newTitle = if !originalUserText.is_empty() {
                 originalUserText.clone()
@@ -773,7 +769,6 @@ impl MessageCoordinationDelegate {
                     messageText: originalUserText.clone(),
                     attachments: attachments.clone(),
                     workspacePath: workspacePath.clone(),
-                    workspaceEnv: workspaceEnv.clone(),
                     replyToMessage,
                     chatId: chatId.clone(),
                     roleCardId: CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string(),

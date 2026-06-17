@@ -21,6 +21,7 @@ use crate::core::tools::skill::SkillManager::SkillManager;
 use crate::core::tools::ToolPackage::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
 };
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 use crate::data::mcp::MCPLocalServer::MCPLocalServer;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use crate::util::AppLogger::AppLogger;
@@ -616,7 +617,7 @@ impl PackageManager {
             return ToolResult {
                 toolName: toolName.to_string(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some("Missing required parameter: package_name".to_string()),
             };
         }
@@ -626,7 +627,7 @@ impl PackageManager {
             return ToolResult {
                 toolName: toolName.to_string(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "ToolPkg container '{}' is not a package and cannot be activated.",
                     normalizedPackageName
@@ -644,7 +645,7 @@ impl PackageManager {
             return ToolResult {
                 toolName: toolName.to_string(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(format!(
                     "Skill '{}' is set to not show to AI",
                     normalizedPackageName
@@ -655,7 +656,7 @@ impl PackageManager {
         ToolResult {
             toolName: toolName.to_string(),
             success: true,
-            result: self.usePackage(&normalizedPackageName),
+            result: stringResultData(self.usePackage(&normalizedPackageName)),
             error: None,
         }
     }

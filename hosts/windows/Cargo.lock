@@ -763,6 +763,7 @@ dependencies = [
 name = "operit-host-windows-native"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "operit-host-api",
  "portable-pty",
  "regex",

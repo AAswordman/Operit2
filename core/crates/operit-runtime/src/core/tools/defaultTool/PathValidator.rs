@@ -1,6 +1,7 @@
 use operit_host_api::FileSystemHost;
 
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
+use crate::core::tools::ToolResultDataClasses::stringResultData;
 
 pub struct PathValidator;
 
@@ -17,7 +18,7 @@ impl PathValidator {
             Err(error) => Some(ToolResult {
                 toolName: toolName.to_string(),
                 success: false,
-                result: String::new(),
+                result: stringResultData(""),
                 error: Some(error.message),
             }),
         }

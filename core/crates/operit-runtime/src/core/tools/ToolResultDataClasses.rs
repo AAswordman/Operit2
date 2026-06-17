@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 pub enum ToolResultData {
     BooleanResultData(BooleanResultData),
     StringResultData(StringResultData),
+    SleepResultData(SleepResultData),
+    EnvironmentVariableReadResultData(EnvironmentVariableReadResultData),
+    EnvironmentVariableWriteResultData(EnvironmentVariableWriteResultData),
     IntResultData(IntResultData),
     BinaryResultData(BinaryResultData),
     FilePartContentData(FilePartContentData),
@@ -65,6 +68,9 @@ impl ToolResultData {
         match self {
             ToolResultData::BooleanResultData(data) => data.value.to_string(),
             ToolResultData::StringResultData(data) => data.value.clone(),
+            ToolResultData::SleepResultData(data) => data.toString(),
+            ToolResultData::EnvironmentVariableReadResultData(data) => data.toString(),
+            ToolResultData::EnvironmentVariableWriteResultData(data) => data.toString(),
             ToolResultData::IntResultData(data) => data.value.to_string(),
             ToolResultData::BinaryResultData(data) => {
                 format!("Binary data ({} bytes)", data.value.len())
@@ -145,6 +151,35 @@ pub struct StringResultData {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct SleepResultData {
+    pub requestedMs: i32,
+    pub sleptMs: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EnvironmentVariableReadResultData {
+    pub key: String,
+    pub value: Option<String>,
+    pub exists: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EnvironmentVariableWriteResultData {
+    pub key: String,
+    pub requestedValue: String,
+    pub value: Option<String>,
+    pub exists: bool,
+    pub cleared: bool,
+}
+
+#[allow(non_snake_case)]
+pub fn stringResultData(value: impl Into<String>) -> ToolResultData {
+    ToolResultData::StringResultData(StringResultData {
+        value: value.into(),
+    })
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct IntResultData {
     pub value: i32,
 }
@@ -163,7 +198,6 @@ pub struct FilePartContentData {
     pub startLine: i32,
     pub endLine: i32,
     pub totalLines: i32,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -179,7 +213,6 @@ pub struct FileEntry {
 pub struct DirectoryListingData {
     pub path: String,
     pub entries: Vec<FileEntry>,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -187,7 +220,6 @@ pub struct FileContentData {
     pub path: String,
     pub content: String,
     pub size: i64,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -195,7 +227,6 @@ pub struct BinaryFileContentData {
     pub path: String,
     pub contentBase64: String,
     pub size: i64,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -204,7 +235,6 @@ pub struct FileExistsData {
     pub exists: bool,
     pub isDirectory: bool,
     pub size: i64,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -218,13 +248,11 @@ pub struct FileInfoData {
     pub group: String,
     pub lastModified: String,
     pub rawStatOutput: String,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FileOperationData {
     pub operation: String,
-    pub env: String,
     pub path: String,
     pub successful: bool,
     pub details: String,
@@ -571,7 +599,6 @@ pub struct FindFilesResultData {
     pub path: String,
     pub pattern: String,
     pub files: Vec<String>,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -594,7 +621,6 @@ pub struct GrepResultData {
     pub matches: Vec<GrepFileMatch>,
     pub totalMatches: i32,
     pub filesSearched: i32,
-    pub env: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -631,6 +657,35 @@ impl From<WebVisitLinkData> for LinkData {
     }
 }
 
+impl SleepResultData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        format!("Slept for {}ms", self.sleptMs)
+    }
+}
+
+impl EnvironmentVariableReadResultData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        if self.exists {
+            format!("{}={}", self.key, self.value.clone().unwrap_or_default())
+        } else {
+            format!("{} is not set", self.key)
+        }
+    }
+}
+
+impl EnvironmentVariableWriteResultData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        if self.cleared {
+            format!("{} cleared", self.key)
+        } else {
+            format!("{}={}", self.key, self.value.clone().unwrap_or_default())
+        }
+    }
+}
+
 impl FilePartContentData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
@@ -642,7 +697,7 @@ impl FilePartContentData {
             self.endLine,
             self.totalLines
         );
-        format!("[{}] {partInfo}\n\n{}", self.env, self.content)
+        format!("{partInfo}\n\n{}", self.content)
     }
 }
 
@@ -650,10 +705,7 @@ impl DirectoryListingData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(&format!(
-            "[{}] Directory listing for {}:\n",
-            self.env, self.path
-        ));
+        sb.push_str(&format!("Directory listing for {}:\n", self.path));
         for entry in &self.entries {
             let typeIndicator = if entry.isDirectory { "d" } else { "-" };
             sb.push_str(&format!(
@@ -668,7 +720,7 @@ impl DirectoryListingData {
 impl FileContentData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
-        format!("[{}] Content of {}:\n{}", self.env, self.path, self.content)
+        format!("Content of {}:\n{}", self.path, self.content)
     }
 }
 
@@ -676,8 +728,7 @@ impl BinaryFileContentData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
         format!(
-            "[{}] Binary content of {} ({} bytes, base64 length={})",
-            self.env,
+            "Binary content of {} ({} bytes, base64 length={})",
             self.path,
             self.size,
             self.contentBase64.chars().count()
@@ -695,14 +746,11 @@ impl FileExistsData {
                 "File"
             };
             format!(
-                "[{}] {fileType} exists at path: {} (size: {} bytes)",
-                self.env, self.path, self.size
+                "{fileType} exists at path: {} (size: {} bytes)",
+                self.path, self.size
             )
         } else {
-            format!(
-                "[{}] No file or directory exists at path: {}",
-                self.env, self.path
-            )
+            format!("No file or directory exists at path: {}", self.path)
         }
     }
 }
@@ -711,16 +759,10 @@ impl FileInfoData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
         if !self.exists {
-            return format!(
-                "[{}] File or directory does not exist at path: {}",
-                self.env, self.path
-            );
+            return format!("File or directory does not exist at path: {}", self.path);
         }
         let mut sb = String::new();
-        sb.push_str(&format!(
-            "[{}] File information for {}:\n",
-            self.env, self.path
-        ));
+        sb.push_str(&format!("File information for {}:\n", self.path));
         sb.push_str(&format!("Type: {}\n", self.fileType));
         sb.push_str(&format!("Size: {} bytes\n", self.size));
         sb.push_str(&format!("Permissions: {}\n", self.permissions));
@@ -734,7 +776,7 @@ impl FileInfoData {
 impl FileOperationData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
-        format!("[{}] {}", self.env, self.details)
+        self.details.clone()
     }
 }
 
@@ -1288,7 +1330,7 @@ impl FindFilesResultData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(&format!("[{}] File Search Result:\n", self.env));
+        sb.push_str("File Search Result:\n");
         sb.push_str(&format!("Search Path: {}\n", self.path));
         sb.push_str(&format!("Pattern: {}\n", self.pattern));
         sb.push_str(&format!("Found {} files:\n", self.files.len()));
@@ -1307,7 +1349,7 @@ impl GrepResultData {
     #[allow(non_snake_case)]
     fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(&format!("[{}] Grep Search Result:\n", self.env));
+        sb.push_str("Grep Search Result:\n");
         sb.push_str(&format!("Search Path: {}\n", self.searchPath));
         sb.push_str(&format!("Pattern: {}\n", self.pattern));
         sb.push_str(&format!(

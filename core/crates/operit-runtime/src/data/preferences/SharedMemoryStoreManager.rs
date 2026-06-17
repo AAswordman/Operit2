@@ -95,7 +95,11 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn renameSharedMemoryStore(&self, id: &str, name: String) -> Result<SharedMemoryStore, String> {
+    pub fn renameSharedMemoryStore(
+        &self,
+        id: &str,
+        name: String,
+    ) -> Result<SharedMemoryStore, String> {
         let trimmedName = name.trim();
         if trimmedName.is_empty() {
             return Err("shared memory store name is empty".to_string());
@@ -170,7 +174,9 @@ fn readSharedMemoryStore(preferences: &Preferences, id: &str) -> SharedMemorySto
     SharedMemoryStore {
         id: id.to_string(),
         name: preferences
-            .get(&stringPreferencesKey(&format!("shared_memory_store_{id}_name")))
+            .get(&stringPreferencesKey(&format!(
+                "shared_memory_store_{id}_name"
+            )))
             .cloned()
             .unwrap_or_else(|| id.to_string()),
         createdAt: preferences

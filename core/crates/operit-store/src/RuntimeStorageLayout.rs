@@ -31,7 +31,7 @@ pub const RUNTIME_WEBSESSION_BROWSER_DOWNLOAD_FILES_DIR_PATH: &str =
     "runtime/websession/browser/download_files";
 
 pub const EXPORTS_DIR_PATH: &str = "runtime/exports";
-pub const WORKSPACE_DIR_PATH: &str = "runtime/workspace";
+pub const WORKSPACE_DIR_PATH: &str = "workspaces";
 pub const OPERIT_LOG_PATH: &str = "runtime/logs/operit.log";
 pub const TOOLPKG_LOG_PATH: &str = "runtime/logs/toolpkg.log";
 

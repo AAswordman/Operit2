@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../common/interactions/MessagePressShield.dart';
+
 class CanvasExpandableHeaderRow extends StatelessWidget {
   const CanvasExpandableHeaderRow({
     super.key,
@@ -25,35 +27,37 @@ class CanvasExpandableHeaderRow extends StatelessWidget {
     return Semantics(
       button: true,
       label: semanticDescription,
-      child: InkWell(
-        onTap: onClick,
-        borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: <Widget>[
-              AnimatedRotation(
-                turns: rotationTurns,
-                duration: const Duration(milliseconds: 300),
-                child: Icon(
-                  Icons.keyboard_arrow_right,
-                  size: 18,
-                  color: titleColor,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+      child: MessagePressShieldRegion(
+        child: InkWell(
+          onTap: onClick,
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: <Widget>[
+                AnimatedRotation(
+                  turns: rotationTurns,
+                  duration: const Duration(milliseconds: 300),
+                  child: Icon(
+                    Icons.keyboard_arrow_right,
+                    size: 18,
                     color: titleColor,
-                    fontWeight: FontWeight.w500,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: titleColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

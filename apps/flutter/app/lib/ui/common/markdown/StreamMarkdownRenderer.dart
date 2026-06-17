@@ -2,12 +2,14 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
 import 'EnhancedTableBlock.dart';
 import 'MarkdownNodeGrouper.dart';
@@ -35,6 +37,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.showThinkingProcess = true,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
+    this.selectionRoot = true,
   });
 
   final String content;
@@ -49,6 +52,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
+  final bool selectionRoot;
 
   @override
   State<StreamMarkdownRenderer> createState() => _StreamMarkdownRendererState();
@@ -347,7 +351,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   @override
   Widget build(BuildContext context) {
-    return _MarkdownNodeColumn(
+    final content = _MarkdownNodeColumn(
       nodes: _rendererState.renderNodes,
       rendererId: _rendererId,
       textColor: widget.textColor,
@@ -361,6 +365,10 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       initialThinkingExpanded: widget.initialThinkingExpanded,
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
     );
+    if (widget.isStreaming || !widget.selectionRoot) {
+      return content;
+    }
+    return SelectionArea(child: content);
   }
 }
 

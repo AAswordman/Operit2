@@ -4,12 +4,16 @@ use serde::{Deserialize, Serialize};
 
 const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "\n[工具结果过长，已截断]";
 const MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS: usize = 64 * 1024;
+pub const ENHANCED_PURE_THINKING_ONLY_WARNING: &str =
+    "警告：请输出正文内容，禁止仅输出思考内容。";
+pub const ENHANCED_TRUNCATED_TOOL_CALL_WARNING: &str =
+    "警告：检测到工具调用输出被截断。本轮所有工具调用均已作废且不会执行。请尝试减少单次输出、拆分任务，或更换更合适的模型/供应商后重试。";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub toolName: String,
     pub success: bool,
-    pub result: String,
+    pub result: ToolResultData,
     pub error: Option<String>,
 }
 
@@ -30,15 +34,15 @@ impl ConversationMarkupManager {
 
     pub fn formatToolResultForMessage(result: &ToolResult) -> String {
         if result.success {
-            let payload = Self::formatToolResultPayload(&result.result);
-            Self::createBoundedToolResultXml(&result.toolName, "success", &payload, |payload| {
-                format!("<content>{payload}</content>")
-            })
+            Self::createBoundedToolResultXml(
+                &result.toolName,
+                "success",
+                &result.result.toString(),
+                |payload| format!("<content>{payload}</content>"),
+            )
         } else {
             let message = result.error.clone().unwrap_or_default().trim().to_string();
-            let detail = Self::formatToolResultPayload(&result.result)
-                .trim()
-                .to_string();
+            let detail = result.result.toString().trim().to_string();
             let errorPayload = if !message.is_empty() && !detail.is_empty() {
                 format!("{message}\n\n{detail}")
             } else if !message.is_empty() {
@@ -50,16 +54,6 @@ impl ConversationMarkupManager {
                 format!("<content><error>{payload}</error></content>")
             })
         }
-    }
-
-    fn formatToolResultPayload(rawPayload: &str) -> String {
-        let trimmed = rawPayload.trim_start();
-        if trimmed.starts_with('{') && trimmed.contains("\"__type\"") {
-            return serde_json::from_str::<ToolResultData>(rawPayload)
-                .expect("ToolResultData structured payload deserialization failed")
-                .toString();
-        }
-        rawPayload.to_string()
     }
 
     pub fn buildBoundedToolResultMessage(results: &[ToolResult]) -> String {
@@ -84,13 +78,6 @@ impl ConversationMarkupManager {
             builder.push_str(&formatted);
         }
         builder
-    }
-
-    pub fn createMultipleToolsWarning(toolName: &str) -> String {
-        Self::createWarningStatus(&format!(
-            "Multiple tool invocations were found; only `{}` will be processed.",
-            toolName
-        ))
     }
 
     pub fn createToolNotAvailableError(toolName: &str, details: Option<&str>) -> String {
@@ -141,5 +128,114 @@ impl ConversationMarkupManager {
         truncated = truncated.trim_end().to_string();
         truncated.push_str(TOOL_RESULT_TRUNCATION_SUFFIX);
         truncated
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConversationMarkupManager, ToolResult};
+    use crate::core::tools::ToolResultDataClasses::{
+        DirectoryListingData, FileEntry, StringResultData, TerminalCommandResultData,
+        ToolResultData,
+    };
+
+    #[test]
+    fn formats_runtime_tool_result_data_with_to_string() {
+        let result = ToolResult {
+            toolName: "execute_in_terminal_session".to_string(),
+            success: true,
+            result: ToolResultData::TerminalCommandResultData(TerminalCommandResultData {
+                command: "Write-Output direct-package-ok".to_string(),
+                output: "direct-package-ok\n".to_string(),
+                exitCode: 0,
+                sessionId: "session-1".to_string(),
+                timedOut: false,
+            }),
+            error: None,
+        };
+
+        let formatted = ConversationMarkupManager::formatToolResultForMessage(&result);
+
+        assert!(formatted.contains("Terminal Command Execution Result:"));
+        assert!(formatted.contains("Command: Write-Output direct-package-ok"));
+        assert!(formatted.contains("Session: session-1"));
+        assert!(formatted.contains("Output:"));
+        assert!(!formatted.contains(r#""__type":"TerminalCommandResultData""#));
+    }
+
+    #[test]
+    fn formats_file_collection_tool_result_data_with_to_string() {
+        let result = ToolResult {
+            toolName: "list_files".to_string(),
+            success: true,
+            result: ToolResultData::DirectoryListingData(DirectoryListingData {
+                path: "C:\\work".to_string(),
+                entries: vec![FileEntry {
+                    name: "notes.txt".to_string(),
+                    isDirectory: false,
+                    size: 42,
+                    permissions: "rw-r--r--".to_string(),
+                    lastModified: "2026-06-16T00:00:00Z".to_string(),
+                }],
+            }),
+            error: None,
+        };
+
+        let formatted = ConversationMarkupManager::formatToolResultForMessage(&result);
+
+        assert!(formatted.contains("Directory listing for C:\\work:"));
+        assert!(formatted.contains("notes.txt"));
+        assert!(!formatted.contains(r#""__type":"DirectoryListingData""#));
+    }
+
+    #[test]
+    fn package_payload_keeps_nested_type_field_as_text() {
+        let payload = r#"{"command":"Write-Output direct-package-ok","output":"direct-package-ok\n","exitCode":0,"sessionId":"super_admin_default_session","timedOut":false,"terminalEnvironment":{"__type":"TerminalInfoResultData","platform":"windows","defaultType":"powershell","types":[]}}"#;
+        let result = ToolResult {
+            toolName: "super_admin:terminal".to_string(),
+            success: true,
+            result: ToolResultData::StringResultData(StringResultData {
+                value: payload.to_string(),
+            }),
+            error: None,
+        };
+
+        let formatted = ConversationMarkupManager::formatToolResultForMessage(&result);
+
+        assert!(formatted.contains(payload));
+    }
+
+    #[test]
+    fn package_payload_keeps_top_level_type_field_as_text() {
+        let payload = r#"{"__type":"PackageOwnedType","value":"plain package json"}"#;
+        let result = ToolResult {
+            toolName: "example_package:tool".to_string(),
+            success: true,
+            result: ToolResultData::StringResultData(StringResultData {
+                value: payload.to_string(),
+            }),
+            error: None,
+        };
+
+        let formatted = ConversationMarkupManager::formatToolResultForMessage(&result);
+
+        assert!(formatted.contains(payload));
+    }
+
+    #[test]
+    fn package_proxy_payload_keeps_top_level_type_field_as_text() {
+        let payload = r#"{"__type":"PackageOwnedType","value":"plain package json"}"#;
+        let result = ToolResult {
+            toolName: "package_proxy".to_string(),
+            success: true,
+            result: ToolResultData::StringResultData(StringResultData {
+                value: payload.to_string(),
+            }),
+            error: None,
+        };
+
+        let formatted = ConversationMarkupManager::formatToolResultForMessage(&result);
+
+        assert!(formatted.contains(payload));
     }
 }

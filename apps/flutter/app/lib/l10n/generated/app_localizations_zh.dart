@@ -81,6 +81,12 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get statusWarningAiErrorSummary => 'AI犯了一个错误';
+
+  @override
+  String get statusWarningAiErrorDetailTitle => 'AI错误原因';
+
+  @override
   String get toolRunning => '工具执行中...';
 
   @override
