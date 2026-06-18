@@ -2,9 +2,9 @@ use super::*;
 use crate::create_local_core;
 
 use crate::access::{
-    AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
-    PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteHostInteractionBroker,
-    RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+    link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
+    AcceptedRemoteSessionStore, PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo,
+    RemoteHostInteractionBroker, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
 };
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
@@ -16,10 +16,12 @@ use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("serve") => run_link_serve_command(&args[1..]).await,
+        Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("connect") => run_link_connect_command(&args[1..]).await,
         Some("hello") => run_link_hello_command(&args[1..]).await,
         Some("sessions") => run_link_sessions_command().await,
@@ -101,12 +103,15 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     let accepted_sessions = load_link_server_sessions()?;
     let accepted_session_loader: AcceptedRemoteSessionLoader = Arc::new(load_link_server_sessions);
     let accepted_session_store: AcceptedRemoteSessionStore = Arc::new(save_link_server_session);
+    let device_info = RemoteDeviceInfo::nativeCli("server")?;
+    let device_id = load_link_host_device_id()?;
     RemoteLinkServer::serve(
         core,
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
-            deviceInfo: RemoteDeviceInfo::native(),
+            deviceId: device_id,
+            deviceInfo: device_info,
             hostInteractionBroker: Some(host_interaction_broker),
             webAccess: None,
             printStartupInfo: true,
@@ -117,6 +122,25 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
         },
     )
     .await
+}
+
+pub(crate) fn load_link_host_device_id() -> Result<String, String> {
+    let path = crate::client_paths::link_host_device_id_path();
+    if path.exists() {
+        let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let device_id = content.trim().to_string();
+        if device_id.is_empty() {
+            return Err(format!("empty link host device id: {}", path.display()));
+        }
+        return Ok(device_id);
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid link host device id path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let device_id = format!("core-{}", Uuid::new_v4());
+    fs::write(&path, device_id.as_bytes()).map_err(|error| error.to_string())?;
+    Ok(device_id)
 }
 
 pub(crate) fn install_remote_host_permission_requester(
@@ -164,10 +188,40 @@ async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     let (url, token) =
         parse_remote_url_token(args, "usage: operit2 cli link hello <url> --token <token>")?;
     let client = RemoteLinkClient::new(url);
-    let hello = client.hello(&token).await?;
+    let token_hash = link_token_hash(&token);
+    let hello = client.hello(&token_hash).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&hello).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
+    let mut timeout_ms = 2000_u64;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--timeout-ms" => {
+                index += 1;
+                timeout_ms = args
+                    .get(index)
+                    .ok_or_else(|| {
+                        "usage: operit2 cli link discover [--timeout-ms <ms>]".to_string()
+                    })?
+                    .parse::<u64>()
+                    .map_err(|error| error.to_string())?;
+            }
+            _ => {
+                return Err("usage: operit2 cli link discover [--timeout-ms <ms>]".to_string());
+            }
+        }
+        index += 1;
+    }
+    let devices = crate::mdns::discover_devices(timeout_ms)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&devices).map_err(|error| error.to_string())?
     );
     Ok(())
 }
@@ -178,14 +232,17 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
         "usage: operit2 cli link connect <url> --token <token> [--save <name>]",
     )?;
     let client = RemoteLinkClient::new(url);
-    let hello = client.hello(&token).await?;
+    let token_hash = link_token_hash(&token);
+    let hello = client.hello(&token_hash).await?;
     println!(
         "remote device={} core={} transports={}",
         hello.coreDeviceInfo.displayName(),
         hello.coreDeviceId,
         hello.transports.join(",")
     );
-    let pair_state = client.pairStart(&token, RemoteDeviceInfo::native()).await?;
+    let pair_state = client
+        .pairStart(&token_hash, RemoteDeviceInfo::nativeCli("client")?)
+        .await?;
     println!("pairing started: {}", pair_state.pairingId);
     println!("check the server terminal for pairing code");
     print!("pairing code> ");
@@ -219,7 +276,7 @@ async fn run_link_sessions_command() -> Result<(), String> {
             name,
             session.remoteDeviceInfo.displayName(),
             session.baseUrl,
-            session.deviceId
+            session.coreDeviceId
         );
     }
     Ok(())
@@ -727,6 +784,7 @@ fn remove_link_server_session(session_id: &str) -> Result<(), String> {
 
 fn print_link_usage() {
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
+    println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link hello <url> --token <token>");
     println!("operit2 cli link connect <url> --token <token> [--save <name>]");
     println!("operit2 cli link sessions");

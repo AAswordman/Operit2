@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 
 const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "\n[工具结果过长，已截断]";
 const MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS: usize = 64 * 1024;
-pub const ENHANCED_PURE_THINKING_ONLY_WARNING: &str =
-    "警告：请输出正文内容，禁止仅输出思考内容。";
+pub const ENHANCED_PURE_THINKING_ONLY_WARNING: &str = "警告：请输出正文内容，禁止仅输出思考内容。";
 pub const ENHANCED_TRUNCATED_TOOL_CALL_WARNING: &str =
     "警告：检测到工具调用输出被截断。本轮所有工具调用均已作废且不会执行。请尝试减少单次输出、拆分任务，或更换更合适的模型/供应商后重试。";
 

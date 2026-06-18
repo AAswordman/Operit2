@@ -12,11 +12,11 @@ use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::api::chat::enhance::ToolExecutionManager::ToolExecutionManager;
 use crate::api::chat::enhance::ToolExecutionManager::{
     AITool, ToolExecutor, ToolParameter, ToolValidationResult,
 };
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
@@ -26,7 +26,6 @@ use crate::core::tools::ToolResultDataClasses::{
     FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
     ToolResultData,
 };
-use crate::data::dao::ChatDao::ChatDao;
 use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 
 use super::StandardWebVisitTool::StandardWebVisitTool;
@@ -39,7 +38,6 @@ pub struct StandardFileSystemTools {
     runtimeStoreRoot: PathBuf,
     appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
-    chatDao: ChatDao,
 }
 
 impl StandardFileSystemTools {
@@ -50,7 +48,6 @@ impl StandardFileSystemTools {
         runtimeStoreRoot: PathBuf,
         appFilesRoot: Option<PathBuf>,
         workspaceCollectionRoot: PathBuf,
-        chatDao: ChatDao,
     ) -> Self {
         Self {
             host,
@@ -59,55 +56,24 @@ impl StandardFileSystemTools {
             runtimeStoreRoot,
             appFilesRoot,
             workspaceCollectionRoot,
-            chatDao,
         }
     }
 
-    #[allow(non_snake_case)]
-    fn currentWorkspacePath(&self) -> Result<Option<String>, String> {
-        let Some(runtimeContext) = ToolExecutionManager::currentToolRuntimeContext() else {
-            return Ok(None);
-        };
-        let Some(chatId) = runtimeContext
-            .callerChatId
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        else {
-            return Ok(None);
-        };
-        let Some(chat) = self
-            .chatDao
-            .getChatById(chatId)
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(None);
-        };
-        Ok(chat
-            .workspace
-            .map(|workspace| workspace.trim().to_string())
-            .filter(|workspace| !workspace.is_empty()))
-    }
-
-    fn vfs(&self) -> Result<VisualFileSystem, String> {
-        Ok(VisualFileSystem::new(
+    fn vfs(&self) -> VisualFileSystem {
+        VisualFileSystem::new(
             self.host.clone(),
             PathMapper::new(
                 self.runtimeStoreRoot.clone(),
                 self.appFilesRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
-                self.currentWorkspacePath()?,
             ),
-        ))
+        )
     }
 
     #[allow(non_snake_case)]
     pub fn listFiles(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         match vfs.listFiles(&path) {
             Ok(entries) => successData(
                 tool,
@@ -123,10 +89,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn readFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
@@ -195,10 +158,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn readFileFull(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.fileExists(&path) {
             Ok(existence) if existence.exists && !existence.isDirectory => {
@@ -248,12 +208,7 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
-    fn handleImageFileRead(
-        &self,
-        tool: &AITool,
-        vfs: &VisualFileSystem,
-        path: &str,
-    ) -> ToolResult {
+    fn handleImageFileRead(&self, tool: &AITool, vfs: &VisualFileSystem, path: &str) -> ToolResult {
         let physicalPath = match vfs.resolvePath(path) {
             Ok(resolved) => resolved.physicalPath,
             Err(error) => return toolError(tool, String::new(), error),
@@ -294,10 +249,7 @@ impl StandardFileSystemTools {
             .unwrap_or(1);
         let endLineParam =
             optionalParameterValue(tool, "end_line").and_then(|value| value.parse::<usize>().ok());
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         let content = match vfs.readFile(&path) {
             Ok(value) => value,
@@ -353,10 +305,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn readFileBinary(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.readFileBytes(&path) {
             Ok(bytes) => {
@@ -383,10 +332,7 @@ impl StandardFileSystemTools {
         let path = parameterValue(tool, "path");
         let content = parameterValue(tool, "content");
         let append = parameterBool(tool, "append");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.writeFile(&path, &content, append) {
             Ok(()) => {
@@ -409,10 +355,7 @@ impl StandardFileSystemTools {
     pub fn writeFileBinary(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let base64Content = parameterValue(tool, "base64Content");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         let decoded = match STANDARD.decode(base64Content.as_bytes()) {
             Ok(value) => value,
@@ -442,10 +385,7 @@ impl StandardFileSystemTools {
     pub fn deleteFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let recursive = parameterBool(tool, "recursive");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.deleteFile(&path, recursive) {
             Ok(()) => successData(
@@ -467,10 +407,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn fileExists(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.fileExists(&path) {
             Ok(existence) => successData(
@@ -490,10 +427,7 @@ impl StandardFileSystemTools {
     pub fn moveFile(&self, tool: &AITool) -> ToolResult {
         let sourcePath = parameterValue(tool, "source");
         let destPath = parameterValue(tool, "destination");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.moveFile(&sourcePath, &destPath) {
             Ok(()) => successData(
@@ -517,10 +451,7 @@ impl StandardFileSystemTools {
         let sourcePath = parameterValue(tool, "source");
         let destPath = parameterValue(tool, "destination");
         let recursive = parameterBoolDefaultTrue(tool, "recursive");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.copyFile(&sourcePath, &destPath, recursive) {
             Ok(()) => successData(
@@ -543,10 +474,7 @@ impl StandardFileSystemTools {
     pub fn makeDirectory(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let createParents = parameterBool(tool, "create_parents");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.makeDirectory(&path, createParents) {
             Ok(()) => successData(
@@ -564,10 +492,7 @@ impl StandardFileSystemTools {
     pub fn findFiles(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let pattern = parameterValue(tool, "pattern");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         if pattern.trim().is_empty() {
             return toolError(
                 tool,
@@ -615,10 +540,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn fileInfo(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         match vfs.fileInfo(&path) {
             Ok(info) => successData(
@@ -643,10 +565,7 @@ impl StandardFileSystemTools {
     pub fn grepCode(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let pattern = parameterValue(tool, "pattern");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         if pattern.trim().is_empty() {
             return toolError(
                 tool,
@@ -683,10 +602,7 @@ impl StandardFileSystemTools {
     pub fn grepContext(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
         let intent = parameterValue(tool, "intent");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         if intent.trim().is_empty() {
             return toolError(
                 tool,
@@ -727,10 +643,7 @@ impl StandardFileSystemTools {
         let imageNumberStr = optionalParameterValue(tool, "image_number");
         let destPath = parameterValue(tool, "destination");
         let headersParam = optionalParameterValue(tool, "headers");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
 
         let mut resolvedUrl = urlParam;
         if resolvedUrl.trim().is_empty() {
@@ -922,10 +835,7 @@ impl StandardFileSystemTools {
             .unwrap_or_default();
         let oldContent = parameterValue(tool, "old");
         let newContent = parameterValue(tool, "new");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return vec![toolError(tool, String::new(), error)],
-        };
+        let vfs = self.vfs();
         if path.trim().is_empty() {
             return vec![toolError(
                 tool,
@@ -1087,10 +997,7 @@ impl StandardFileSystemTools {
     pub fn zipFiles(&self, tool: &AITool) -> ToolResult {
         let source = parameterValue(tool, "source");
         let destination = parameterValue(tool, "destination");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         match vfs.zipFiles(&source, &destination) {
             Ok(()) => successData(
                 tool,
@@ -1112,10 +1019,7 @@ impl StandardFileSystemTools {
     pub fn unzipFiles(&self, tool: &AITool) -> ToolResult {
         let source = parameterValue(tool, "source");
         let destination = parameterValue(tool, "destination");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         match vfs.unzipFiles(&source, &destination) {
             Ok(()) => successData(
                 tool,
@@ -1136,10 +1040,7 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     pub fn openFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         match vfs.openFile(&path) {
             Ok(()) => successData(
                 tool,
@@ -1157,10 +1058,7 @@ impl StandardFileSystemTools {
         let path = parameterValue(tool, "path");
         let title =
             optionalParameterValue(tool, "title").unwrap_or_else(|| "Share File".to_string());
-        let vfs = match self.vfs() {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, String::new(), error),
-        };
+        let vfs = self.vfs();
         match vfs.shareFile(&path, &title) {
             Ok(()) => successData(
                 tool,

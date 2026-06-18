@@ -39,6 +39,7 @@ pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 pub struct RemoteLinkServerConfig {
     pub bindAddress: String,
     pub token: String,
+    pub deviceId: String,
     pub deviceInfo: RemoteDeviceInfo,
     pub hostInteractionBroker: Option<RemoteHostInteractionBroker>,
     pub webAccess: Option<RemoteWebAccessConfig>,
@@ -54,6 +55,7 @@ impl Default for RemoteLinkServerConfig {
         Self {
             bindAddress: "0.0.0.0:37192".to_string(),
             token: "operit-link-dev".to_string(),
+            deviceId: format!("core-{}", Uuid::new_v4()),
             deviceInfo: RemoteDeviceInfo::native(),
             hostInteractionBroker: None,
             webAccess: None,
@@ -203,7 +205,7 @@ pub struct HelloResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairStartRequest {
     pub pairingServiceVersion: i32,
-    pub token: String,
+    pub tokenHash: String,
     pub clientDeviceId: String,
     pub clientDeviceInfo: RemoteDeviceInfo,
     pub clientPublicKey: String,
@@ -343,6 +345,7 @@ pub struct PairedRemoteSessionRecord {
     pub baseUrl: String,
     pub sessionId: String,
     pub deviceId: String,
+    pub coreDeviceId: String,
     pub remoteDeviceInfo: RemoteDeviceInfo,
     pub pairingServiceVersion: i32,
     pub sessionSecret: String,
@@ -355,6 +358,7 @@ pub struct PairStartState {
     pub clientDeviceId: String,
     pub clientDeviceInfo: RemoteDeviceInfo,
     pub clientPublicKey: String,
+    pub coreDeviceId: String,
     pub coreDeviceInfo: RemoteDeviceInfo,
     pub clientNonce: String,
     pub serverNonce: String,
@@ -539,7 +543,7 @@ impl RemoteLinkServer {
             token: config.token.clone(),
             keySecret,
             keyPublic,
-            deviceId: format!("core-{}", Uuid::new_v4()),
+            deviceId: config.deviceId.clone(),
             deviceInfo: config.deviceInfo.clone(),
             pairings: Arc::new(Mutex::new(BTreeMap::new())),
             sessions,
@@ -596,10 +600,10 @@ impl RemoteLinkClient {
         }
     }
 
-    pub async fn hello(&self, token: &str) -> Result<HelloResponse, String> {
+    pub async fn hello(&self, tokenHash: &str) -> Result<HelloResponse, String> {
         self.http
             .get(format!("{}/link/hello", self.baseUrl))
-            .header("x-operit-link-token", token)
+            .header("x-operit-link-token-hash", tokenHash)
             .send()
             .await
             .map_err(|error| error.to_string())?
@@ -612,7 +616,7 @@ impl RemoteLinkClient {
 
     pub async fn pairStart(
         &self,
-        token: &str,
+        tokenHash: &str,
         clientDeviceInfo: RemoteDeviceInfo,
     ) -> Result<PairStartState, String> {
         let clientSecret = StaticSecret::random_from_rng(OsRng);
@@ -621,7 +625,7 @@ impl RemoteLinkClient {
         let clientNonce = Uuid::new_v4().to_string();
         let request = PairStartRequest {
             pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
-            token: token.to_string(),
+            tokenHash: tokenHash.to_string(),
             clientDeviceId: clientDeviceId.clone(),
             clientDeviceInfo: clientDeviceInfo.clone(),
             clientPublicKey: public_key_to_string(&clientPublic),
@@ -647,6 +651,7 @@ impl RemoteLinkClient {
             clientDeviceId,
             clientDeviceInfo,
             clientPublicKey: public_key_to_string(&clientPublic),
+            coreDeviceId: response.coreDeviceId,
             coreDeviceInfo: response.coreDeviceInfo,
             clientNonce,
             serverNonce: response.serverNonce,
@@ -696,6 +701,7 @@ impl RemoteLinkClient {
             http: self.http.clone(),
             sessionId: response.sessionId,
             deviceId: state.clientDeviceId.clone(),
+            coreDeviceId: state.coreDeviceId.clone(),
             remoteDeviceInfo: state.coreDeviceInfo.clone(),
             pairingServiceVersion: response.pairingServiceVersion,
             sessionSecret: session_secret(
@@ -714,6 +720,7 @@ pub struct PairedRemoteSession {
     http: reqwest::Client,
     pub sessionId: String,
     pub deviceId: String,
+    pub coreDeviceId: String,
     pub remoteDeviceInfo: RemoteDeviceInfo,
     pub pairingServiceVersion: i32,
     sessionSecret: Vec<u8>,
@@ -733,6 +740,7 @@ impl PairedRemoteSession {
             baseUrl: self.baseUrl.clone(),
             sessionId: self.sessionId.clone(),
             deviceId: self.deviceId.clone(),
+            coreDeviceId: self.coreDeviceId.clone(),
             remoteDeviceInfo: self.remoteDeviceInfo.clone(),
             pairingServiceVersion: self.pairingServiceVersion,
             sessionSecret: BASE64.encode(&self.sessionSecret),
@@ -746,6 +754,7 @@ impl PairedRemoteSession {
             http: reqwest::Client::new(),
             sessionId: record.sessionId,
             deviceId: record.deviceId,
+            coreDeviceId: record.coreDeviceId,
             remoteDeviceInfo: record.remoteDeviceInfo,
             pairingServiceVersion: record.pairingServiceVersion,
             sessionSecret: BASE64
@@ -1086,7 +1095,7 @@ async fn pair_start(
     State(state): State<RemoteLinkState>,
     Json(request): Json<PairStartRequest>,
 ) -> Response {
-    if request.token != state.token {
+    if !token_hash_matches(&state, &request.tokenHash) {
         return unauthorized("invalid token");
     }
     let clientPublic = match parse_public_key(&request.clientPublicKey) {
@@ -1540,9 +1549,19 @@ async fn refresh_accepted_session(
 }
 
 fn token_matches(state: &RemoteLinkState, headers: &HeaderMap) -> bool {
-    header_string(headers, "x-operit-link-token")
-        .map(|value| value == state.token)
+    header_string(headers, "x-operit-link-token-hash")
+        .map(|value| token_hash_matches(state, &value))
         .unwrap_or(false)
+}
+
+pub fn link_token_hash(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    BASE64.encode(hasher.finalize())
+}
+
+fn token_hash_matches(state: &RemoteLinkState, tokenHash: &str) -> bool {
+    tokenHash == link_token_hash(&state.token)
 }
 
 fn header_string(headers: &HeaderMap, name: &str) -> Option<String> {

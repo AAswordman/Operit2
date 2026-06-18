@@ -15,10 +15,14 @@ use operit_core_proxy::LocalCoreProxy;
 mod access;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod mdnss;
+
+#[cfg(not(target_arch = "wasm32"))]
 use access::{
-    AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord, AcceptedRemoteSessionStore,
-    PairStartState, RemoteDeviceInfo, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
-    RemotePairingCodeRecord, RemotePairingCodeSink, RemoteWebAccessConfig,
+    link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
+    AcceptedRemoteSessionStore, PairStartState, RemoteDeviceInfo, RemoteLinkClient,
+    RemoteLinkServer, RemoteLinkServerConfig, RemotePairingCodeRecord, RemotePairingCodeSink,
+    RemoteWebAccessConfig,
 };
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
@@ -85,6 +89,8 @@ pub struct OperitFlutterBridge {
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
     #[cfg(not(target_arch = "wasm32"))]
     pendingRemotePairings: Mutex<HashMap<String, PendingRemotePairing>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    mdns: Mutex<Option<mdnss::MdnsHandle>>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     terminalHost: Arc<NativeTerminalHost>,
 }
@@ -724,6 +730,8 @@ impl OperitFlutterBridge {
             webAccessTask: Mutex::new(None),
             #[cfg(not(target_arch = "wasm32"))]
             pendingRemotePairings: Mutex::new(HashMap::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            mdns: Mutex::new(None),
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost,
         })
@@ -886,14 +894,14 @@ impl OperitFlutterBridge {
     fn remotePairStart(
         &self,
         baseUrl: String,
-        token: String,
+        tokenHash: String,
         clientDeviceInfo: RemoteDeviceInfo,
     ) -> Result<String, String> {
         let client = RemoteLinkClient::new(baseUrl);
-        let hello = self.runtime.block_on(client.hello(&token))?;
+        let hello = self.runtime.block_on(client.hello(&tokenHash))?;
         let state = self
             .runtime
-            .block_on(client.pairStart(&token, clientDeviceInfo))?;
+            .block_on(client.pairStart(&tokenHash, clientDeviceInfo))?;
         let pairingId = state.pairingId.clone();
         let pairingServiceVersion = state.pairingServiceVersion;
         self.pendingRemotePairings
@@ -930,10 +938,13 @@ impl OperitFlutterBridge {
         token: String,
         shutdownToken: String,
         webRoot: PathBuf,
+        deviceId: String,
         acceptedSessionsJson: String,
         acceptedSessionStorePath: PathBuf,
         pairingCodePath: PathBuf,
         deviceInfo: RemoteDeviceInfo,
+        enableWebAccess: bool,
+        enableDiscovery: bool,
     ) -> Result<(), String> {
         self.stopWebAccessServer();
         let acceptedSessions =
@@ -957,6 +968,25 @@ impl OperitFlutterBridge {
             .runtime
             .block_on(tokio::net::TcpListener::bind(address))
             .map_err(|error| error.to_string())?;
+
+        if enableDiscovery {
+            let mut mdns_guard = self
+                .mdns
+                .lock()
+                .map_err(|error| format!("mDNS lock poisoned: {error}"))?;
+            if mdns_guard.is_none() {
+                let mut mdns = mdnss::MdnsHandle::new()?;
+                let mut props = std::collections::HashMap::new();
+                props.insert("deviceId".to_string(), deviceId.clone());
+                props.insert("displayName".to_string(), deviceInfo.displayName());
+                props.insert("platform".to_string(), deviceInfo.platform.clone());
+                props.insert("model".to_string(), deviceInfo.model.clone());
+                props.insert("tokenHash".to_string(), link_token_hash(&token));
+                props.insert("version".to_string(), "1".to_string());
+                mdns.register(address.port(), props)?;
+                *mdns_guard = Some(mdns);
+            }
+        }
         let coreClient = SharedFlutterCoreClient {
             proxyCore: self.proxyCore.clone(),
             runtimeHandle: self.runtime.handle().clone(),
@@ -967,13 +997,18 @@ impl OperitFlutterBridge {
                 RemoteLinkServerConfig {
                     bindAddress,
                     token: token.clone(),
+                    deviceId,
                     deviceInfo,
                     hostInteractionBroker: None,
-                    webAccess: Some(RemoteWebAccessConfig {
-                        token,
-                        shutdownToken,
-                        webRoot,
-                    }),
+                    webAccess: if enableWebAccess {
+                        Some(RemoteWebAccessConfig {
+                            token,
+                            shutdownToken,
+                            webRoot,
+                        })
+                    } else {
+                        None
+                    },
                     printStartupInfo: false,
                     acceptedSessions,
                     acceptedSessionLoader: Some(acceptedSessionLoader),
@@ -1002,6 +1037,17 @@ impl OperitFlutterBridge {
         {
             task.abort();
         }
+        if let Ok(mut mdns_guard) = self.mdns.lock() {
+            if let Some(mdns) = mdns_guard.take() {
+                let _ = mdns.unregister();
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn discoverDevices(&self, timeout_ms: u64) -> Result<String, String> {
+        let devices = mdnss::discover_devices(timeout_ms)?;
+        serde_json::to_string(&devices).map_err(|e| e.to_string())
     }
 }
 
@@ -1537,10 +1583,13 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
     token: *const c_char,
     shutdown_token: *const c_char,
     web_root: *const c_char,
+    device_id: *const c_char,
     accepted_sessions_json: *const c_char,
     accepted_session_store_path: *const c_char,
     pairing_code_path: *const c_char,
     device_info_json: *const c_char,
+    enable_web_access: *const c_char,
+    enable_discovery: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
         return string_to_ptr(
@@ -1555,10 +1604,13 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         ("token", token),
         ("shutdown token", shutdown_token),
         ("web root", web_root),
+        ("device id", device_id),
         ("accepted sessions", accepted_sessions_json),
         ("accepted session store path", accepted_session_store_path),
         ("pairing code path", pairing_code_path),
         ("device info", device_info_json),
+        ("enable web access", enable_web_access),
+        ("enable discovery", enable_discovery),
     ];
     let mut values = Vec::new();
     for (name, ptr) in args {
@@ -1591,9 +1643,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         values[2].clone(),
         PathBuf::from(&values[3]),
         values[4].clone(),
-        PathBuf::from(&values[5]),
+        values[5].clone(),
         PathBuf::from(&values[6]),
-        match serde_json::from_str::<RemoteDeviceInfo>(&values[7]) {
+        PathBuf::from(&values[7]),
+        match serde_json::from_str::<RemoteDeviceInfo>(&values[8]) {
             Ok(value) => value,
             Err(error) => {
                 return string_to_ptr(
@@ -1605,8 +1658,66 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
                 );
             }
         },
+        values[9] == "true",
+        values[10] == "true",
     ) {
         Ok(()) => string_to_ptr("{\"ok\":true}"),
+        Err(error) => string_to_ptr(
+            &serde_json::to_string(&CoreLinkError::internal(error))
+                .expect("CoreLinkError must serialize"),
+        ),
+    }
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_discover_devices(
+    handle: *mut OperitFlutterBridge,
+    timeout_ms: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::internal(
+                "runtime bridge is not initialized",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    if timeout_ms.is_null() {
+        return string_to_ptr(
+            serde_json::to_string(&CoreLinkError::new(
+                "INVALID_ARGS",
+                "timeout_ms pointer is null",
+            ))
+            .expect("CoreLinkError must serialize"),
+        );
+    }
+    let timeout_value = match CStr::from_ptr(timeout_ms).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("timeout_ms is not valid UTF-8: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    let timeout: u64 = match timeout_value.parse() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::to_string(&CoreLinkError::new(
+                    "INVALID_ARGS",
+                    format!("timeout_ms is not a valid number: {error}"),
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        }
+    };
+    match (*handle).discoverDevices(timeout) {
+        Ok(json) => string_to_ptr(&json),
         Err(error) => string_to_ptr(
             &serde_json::to_string(&CoreLinkError::internal(error))
                 .expect("CoreLinkError must serialize"),
@@ -1695,7 +1806,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
 pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
     handle: *mut OperitFlutterBridge,
     base_url: *const c_char,
-    token: *const c_char,
+    token_hash: *const c_char,
     client_device_info_json: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
@@ -1706,11 +1817,11 @@ pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
             .expect("CoreLinkError must serialize"),
         );
     }
-    if base_url.is_null() || token.is_null() || client_device_info_json.is_null() {
+    if base_url.is_null() || token_hash.is_null() || client_device_info_json.is_null() {
         return string_to_ptr(
             serde_json::to_string(&CoreLinkError::new(
                 "INVALID_ARGS",
-                "remote pair start expects baseUrl, token and clientDeviceInfo",
+                "remote pair start expects baseUrl, tokenHash and clientDeviceInfo",
             ))
             .expect("CoreLinkError must serialize"),
         );
@@ -1727,13 +1838,13 @@ pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
             );
         }
     };
-    let token = match CStr::from_ptr(token).to_str() {
+    let tokenHash = match CStr::from_ptr(token_hash).to_str() {
         Ok(value) => value.to_string(),
         Err(error) => {
             return string_to_ptr(
                 serde_json::to_string(&CoreLinkError::new(
                     "INVALID_ARGS",
-                    format!("token is not valid UTF-8: {error}"),
+                    format!("tokenHash is not valid UTF-8: {error}"),
                 ))
                 .expect("CoreLinkError must serialize"),
             );
@@ -1763,7 +1874,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
             );
         }
     };
-    match (*handle).remotePairStart(baseUrl, token, clientDeviceInfo) {
+    match (*handle).remotePairStart(baseUrl, tokenHash, clientDeviceInfo) {
         Ok(value) => string_to_ptr(value),
         Err(error) => string_to_ptr(
             serde_json::to_string(&CoreLinkError::internal(error))
@@ -2408,10 +2519,13 @@ mod android_jni {
         token: JString,
         shutdownToken: JString,
         webRoot: JString,
+        deviceId: JString,
         acceptedSessionsJson: JString,
         acceptedSessionStorePath: JString,
         pairingCodePath: JString,
         deviceInfoJson: JString,
+        enableWebAccess: JString,
+        enableDiscovery: JString,
     ) -> jstring {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_string(
@@ -2469,6 +2583,19 @@ mod android_jni {
                     &serde_json::to_string(&CoreLinkError::new(
                         "INVALID_ARGS",
                         format!("invalid JNI webRoot: {error}"),
+                    ))
+                    .expect("CoreLinkError must serialize"),
+                );
+            }
+        };
+        let deviceId = match env.get_string(&deviceId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new(
+                        "INVALID_ARGS",
+                        format!("invalid JNI deviceId: {error}"),
                     ))
                     .expect("CoreLinkError must serialize"),
                 );
@@ -2539,15 +2666,26 @@ mod android_jni {
                 );
             }
         };
+        let enableWebAccess = match env.get_string(&enableWebAccess) {
+            Ok(value) => value.to_str() == "true",
+            Err(_) => false,
+        };
+        let enableDiscovery = match env.get_string(&enableDiscovery) {
+            Ok(value) => value.to_str() == "true",
+            Err(_) => false,
+        };
         match bridge.startWebAccessServer(
             bindAddress,
             token,
             shutdownToken,
             PathBuf::from(webRoot),
+            deviceId,
             acceptedSessionsJson,
             PathBuf::from(acceptedSessionStorePath),
             PathBuf::from(pairingCodePath),
             deviceInfo,
+            enableWebAccess,
+            enableDiscovery,
         ) {
             Ok(()) => new_java_string(env, "{\"ok\":true}"),
             Err(error) => new_java_string(
@@ -2578,12 +2716,34 @@ mod android_jni {
     }
 
     #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_discoverDevices(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        timeoutMs: jlong,
+    ) -> jstring {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_string(
+                env,
+                &serde_json::to_string(&CoreLinkError::internal(
+                    "runtime bridge is not initialized",
+                ))
+                .expect("CoreLinkError must serialize"),
+            );
+        };
+        let json = bridge
+            .discoverDevices(timeoutMs as u64)
+            .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
+        new_java_string(env, &json)
+    }
+
+    #[no_mangle]
     pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_remotePairStart(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
         baseUrl: JString,
-        token: JString,
+        tokenHash: JString,
         clientDeviceInfoJson: JString,
     ) -> jstring {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
@@ -2608,14 +2768,14 @@ mod android_jni {
                 );
             }
         };
-        let token = match env.get_string(&token) {
+        let tokenHash = match env.get_string(&tokenHash) {
             Ok(value) => String::from(value),
             Err(error) => {
                 return new_java_string(
                     env,
                     &serde_json::to_string(&CoreLinkError::new(
                         "INVALID_ARGS",
-                        format!("invalid JNI token: {error}"),
+                        format!("invalid JNI tokenHash: {error}"),
                     ))
                     .expect("CoreLinkError must serialize"),
                 );
@@ -2648,7 +2808,7 @@ mod android_jni {
                 );
             }
         };
-        match bridge.remotePairStart(baseUrl, token, clientDeviceInfo) {
+        match bridge.remotePairStart(baseUrl, tokenHash, clientDeviceInfo) {
             Ok(value) => new_java_string(env, &value),
             Err(error) => new_java_string(
                 env,

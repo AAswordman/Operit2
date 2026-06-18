@@ -77,7 +77,7 @@
     const clientNonce = crypto.randomUUID();
     const start = await postJson(`${baseUrl}/link/pair/start`, {
       pairingServiceVersion,
-      token: token.trim(),
+      tokenHash: await linkTokenHash(token.trim()),
       clientDeviceId,
       clientDeviceInfo: webDeviceInfo(),
       clientPublicKey,
@@ -114,6 +114,8 @@
       baseUrl,
       sessionId: finish.sessionId,
       deviceId: clientDeviceId,
+      coreDeviceId: start.coreDeviceId,
+      remoteDeviceInfo: start.coreDeviceInfo,
       pairingServiceVersion: finish.pairingServiceVersion,
       sessionSecret: await sessionSecret(sharedSecret, clientNonce, start.serverNonce),
     };
@@ -166,6 +168,14 @@
             textEncoder.encode(role),
           ),
         ),
+      ),
+    );
+  }
+
+  async function linkTokenHash(token) {
+    return bytesToBase64(
+      new Uint8Array(
+        await crypto.subtle.digest("SHA-256", textEncoder.encode(token)),
       ),
     );
   }

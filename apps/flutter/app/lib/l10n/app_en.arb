@@ -413,12 +413,12 @@
   "settingsCategoryAppearanceTitle": "Appearance & Interaction",
   "settingsCategoryAppearanceSubtitle": "Theme and language",
   "settingsCategoryAppearanceDescription": "Adjust the client theme and current localization display.",
-  "settingsCategoryDataTitle": "Data & Diagnostics",
-  "settingsCategoryDataSubtitle": "History, backup, logs",
-  "settingsCategoryDataDescription": "Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.",
-  "settingsCategoryAccessLinksTitle": "Access & Links",
-  "settingsCategoryAccessLinksSubtitle": "Runtime, Web Access",
-  "settingsCategoryAccessLinksDescription": "Manage the runtime connection, local web access entry, bind address, and access token for this client.",
+  "settingsCategoryDataTitle": "Data & Backup",
+  "settingsCategoryDataSubtitle": "Backup, restore, stats",
+  "settingsCategoryDataDescription": "Back up chats, characters, and model settings, restore backup content, and view data statistics.",
+  "settingsCategoryAccessLinksTitle": "Devices & Access",
+  "settingsCategoryAccessLinksSubtitle": "Connect, sync, access",
+  "settingsCategoryAccessLinksDescription": "Connect another device, sync data, or allow browsers to access this device.",
   "settingsComingSoon": "This area will continue connecting existing runtime capabilities. Models, characters, and tools are being completed first.",
   "settingsAdvanced": "Advanced settings",
   "settingsActive": "Active",
@@ -931,25 +931,25 @@
     }
   },
   "settingsWorkspaceRefresh": "Refresh",
-  "settingsRuntimeConnection": "Runtime connection",
-  "settingsRuntimeConnectionDescription": "All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.",
-  "settingsRuntimeUseLocal": "Use local runtime",
-  "settingsRuntimeLocalTitle": "Local runtime",
-  "settingsRuntimeLocalDescription": "Use the core built into this device. No connection details are required.",
-  "settingsRuntimeRemoteTitle": "Remote runtime",
-  "settingsRuntimeRemoteDescription": "Manage paired remote cores and switch to a specific remote from the list.",
-  "settingsRuntimeTesting": "Testing runtime…",
-  "settingsRuntimePairRemote": "Pair new remote",
-  "settingsRuntimeNoPairedRemote": "No paired remote core yet.",
-  "settingsRuntimePairToken": "Pairing token",
+  "settingsRuntimeConnection": "Current device",
+  "settingsRuntimeConnectionDescription": "Choose whether chats and tools run on this device or another connected device.",
+  "settingsRuntimeUseLocal": "Use this device",
+  "settingsRuntimeLocalTitle": "This device",
+  "settingsRuntimeLocalDescription": "Chats and tools run on this device.",
+  "settingsRuntimeRemoteTitle": "Connected devices",
+  "settingsRuntimeRemoteDescription": "These devices are connected. You can use or remove them.",
+  "settingsRuntimeTesting": "Checking connection…",
+  "settingsRuntimePairRemote": "Connect another device",
+  "settingsRuntimeNoPairedRemote": "No connected devices yet.",
+  "settingsRuntimePairToken": "Connection token",
   "settingsRuntimePairCode": "Pairing code",
-  "settingsRuntimeStartPairing": "Start pairing",
-  "settingsRuntimeFinishPairing": "Finish pairing",
-  "settingsRuntimeBaseUrl": "Remote address",
-  "settingsRuntimeTestCurrent": "Test current runtime",
-  "settingsRuntimeSwitchedLocal": "Switched to local runtime.",
-  "settingsRuntimeSwitchedRemote": "Switched to remote runtime.",
-  "settingsRuntimeTestResult": "Runtime available: {version}",
+  "settingsRuntimeStartPairing": "Start connection",
+  "settingsRuntimeFinishPairing": "Finish connection",
+  "settingsRuntimeBaseUrl": "Device address",
+  "settingsRuntimeTestCurrent": "Check connection",
+  "settingsRuntimeSwitchedLocal": "Now using this device.",
+  "settingsRuntimeSwitchedRemote": "Now using a connected device.",
+  "settingsRuntimeTestResult": "Device available: {version}",
   "@settingsRuntimeTestResult": {
     "placeholders": {
       "version": {
@@ -957,7 +957,7 @@
       }
     }
   },
-  "settingsRuntimeTestFailed": "Runtime test failed: {error}",
+  "settingsRuntimeTestFailed": "Connection check failed: {error}",
   "@settingsRuntimeTestFailed": {
     "placeholders": {
       "error": {
@@ -965,8 +965,8 @@
       }
     }
   },
-  "settingsRuntimeRemoteDisconnected": "Remote runtime disconnected",
-  "settingsRuntimeRemoteDisconnectedMessage": "Switched to local core.\n\n{error}",
+  "settingsRuntimeRemoteDisconnected": "Connected device disconnected",
+  "settingsRuntimeRemoteDisconnectedMessage": "Now using this device.\n\n{error}",
   "@settingsRuntimeRemoteDisconnectedMessage": {
     "placeholders": {
       "error": {
@@ -974,30 +974,94 @@
       }
     }
   },
-  "settingsWebAccessService": "Web access service",
-  "settingsWebAccessServiceDescription": "When enabled, this client starts a local HTTP entry. Browsers can access core with the token.",
-  "settingsWebAccessEnable": "Enable web access",
-  "settingsWebAccessBindAddress": "Bind address",
+  "settingsRuntimePairingRejected": "A device connection was rejected",
+  "settingsRuntimePairedChecking": "Checking",
+  "settingsRuntimePairedOnline": "Online",
+  "settingsRuntimePairedOffline": "Offline",
+  "settingsRuntimeSync": "Sync data",
+  "settingsRuntimeSyncing": "Syncing…",
+  "settingsRuntimeSyncCompleted": "Sync completed: this device {localApplied}, remote {remoteApplied}.",
+  "@settingsRuntimeSyncCompleted": {
+    "placeholders": {
+      "localApplied": {
+        "type": "int"
+      },
+      "remoteApplied": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeSyncFailed": "Sync failed: {error}",
+  "@settingsRuntimeSyncFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDiscoverDevices": "Discover devices",
+  "settingsRuntimeDiscoverDevicesDescription": "Scan for nearby devices or enter an address to connect.",
+  "settingsRuntimeScan": "Scan",
+  "settingsRuntimeScanning": "Scanning…",
+  "settingsRuntimeEnterManually": "Enter manually",
+  "settingsRuntimeConnect": "Connect",
+  "settingsRuntimeEnableDiscovery": "Allow other devices to discover this device",
+  "settingsRuntimeEnableDiscoveryDescription": "Other devices on the same LAN can find this device automatically.",
+  "settingsRuntimeEnableDiscoveryFailed": "Could not enable device discovery: {error}",
+  "@settingsRuntimeEnableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisableDiscoveryFailed": "Could not disable device discovery: {error}",
+  "@settingsRuntimeDisableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeUsingLocal": "Using: this device",
+  "settingsRuntimeUsingRemote": "Using: {device}",
+  "@settingsRuntimeUsingRemote": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeRemoteInUseDescription": "Chats and tools run on this connected device.",
+  "settingsWebAccessService": "Allow access",
+  "settingsWebAccessServiceDescription": "When enabled, browsers can access this device with an address and token.",
+  "settingsWebAccessEnable": "Allow external access",
+  "settingsWebAccessPortMode": "Port mode",
+  "settingsWebAccessPortAutomatic": "Automatic",
+  "settingsWebAccessPortFixed": "Fixed",
+  "settingsWebAccessPortAutomaticDescription": "The app chooses a port automatically. No manual setup is needed.",
+  "settingsWebAccessPortFixedDescription": "Only the port in the listen address is used.",
+  "settingsWebAccessBindAddress": "Listen address",
   "settingsWebAccessToken": "Access token",
-  "settingsWebAccessRotateToken": "Rotate token",
+  "settingsWebAccessRotateToken": "Change token",
   "settingsWebAccessCopyToken": "Copy token",
-  "settingsWebAccessAccessUrl": "Address",
-  "settingsWebAccessLocalUrl": "Local",
-  "settingsWebAccessPairingUrl": "Pairing",
-  "settingsWebAccessPairingUrlLocalOnly": "Local only",
+  "settingsWebAccessAccessUrl": "Access address",
+  "settingsWebAccessLocalUrl": "This device",
+  "settingsWebAccessPairingUrl": "Pairing address",
+  "settingsWebAccessPairingUrlLocalOnly": "This device only",
   "settingsWebAccessPairingUrlUnavailable": "No LAN address found",
   "settingsWebAccessCopyUrl": "Copy URL",
-  "settingsWebAccessOpenUrl": "Open",
-  "settingsWebAccessRunning": "Running",
-  "settingsWebAccessStopped": "Stopped",
-  "settingsWebAccessSaved": "Web access settings saved.",
+  "settingsWebAccessOpenUrl": "Open address",
+  "settingsWebAccessRunning": "On",
+  "settingsWebAccessStopped": "Off",
+  "settingsWebAccessSaved": "Access settings saved.",
   "settingsWebAccessTokenCopied": "Access token copied.",
   "settingsWebAccessUrlCopied": "Access URL copied.",
-  "settingsWebAccessPairedClients": "Paired clients",
-  "settingsWebAccessNoPairedClients": "No client has paired with this device yet.",
-  "settingsWebAccessPairedDeleted": "Paired client deleted.",
-  "settingsWebAccessPairingRequest": "Remote pairing request",
-  "settingsWebAccessPairingRequestMessage": "Pairing code: {code}\nClient: {client}",
+  "settingsWebAccessPairedClients": "Authorized devices",
+  "settingsWebAccessNoPairedClients": "No device is authorized yet.",
+  "settingsWebAccessPairedDeleted": "Authorized device deleted.",
+  "settingsWebAccessPairingRequest": "Pairing request",
+  "settingsWebAccessPairingRequestMessage": "Pairing code: {code}\nDevice: {client}",
   "@settingsWebAccessPairingRequestMessage": {
     "placeholders": {
       "code": {
@@ -1009,7 +1073,7 @@
     }
   },
   "settingsWebAccessInvalidBindAddress": "Bind address must be host:port.",
-  "settingsWebAccessStartFailed": "Failed to start web access: {error}",
+  "settingsWebAccessStartFailed": "Failed to enable access: {error}",
   "@settingsWebAccessStartFailed": {
     "placeholders": {
       "error": {
@@ -1017,7 +1081,7 @@
       }
     }
   },
-  "settingsWebAccessStopFailed": "Failed to stop web access: {error}",
+  "settingsWebAccessStopFailed": "Failed to turn off access: {error}",
   "@settingsWebAccessStopFailed": {
     "placeholders": {
       "error": {
@@ -1158,22 +1222,22 @@
   "settingsAppearanceLanguageSection": "Language",
   "settingsAppearanceLanguage": "Current language",
   "settingsAppearanceLanguageDescription": "Language follows the localization configuration loaded at app startup.",
-  "settingsDataRuntimeSection": "Runtime",
-  "settingsDataCoreVersion": "Core version",
-  "settingsDataTokenSection": "Token statistics",
-  "settingsDataInputTokens": "Input tokens",
-  "settingsDataOutputTokens": "Output tokens",
-  "settingsDataRefreshTokenStats": "Refresh cumulative statistics",
-  "settingsDataResetTokenStats": "Reset token statistics",
-  "settingsDataBackupSection": "Backup",
-  "settingsDataChatHistoriesBackup": "Chat history backup",
-  "settingsDataChatHistoriesBackupDescription": "Copy all chats and messages as JSON. Import updates or creates chats by chat ID.",
-  "settingsDataCharacterCardsBackup": "Character card backup",
-  "settingsDataCharacterCardsBackupDescription": "Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.",
-  "settingsDataCharacterGroupsBackup": "Group backup",
-  "settingsDataCharacterGroupsBackupDescription": "Copy all groups as JSON. Import keeps member references and ordering.",
-  "settingsDataModelConfigsBackup": "Model config backup",
-  "settingsDataModelConfigsBackupDescription": "Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.",
+  "settingsDataRuntimeSection": "Data overview",
+  "settingsDataCoreVersion": "Current version",
+  "settingsDataTokenSection": "Usage statistics",
+  "settingsDataInputTokens": "Input",
+  "settingsDataOutputTokens": "Output",
+  "settingsDataRefreshTokenStats": "Refresh statistics",
+  "settingsDataResetTokenStats": "Reset statistics",
+  "settingsDataBackupSection": "Backup & restore",
+  "settingsDataChatHistoriesBackup": "Chat data",
+  "settingsDataChatHistoriesBackupDescription": "Back up all chats and messages. Restore updates or creates chats by chat ID.",
+  "settingsDataCharacterCardsBackup": "Character card data",
+  "settingsDataCharacterCardsBackupDescription": "Back up all character cards and referenced tags. Restore updates or creates items by original ID.",
+  "settingsDataCharacterGroupsBackup": "Group data",
+  "settingsDataCharacterGroupsBackupDescription": "Back up all groups. Restore keeps member references and ordering.",
+  "settingsDataModelConfigsBackup": "Model settings",
+  "settingsDataModelConfigsBackupDescription": "Back up all model settings, including model parameters and API key pools.",
   "settingsDataBackupCount": "{count} items",
   "@settingsDataBackupCount": {
     "placeholders": {
@@ -1182,10 +1246,10 @@
       }
     }
   },
-  "settingsDataCopyBackupJson": "Copy backup JSON",
-  "settingsDataImportBackupJson": "Import backup JSON",
-  "settingsDataBackupJsonInput": "Backup JSON content",
-  "settingsDataBackupCopied": "Copied backup JSON for “{name}”.",
+  "settingsDataCopyBackupJson": "Copy backup",
+  "settingsDataImportBackupJson": "Restore data",
+  "settingsDataBackupJsonInput": "Restore content",
+  "settingsDataBackupCopied": "Copied backup for “{name}”.",
   "@settingsDataBackupCopied": {
     "placeholders": {
       "name": {
@@ -1193,7 +1257,7 @@
       }
     }
   },
-  "settingsDataBackupImportResult": "Import complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.",
+  "settingsDataBackupImportResult": "Restore complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.",
   "@settingsDataBackupImportResult": {
     "placeholders": {
       "newCount": {
@@ -1207,7 +1271,7 @@
       }
     }
   },
-  "settingsDataBackupImportError": "Backup import failed: {error}",
+  "settingsDataBackupImportError": "Restore failed: {error}",
   "@settingsDataBackupImportError": {
     "placeholders": {
       "error": {
@@ -1215,7 +1279,7 @@
       }
     }
   },
-  "settingsDataBackupCopyError": "Backup copy failed: {error}",
+  "settingsDataBackupCopyError": "Copy failed: {error}",
   "@settingsDataBackupCopyError": {
     "placeholders": {
       "error": {
@@ -1223,14 +1287,54 @@
       }
     }
   },
-  "settingsDataExportRawSnapshot": "Export raw snapshot",
-  "settingsDataExportRawSnapshotDescription": "Generate the current data snapshot from runtime and show its byte size.",
-  "settingsDataSnapshotBytes": "Snapshot generated: {bytes} bytes",
+  "settingsDataSnapshotBackupTitle": "Full snapshot",
+  "settingsDataExportRawSnapshot": "Export snapshot",
+  "settingsDataImportRawSnapshot": "Restore snapshot",
+  "settingsDataExportRawSnapshotDescription": "Pack chats, characters, model settings, and local files into one backup file. Restoring replaces current data with the backup.",
+  "settingsDataSnapshotBytes": "Snapshot size: {bytes} bytes",
   "@settingsDataSnapshotBytes": {
     "placeholders": {
       "bytes": {
         "type": "int"
       }
     }
-  }
+  },
+  "settingsDataSnapshotImported": "Snapshot restored.",
+  "settingsDataSnapshotExportError": "Snapshot export failed: {error}",
+  "@settingsDataSnapshotExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotImportError": "Snapshot restore failed: {error}",
+  "@settingsDataSnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmTitle": "Restore full snapshot",
+  "settingsDataSnapshotRestoreConfirmMessage": "Restoring will replace the current runtime data.\nFormat version: {formatVersion}\nFiles: {fileCount}\nCreated: {createdAt}\nSnapshot size: {bytes} bytes",
+  "@settingsDataSnapshotRestoreConfirmMessage": {
+    "placeholders": {
+      "formatVersion": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "createdAt": {
+        "type": "String"
+      },
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmAction": "Restore",
+  "settingsDataAdvancedBackupOptions": "Advanced options",
+  "settingsDataAdvancedBackupOptionsDescription": "Single-item JSON export and restore"
 }

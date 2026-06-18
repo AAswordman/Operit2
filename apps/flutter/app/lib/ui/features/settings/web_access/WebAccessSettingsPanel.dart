@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../../core/web_access/FlutterWebAccessServer.dart';
-import '../../../../core/web_access/WebAccessConfig.dart';
+import '../../../../core/link_host/LinkHostServer.dart';
+import '../../../../core/link_host/LinkHostConfig.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
@@ -22,10 +22,9 @@ class WebAccessSettingsPanel extends StatefulWidget {
 class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   final TextEditingController _bindAddressController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
-  WebAccessConfig? _config;
-  Map<String, WebAccessAcceptedSessionRecord> _acceptedSessions =
-      <String, WebAccessAcceptedSessionRecord>{};
+  LinkHostConfig? _config;
   List<String> _pairingBaseUrls = <String>[];
+  LinkHostPortMode _portMode = LinkHostPortMode.automatic;
   bool _busy = false;
 
   @override
@@ -42,18 +41,21 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   }
 
   Future<void> _load() async {
-    final config = await WebAccessConfigStore.read();
-    final acceptedSessions = await WebAccessAcceptedSessionStore.read();
-    final pairingBaseUrls = _bindAddressLooksValid(config.bindAddress)
-        ? await FlutterWebAccessServer.instance.pairingBaseUrls(config)
+    final config = await LinkHostConfigStore.read();
+    final server = LinkHostServer.instance;
+    final displayConfig = config.webAccessEnabled && server.isRunning
+        ? server.currentConfig!
+        : config;
+    final pairingBaseUrls = _bindAddressLooksValid(displayConfig.bindAddress)
+        ? await server.pairingBaseUrls(displayConfig)
         : <String>[];
     if (!mounted) {
       return;
     }
     setState(() {
       _config = config;
-      _acceptedSessions = acceptedSessions;
       _pairingBaseUrls = pairingBaseUrls;
+      _portMode = config.portMode;
       _bindAddressController.text = config.bindAddress;
       _tokenController.text = config.token;
     });
@@ -65,35 +67,42 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null || _busy) {
       return;
     }
-    if (!_bindAddressLooksValid(_bindAddressController.text)) {
+    if (!_bindAddressInputIsValid()) {
       _showMessage(l10n.settingsWebAccessInvalidBindAddress);
       return;
     }
     setState(() => _busy = true);
     try {
       final next = config.copyWith(
-        enabled: enabled,
-        bindAddress: _bindAddressController.text.trim(),
+        webAccessEnabled: enabled,
+        portMode: _portMode,
+        bindAddress: _bindAddressForPortMode(),
         token: _tokenController.text,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
-      await WebAccessConfigStore.write(next);
-      if (enabled) {
-        await FlutterWebAccessServer.instance.start(next);
+      LinkHostConfig displayConfig = next;
+      if (next.webAccessEnabled || next.discoveryEnabled) {
+        await LinkHostServer.instance.start(next);
+        displayConfig = LinkHostServer.instance.currentConfig!;
+        await LinkHostConfigStore.write(next);
       } else {
-        await FlutterWebAccessServer.instance.stop();
+        await LinkHostConfigStore.write(next);
+        await LinkHostServer.instance.stop(updateConfig: false);
       }
       if (!mounted) {
         return;
       }
-      final pairingBaseUrls = await FlutterWebAccessServer.instance
-          .pairingBaseUrls(next);
+      final pairingBaseUrls = await LinkHostServer.instance.pairingBaseUrls(
+        displayConfig,
+      );
       if (!mounted) {
         return;
       }
       setState(() {
         _config = next;
         _pairingBaseUrls = pairingBaseUrls;
+        _portMode = next.portMode;
+        _bindAddressController.text = next.bindAddress;
       });
     } catch (error) {
       if (mounted) {
@@ -116,32 +125,38 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null || _busy) {
       return;
     }
-    if (!_bindAddressLooksValid(_bindAddressController.text)) {
+    if (!_bindAddressInputIsValid()) {
       _showMessage(l10n.settingsWebAccessInvalidBindAddress);
       return;
     }
     setState(() => _busy = true);
     try {
       final next = config.copyWith(
-        bindAddress: _bindAddressController.text.trim(),
+        portMode: _portMode,
+        bindAddress: _bindAddressForPortMode(),
         token: _tokenController.text,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
-      await WebAccessConfigStore.write(next);
-      if (next.enabled) {
-        await FlutterWebAccessServer.instance.start(next);
+      LinkHostConfig displayConfig = next;
+      if (next.webAccessEnabled || next.discoveryEnabled) {
+        await LinkHostServer.instance.start(next);
+        displayConfig = LinkHostServer.instance.currentConfig!;
       }
+      await LinkHostConfigStore.write(next);
       if (!mounted) {
         return;
       }
-      final pairingBaseUrls = await FlutterWebAccessServer.instance
-          .pairingBaseUrls(next);
+      final pairingBaseUrls = await LinkHostServer.instance.pairingBaseUrls(
+        displayConfig,
+      );
       if (!mounted) {
         return;
       }
       setState(() {
         _config = next;
         _pairingBaseUrls = pairingBaseUrls;
+        _portMode = next.portMode;
+        _bindAddressController.text = next.bindAddress;
       });
     } catch (error) {
       if (mounted) {
@@ -159,20 +174,37 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null) {
       return;
     }
-    final token = WebAccessToken.generate();
+    final token = LinkHostToken.generate();
     _tokenController.text = token;
     final next = config.copyWith(
       token: token,
+      portMode: _portMode,
+      bindAddress: _bindAddressForPortMode(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    await WebAccessConfigStore.write(next);
-    if (next.enabled) {
-      await FlutterWebAccessServer.instance.start(next);
+    if (next.webAccessEnabled || next.discoveryEnabled) {
+      await LinkHostServer.instance.start(next);
     }
+    await LinkHostConfigStore.write(next);
     if (!mounted) {
       return;
     }
-    setState(() => _config = next);
+    setState(() {
+      _config = next;
+      _portMode = next.portMode;
+      _bindAddressController.text = next.bindAddress;
+    });
+  }
+
+  bool _bindAddressInputIsValid() {
+    return _portMode == LinkHostPortMode.automatic ||
+        _bindAddressLooksValid(_bindAddressController.text);
+  }
+
+  String _bindAddressForPortMode() {
+    return _portMode == LinkHostPortMode.automatic
+        ? LinkHostConfig.automaticBindAddress
+        : _bindAddressController.text.trim();
   }
 
   Future<void> _copyToken() async {
@@ -193,18 +225,6 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
-  Future<void> _deleteAcceptedSession(String sessionId) async {
-    final sessions = Map<String, WebAccessAcceptedSessionRecord>.of(
-      _acceptedSessions,
-    )..remove(sessionId);
-    await WebAccessAcceptedSessionStore.write(sessions);
-    if (!mounted) {
-      return;
-    }
-    setState(() => _acceptedSessions = sessions);
-    _showMessage(AppLocalizations.of(context)!.settingsWebAccessPairedDeleted);
-  }
-
   void _showMessage(String message) {
     ScaffoldMessenger.of(
       context,
@@ -218,9 +238,13 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final running = FlutterWebAccessServer.instance.isRunning;
-    final bindAddress = _bindAddressController.text;
-    final runningUrl = FlutterWebAccessServer.instance.baseUrl;
+    final server = LinkHostServer.instance;
+    final running = config.webAccessEnabled && server.isRunning;
+    final displayConfig = running ? server.currentConfig! : config;
+    final bindAddress = running
+        ? displayConfig.bindAddress
+        : _bindAddressForPortMode();
+    final runningUrl = server.baseUrl;
     final url = running && runningUrl != null
         ? runningUrl
         : (_bindAddressLooksValid(bindAddress)
@@ -255,20 +279,60 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
                   ? l10n.settingsWebAccessRunning
                   : l10n.settingsWebAccessStopped,
             ),
-            value: config.enabled,
+            value: config.webAccessEnabled,
             onChanged: _busy ? null : _setEnabled,
           ),
           const SizedBox(height: 8),
-          TextField(
-            controller: _bindAddressController,
-            decoration: InputDecoration(
-              labelText: l10n.settingsWebAccessBindAddress,
-              border: const OutlineInputBorder(),
-              isDense: true,
+          Text(
+            l10n.settingsWebAccessPortMode,
+            style: Theme.of(context).textTheme.labelMedium,
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<LinkHostPortMode>(
+              segments: <ButtonSegment<LinkHostPortMode>>[
+                ButtonSegment<LinkHostPortMode>(
+                  value: LinkHostPortMode.automatic,
+                  icon: const Icon(Icons.auto_mode_outlined),
+                  label: Text(l10n.settingsWebAccessPortAutomatic),
+                ),
+                ButtonSegment<LinkHostPortMode>(
+                  value: LinkHostPortMode.fixed,
+                  icon: const Icon(Icons.push_pin_outlined),
+                  label: Text(l10n.settingsWebAccessPortFixed),
+                ),
+              ],
+              selected: <LinkHostPortMode>{_portMode},
+              onSelectionChanged: _busy
+                  ? null
+                  : (selection) {
+                      setState(() => _portMode = selection.first);
+                    },
             ),
-            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _portMode == LinkHostPortMode.automatic
+                ? l10n.settingsWebAccessPortAutomaticDescription
+                : l10n.settingsWebAccessPortFixedDescription,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 10),
+          if (_portMode == LinkHostPortMode.fixed) ...<Widget>[
+            TextField(
+              controller: _bindAddressController,
+              decoration: InputDecoration(
+                labelText: l10n.settingsWebAccessBindAddress,
+                border: const OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: (_) => _save(),
+            ),
+            const SizedBox(height: 10),
+          ],
           TextField(
             controller: _tokenController,
             decoration: InputDecoration(
@@ -330,25 +394,6 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
               ),
         ],
       ),
-      _SectionCard(
-        title: l10n.settingsWebAccessPairedClients,
-        children: <Widget>[
-          if (_acceptedSessions.isEmpty)
-            Text(
-              l10n.settingsWebAccessNoPairedClients,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            for (final entry in _acceptedSessions.entries)
-              _AcceptedSessionTile(
-                sessionId: entry.key,
-                record: entry.value,
-                onDelete: () => _deleteAcceptedSession(entry.key),
-              ),
-        ],
-      ),
     ];
     if (widget.embedded) {
       return Column(
@@ -380,6 +425,7 @@ class _SectionCard extends StatelessWidget {
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
+        material: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: Column(
@@ -446,55 +492,6 @@ class _AddressRow extends StatelessWidget {
             onPressed: onOpen,
           ),
       ],
-    );
-  }
-}
-
-class _AcceptedSessionTile extends StatelessWidget {
-  const _AcceptedSessionTile({
-    required this.sessionId,
-    required this.record,
-    required this.onDelete,
-  });
-
-  final String sessionId;
-  final WebAccessAcceptedSessionRecord record;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colorScheme.surface.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.16),
-          ),
-        ),
-        child: ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 10, right: 4),
-          title: Text(
-            record.deviceInfo.displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            sessionId,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: IconButton(
-            tooltip: l10n.delete,
-            icon: const Icon(Icons.delete_outline),
-            onPressed: onDelete,
-          ),
-        ),
-      ),
     );
   }
 }

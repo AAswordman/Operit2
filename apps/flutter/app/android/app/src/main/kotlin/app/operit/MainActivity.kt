@@ -68,6 +68,11 @@ class MainActivity : FlutterActivity() {
                     "stopWebAccessServer" -> runRuntime(result) {
                         OperitRuntimeNative.stopWebAccessServer(ensureRuntimeHandle())
                     }
+                    "discoverDevices" -> runRuntime(result) {
+                        val args = call.arguments as? Map<*, *>
+                        val timeoutMs = (args?.get("timeoutMs") as? Number)?.toLong() ?: 2000L
+                        OperitRuntimeNative.discoverDevices(ensureRuntimeHandle(), timeoutMs)
+                    }
                     "remotePairStart" -> remotePairStart(call, result)
                     "remotePairFinish" -> remotePairFinish(call, result)
                     "currentPermissionRequest" -> runRuntime(result) {
@@ -176,23 +181,29 @@ class MainActivity : FlutterActivity() {
         val token = args?.get("token") as? String
         val shutdownToken = args?.get("shutdownToken") as? String
         val webRoot = args?.get("webRoot") as? String
+        val deviceId = args?.get("deviceId") as? String
         val acceptedSessions = args?.get("acceptedSessions") as? String
         val acceptedSessionStorePath = args?.get("acceptedSessionStorePath") as? String
         val pairingCodePath = args?.get("pairingCodePath") as? String
         val deviceInfoJson = args?.get("deviceInfo") as? String
+        val enableWebAccess = args?.get("enableWebAccess") as? String
+        val enableDiscovery = args?.get("enableDiscovery") as? String
         if (
             bindAddress == null ||
-                token == null ||
-                shutdownToken == null ||
-                webRoot == null ||
-                acceptedSessions == null ||
-                acceptedSessionStorePath == null ||
+                  token == null ||
+                  shutdownToken == null ||
+                  webRoot == null ||
+                  deviceId == null ||
+                  acceptedSessions == null ||
+                  acceptedSessionStorePath == null ||
                 pairingCodePath == null ||
-                deviceInfoJson == null
+                deviceInfoJson == null ||
+                enableWebAccess == null ||
+                enableDiscovery == null
         ) {
             result.error(
                 "INVALID_ARGS",
-                "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, acceptedSessions, acceptedSessionStorePath, pairingCodePath and deviceInfo",
+                "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery",
                 null,
             )
             return
@@ -204,10 +215,13 @@ class MainActivity : FlutterActivity() {
                 token,
                 shutdownToken,
                 webRoot,
+                deviceId,
                 acceptedSessions,
                 acceptedSessionStorePath,
                 pairingCodePath,
                 deviceInfoJson,
+                enableWebAccess,
+                enableDiscovery,
             )
         }
     }
@@ -215,14 +229,14 @@ class MainActivity : FlutterActivity() {
     private fun remotePairStart(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *>
         val baseUrl = args?.get("baseUrl") as? String
-        val token = args?.get("token") as? String
+        val tokenHash = args?.get("tokenHash") as? String
         val clientDeviceInfoJson = args?.get("clientDeviceInfo") as? String
-        if (baseUrl == null || token == null || clientDeviceInfoJson == null) {
-            result.error("INVALID_ARGS", "remotePairStart expects baseUrl, token and clientDeviceInfo", null)
+        if (baseUrl == null || tokenHash == null || clientDeviceInfoJson == null) {
+            result.error("INVALID_ARGS", "remotePairStart expects baseUrl, tokenHash and clientDeviceInfo", null)
             return
         }
         runRuntime(result) {
-            OperitRuntimeNative.remotePairStart(ensureRuntimeHandle(), baseUrl, token, clientDeviceInfoJson)
+            OperitRuntimeNative.remotePairStart(ensureRuntimeHandle(), baseUrl, tokenHash, clientDeviceInfoJson)
         }
     }
 
@@ -577,13 +591,21 @@ object OperitRuntimeNative {
         token: String,
         shutdownToken: String,
         webRoot: String,
+        deviceId: String,
         acceptedSessions: String,
         acceptedSessionStorePath: String,
         pairingCodePath: String,
         deviceInfoJson: String,
+        enableWebAccess: String,
+        enableDiscovery: String,
     ): String
     @JvmStatic external fun stopWebAccessServer(handle: Long): String
-    @JvmStatic external fun remotePairStart(handle: Long, baseUrl: String, token: String, clientDeviceInfoJson: String): String
+    @JvmStatic
+    external fun discoverDevices(
+        handle: Long,
+        timeoutMs: Long,
+    ): String
+    @JvmStatic external fun remotePairStart(handle: Long, baseUrl: String, tokenHash: String, clientDeviceInfoJson: String): String
     @JvmStatic external fun remotePairFinish(handle: Long, pairingId: String, pairingCode: String): String
     @JvmStatic external fun currentPermissionRequest(handle: Long): String
     @JvmStatic external fun handlePermissionResult(handle: Long, permissionResult: String): String

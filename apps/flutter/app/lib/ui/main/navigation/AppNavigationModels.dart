@@ -17,8 +17,6 @@ enum NavigationEntryKind { host, plugin }
 
 enum RouteEntrySource { defaultSource, drawer, script }
 
-enum NavigationTransitionSource { defaultSource, drawer }
-
 @immutable
 class NavigationEntryActionSpec {
   const NavigationEntryActionSpec({

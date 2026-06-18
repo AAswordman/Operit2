@@ -49,7 +49,13 @@ impl ChatUtils {
             Regex::new(r"(?s)<think(?:ing)?>(.*?)</think(?:ing)?>").expect("think regex");
         let thinking = think_pattern
             .captures_iter(content)
-            .map(|capture| capture.get(1).map(|value| value.as_str()).unwrap_or("").trim())
+            .map(|capture| {
+                capture
+                    .get(1)
+                    .map(|value| value.as_str())
+                    .unwrap_or("")
+                    .trim()
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let search_pattern = Regex::new(r"(?s)<search>.*?(</search>|\z)").expect("search regex");

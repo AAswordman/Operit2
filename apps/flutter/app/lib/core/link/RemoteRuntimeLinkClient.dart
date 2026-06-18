@@ -4,30 +4,63 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' show Response;
 import 'package:http/http.dart' as http;
 
 import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../bridge/CoreProxy.dart';
 
+typedef RemoteConnectionIssueCallback = void Function(CoreLinkError error);
+
 class RemoteRuntimeLinkClient extends CoreProxy {
-  RemoteRuntimeLinkClient({required this.session, http.Client? client})
-    : client = client ?? http.Client() {
-    _watchPool = _RemoteWatchChannelPool(session: session, client: this.client);
+  RemoteRuntimeLinkClient({
+    required this.session,
+    http.Client? client,
+    RemoteConnectionIssueCallback? onConnectionIssue,
+  }) : client = client ?? http.Client(),
+       _onConnectionIssue = onConnectionIssue {
+    _watchPool = _RemoteWatchChannelPool(
+      session: session,
+      client: this.client,
+      onConnectionIssue: (error) => _notifyConnectionIssue(error),
+    );
   }
 
   final PairedRemoteSessionRecord session;
   final http.Client client;
+  RemoteConnectionIssueCallback? _onConnectionIssue;
   late final _RemoteWatchChannelPool _watchPool;
+  bool _disposed = false;
+
+  void setConnectionIssueHandler(RemoteConnectionIssueCallback? handler) {
+    _onConnectionIssue = handler;
+  }
+
+  void _notifyConnectionIssue(CoreLinkError error) {
+    if (_disposed) return;
+    _onConnectionIssue?.call(error);
+  }
+
+  Future<Response> _postRequest(String path, String body) async {
+    try {
+      return await client.post(
+        session.uri(path),
+        headers: session.signedHeaders(body),
+        body: body,
+      );
+    } catch (error) {
+      _notifyConnectionIssue(
+        CoreLinkError(code: 'REMOTE_UNREACHABLE', message: error.toString()),
+      );
+      rethrow;
+    }
+  }
 
   @override
   Future<Object?> call(CoreCallRequest request) async {
     final body = jsonEncode({'request': request.toJson()});
-    final response = await client.post(
-      session.uri('/link/call'),
-      headers: session.signedHeaders(body),
-      body: body,
-    );
+    final response = await _postRequest('/link/call', body);
     _throwIfRemoteError(response);
 
     final json = jsonDecode(response.body) as Map<String, Object?>;
@@ -50,11 +83,7 @@ class RemoteRuntimeLinkClient extends CoreProxy {
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     final body = jsonEncode({'request': request.toJson()});
-    final response = await client.post(
-      session.uri('/link/watch/snapshot'),
-      headers: session.signedHeaders(body),
-      body: body,
-    );
+    final response = await _postRequest('/link/watch/snapshot', body);
     _throwIfRemoteError(response);
     return CoreEvent.fromJson(
       jsonDecode(response.body) as Map<String, Object?>,
@@ -75,31 +104,17 @@ class RemoteRuntimeLinkClient extends CoreProxy {
 
   @override
   Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    final nonce = 'flutter-${DateTime.now().microsecondsSinceEpoch}';
-    final body = jsonEncode({'nonce': nonce});
-    final response = await client.post(
-      session.uri('/link/session'),
-      headers: session.signedHeaders(body),
-      body: body,
-    );
-    _throwIfRemoteError(response);
-
-    final json = jsonDecode(response.body) as Map<String, Object?>;
-    final coreDeviceId = json['coreDeviceId'] as String;
-    final coreDeviceInfo = RemoteDeviceInfo.fromJson(
-      json['coreDeviceInfo'] as Map<String, Object?>,
-    );
-    final transports = (json['transports'] as List<Object?>).cast<String>();
+    final info = await sessionInfo();
     return HostEnvironmentDescriptor(
-      id: 'remote:$coreDeviceId',
-      displayName: 'Remote ${coreDeviceInfo.displayName}',
+      id: 'remote:${info.coreDeviceId}',
+      displayName: 'Remote ${info.coreDeviceInfo.displayName}',
       pathStyleDescriptionEn: 'Remote core path style',
       pathStyleDescriptionCn: '远程核心路径风格',
       examplePaths: const <String>[],
       usesEnvironmentParameter: false,
       environmentParameterDescriptionEn: '',
       environmentParameterDescriptionCn: '',
-      capabilities: transports,
+      capabilities: info.transports,
       fileSystemHost: true,
       webVisitHost: true,
       systemOperationHost: true,
@@ -109,15 +124,21 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     );
   }
 
+  Future<RemoteSessionInfo> sessionInfo() async {
+    final nonce = 'flutter-${DateTime.now().microsecondsSinceEpoch}';
+    final body = jsonEncode(<String, Object?>{'nonce': nonce});
+    final response = await _postRequest('/link/session', body);
+    _throwIfRemoteError(response);
+    return RemoteSessionInfo.fromJson(
+      jsonDecode(response.body) as Map<String, Object?>,
+    );
+  }
+
   Future<RemoteHostInteractionRequest?> pollHostInteraction({
     required int timeoutMs,
   }) async {
-    final body = jsonEncode({'timeoutMs': timeoutMs});
-    final response = await client.post(
-      session.uri('/host/interaction/poll'),
-      headers: session.signedHeaders(body),
-      body: body,
-    );
+    final body = jsonEncode(<String, Object?>{'timeoutMs': timeoutMs});
+    final response = await _postRequest('/host/interaction/poll', body);
     _throwIfRemoteError(response);
     final decoded = jsonDecode(response.body) as Map<String, Object?>;
     final request = decoded['request'];
@@ -135,17 +156,14 @@ class RemoteRuntimeLinkClient extends CoreProxy {
   }) async {
     final body = jsonEncode({
       'requestId': requestId,
-      'response': {'result': result},
+      'response': <String, String>{'result': result},
     });
-    final response = await client.post(
-      session.uri('/host/interaction/respond'),
-      headers: session.signedHeaders(body),
-      body: body,
-    );
+    final response = await _postRequest('/host/interaction/respond', body);
     _throwIfRemoteError(response);
   }
 
   void dispose() {
+    _disposed = true;
     _watchPool.dispose();
     client.close();
   }
@@ -154,30 +172,46 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return;
     }
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      _notifyConnectionIssue(
+        _parseErrorBody(response.statusCode, response.body),
+      );
+    }
     _throwRemoteErrorBody(response.statusCode, response.body);
   }
 
-  void _throwRemoteErrorBody(int statusCode, String body) {
-    final decoded = jsonDecode(body);
-    if (decoded is Map<String, Object?> &&
-        decoded.containsKey('code') &&
-        decoded.containsKey('message')) {
-      throw CoreLinkError.fromJson(decoded);
-    }
-    throw CoreLinkError(
+  CoreLinkError _parseErrorBody(int statusCode, String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, Object?> &&
+          decoded.containsKey('code') &&
+          decoded.containsKey('message')) {
+        return CoreLinkError.fromJson(decoded);
+      }
+    } catch (_) {}
+    return CoreLinkError(
       code: 'REMOTE_HTTP_ERROR',
       message: 'remote core returned HTTP $statusCode',
     );
   }
+
+  void _throwRemoteErrorBody(int statusCode, String body) {
+    throw _parseErrorBody(statusCode, body);
+  }
 }
 
 class _RemoteWatchChannelPool {
-  _RemoteWatchChannelPool({required this.session, required this.client});
+  _RemoteWatchChannelPool({
+    required this.session,
+    required this.client,
+    RemoteConnectionIssueCallback? onConnectionIssue,
+  }) : _onConnectionIssue = onConnectionIssue;
 
   static const int maxSubscriptionsPerChannel = 16;
 
   final PairedRemoteSessionRecord session;
   final http.Client client;
+  final RemoteConnectionIssueCallback? _onConnectionIssue;
   final List<_RemoteWatchChannel> _channels = <_RemoteWatchChannel>[];
   int _nextChannelId = 0;
   int _nextSubscriptionId = 0;
@@ -262,6 +296,7 @@ class _RemoteWatchChannelPool {
     final channel = await _RemoteWatchChannel.open(
       session: session,
       client: client,
+      onConnectionIssue: _onConnectionIssue,
       channelId: 'watch-channel-${_nextChannelId++}',
     );
     _channels.add(channel);
@@ -283,6 +318,7 @@ class _RemoteWatchChannel {
   static Future<_RemoteWatchChannel> open({
     required PairedRemoteSessionRecord session,
     required http.Client client,
+    RemoteConnectionIssueCallback? onConnectionIssue,
     required String channelId,
   }) async {
     final subscriptions = <String, StreamController<CoreEvent>>{};
@@ -317,6 +353,12 @@ class _RemoteWatchChannel {
             if (channel._closing) {
               return;
             }
+            onConnectionIssue?.call(
+              CoreLinkError(
+                code: 'REMOTE_WATCH_ERROR',
+                message: error.toString(),
+              ),
+            );
             channel._fail(error, stackTrace);
           },
           onDone: () {
@@ -324,7 +366,17 @@ class _RemoteWatchChannel {
             if (tail.isNotEmpty) {
               channel._dispatch(tail);
             }
+            if (channel._closing) {
+              channel._done();
+              return;
+            }
             channel._done();
+            onConnectionIssue?.call(
+              const CoreLinkError(
+                code: 'REMOTE_WATCH_CLOSED',
+                message: 'remote watch channel closed',
+              ),
+            );
           },
         );
     channel = _RemoteWatchChannel._(
@@ -457,11 +509,51 @@ class RemoteDeviceInfo {
   }
 }
 
+class RemoteSessionInfo {
+  const RemoteSessionInfo({
+    required this.protocolVersion,
+    required this.pairingServiceVersion,
+    required this.coreDeviceId,
+    required this.coreDeviceInfo,
+    required this.clientDeviceId,
+    required this.clientDeviceInfo,
+    required this.transports,
+    required this.nonce,
+  });
+
+  factory RemoteSessionInfo.fromJson(Map<String, Object?> json) {
+    return RemoteSessionInfo(
+      protocolVersion: json['protocolVersion'] as int,
+      pairingServiceVersion: json['pairingServiceVersion'] as int,
+      coreDeviceId: json['coreDeviceId'] as String,
+      coreDeviceInfo: RemoteDeviceInfo.fromJson(
+        json['coreDeviceInfo'] as Map<String, Object?>,
+      ),
+      clientDeviceId: json['clientDeviceId'] as String,
+      clientDeviceInfo: RemoteDeviceInfo.fromJson(
+        json['clientDeviceInfo'] as Map<String, Object?>,
+      ),
+      transports: (json['transports'] as List<Object?>).cast<String>(),
+      nonce: json['nonce'] as String,
+    );
+  }
+
+  final int protocolVersion;
+  final int pairingServiceVersion;
+  final String coreDeviceId;
+  final RemoteDeviceInfo coreDeviceInfo;
+  final String clientDeviceId;
+  final RemoteDeviceInfo clientDeviceInfo;
+  final List<String> transports;
+  final String nonce;
+}
+
 class PairedRemoteSessionRecord {
   const PairedRemoteSessionRecord({
     required this.baseUrl,
     required this.sessionId,
     required this.deviceId,
+    required this.coreDeviceId,
     required this.remoteDeviceInfo,
     required this.pairingServiceVersion,
     required this.sessionSecret,
@@ -472,6 +564,7 @@ class PairedRemoteSessionRecord {
       baseUrl: json['baseUrl'] as String,
       sessionId: json['sessionId'] as String,
       deviceId: json['deviceId'] as String,
+      coreDeviceId: json['coreDeviceId'] as String,
       remoteDeviceInfo: RemoteDeviceInfo.fromJson(
         json['remoteDeviceInfo'] as Map<String, Object?>,
       ),
@@ -483,6 +576,7 @@ class PairedRemoteSessionRecord {
   final String baseUrl;
   final String sessionId;
   final String deviceId;
+  final String coreDeviceId;
   final RemoteDeviceInfo remoteDeviceInfo;
   final int pairingServiceVersion;
   final String sessionSecret;
@@ -508,6 +602,7 @@ class PairedRemoteSessionRecord {
       'baseUrl': baseUrl,
       'sessionId': sessionId,
       'deviceId': deviceId,
+      'coreDeviceId': coreDeviceId,
       'remoteDeviceInfo': remoteDeviceInfo.toJson(),
       'pairingServiceVersion': pairingServiceVersion,
       'sessionSecret': sessionSecret,

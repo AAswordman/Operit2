@@ -2,7 +2,8 @@
 
 import 'package:flutter/material.dart';
 
-import '../../core/web_access/FlutterWebAccessServer.dart';
+import '../../core/link_host/LinkHostServer.dart';
+import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../theme/OperitTheme.dart';
 import 'screens/OperitMainScreen.dart';
@@ -43,12 +44,14 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   @override
   void initState() {
     super.initState();
-    FlutterWebAccessServer.instance.addListener(_onWebAccessChanged);
+    LinkHostServer.instance.addListener(_onWebAccessChanged);
+    RuntimeConnectionManager.instance.addListener(_onManagerChanged);
   }
 
   @override
   void dispose() {
-    FlutterWebAccessServer.instance.removeListener(_onWebAccessChanged);
+    LinkHostServer.instance.removeListener(_onWebAccessChanged);
+    RuntimeConnectionManager.instance.removeListener(_onManagerChanged);
     super.dispose();
   }
 
@@ -56,6 +59,7 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _showStartupWebAccessError();
+    _showPendingRemoteError();
   }
 
   void _showStartupWebAccessError() {
@@ -90,7 +94,7 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   }
 
   void _onWebAccessChanged() {
-    final record = FlutterWebAccessServer.instance.lastPairingCode;
+    final record = LinkHostServer.instance.lastPairingCode;
     if (record == null || record.pairingId == _shownPairingId) {
       return;
     }
@@ -109,6 +113,38 @@ class _AppDialogHostState extends State<_AppDialogHost> {
               l10n.settingsWebAccessPairingRequestMessage(
                 record.pairingCode,
                 record.clientDeviceId,
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(l10n.ok),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  void _onManagerChanged() {
+    _showPendingRemoteError();
+  }
+
+  void _showPendingRemoteError() {
+    final error = RuntimeConnectionManager.instance.consumePendingRemoteError();
+    if (error == null || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text(l10n.settingsRuntimeRemoteDisconnected),
+            content: SingleChildScrollView(
+              child: SelectableText(
+                l10n.settingsRuntimeRemoteDisconnectedMessage(error.toString()),
               ),
             ),
             actions: <Widget>[

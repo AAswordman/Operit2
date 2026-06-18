@@ -30,48 +30,47 @@ class OperitClientPaths {
     return _directory(<String>['client', 'link']);
   }
 
-  static Future<File> linkSessionsFile() async {
+  static Future<File> outboundLinkSessionsFile() async {
     final directory = await linkDir();
-    return File(_join(<String>[directory.path, 'link_sessions.json']));
-  }
-
-  static Future<Directory> accessDir() {
-    return _directory(<String>['client', 'access']);
+    return File(_join(<String>[directory.path, 'outbound_sessions.json']));
   }
 
   static Future<File> runtimeConnectionConfigFile() async {
-    final directory = await accessDir();
+    final directory = await linkDir();
     return File(_join(<String>[directory.path, 'runtime_connection.json']));
   }
 
-  static Future<Directory> webAccessDir() {
-    return _directory(<String>['client', 'web_access']);
+  static Future<Directory> linkHostDir() {
+    return linkDir();
   }
 
-  static Future<Directory> webAccessBundleDir() {
-    return _directory(<String>['client', 'web_access', 'flutter_web']);
+  static Future<Directory> linkHostWebAccessBundleDir() {
+    return _directory(<String>['client', 'link', 'web_access_bundle']);
   }
 
-  static Future<File> webAccessConfigFile() async {
-    final directory = await webAccessDir();
-    return File(_join(<String>[directory.path, 'web_access.json']));
+  static Future<File> linkHostConfigFile() async {
+    final directory = await linkHostDir();
+    return File(_join(<String>[directory.path, 'host_config.json']));
   }
 
-  static Future<File> webAccessStateFile() async {
-    final directory = await webAccessDir();
-    return File(_join(<String>[directory.path, 'web_access_state.json']));
+  static Future<File> linkHostStateFile() async {
+    final directory = await linkHostDir();
+    return File(_join(<String>[directory.path, 'host_state.json']));
   }
 
-  static Future<File> webAccessAcceptedSessionsFile() async {
-    final directory = await webAccessDir();
-    return File(_join(<String>[directory.path, 'link_server_sessions.json']));
+  static Future<File> linkHostDeviceIdFile() async {
+    final directory = await linkHostDir();
+    return File(_join(<String>[directory.path, 'host_device_id']));
   }
 
-  static Future<File> webAccessPairingCodeFile() async {
-    final directory = await webAccessDir();
-    return File(
-      _join(<String>[directory.path, 'web_access_pairing_code.json']),
-    );
+  static Future<File> inboundLinkSessionsFile() async {
+    final directory = await linkHostDir();
+    return File(_join(<String>[directory.path, 'inbound_sessions.json']));
+  }
+
+  static Future<File> pendingLinkPairingCodeFile() async {
+    final directory = await linkHostDir();
+    return File(_join(<String>[directory.path, 'pending_pairing_code.json']));
   }
 
   static Future<Directory> tempDir() {

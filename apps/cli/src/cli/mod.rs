@@ -300,7 +300,7 @@ fn print_cli_usage() {
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
-        "operit2 cli link <serve|hello|connect|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|sync|sync-status|call|watch|tui|run>"
+        "operit2 cli link <serve|discover|hello|connect|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|sync|sync-status|call|watch|tui|run>"
     );
     println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");

@@ -5,30 +5,32 @@ pub(crate) fn client_root_dir() -> PathBuf {
     platform_files_root_dir().join("client")
 }
 
-pub(crate) fn access_dir() -> PathBuf {
-    client_root_dir().join("access")
+pub(crate) fn link_dir() -> PathBuf {
+    client_root_dir().join("link")
 }
 
 pub(crate) fn link_sessions_path() -> PathBuf {
-    access_dir().join("link_sessions.json")
+    link_dir().join("outbound_sessions.json")
 }
 
 pub(crate) fn link_server_sessions_path() -> PathBuf {
-    access_dir().join("link_server_sessions.json")
+    link_dir().join("inbound_sessions.json")
 }
 
-pub(crate) fn web_access_config_path() -> PathBuf {
-    client_root_dir().join("web_access").join("web_access.json")
+pub(crate) fn link_host_config_path() -> PathBuf {
+    link_dir().join("host_config.json")
 }
 
-pub(crate) fn web_access_state_path() -> PathBuf {
-    client_root_dir()
-        .join("web_access")
-        .join("web_access_state.json")
+pub(crate) fn link_host_state_path() -> PathBuf {
+    link_dir().join("host_state.json")
 }
 
-pub(crate) fn web_access_bundle_dir() -> PathBuf {
-    client_root_dir().join("web_access").join("flutter_web")
+pub(crate) fn link_host_device_id_path() -> PathBuf {
+    link_dir().join("host_device_id")
+}
+
+pub(crate) fn link_host_web_access_bundle_dir() -> PathBuf {
+    link_dir().join("web_access_bundle")
 }
 
 #[cfg(windows)]

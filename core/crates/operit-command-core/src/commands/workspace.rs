@@ -102,6 +102,7 @@ fn bind_workspace(
         .cloned()
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?;
+    let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace)?;
     application
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)
@@ -195,6 +196,7 @@ fn list_workspace_commands_path(
         .cloned()
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace commands-path <workspace>".to_string())?;
+    let workspacePath = PathMapper::normalizeWorkspaceBindingPath(&workspacePath)?;
     list_commands_at_path(&application.applicationContext, &workspacePath, output)
 }
 
@@ -228,6 +230,7 @@ fn run_workspace_shortcut_path(
         .cloned()
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
+    let workspacePath = PathMapper::normalizeWorkspaceBindingPath(&workspacePath)?;
     let commandId = args
         .get(1)
         .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
@@ -257,10 +260,7 @@ fn workspace_path_for_chat(
 }
 
 #[allow(non_snake_case)]
-fn vfsForWorkspace(
-    context: &OperitApplicationContext,
-    workspacePath: &str,
-) -> Result<VisualFileSystem, String> {
+fn vfsForWorkspace(context: &OperitApplicationContext) -> Result<VisualFileSystem, String> {
     let runtimeStoreRoot = context
         .runtimeStorageHost
         .as_ref()
@@ -278,7 +278,6 @@ fn vfsForWorkspace(
             runtimeStoreRoot,
             context.appFilesRoot.clone(),
             runtimeStorePaths.workspace_dir(),
-            Some(workspacePath.to_string()),
         ),
     ))
 }
@@ -288,7 +287,7 @@ fn list_commands_at_path(
     workspacePath: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let vfs = vfsForWorkspace(context, workspacePath)?;
+    let vfs = vfsForWorkspace(context)?;
     let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     for command in config.commands {
         output.push_stdout_line(format!(
@@ -310,7 +309,7 @@ fn run_command_at_path(
     commandId: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let vfs = vfsForWorkspace(&context, workspacePath)?;
+    let vfs = vfsForWorkspace(&context)?;
     let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     let command = config
         .commands
@@ -368,7 +367,7 @@ fn execute_workspace_shell_command(
     let terminalInfo = terminalHost
         .terminalInfo()
         .map_err(|error| format!("failed to read terminal info: {}", error.message))?;
-    let vfs = vfsForWorkspace(context, workspacePath)?;
+    let vfs = vfsForWorkspace(context)?;
     let workingDir = workspace_command_working_dir(&vfs, workspacePath, &command.workingDir)?;
     let sessionName = workspace_command_session_name(workspacePath, command);
     let session = terminalHost

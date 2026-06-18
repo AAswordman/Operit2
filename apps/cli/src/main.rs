@@ -9,6 +9,7 @@ mod chat_runtime;
 mod cli;
 mod client_paths;
 mod core_proxy;
+mod mdns;
 mod tui;
 mod web_access_assets;
 

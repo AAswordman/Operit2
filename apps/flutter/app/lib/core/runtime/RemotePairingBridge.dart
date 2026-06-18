@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 
 import '../link/CoreLinkProtocol.dart';
@@ -15,14 +16,24 @@ class RemotePairingBridge {
 
   final MethodChannel _channel;
 
-  Future<RemotePairStartResult> start({
+  Future<RemotePairStartResult> startWithToken({
     required String baseUrl,
     required String token,
+  }) {
+    return startWithTokenHash(
+      baseUrl: baseUrl,
+      tokenHash: _linkTokenHash(token),
+    );
+  }
+
+  Future<RemotePairStartResult> startWithTokenHash({
+    required String baseUrl,
+    required String tokenHash,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
     final response = await _channel.invokeMethod<String>('remotePairStart', {
       'baseUrl': baseUrl,
-      'token': token,
+      'tokenHash': tokenHash,
       'clientDeviceInfo': jsonEncode(clientDeviceInfo.toJson()),
     });
     if (response == null) {
@@ -52,6 +63,10 @@ class RemotePairingBridge {
     }
     return PairedRemoteSessionRecord.fromJson(decoded);
   }
+}
+
+String _linkTokenHash(String token) {
+  return base64Encode(sha256.convert(utf8.encode(token)).bytes);
 }
 
 class RemotePairStartResult {

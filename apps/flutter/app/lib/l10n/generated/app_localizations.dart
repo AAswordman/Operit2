@@ -1649,37 +1649,37 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryDataTitle.
   ///
   /// In en, this message translates to:
-  /// **'Data & Diagnostics'**
+  /// **'Data & Backup'**
   String get settingsCategoryDataTitle;
 
   /// No description provided for @settingsCategoryDataSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'History, backup, logs'**
+  /// **'Backup, restore, stats'**
   String get settingsCategoryDataSubtitle;
 
   /// No description provided for @settingsCategoryDataDescription.
   ///
   /// In en, this message translates to:
-  /// **'Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.'**
+  /// **'Back up chats, characters, and model settings, restore backup content, and view data statistics.'**
   String get settingsCategoryDataDescription;
 
   /// No description provided for @settingsCategoryAccessLinksTitle.
   ///
   /// In en, this message translates to:
-  /// **'Access & Links'**
+  /// **'Devices & Access'**
   String get settingsCategoryAccessLinksTitle;
 
   /// No description provided for @settingsCategoryAccessLinksSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Runtime, Web Access'**
+  /// **'Connect, sync, access'**
   String get settingsCategoryAccessLinksSubtitle;
 
   /// No description provided for @settingsCategoryAccessLinksDescription.
   ///
   /// In en, this message translates to:
-  /// **'Manage the runtime connection, local web access entry, bind address, and access token for this client.'**
+  /// **'Connect another device, sync data, or allow browsers to access this device.'**
   String get settingsCategoryAccessLinksDescription;
 
   /// No description provided for @settingsComingSoon.
@@ -3472,67 +3472,67 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRuntimeConnection.
   ///
   /// In en, this message translates to:
-  /// **'Runtime connection'**
+  /// **'Current device'**
   String get settingsRuntimeConnection;
 
   /// No description provided for @settingsRuntimeConnectionDescription.
   ///
   /// In en, this message translates to:
-  /// **'All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.'**
+  /// **'Choose whether chats and tools run on this device or another connected device.'**
   String get settingsRuntimeConnectionDescription;
 
   /// No description provided for @settingsRuntimeUseLocal.
   ///
   /// In en, this message translates to:
-  /// **'Use local runtime'**
+  /// **'Use this device'**
   String get settingsRuntimeUseLocal;
 
   /// No description provided for @settingsRuntimeLocalTitle.
   ///
   /// In en, this message translates to:
-  /// **'Local runtime'**
+  /// **'This device'**
   String get settingsRuntimeLocalTitle;
 
   /// No description provided for @settingsRuntimeLocalDescription.
   ///
   /// In en, this message translates to:
-  /// **'Use the core built into this device. No connection details are required.'**
+  /// **'Chats and tools run on this device.'**
   String get settingsRuntimeLocalDescription;
 
   /// No description provided for @settingsRuntimeRemoteTitle.
   ///
   /// In en, this message translates to:
-  /// **'Remote runtime'**
+  /// **'Connected devices'**
   String get settingsRuntimeRemoteTitle;
 
   /// No description provided for @settingsRuntimeRemoteDescription.
   ///
   /// In en, this message translates to:
-  /// **'Manage paired remote cores and switch to a specific remote from the list.'**
+  /// **'These devices are connected. You can use or remove them.'**
   String get settingsRuntimeRemoteDescription;
 
   /// No description provided for @settingsRuntimeTesting.
   ///
   /// In en, this message translates to:
-  /// **'Testing runtime…'**
+  /// **'Checking connection…'**
   String get settingsRuntimeTesting;
 
   /// No description provided for @settingsRuntimePairRemote.
   ///
   /// In en, this message translates to:
-  /// **'Pair new remote'**
+  /// **'Connect another device'**
   String get settingsRuntimePairRemote;
 
   /// No description provided for @settingsRuntimeNoPairedRemote.
   ///
   /// In en, this message translates to:
-  /// **'No paired remote core yet.'**
+  /// **'No connected devices yet.'**
   String get settingsRuntimeNoPairedRemote;
 
   /// No description provided for @settingsRuntimePairToken.
   ///
   /// In en, this message translates to:
-  /// **'Pairing token'**
+  /// **'Connection token'**
   String get settingsRuntimePairToken;
 
   /// No description provided for @settingsRuntimePairCode.
@@ -3544,85 +3544,241 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRuntimeStartPairing.
   ///
   /// In en, this message translates to:
-  /// **'Start pairing'**
+  /// **'Start connection'**
   String get settingsRuntimeStartPairing;
 
   /// No description provided for @settingsRuntimeFinishPairing.
   ///
   /// In en, this message translates to:
-  /// **'Finish pairing'**
+  /// **'Finish connection'**
   String get settingsRuntimeFinishPairing;
 
   /// No description provided for @settingsRuntimeBaseUrl.
   ///
   /// In en, this message translates to:
-  /// **'Remote address'**
+  /// **'Device address'**
   String get settingsRuntimeBaseUrl;
 
   /// No description provided for @settingsRuntimeTestCurrent.
   ///
   /// In en, this message translates to:
-  /// **'Test current runtime'**
+  /// **'Check connection'**
   String get settingsRuntimeTestCurrent;
 
   /// No description provided for @settingsRuntimeSwitchedLocal.
   ///
   /// In en, this message translates to:
-  /// **'Switched to local runtime.'**
+  /// **'Now using this device.'**
   String get settingsRuntimeSwitchedLocal;
 
   /// No description provided for @settingsRuntimeSwitchedRemote.
   ///
   /// In en, this message translates to:
-  /// **'Switched to remote runtime.'**
+  /// **'Now using a connected device.'**
   String get settingsRuntimeSwitchedRemote;
 
   /// No description provided for @settingsRuntimeTestResult.
   ///
   /// In en, this message translates to:
-  /// **'Runtime available: {version}'**
+  /// **'Device available: {version}'**
   String settingsRuntimeTestResult(String version);
 
   /// No description provided for @settingsRuntimeTestFailed.
   ///
   /// In en, this message translates to:
-  /// **'Runtime test failed: {error}'**
+  /// **'Connection check failed: {error}'**
   String settingsRuntimeTestFailed(String error);
 
   /// No description provided for @settingsRuntimeRemoteDisconnected.
   ///
   /// In en, this message translates to:
-  /// **'Remote runtime disconnected'**
+  /// **'Connected device disconnected'**
   String get settingsRuntimeRemoteDisconnected;
 
   /// No description provided for @settingsRuntimeRemoteDisconnectedMessage.
   ///
   /// In en, this message translates to:
-  /// **'Switched to local core.\n\n{error}'**
+  /// **'Now using this device.\n\n{error}'**
   String settingsRuntimeRemoteDisconnectedMessage(String error);
+
+  /// No description provided for @settingsRuntimePairingRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'A device connection was rejected'**
+  String get settingsRuntimePairingRejected;
+
+  /// No description provided for @settingsRuntimePairedChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking'**
+  String get settingsRuntimePairedChecking;
+
+  /// No description provided for @settingsRuntimePairedOnline.
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get settingsRuntimePairedOnline;
+
+  /// No description provided for @settingsRuntimePairedOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get settingsRuntimePairedOffline;
+
+  /// No description provided for @settingsRuntimeSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync data'**
+  String get settingsRuntimeSync;
+
+  /// No description provided for @settingsRuntimeSyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing…'**
+  String get settingsRuntimeSyncing;
+
+  /// No description provided for @settingsRuntimeSyncCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync completed: this device {localApplied}, remote {remoteApplied}.'**
+  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied);
+
+  /// No description provided for @settingsRuntimeSyncFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync failed: {error}'**
+  String settingsRuntimeSyncFailed(String error);
+
+  /// No description provided for @settingsRuntimeDiscoverDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Discover devices'**
+  String get settingsRuntimeDiscoverDevices;
+
+  /// No description provided for @settingsRuntimeDiscoverDevicesDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan for nearby devices or enter an address to connect.'**
+  String get settingsRuntimeDiscoverDevicesDescription;
+
+  /// No description provided for @settingsRuntimeScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan'**
+  String get settingsRuntimeScan;
+
+  /// No description provided for @settingsRuntimeScanning.
+  ///
+  /// In en, this message translates to:
+  /// **'Scanning…'**
+  String get settingsRuntimeScanning;
+
+  /// No description provided for @settingsRuntimeEnterManually.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter manually'**
+  String get settingsRuntimeEnterManually;
+
+  /// No description provided for @settingsRuntimeConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get settingsRuntimeConnect;
+
+  /// No description provided for @settingsRuntimeEnableDiscovery.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow other devices to discover this device'**
+  String get settingsRuntimeEnableDiscovery;
+
+  /// No description provided for @settingsRuntimeEnableDiscoveryDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Other devices on the same LAN can find this device automatically.'**
+  String get settingsRuntimeEnableDiscoveryDescription;
+
+  /// No description provided for @settingsRuntimeEnableDiscoveryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not enable device discovery: {error}'**
+  String settingsRuntimeEnableDiscoveryFailed(String error);
+
+  /// No description provided for @settingsRuntimeDisableDiscoveryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not disable device discovery: {error}'**
+  String settingsRuntimeDisableDiscoveryFailed(String error);
+
+  /// No description provided for @settingsRuntimeUsingLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Using: this device'**
+  String get settingsRuntimeUsingLocal;
+
+  /// No description provided for @settingsRuntimeUsingRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Using: {device}'**
+  String settingsRuntimeUsingRemote(String device);
+
+  /// No description provided for @settingsRuntimeRemoteInUseDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats and tools run on this connected device.'**
+  String get settingsRuntimeRemoteInUseDescription;
 
   /// No description provided for @settingsWebAccessService.
   ///
   /// In en, this message translates to:
-  /// **'Web access service'**
+  /// **'Allow access'**
   String get settingsWebAccessService;
 
   /// No description provided for @settingsWebAccessServiceDescription.
   ///
   /// In en, this message translates to:
-  /// **'When enabled, this client starts a local HTTP entry. Browsers can access core with the token.'**
+  /// **'When enabled, browsers can access this device with an address and token.'**
   String get settingsWebAccessServiceDescription;
 
   /// No description provided for @settingsWebAccessEnable.
   ///
   /// In en, this message translates to:
-  /// **'Enable web access'**
+  /// **'Allow external access'**
   String get settingsWebAccessEnable;
+
+  /// No description provided for @settingsWebAccessPortMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Port mode'**
+  String get settingsWebAccessPortMode;
+
+  /// No description provided for @settingsWebAccessPortAutomatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get settingsWebAccessPortAutomatic;
+
+  /// No description provided for @settingsWebAccessPortFixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed'**
+  String get settingsWebAccessPortFixed;
+
+  /// No description provided for @settingsWebAccessPortAutomaticDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The app chooses a port automatically. No manual setup is needed.'**
+  String get settingsWebAccessPortAutomaticDescription;
+
+  /// No description provided for @settingsWebAccessPortFixedDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the port in the listen address is used.'**
+  String get settingsWebAccessPortFixedDescription;
 
   /// No description provided for @settingsWebAccessBindAddress.
   ///
   /// In en, this message translates to:
-  /// **'Bind address'**
+  /// **'Listen address'**
   String get settingsWebAccessBindAddress;
 
   /// No description provided for @settingsWebAccessToken.
@@ -3634,7 +3790,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessRotateToken.
   ///
   /// In en, this message translates to:
-  /// **'Rotate token'**
+  /// **'Change token'**
   String get settingsWebAccessRotateToken;
 
   /// No description provided for @settingsWebAccessCopyToken.
@@ -3646,25 +3802,25 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessAccessUrl.
   ///
   /// In en, this message translates to:
-  /// **'Address'**
+  /// **'Access address'**
   String get settingsWebAccessAccessUrl;
 
   /// No description provided for @settingsWebAccessLocalUrl.
   ///
   /// In en, this message translates to:
-  /// **'Local'**
+  /// **'This device'**
   String get settingsWebAccessLocalUrl;
 
   /// No description provided for @settingsWebAccessPairingUrl.
   ///
   /// In en, this message translates to:
-  /// **'Pairing'**
+  /// **'Pairing address'**
   String get settingsWebAccessPairingUrl;
 
   /// No description provided for @settingsWebAccessPairingUrlLocalOnly.
   ///
   /// In en, this message translates to:
-  /// **'Local only'**
+  /// **'This device only'**
   String get settingsWebAccessPairingUrlLocalOnly;
 
   /// No description provided for @settingsWebAccessPairingUrlUnavailable.
@@ -3682,25 +3838,25 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessOpenUrl.
   ///
   /// In en, this message translates to:
-  /// **'Open'**
+  /// **'Open address'**
   String get settingsWebAccessOpenUrl;
 
   /// No description provided for @settingsWebAccessRunning.
   ///
   /// In en, this message translates to:
-  /// **'Running'**
+  /// **'On'**
   String get settingsWebAccessRunning;
 
   /// No description provided for @settingsWebAccessStopped.
   ///
   /// In en, this message translates to:
-  /// **'Stopped'**
+  /// **'Off'**
   String get settingsWebAccessStopped;
 
   /// No description provided for @settingsWebAccessSaved.
   ///
   /// In en, this message translates to:
-  /// **'Web access settings saved.'**
+  /// **'Access settings saved.'**
   String get settingsWebAccessSaved;
 
   /// No description provided for @settingsWebAccessTokenCopied.
@@ -3718,31 +3874,31 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessPairedClients.
   ///
   /// In en, this message translates to:
-  /// **'Paired clients'**
+  /// **'Authorized devices'**
   String get settingsWebAccessPairedClients;
 
   /// No description provided for @settingsWebAccessNoPairedClients.
   ///
   /// In en, this message translates to:
-  /// **'No client has paired with this device yet.'**
+  /// **'No device is authorized yet.'**
   String get settingsWebAccessNoPairedClients;
 
   /// No description provided for @settingsWebAccessPairedDeleted.
   ///
   /// In en, this message translates to:
-  /// **'Paired client deleted.'**
+  /// **'Authorized device deleted.'**
   String get settingsWebAccessPairedDeleted;
 
   /// No description provided for @settingsWebAccessPairingRequest.
   ///
   /// In en, this message translates to:
-  /// **'Remote pairing request'**
+  /// **'Pairing request'**
   String get settingsWebAccessPairingRequest;
 
   /// No description provided for @settingsWebAccessPairingRequestMessage.
   ///
   /// In en, this message translates to:
-  /// **'Pairing code: {code}\nClient: {client}'**
+  /// **'Pairing code: {code}\nDevice: {client}'**
   String settingsWebAccessPairingRequestMessage(String code, String client);
 
   /// No description provided for @settingsWebAccessInvalidBindAddress.
@@ -3754,13 +3910,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsWebAccessStartFailed.
   ///
   /// In en, this message translates to:
-  /// **'Failed to start web access: {error}'**
+  /// **'Failed to enable access: {error}'**
   String settingsWebAccessStartFailed(String error);
 
   /// No description provided for @settingsWebAccessStopFailed.
   ///
   /// In en, this message translates to:
-  /// **'Failed to stop web access: {error}'**
+  /// **'Failed to turn off access: {error}'**
   String settingsWebAccessStopFailed(String error);
 
   /// No description provided for @settingsAppearanceThemeSection.
@@ -4504,97 +4660,97 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataRuntimeSection.
   ///
   /// In en, this message translates to:
-  /// **'Runtime'**
+  /// **'Data overview'**
   String get settingsDataRuntimeSection;
 
   /// No description provided for @settingsDataCoreVersion.
   ///
   /// In en, this message translates to:
-  /// **'Core version'**
+  /// **'Current version'**
   String get settingsDataCoreVersion;
 
   /// No description provided for @settingsDataTokenSection.
   ///
   /// In en, this message translates to:
-  /// **'Token statistics'**
+  /// **'Usage statistics'**
   String get settingsDataTokenSection;
 
   /// No description provided for @settingsDataInputTokens.
   ///
   /// In en, this message translates to:
-  /// **'Input tokens'**
+  /// **'Input'**
   String get settingsDataInputTokens;
 
   /// No description provided for @settingsDataOutputTokens.
   ///
   /// In en, this message translates to:
-  /// **'Output tokens'**
+  /// **'Output'**
   String get settingsDataOutputTokens;
 
   /// No description provided for @settingsDataRefreshTokenStats.
   ///
   /// In en, this message translates to:
-  /// **'Refresh cumulative statistics'**
+  /// **'Refresh statistics'**
   String get settingsDataRefreshTokenStats;
 
   /// No description provided for @settingsDataResetTokenStats.
   ///
   /// In en, this message translates to:
-  /// **'Reset token statistics'**
+  /// **'Reset statistics'**
   String get settingsDataResetTokenStats;
 
   /// No description provided for @settingsDataBackupSection.
   ///
   /// In en, this message translates to:
-  /// **'Backup'**
+  /// **'Backup & restore'**
   String get settingsDataBackupSection;
 
   /// No description provided for @settingsDataChatHistoriesBackup.
   ///
   /// In en, this message translates to:
-  /// **'Chat history backup'**
+  /// **'Chat data'**
   String get settingsDataChatHistoriesBackup;
 
   /// No description provided for @settingsDataChatHistoriesBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Copy all chats and messages as JSON. Import updates or creates chats by chat ID.'**
+  /// **'Back up all chats and messages. Restore updates or creates chats by chat ID.'**
   String get settingsDataChatHistoriesBackupDescription;
 
   /// No description provided for @settingsDataCharacterCardsBackup.
   ///
   /// In en, this message translates to:
-  /// **'Character card backup'**
+  /// **'Character card data'**
   String get settingsDataCharacterCardsBackup;
 
   /// No description provided for @settingsDataCharacterCardsBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.'**
+  /// **'Back up all character cards and referenced tags. Restore updates or creates items by original ID.'**
   String get settingsDataCharacterCardsBackupDescription;
 
   /// No description provided for @settingsDataCharacterGroupsBackup.
   ///
   /// In en, this message translates to:
-  /// **'Group backup'**
+  /// **'Group data'**
   String get settingsDataCharacterGroupsBackup;
 
   /// No description provided for @settingsDataCharacterGroupsBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Copy all groups as JSON. Import keeps member references and ordering.'**
+  /// **'Back up all groups. Restore keeps member references and ordering.'**
   String get settingsDataCharacterGroupsBackupDescription;
 
   /// No description provided for @settingsDataModelConfigsBackup.
   ///
   /// In en, this message translates to:
-  /// **'Model config backup'**
+  /// **'Model settings'**
   String get settingsDataModelConfigsBackup;
 
   /// No description provided for @settingsDataModelConfigsBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.'**
+  /// **'Back up all model settings, including model parameters and API key pools.'**
   String get settingsDataModelConfigsBackupDescription;
 
   /// No description provided for @settingsDataBackupCount.
@@ -4606,31 +4762,31 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataCopyBackupJson.
   ///
   /// In en, this message translates to:
-  /// **'Copy backup JSON'**
+  /// **'Copy backup'**
   String get settingsDataCopyBackupJson;
 
   /// No description provided for @settingsDataImportBackupJson.
   ///
   /// In en, this message translates to:
-  /// **'Import backup JSON'**
+  /// **'Restore data'**
   String get settingsDataImportBackupJson;
 
   /// No description provided for @settingsDataBackupJsonInput.
   ///
   /// In en, this message translates to:
-  /// **'Backup JSON content'**
+  /// **'Restore content'**
   String get settingsDataBackupJsonInput;
 
   /// No description provided for @settingsDataBackupCopied.
   ///
   /// In en, this message translates to:
-  /// **'Copied backup JSON for “{name}”.'**
+  /// **'Copied backup for “{name}”.'**
   String settingsDataBackupCopied(String name);
 
   /// No description provided for @settingsDataBackupImportResult.
   ///
   /// In en, this message translates to:
-  /// **'Import complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.'**
+  /// **'Restore complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.'**
   String settingsDataBackupImportResult(
     int newCount,
     int updatedCount,
@@ -4640,32 +4796,97 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataBackupImportError.
   ///
   /// In en, this message translates to:
-  /// **'Backup import failed: {error}'**
+  /// **'Restore failed: {error}'**
   String settingsDataBackupImportError(String error);
 
   /// No description provided for @settingsDataBackupCopyError.
   ///
   /// In en, this message translates to:
-  /// **'Backup copy failed: {error}'**
+  /// **'Copy failed: {error}'**
   String settingsDataBackupCopyError(String error);
+
+  /// No description provided for @settingsDataSnapshotBackupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Full snapshot'**
+  String get settingsDataSnapshotBackupTitle;
 
   /// No description provided for @settingsDataExportRawSnapshot.
   ///
   /// In en, this message translates to:
-  /// **'Export raw snapshot'**
+  /// **'Export snapshot'**
   String get settingsDataExportRawSnapshot;
+
+  /// No description provided for @settingsDataImportRawSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore snapshot'**
+  String get settingsDataImportRawSnapshot;
 
   /// No description provided for @settingsDataExportRawSnapshotDescription.
   ///
   /// In en, this message translates to:
-  /// **'Generate the current data snapshot from runtime and show its byte size.'**
+  /// **'Pack chats, characters, model settings, and local files into one backup file. Restoring replaces current data with the backup.'**
   String get settingsDataExportRawSnapshotDescription;
 
   /// No description provided for @settingsDataSnapshotBytes.
   ///
   /// In en, this message translates to:
-  /// **'Snapshot generated: {bytes} bytes'**
+  /// **'Snapshot size: {bytes} bytes'**
   String settingsDataSnapshotBytes(int bytes);
+
+  /// No description provided for @settingsDataSnapshotImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Snapshot restored.'**
+  String get settingsDataSnapshotImported;
+
+  /// No description provided for @settingsDataSnapshotExportError.
+  ///
+  /// In en, this message translates to:
+  /// **'Snapshot export failed: {error}'**
+  String settingsDataSnapshotExportError(String error);
+
+  /// No description provided for @settingsDataSnapshotImportError.
+  ///
+  /// In en, this message translates to:
+  /// **'Snapshot restore failed: {error}'**
+  String settingsDataSnapshotImportError(String error);
+
+  /// No description provided for @settingsDataSnapshotRestoreConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore full snapshot'**
+  String get settingsDataSnapshotRestoreConfirmTitle;
+
+  /// No description provided for @settingsDataSnapshotRestoreConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Restoring will replace the current runtime data.\nFormat version: {formatVersion}\nFiles: {fileCount}\nCreated: {createdAt}\nSnapshot size: {bytes} bytes'**
+  String settingsDataSnapshotRestoreConfirmMessage(
+    int formatVersion,
+    int fileCount,
+    String createdAt,
+    int bytes,
+  );
+
+  /// No description provided for @settingsDataSnapshotRestoreConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore'**
+  String get settingsDataSnapshotRestoreConfirmAction;
+
+  /// No description provided for @settingsDataAdvancedBackupOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced options'**
+  String get settingsDataAdvancedBackupOptions;
+
+  /// No description provided for @settingsDataAdvancedBackupOptionsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Single-item JSON export and restore'**
+  String get settingsDataAdvancedBackupOptionsDescription;
 }
 
 class _AppLocalizationsDelegate

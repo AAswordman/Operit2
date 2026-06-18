@@ -37,7 +37,10 @@ using BridgePollWatchStreams = char* (*)(BridgeHandle, const char*);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeStartWebAccessServer =
     char* (*)(BridgeHandle, const char*, const char*, const char*, const char*,
-              const char*, const char*, const char*, const char*);
+              const char*, const char*, const char*, const char*, const char*,
+              const char*, const char*);
+using BridgeDiscoverDevices =
+    char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeHostDescriptor = char* (*)(BridgeHandle);
 using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
@@ -302,6 +305,8 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_poll_watch_streams"));
       close_watch_stream_ = reinterpret_cast<BridgeCloseWatchStream>(
           GetProcAddress(library_, "operit_flutter_bridge_close_watch_stream"));
+      discover_devices_ = reinterpret_cast<BridgeDiscoverDevices>(
+          GetProcAddress(library_, "operit_flutter_bridge_discover_devices"));
       start_web_access_server_ = reinterpret_cast<BridgeStartWebAccessServer>(
           GetProcAddress(library_, "operit_flutter_bridge_start_web_access_server"));
       stop_web_access_server_ = reinterpret_cast<BridgeStopWebAccessServer>(
@@ -405,19 +410,32 @@ class OperitRuntimeLibrary {
                             const std::string& token,
                             const std::string& shutdown_token,
                             const std::string& web_root,
+                            const std::string& device_id,
                             const std::string& accepted_sessions,
                             const std::string& accepted_session_store_path,
                             const std::string& pairing_code_path,
                             const std::string& device_info,
+                            const std::string& enable_web_access,
+                            const std::string& enable_discovery,
                             std::string* response, std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = start_web_access_server_(
-        handle_, bind_address.c_str(), token.c_str(), shutdown_token.c_str(),
-        web_root.c_str(), accepted_sessions.c_str(),
-        accepted_session_store_path.c_str(), pairing_code_path.c_str(),
-        device_info.c_str());
+      char* raw_response = start_web_access_server_(
+          handle_, bind_address.c_str(), token.c_str(), shutdown_token.c_str(),
+          web_root.c_str(), device_id.c_str(), accepted_sessions.c_str(),
+          accepted_session_store_path.c_str(), pairing_code_path.c_str(),
+          device_info.c_str(), enable_web_access.c_str(),
+          enable_discovery.c_str());
+    return TakeBridgeString(raw_response, response, error);
+  }
+
+  bool DiscoverDevices(const std::string& timeout_ms,
+                       std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    char* raw_response = discover_devices_(handle_, timeout_ms.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -454,14 +472,14 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  bool RemotePairStart(const std::string& base_url, const std::string& token,
+  bool RemotePairStart(const std::string& base_url, const std::string& token_hash,
                        const std::string& client_device_info,
                        std::string* response, std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
     char* raw_response =
-        remote_pair_start_(handle_, base_url.c_str(), token.c_str(),
+        remote_pair_start_(handle_, base_url.c_str(), token_hash.c_str(),
                            client_device_info.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
@@ -527,6 +545,7 @@ class OperitRuntimeLibrary {
   BridgePollWatchStreams poll_watch_streams_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
+  BridgeDiscoverDevices discover_devices_ = nullptr;
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
   BridgeHostDescriptor host_descriptor_ = nullptr;
   BridgeCurrentPermissionRequest current_permission_request_ = nullptr;
@@ -711,33 +730,68 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           const std::string* token = StringMapValue(method_call, "token");
           const std::string* shutdown_token =
               StringMapValue(method_call, "shutdownToken");
-          const std::string* web_root = StringMapValue(method_call, "webRoot");
-          const std::string* accepted_sessions =
-              StringMapValue(method_call, "acceptedSessions");
+            const std::string* web_root = StringMapValue(method_call, "webRoot");
+            const std::string* device_id =
+                StringMapValue(method_call, "deviceId");
+            const std::string* accepted_sessions =
+                StringMapValue(method_call, "acceptedSessions");
           const std::string* accepted_session_store_path =
               StringMapValue(method_call, "acceptedSessionStorePath");
           const std::string* pairing_code_path =
               StringMapValue(method_call, "pairingCodePath");
           const std::string* device_info =
               StringMapValue(method_call, "deviceInfo");
+          const std::string* enable_web_access =
+              StringMapValue(method_call, "enableWebAccess");
+          const std::string* enable_discovery =
+              StringMapValue(method_call, "enableDiscovery");
           if (bind_address == nullptr || token == nullptr ||
-              shutdown_token == nullptr || web_root == nullptr ||
-              accepted_sessions == nullptr ||
-              accepted_session_store_path == nullptr ||
-              pairing_code_path == nullptr || device_info == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, acceptedSessions, acceptedSessionStorePath, pairingCodePath and deviceInfo");
-            return;
-          }
-          if (g_operit_runtime_library->StartWebAccessServer(
-                  *bind_address, *token, *shutdown_token, *web_root,
-                  *accepted_sessions, *accepted_session_store_path,
-                  *pairing_code_path, *device_info,
-                  &response, &error)) {
+                shutdown_token == nullptr || web_root == nullptr ||
+                device_id == nullptr ||
+                accepted_sessions == nullptr ||
+                accepted_session_store_path == nullptr ||
+                pairing_code_path == nullptr || device_info == nullptr ||
+                enable_web_access == nullptr || enable_discovery == nullptr) {
+              result->Error("INVALID_ARGS",
+                           "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery");
+              return;
+            }
+            if (g_operit_runtime_library->StartWebAccessServer(
+                    *bind_address, *token, *shutdown_token, *web_root,
+                    *device_id, *accepted_sessions, *accepted_session_store_path,
+                    *pairing_code_path, *device_info, *enable_web_access,
+                    *enable_discovery, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
           }
+          return;
+        }
+        if (method_call.method_name().compare("discoverDevices") == 0) {
+          const std::string* timeout_ms =
+              StringMapValue(method_call, "timeoutMs");
+          if (timeout_ms == nullptr) {
+            result->Error("INVALID_ARGS",
+                          "discoverDevices expects timeoutMs");
+            return;
+          }
+          std::string timeout = *timeout_ms;
+          auto library = g_operit_runtime_library;
+          std::thread([library, timeout = std::move(timeout),
+                       result = std::move(result)]() mutable {
+            std::string response;
+            std::string error;
+            const bool ok = library->DiscoverDevices(timeout, &response, &error);
+            PostOperitRuntimePlatformTask(
+                [result = std::move(result), ok, response = std::move(response),
+                 error = std::move(error)]() mutable {
+                  if (ok) {
+                    result->Success(flutter::EncodableValue(response));
+                  } else {
+                    result->Error("RUNTIME_BRIDGE_ERROR", error);
+                  }
+                });
+          }).detach();
           return;
         }
         if (method_call.method_name().compare("stopWebAccessServer") == 0) {
@@ -780,17 +834,18 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
         }
         if (method_call.method_name().compare("remotePairStart") == 0) {
           const std::string* base_url = StringMapValue(method_call, "baseUrl");
-          const std::string* token = StringMapValue(method_call, "token");
+          const std::string* token_hash =
+              StringMapValue(method_call, "tokenHash");
           const std::string* client_device_info =
               StringMapValue(method_call, "clientDeviceInfo");
-          if (base_url == nullptr || token == nullptr ||
+          if (base_url == nullptr || token_hash == nullptr ||
               client_device_info == nullptr) {
             result->Error("INVALID_ARGS",
-                          "remotePairStart expects baseUrl, token and clientDeviceInfo");
+                          "remotePairStart expects baseUrl, tokenHash and clientDeviceInfo");
             return;
           }
           if (g_operit_runtime_library->RemotePairStart(
-                  *base_url, *token, *client_device_info, &response, &error)) {
+                  *base_url, *token_hash, *client_device_info, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);

@@ -2,20 +2,22 @@
 
 import 'package:flutter/foundation.dart';
 
-import 'WebAccessConfig.dart';
+import 'LinkHostConfig.dart';
 
-class FlutterWebAccessServer extends ChangeNotifier {
-  FlutterWebAccessServer._();
+class LinkHostServer extends ChangeNotifier {
+  LinkHostServer._();
 
-  static final FlutterWebAccessServer instance = FlutterWebAccessServer._();
+  static final LinkHostServer instance = LinkHostServer._();
 
   bool get isRunning => false;
 
-  WebAccessPairingCodeRecord? get lastPairingCode => null;
+  LinkHostConfig? get currentConfig => null;
+
+  PendingLinkPairingCodeRecord? get lastPairingCode => null;
 
   String? get baseUrl => null;
 
-  Future<List<String>> pairingBaseUrls(WebAccessConfig config) async {
+  Future<List<String>> pairingBaseUrls(LinkHostConfig config) async {
     return <String>[];
   }
 
@@ -25,6 +27,10 @@ class FlutterWebAccessServer extends ChangeNotifier {
     throw UnsupportedError(
       'Flutter Web cannot host Web Access. Start Web Access from a native client or CLI.',
     );
+  }
+
+  Future<String> discoverDevices(int timeoutMs) async {
+    return '[]';
   }
 
   Future<void> stop({bool updateConfig = true}) async {}

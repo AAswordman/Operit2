@@ -834,24 +834,23 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryAppearanceDescription => '调整客户端主题和当前本地化显示。';
 
   @override
-  String get settingsCategoryDataTitle => '数据与诊断';
+  String get settingsCategoryDataTitle => '数据与备份';
 
   @override
-  String get settingsCategoryDataSubtitle => '历史、备份、日志';
+  String get settingsCategoryDataSubtitle => '备份、恢复、统计';
 
   @override
-  String get settingsCategoryDataDescription =>
-      '管理聊天历史、备份恢复、Token 统计、Host 能力、日志和版本更新。';
+  String get settingsCategoryDataDescription => '备份聊天、角色和模型配置，恢复备份内容，并查看数据统计。';
 
   @override
-  String get settingsCategoryAccessLinksTitle => '访问与链接';
+  String get settingsCategoryAccessLinksTitle => '设备与访问';
 
   @override
-  String get settingsCategoryAccessLinksSubtitle => 'Runtime、Web 访问';
+  String get settingsCategoryAccessLinksSubtitle => '连接、同步、访问';
 
   @override
   String get settingsCategoryAccessLinksDescription =>
-      '管理当前客户端连接的 runtime、本机 Web 访问入口、绑定地址和访问 Token。';
+      '连接另一台设备，同步数据，或允许浏览器访问这台设备。';
 
   @override
   String get settingsComingSoon => '这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。';
@@ -1821,111 +1820,199 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsWorkspaceRefresh => '刷新';
 
   @override
-  String get settingsRuntimeConnection => 'Runtime 连接';
+  String get settingsRuntimeConnection => '当前设备';
 
   @override
   String get settingsRuntimeConnectionDescription =>
-      '当前客户端的所有 core 调用都会走这里选择的 runtime；Web 访问入口也会跟随它。';
+      '选择让聊天和工具运行在这台设备，还是运行在另一台已连接设备。';
 
   @override
-  String get settingsRuntimeUseLocal => '使用本地 runtime';
+  String get settingsRuntimeUseLocal => '使用这台设备';
 
   @override
-  String get settingsRuntimeLocalTitle => '本地 runtime';
+  String get settingsRuntimeLocalTitle => '这台设备';
 
   @override
-  String get settingsRuntimeLocalDescription => '使用当前设备内置的 core，不需要填写连接信息。';
+  String get settingsRuntimeLocalDescription => '聊天和工具会在这台设备上运行。';
 
   @override
-  String get settingsRuntimeRemoteTitle => '远程 runtime';
+  String get settingsRuntimeRemoteTitle => '已连接的设备';
 
   @override
-  String get settingsRuntimeRemoteDescription => '管理已配对的远程 core，可从列表里切换到指定远程。';
+  String get settingsRuntimeRemoteDescription => '这些设备已经完成连接，可以切换使用或移除。';
 
   @override
-  String get settingsRuntimeTesting => '正在测试 runtime…';
+  String get settingsRuntimeTesting => '正在检查连接…';
 
   @override
-  String get settingsRuntimePairRemote => '配对新远程';
+  String get settingsRuntimePairRemote => '连接另一台设备';
 
   @override
-  String get settingsRuntimeNoPairedRemote => '还没有已配对的远程 core。';
+  String get settingsRuntimeNoPairedRemote => '还没有已连接的设备。';
 
   @override
-  String get settingsRuntimePairToken => '配对 Token';
+  String get settingsRuntimePairToken => '连接 Token';
 
   @override
   String get settingsRuntimePairCode => '配对码';
 
   @override
-  String get settingsRuntimeStartPairing => '开始配对';
+  String get settingsRuntimeStartPairing => '开始连接';
 
   @override
-  String get settingsRuntimeFinishPairing => '完成配对';
+  String get settingsRuntimeFinishPairing => '完成连接';
 
   @override
-  String get settingsRuntimeBaseUrl => '远程地址';
+  String get settingsRuntimeBaseUrl => '设备地址';
 
   @override
-  String get settingsRuntimeTestCurrent => '测试当前 runtime';
+  String get settingsRuntimeTestCurrent => '检查连接';
 
   @override
-  String get settingsRuntimeSwitchedLocal => '已切换到本地 runtime。';
+  String get settingsRuntimeSwitchedLocal => '已切换到这台设备。';
 
   @override
-  String get settingsRuntimeSwitchedRemote => '已切换到远程 runtime。';
+  String get settingsRuntimeSwitchedRemote => '已切换到已连接设备。';
 
   @override
   String settingsRuntimeTestResult(String version) {
-    return 'Runtime 可用：$version';
+    return '设备可用：$version';
   }
 
   @override
   String settingsRuntimeTestFailed(String error) {
-    return 'Runtime 测试失败：$error';
+    return '连接检查失败：$error';
   }
 
   @override
-  String get settingsRuntimeRemoteDisconnected => '远程 runtime 已断开';
+  String get settingsRuntimeRemoteDisconnected => '已连接设备断开';
 
   @override
   String settingsRuntimeRemoteDisconnectedMessage(String error) {
-    return '已切换到本地 core。\n\n$error';
+    return '已切换到这台设备。\n\n$error';
   }
 
   @override
-  String get settingsWebAccessService => 'Web 访问服务';
+  String get settingsRuntimePairingRejected => '有设备的连接请求被拒绝';
 
   @override
-  String get settingsWebAccessServiceDescription =>
-      '开启后，当前客户端会在本机启动一个 HTTP 入口，浏览器可通过 Token 访问 core。';
+  String get settingsRuntimePairedChecking => '检测中';
 
   @override
-  String get settingsWebAccessEnable => '开启 Web 访问';
+  String get settingsRuntimePairedOnline => '在线';
 
   @override
-  String get settingsWebAccessBindAddress => '绑定地址';
+  String get settingsRuntimePairedOffline => '离线';
 
   @override
-  String get settingsWebAccessToken => '访问 Token';
+  String get settingsRuntimeSync => '同步数据';
 
   @override
-  String get settingsWebAccessRotateToken => '轮换 Token';
+  String get settingsRuntimeSyncing => '同步中…';
 
   @override
-  String get settingsWebAccessCopyToken => '复制 Token';
+  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied) {
+    return '同步完成：本机 $localApplied 项，远端 $remoteApplied 项。';
+  }
 
   @override
-  String get settingsWebAccessAccessUrl => '地址';
+  String settingsRuntimeSyncFailed(String error) {
+    return '同步失败：$error';
+  }
 
   @override
-  String get settingsWebAccessLocalUrl => '本机访问';
+  String get settingsRuntimeDiscoverDevices => '发现设备';
 
   @override
-  String get settingsWebAccessPairingUrl => '远程配对';
+  String get settingsRuntimeDiscoverDevicesDescription => '扫描附近设备或手动输入地址来建立连接。';
 
   @override
-  String get settingsWebAccessPairingUrlLocalOnly => '仅本机';
+  String get settingsRuntimeScan => '扫描';
+
+  @override
+  String get settingsRuntimeScanning => '扫描中…';
+
+  @override
+  String get settingsRuntimeEnterManually => '手动输入';
+
+  @override
+  String get settingsRuntimeConnect => '连接';
+
+  @override
+  String get settingsRuntimeEnableDiscovery => '允许其他设备发现这台设备';
+
+  @override
+  String get settingsRuntimeEnableDiscoveryDescription =>
+      '开启后，同网络下的设备能自动搜索到这台设备。';
+
+  @override
+  String settingsRuntimeEnableDiscoveryFailed(String error) {
+    return '无法开启设备发现：$error';
+  }
+
+  @override
+  String settingsRuntimeDisableDiscoveryFailed(String error) {
+    return '无法关闭设备发现：$error';
+  }
+
+  @override
+  String get settingsRuntimeUsingLocal => '正在使用：这台设备';
+
+  @override
+  String settingsRuntimeUsingRemote(String device) {
+    return '正在使用：$device';
+  }
+
+  @override
+  String get settingsRuntimeRemoteInUseDescription => '聊天和工具会在这台已连接设备上运行。';
+
+  @override
+  String get settingsWebAccessService => '允许访问';
+
+  @override
+  String get settingsWebAccessServiceDescription => '开启后，浏览器可以通过地址和口令访问这台设备。';
+
+  @override
+  String get settingsWebAccessEnable => '允许外部访问';
+
+  @override
+  String get settingsWebAccessPortMode => '端口模式';
+
+  @override
+  String get settingsWebAccessPortAutomatic => '自动';
+
+  @override
+  String get settingsWebAccessPortFixed => '固定';
+
+  @override
+  String get settingsWebAccessPortAutomaticDescription => '端口由系统自动选择，不需要手动配置。';
+
+  @override
+  String get settingsWebAccessPortFixedDescription => '只使用监听地址中填写的端口。';
+
+  @override
+  String get settingsWebAccessBindAddress => '监听地址';
+
+  @override
+  String get settingsWebAccessToken => '访问口令';
+
+  @override
+  String get settingsWebAccessRotateToken => '更换口令';
+
+  @override
+  String get settingsWebAccessCopyToken => '复制口令';
+
+  @override
+  String get settingsWebAccessAccessUrl => '访问地址';
+
+  @override
+  String get settingsWebAccessLocalUrl => '本机';
+
+  @override
+  String get settingsWebAccessPairingUrl => '配对地址';
+
+  @override
+  String get settingsWebAccessPairingUrlLocalOnly => '仅本机可用';
 
   @override
   String get settingsWebAccessPairingUrlUnavailable => '未找到局域网地址';
@@ -1934,38 +2021,38 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsWebAccessCopyUrl => '复制地址';
 
   @override
-  String get settingsWebAccessOpenUrl => '打开';
+  String get settingsWebAccessOpenUrl => '打开地址';
 
   @override
-  String get settingsWebAccessRunning => '运行中';
+  String get settingsWebAccessRunning => '已开启';
 
   @override
-  String get settingsWebAccessStopped => '未开启';
+  String get settingsWebAccessStopped => '已关闭';
 
   @override
-  String get settingsWebAccessSaved => 'Web 访问设置已保存。';
+  String get settingsWebAccessSaved => '访问设置已保存。';
 
   @override
-  String get settingsWebAccessTokenCopied => '访问 Token 已复制。';
+  String get settingsWebAccessTokenCopied => '访问口令已复制。';
 
   @override
   String get settingsWebAccessUrlCopied => '访问地址已复制。';
 
   @override
-  String get settingsWebAccessPairedClients => '已配对客户端';
+  String get settingsWebAccessPairedClients => '已授权设备';
 
   @override
-  String get settingsWebAccessNoPairedClients => '还没有客户端配对此设备。';
+  String get settingsWebAccessNoPairedClients => '还没有设备被授权。';
 
   @override
-  String get settingsWebAccessPairedDeleted => '已删除配对客户端。';
+  String get settingsWebAccessPairedDeleted => '已删除授权设备。';
 
   @override
-  String get settingsWebAccessPairingRequest => '远程配对请求';
+  String get settingsWebAccessPairingRequest => '配对请求';
 
   @override
   String settingsWebAccessPairingRequestMessage(String code, String client) {
-    return '配对码：$code\n客户端：$client';
+    return '配对码：$code\n设备：$client';
   }
 
   @override
@@ -1973,12 +2060,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String settingsWebAccessStartFailed(String error) {
-    return '启动 Web 访问失败：$error';
+    return '开启访问失败：$error';
   }
 
   @override
   String settingsWebAccessStopFailed(String error) {
-    return '关闭 Web 访问失败：$error';
+    return '关闭访问失败：$error';
   }
 
   @override
@@ -2357,56 +2444,56 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceLanguageDescription => '语言跟随应用启动时的本地化配置。';
 
   @override
-  String get settingsDataRuntimeSection => 'Runtime';
+  String get settingsDataRuntimeSection => '数据概览';
 
   @override
-  String get settingsDataCoreVersion => 'Core 版本';
+  String get settingsDataCoreVersion => '当前版本';
 
   @override
-  String get settingsDataTokenSection => 'Token 统计';
+  String get settingsDataTokenSection => '使用统计';
 
   @override
-  String get settingsDataInputTokens => '输入 Token';
+  String get settingsDataInputTokens => '输入';
 
   @override
-  String get settingsDataOutputTokens => '输出 Token';
+  String get settingsDataOutputTokens => '输出';
 
   @override
-  String get settingsDataRefreshTokenStats => '刷新累计统计';
+  String get settingsDataRefreshTokenStats => '刷新统计';
 
   @override
-  String get settingsDataResetTokenStats => '重置 Token 统计';
+  String get settingsDataResetTokenStats => '重置统计';
 
   @override
-  String get settingsDataBackupSection => '备份';
+  String get settingsDataBackupSection => '备份与恢复';
 
   @override
-  String get settingsDataChatHistoriesBackup => '聊天记录备份';
+  String get settingsDataChatHistoriesBackup => '聊天数据';
 
   @override
   String get settingsDataChatHistoriesBackupDescription =>
-      '复制全部聊天和消息为 JSON；导入时会按聊天 ID 更新或新增。';
+      '备份全部聊天和消息；恢复时按聊天 ID 更新或新增。';
 
   @override
-  String get settingsDataCharacterCardsBackup => '角色卡备份';
+  String get settingsDataCharacterCardsBackup => '角色卡数据';
 
   @override
   String get settingsDataCharacterCardsBackupDescription =>
-      '复制全部角色卡和已引用标签为 JSON；导入时会按原 ID 更新或新增。';
+      '备份全部角色卡和已引用标签；恢复时按原 ID 更新或新增。';
 
   @override
-  String get settingsDataCharacterGroupsBackup => '群组备份';
+  String get settingsDataCharacterGroupsBackup => '群组数据';
 
   @override
   String get settingsDataCharacterGroupsBackupDescription =>
-      '复制全部群组为 JSON；导入时会保留组内角色引用和顺序。';
+      '备份全部群组；恢复时保留组内角色引用和顺序。';
 
   @override
-  String get settingsDataModelConfigsBackup => '模型配置备份';
+  String get settingsDataModelConfigsBackup => '模型配置';
 
   @override
   String get settingsDataModelConfigsBackupDescription =>
-      '复制全部模型配置为 JSON；导入时会按配置 ID 更新或新增，包含模型参数和 API Key 池。';
+      '备份全部模型配置，包含模型参数和 API Key 池。';
 
   @override
   String settingsDataBackupCount(int count) {
@@ -2414,17 +2501,17 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsDataCopyBackupJson => '复制备份 JSON';
+  String get settingsDataCopyBackupJson => '复制备份';
 
   @override
-  String get settingsDataImportBackupJson => '导入备份 JSON';
+  String get settingsDataImportBackupJson => '恢复数据';
 
   @override
-  String get settingsDataBackupJsonInput => '备份 JSON 内容';
+  String get settingsDataBackupJsonInput => '恢复内容';
 
   @override
   String settingsDataBackupCopied(String name) {
-    return '已复制“$name”备份 JSON。';
+    return '已复制“$name”备份。';
   }
 
   @override
@@ -2433,28 +2520,69 @@ class AppLocalizationsZh extends AppLocalizations {
     int updatedCount,
     int skippedCount,
   ) {
-    return '导入完成：新增 $newCount，更新 $updatedCount，跳过 $skippedCount。';
+    return '恢复完成：新增 $newCount，更新 $updatedCount，跳过 $skippedCount。';
   }
 
   @override
   String settingsDataBackupImportError(String error) {
-    return '导入备份失败：$error';
+    return '恢复失败：$error';
   }
 
   @override
   String settingsDataBackupCopyError(String error) {
-    return '复制备份失败：$error';
+    return '复制失败：$error';
   }
 
   @override
-  String get settingsDataExportRawSnapshot => '导出原始快照';
+  String get settingsDataSnapshotBackupTitle => '完整快照';
+
+  @override
+  String get settingsDataExportRawSnapshot => '导出快照';
+
+  @override
+  String get settingsDataImportRawSnapshot => '恢复快照';
 
   @override
   String get settingsDataExportRawSnapshotDescription =>
-      '从 runtime 生成当前数据快照并显示字节数。';
+      '把聊天、角色、模型设置和本地文件打包成一个备份文件。恢复时会用备份里的数据覆盖当前数据。';
 
   @override
   String settingsDataSnapshotBytes(int bytes) {
-    return '已生成快照：$bytes 字节';
+    return '快照大小：$bytes 字节';
   }
+
+  @override
+  String get settingsDataSnapshotImported => '快照恢复完成。';
+
+  @override
+  String settingsDataSnapshotExportError(String error) {
+    return '快照导出失败：$error';
+  }
+
+  @override
+  String settingsDataSnapshotImportError(String error) {
+    return '快照恢复失败：$error';
+  }
+
+  @override
+  String get settingsDataSnapshotRestoreConfirmTitle => '恢复完整快照';
+
+  @override
+  String settingsDataSnapshotRestoreConfirmMessage(
+    int formatVersion,
+    int fileCount,
+    String createdAt,
+    int bytes,
+  ) {
+    return '恢复会替换当前 runtime 数据。\n格式版本：$formatVersion\n文件数量：$fileCount\n创建时间：$createdAt\n快照大小：$bytes 字节';
+  }
+
+  @override
+  String get settingsDataSnapshotRestoreConfirmAction => '确认恢复';
+
+  @override
+  String get settingsDataAdvancedBackupOptions => '高级选项';
+
+  @override
+  String get settingsDataAdvancedBackupOptionsDescription => '单项 JSON 导出与恢复';
 }

@@ -66,13 +66,13 @@ class SettingsCategorySpec {
         title: l10n.settingsCategoryDataTitle,
         subtitle: l10n.settingsCategoryDataSubtitle,
         description: l10n.settingsCategoryDataDescription,
-        icon: Icons.storage_outlined,
+        icon: Icons.backup_outlined,
       ),
       SettingsCategory.accessLinks => SettingsCategorySpec(
         title: l10n.settingsCategoryAccessLinksTitle,
         subtitle: l10n.settingsCategoryAccessLinksSubtitle,
         description: l10n.settingsCategoryAccessLinksDescription,
-        icon: Icons.language_outlined,
+        icon: Icons.devices_outlined,
       ),
     };
   }

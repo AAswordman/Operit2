@@ -59,17 +59,20 @@ pub struct OCRUtils;
 
 impl OCRUtils {
     #[allow(non_snake_case)]
-    pub fn recognizeTextFromPath(
+    fn recognizeTextFromPathInternal(
         context: &OperitApplicationContext,
         imagePath: &str,
         language: Language,
         quality: Quality,
+        logError: bool,
     ) -> OCRResult {
         let host = match context.systemOperationHost.as_ref() {
             Some(host) => host,
             None => {
                 let message = "SystemOperationHost is required for OCR".to_string();
-                AppLogger::e(TAG, &message);
+                if logError {
+                    AppLogger::e(TAG, &message);
+                }
                 return OCRResult::Error(message);
             }
         };
@@ -80,10 +83,22 @@ impl OCRUtils {
         ) {
             Ok(text) => OCRResult::Success(text),
             Err(error) => {
-                AppLogger::e(TAG, &format!("Text recognition failed: {}", error.message));
+                if logError {
+                    AppLogger::e(TAG, &format!("Text recognition failed: {}", error.message));
+                }
                 OCRResult::Error(error.message)
             }
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn recognizeTextFromPath(
+        context: &OperitApplicationContext,
+        imagePath: &str,
+        language: Language,
+        quality: Quality,
+    ) -> OCRResult {
+        Self::recognizeTextFromPathInternal(context, imagePath, language, quality, true)
     }
 
     #[allow(non_snake_case)]
@@ -92,9 +107,20 @@ impl OCRUtils {
         imagePath: &str,
         quality: Quality,
     ) -> String {
-        let latinResult = Self::recognizeTextFromPath(context, imagePath, Language::LATIN, quality);
-        let chineseResult =
-            Self::recognizeTextFromPath(context, imagePath, Language::CHINESE, quality);
+        let latinResult = Self::recognizeTextFromPathInternal(
+            context,
+            imagePath,
+            Language::LATIN,
+            quality,
+            false,
+        );
+        let chineseResult = Self::recognizeTextFromPathInternal(
+            context,
+            imagePath,
+            Language::CHINESE,
+            quality,
+            false,
+        );
 
         let latinText = match latinResult {
             OCRResult::Success(text) => text,

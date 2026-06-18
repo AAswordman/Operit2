@@ -53,6 +53,27 @@ class _CodeLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final codeText = span == null
+        ? Text(
+            text,
+            softWrap: autoWrapEnabled,
+            style: markdownCodeTextStyle(
+              context,
+              color: const Color(0xFFD4D4D4),
+            ),
+          )
+        : Text.rich(
+            span!,
+            softWrap: autoWrapEnabled,
+            style: markdownCodeTextStyle(
+              context,
+              color: const Color(0xFFD4D4D4),
+            ),
+          );
+    final codeTextChild = autoWrapEnabled
+        ? Expanded(child: codeText)
+        : ConstrainedBox(constraints: const BoxConstraints(), child: codeText);
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -72,26 +93,7 @@ class _CodeLine extends StatelessWidget {
             ),
           ),
         ),
-        ConstrainedBox(
-          constraints: autoWrapEnabled
-              ? const BoxConstraints(maxWidth: 680)
-              : const BoxConstraints(),
-          child: span == null
-              ? Text(
-                  text,
-                  style: markdownCodeTextStyle(
-                    context,
-                    color: const Color(0xFFD4D4D4),
-                  ),
-                )
-              : Text.rich(
-                  span!,
-                  style: markdownCodeTextStyle(
-                    context,
-                    color: const Color(0xFFD4D4D4),
-                  ),
-                ),
-        ),
+        codeTextChild,
       ],
     );
   }

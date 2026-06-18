@@ -1,14 +1,21 @@
 // ignore_for_file: file_names
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+
+const XTypeGroup _rawSnapshotFileTypeGroup = XTypeGroup(
+  label: 'Operit snapshot',
+  extensions: <String>['opsnapshot', 'zip'],
+);
 
 class DataSettingsPanel extends StatefulWidget {
   const DataSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -80,15 +87,108 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   }
 
   Future<void> _exportRawSnapshot() async {
+    final l10n = AppLocalizations.of(context)!;
+    final suggestedName = _rawSnapshotSuggestedName();
+    final location = await getSaveLocation(
+      acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
+      suggestedName: suggestedName,
+    );
+    if (location == null) {
+      return;
+    }
     setState(() => _busy = true);
-    final bytes = await widget.clients.application.exportRawSnapshot();
+    try {
+      final bytes = await widget.clients.application.exportRawSnapshot();
+      await XFile.fromData(
+        Uint8List.fromList(bytes),
+        name: suggestedName,
+        mimeType: 'application/zip',
+      ).saveTo(location.path);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _lastSnapshotBytes = bytes.length;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(location.path))));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataSnapshotExportError('$error'))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _importRawSnapshot() async {
+    final l10n = AppLocalizations.of(context)!;
+    final file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
+    );
+    if (file == null) {
+      return;
+    }
+    setState(() => _busy = true);
+    late final List<int> bytes;
+    late final RawSnapshotManifest manifest;
+    try {
+      bytes = await file.readAsBytes();
+      manifest = await widget.clients.application.inspectRawSnapshot(
+        bytes: bytes,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataSnapshotImportError('$error'))),
+      );
+      return;
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
     if (!mounted) {
       return;
     }
-    setState(() {
-      _busy = false;
-      _lastSnapshotBytes = bytes.length;
-    });
+    final confirmed = await _RawSnapshotRestoreDialog.show(
+      context: context,
+      manifest: manifest,
+      byteCount: bytes.length,
+    );
+    if (confirmed != true) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await widget.clients.application.importRawSnapshot(bytes: bytes);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataSnapshotImported)),
+      );
+      _reload();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataSnapshotImportError('$error'))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Future<void> _copyChatHistoriesBackup() async {
@@ -339,6 +439,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
     return FutureBuilder<_DataSettingsData>(
       future: _future,
       builder: (context, snapshot) {
@@ -349,6 +450,82 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
+            _SectionCard(
+              title: l10n.settingsDataBackupSection,
+              children: <Widget>[
+                _SnapshotBackupLine(
+                  lastSnapshotBytes: _lastSnapshotBytes,
+                  onExport: _busy ? null : _exportRawSnapshot,
+                  onImport: _busy ? null : _importRawSnapshot,
+                ),
+                const Divider(height: 20),
+                Theme(
+                  data: Theme.of(
+                    context,
+                  ).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      Icons.tune_outlined,
+                      color: colorScheme.primary,
+                    ),
+                    title: Text(
+                      l10n.settingsDataAdvancedBackupOptions,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      l10n.settingsDataAdvancedBackupOptionsDescription,
+                    ),
+                    children: <Widget>[
+                      _BackupLine(
+                        title: l10n.settingsDataChatHistoriesBackup,
+                        subtitle: l10n.settingsDataBackupCount(
+                          data.chatHistoryCount,
+                        ),
+                        description:
+                            l10n.settingsDataChatHistoriesBackupDescription,
+                        onExport: _busy ? null : _copyChatHistoriesBackup,
+                        onImport: _busy ? null : _importChatHistoriesBackup,
+                      ),
+                      const Divider(height: 20),
+                      _BackupLine(
+                        title: l10n.settingsDataCharacterCardsBackup,
+                        subtitle: l10n.settingsDataBackupCount(
+                          data.characterCardCount,
+                        ),
+                        description:
+                            l10n.settingsDataCharacterCardsBackupDescription,
+                        onExport: _busy ? null : _copyCharacterCardsBackup,
+                        onImport: _busy ? null : _importCharacterCardsBackup,
+                      ),
+                      const Divider(height: 20),
+                      _BackupLine(
+                        title: l10n.settingsDataCharacterGroupsBackup,
+                        subtitle: l10n.settingsDataBackupCount(
+                          data.characterGroupCount,
+                        ),
+                        description:
+                            l10n.settingsDataCharacterGroupsBackupDescription,
+                        onExport: _busy ? null : _copyCharacterGroupsBackup,
+                        onImport: _busy ? null : _importCharacterGroupsBackup,
+                      ),
+                      const Divider(height: 20),
+                      _BackupLine(
+                        title: l10n.settingsDataModelConfigsBackup,
+                        subtitle: l10n.settingsDataBackupCount(
+                          data.modelConfigCount,
+                        ),
+                        description:
+                            l10n.settingsDataModelConfigsBackupDescription,
+                        onExport: _busy ? null : _copyModelConfigsBackup,
+                        onImport: null,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
             _SectionCard(
               title: l10n.settingsDataRuntimeSection,
               children: <Widget>[
@@ -382,64 +559,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                 ),
               ],
             ),
-            _SectionCard(
-              title: l10n.settingsDataBackupSection,
-              children: <Widget>[
-                _BackupLine(
-                  title: l10n.settingsDataChatHistoriesBackup,
-                  subtitle: l10n.settingsDataBackupCount(data.chatHistoryCount),
-                  description: l10n.settingsDataChatHistoriesBackupDescription,
-                  onExport: _busy ? null : _copyChatHistoriesBackup,
-                  onImport: _busy ? null : _importChatHistoriesBackup,
-                ),
-                const Divider(height: 20),
-                _BackupLine(
-                  title: l10n.settingsDataCharacterCardsBackup,
-                  subtitle: l10n.settingsDataBackupCount(
-                    data.characterCardCount,
-                  ),
-                  description: l10n.settingsDataCharacterCardsBackupDescription,
-                  onExport: _busy ? null : _copyCharacterCardsBackup,
-                  onImport: _busy ? null : _importCharacterCardsBackup,
-                ),
-                const Divider(height: 20),
-                _BackupLine(
-                  title: l10n.settingsDataCharacterGroupsBackup,
-                  subtitle: l10n.settingsDataBackupCount(
-                    data.characterGroupCount,
-                  ),
-                  description:
-                      l10n.settingsDataCharacterGroupsBackupDescription,
-                  onExport: _busy ? null : _copyCharacterGroupsBackup,
-                  onImport: _busy ? null : _importCharacterGroupsBackup,
-                ),
-                const Divider(height: 20),
-                _BackupLine(
-                  title: l10n.settingsDataModelConfigsBackup,
-                  subtitle: l10n.settingsDataBackupCount(data.modelConfigCount),
-                  description: l10n.settingsDataModelConfigsBackupDescription,
-                  onExport: _busy ? null : _copyModelConfigsBackup,
-                  onImport: null,
-                ),
-                const Divider(height: 20),
-                _ActionLine(
-                  icon: Icons.archive_outlined,
-                  title: l10n.settingsDataExportRawSnapshot,
-                  subtitle: l10n.settingsDataExportRawSnapshotDescription,
-                  onTap: _busy ? null : _exportRawSnapshot,
-                ),
-                if (_lastSnapshotBytes != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: Text(
-                      l10n.settingsDataSnapshotBytes(_lastSnapshotBytes!),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
           ],
         );
       },
@@ -467,6 +586,65 @@ class _DataSettingsData {
   final int modelConfigCount;
 }
 
+class _SnapshotBackupLine extends StatelessWidget {
+  const _SnapshotBackupLine({
+    required this.lastSnapshotBytes,
+    required this.onExport,
+    required this.onImport,
+  });
+
+  final int? lastSnapshotBytes;
+  final VoidCallback? onExport;
+  final VoidCallback? onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            l10n.settingsDataSnapshotBackupTitle,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l10n.settingsDataExportRawSnapshotDescription,
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
+          ),
+          if (lastSnapshotBytes != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              l10n.settingsDataSnapshotBytes(lastSnapshotBytes!),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              FilledButton.icon(
+                onPressed: onExport,
+                icon: const Icon(Icons.download_outlined),
+                label: Text(l10n.settingsDataExportRawSnapshot),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: onImport,
+                icon: const Icon(Icons.restore_outlined),
+                label: Text(l10n.settingsDataImportRawSnapshot),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.title, required this.children});
 
@@ -485,6 +663,7 @@ class _SectionCard extends StatelessWidget {
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
+        material: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
           child: Column(
@@ -658,18 +837,64 @@ class _BackupImportDialogState extends State<_BackupImportDialog> {
   }
 }
 
+class _RawSnapshotRestoreDialog extends StatelessWidget {
+  const _RawSnapshotRestoreDialog({
+    required this.manifest,
+    required this.byteCount,
+  });
+
+  final RawSnapshotManifest manifest;
+  final int byteCount;
+
+  static Future<bool?> show({
+    required BuildContext context,
+    required RawSnapshotManifest manifest,
+    required int byteCount,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) =>
+          _RawSnapshotRestoreDialog(manifest: manifest, byteCount: byteCount),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsDataSnapshotRestoreConfirmTitle),
+      content: Text(
+        l10n.settingsDataSnapshotRestoreConfirmMessage(
+          manifest.formatVersion,
+          manifest.includes.length,
+          _formatSnapshotCreatedAt(manifest.createdAt),
+          byteCount,
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(l10n.settingsDataSnapshotRestoreConfirmAction),
+        ),
+      ],
+    );
+  }
+}
+
 class _ActionLine extends StatelessWidget {
   const _ActionLine({
     required this.icon,
     required this.title,
     required this.onTap,
-    this.subtitle,
     this.destructive = false,
   });
 
   final IconData icon;
   final String title;
-  final String? subtitle;
   final VoidCallback? onTap;
   final bool destructive;
 
@@ -683,9 +908,26 @@ class _ActionLine extends StatelessWidget {
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, color: color),
       title: Text(title, style: TextStyle(color: destructive ? color : null)),
-      subtitle: subtitle == null ? null : Text(subtitle!),
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
     );
   }
 }
+
+String _rawSnapshotSuggestedName() {
+  final now = DateTime.now();
+  return 'operit-snapshot-${now.year}${_twoDigits(now.month)}'
+      '${_twoDigits(now.day)}-${_twoDigits(now.hour)}'
+      '${_twoDigits(now.minute)}${_twoDigits(now.second)}.opsnapshot';
+}
+
+String _formatSnapshotCreatedAt(int millisecondsSinceEpoch) {
+  final createdAt = DateTime.fromMillisecondsSinceEpoch(
+    millisecondsSinceEpoch,
+  ).toLocal();
+  return '${createdAt.year}-${_twoDigits(createdAt.month)}'
+      '-${_twoDigits(createdAt.day)} ${_twoDigits(createdAt.hour)}'
+      ':${_twoDigits(createdAt.minute)}';
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');

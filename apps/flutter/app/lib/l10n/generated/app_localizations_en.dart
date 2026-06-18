@@ -853,24 +853,24 @@ class AppLocalizationsEn extends AppLocalizations {
       'Adjust the client theme and current localization display.';
 
   @override
-  String get settingsCategoryDataTitle => 'Data & Diagnostics';
+  String get settingsCategoryDataTitle => 'Data & Backup';
 
   @override
-  String get settingsCategoryDataSubtitle => 'History, backup, logs';
+  String get settingsCategoryDataSubtitle => 'Backup, restore, stats';
 
   @override
   String get settingsCategoryDataDescription =>
-      'Manage chat history, backup and restore, token statistics, host capabilities, logs, and updates.';
+      'Back up chats, characters, and model settings, restore backup content, and view data statistics.';
 
   @override
-  String get settingsCategoryAccessLinksTitle => 'Access & Links';
+  String get settingsCategoryAccessLinksTitle => 'Devices & Access';
 
   @override
-  String get settingsCategoryAccessLinksSubtitle => 'Runtime, Web Access';
+  String get settingsCategoryAccessLinksSubtitle => 'Connect, sync, access';
 
   @override
   String get settingsCategoryAccessLinksDescription =>
-      'Manage the runtime connection, local web access entry, bind address, and access token for this client.';
+      'Connect another device, sync data, or allow browsers to access this device.';
 
   @override
   String get settingsComingSoon =>
@@ -1892,113 +1892,209 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsWorkspaceRefresh => 'Refresh';
 
   @override
-  String get settingsRuntimeConnection => 'Runtime connection';
+  String get settingsRuntimeConnection => 'Current device';
 
   @override
   String get settingsRuntimeConnectionDescription =>
-      'All core calls from this client use the runtime selected here. The Web Access entry follows the same runtime.';
+      'Choose whether chats and tools run on this device or another connected device.';
 
   @override
-  String get settingsRuntimeUseLocal => 'Use local runtime';
+  String get settingsRuntimeUseLocal => 'Use this device';
 
   @override
-  String get settingsRuntimeLocalTitle => 'Local runtime';
+  String get settingsRuntimeLocalTitle => 'This device';
 
   @override
   String get settingsRuntimeLocalDescription =>
-      'Use the core built into this device. No connection details are required.';
+      'Chats and tools run on this device.';
 
   @override
-  String get settingsRuntimeRemoteTitle => 'Remote runtime';
+  String get settingsRuntimeRemoteTitle => 'Connected devices';
 
   @override
   String get settingsRuntimeRemoteDescription =>
-      'Manage paired remote cores and switch to a specific remote from the list.';
+      'These devices are connected. You can use or remove them.';
 
   @override
-  String get settingsRuntimeTesting => 'Testing runtime…';
+  String get settingsRuntimeTesting => 'Checking connection…';
 
   @override
-  String get settingsRuntimePairRemote => 'Pair new remote';
+  String get settingsRuntimePairRemote => 'Connect another device';
 
   @override
-  String get settingsRuntimeNoPairedRemote => 'No paired remote core yet.';
+  String get settingsRuntimeNoPairedRemote => 'No connected devices yet.';
 
   @override
-  String get settingsRuntimePairToken => 'Pairing token';
+  String get settingsRuntimePairToken => 'Connection token';
 
   @override
   String get settingsRuntimePairCode => 'Pairing code';
 
   @override
-  String get settingsRuntimeStartPairing => 'Start pairing';
+  String get settingsRuntimeStartPairing => 'Start connection';
 
   @override
-  String get settingsRuntimeFinishPairing => 'Finish pairing';
+  String get settingsRuntimeFinishPairing => 'Finish connection';
 
   @override
-  String get settingsRuntimeBaseUrl => 'Remote address';
+  String get settingsRuntimeBaseUrl => 'Device address';
 
   @override
-  String get settingsRuntimeTestCurrent => 'Test current runtime';
+  String get settingsRuntimeTestCurrent => 'Check connection';
 
   @override
-  String get settingsRuntimeSwitchedLocal => 'Switched to local runtime.';
+  String get settingsRuntimeSwitchedLocal => 'Now using this device.';
 
   @override
-  String get settingsRuntimeSwitchedRemote => 'Switched to remote runtime.';
+  String get settingsRuntimeSwitchedRemote => 'Now using a connected device.';
 
   @override
   String settingsRuntimeTestResult(String version) {
-    return 'Runtime available: $version';
+    return 'Device available: $version';
   }
 
   @override
   String settingsRuntimeTestFailed(String error) {
-    return 'Runtime test failed: $error';
+    return 'Connection check failed: $error';
   }
 
   @override
-  String get settingsRuntimeRemoteDisconnected => 'Remote runtime disconnected';
+  String get settingsRuntimeRemoteDisconnected =>
+      'Connected device disconnected';
 
   @override
   String settingsRuntimeRemoteDisconnectedMessage(String error) {
-    return 'Switched to local core.\n\n$error';
+    return 'Now using this device.\n\n$error';
   }
 
   @override
-  String get settingsWebAccessService => 'Web access service';
+  String get settingsRuntimePairingRejected =>
+      'A device connection was rejected';
+
+  @override
+  String get settingsRuntimePairedChecking => 'Checking';
+
+  @override
+  String get settingsRuntimePairedOnline => 'Online';
+
+  @override
+  String get settingsRuntimePairedOffline => 'Offline';
+
+  @override
+  String get settingsRuntimeSync => 'Sync data';
+
+  @override
+  String get settingsRuntimeSyncing => 'Syncing…';
+
+  @override
+  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied) {
+    return 'Sync completed: this device $localApplied, remote $remoteApplied.';
+  }
+
+  @override
+  String settingsRuntimeSyncFailed(String error) {
+    return 'Sync failed: $error';
+  }
+
+  @override
+  String get settingsRuntimeDiscoverDevices => 'Discover devices';
+
+  @override
+  String get settingsRuntimeDiscoverDevicesDescription =>
+      'Scan for nearby devices or enter an address to connect.';
+
+  @override
+  String get settingsRuntimeScan => 'Scan';
+
+  @override
+  String get settingsRuntimeScanning => 'Scanning…';
+
+  @override
+  String get settingsRuntimeEnterManually => 'Enter manually';
+
+  @override
+  String get settingsRuntimeConnect => 'Connect';
+
+  @override
+  String get settingsRuntimeEnableDiscovery =>
+      'Allow other devices to discover this device';
+
+  @override
+  String get settingsRuntimeEnableDiscoveryDescription =>
+      'Other devices on the same LAN can find this device automatically.';
+
+  @override
+  String settingsRuntimeEnableDiscoveryFailed(String error) {
+    return 'Could not enable device discovery: $error';
+  }
+
+  @override
+  String settingsRuntimeDisableDiscoveryFailed(String error) {
+    return 'Could not disable device discovery: $error';
+  }
+
+  @override
+  String get settingsRuntimeUsingLocal => 'Using: this device';
+
+  @override
+  String settingsRuntimeUsingRemote(String device) {
+    return 'Using: $device';
+  }
+
+  @override
+  String get settingsRuntimeRemoteInUseDescription =>
+      'Chats and tools run on this connected device.';
+
+  @override
+  String get settingsWebAccessService => 'Allow access';
 
   @override
   String get settingsWebAccessServiceDescription =>
-      'When enabled, this client starts a local HTTP entry. Browsers can access core with the token.';
+      'When enabled, browsers can access this device with an address and token.';
 
   @override
-  String get settingsWebAccessEnable => 'Enable web access';
+  String get settingsWebAccessEnable => 'Allow external access';
 
   @override
-  String get settingsWebAccessBindAddress => 'Bind address';
+  String get settingsWebAccessPortMode => 'Port mode';
+
+  @override
+  String get settingsWebAccessPortAutomatic => 'Automatic';
+
+  @override
+  String get settingsWebAccessPortFixed => 'Fixed';
+
+  @override
+  String get settingsWebAccessPortAutomaticDescription =>
+      'The app chooses a port automatically. No manual setup is needed.';
+
+  @override
+  String get settingsWebAccessPortFixedDescription =>
+      'Only the port in the listen address is used.';
+
+  @override
+  String get settingsWebAccessBindAddress => 'Listen address';
 
   @override
   String get settingsWebAccessToken => 'Access token';
 
   @override
-  String get settingsWebAccessRotateToken => 'Rotate token';
+  String get settingsWebAccessRotateToken => 'Change token';
 
   @override
   String get settingsWebAccessCopyToken => 'Copy token';
 
   @override
-  String get settingsWebAccessAccessUrl => 'Address';
+  String get settingsWebAccessAccessUrl => 'Access address';
 
   @override
-  String get settingsWebAccessLocalUrl => 'Local';
+  String get settingsWebAccessLocalUrl => 'This device';
 
   @override
-  String get settingsWebAccessPairingUrl => 'Pairing';
+  String get settingsWebAccessPairingUrl => 'Pairing address';
 
   @override
-  String get settingsWebAccessPairingUrlLocalOnly => 'Local only';
+  String get settingsWebAccessPairingUrlLocalOnly => 'This device only';
 
   @override
   String get settingsWebAccessPairingUrlUnavailable => 'No LAN address found';
@@ -2007,16 +2103,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsWebAccessCopyUrl => 'Copy URL';
 
   @override
-  String get settingsWebAccessOpenUrl => 'Open';
+  String get settingsWebAccessOpenUrl => 'Open address';
 
   @override
-  String get settingsWebAccessRunning => 'Running';
+  String get settingsWebAccessRunning => 'On';
 
   @override
-  String get settingsWebAccessStopped => 'Stopped';
+  String get settingsWebAccessStopped => 'Off';
 
   @override
-  String get settingsWebAccessSaved => 'Web access settings saved.';
+  String get settingsWebAccessSaved => 'Access settings saved.';
 
   @override
   String get settingsWebAccessTokenCopied => 'Access token copied.';
@@ -2025,21 +2121,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsWebAccessUrlCopied => 'Access URL copied.';
 
   @override
-  String get settingsWebAccessPairedClients => 'Paired clients';
+  String get settingsWebAccessPairedClients => 'Authorized devices';
 
   @override
-  String get settingsWebAccessNoPairedClients =>
-      'No client has paired with this device yet.';
+  String get settingsWebAccessNoPairedClients => 'No device is authorized yet.';
 
   @override
-  String get settingsWebAccessPairedDeleted => 'Paired client deleted.';
+  String get settingsWebAccessPairedDeleted => 'Authorized device deleted.';
 
   @override
-  String get settingsWebAccessPairingRequest => 'Remote pairing request';
+  String get settingsWebAccessPairingRequest => 'Pairing request';
 
   @override
   String settingsWebAccessPairingRequestMessage(String code, String client) {
-    return 'Pairing code: $code\nClient: $client';
+    return 'Pairing code: $code\nDevice: $client';
   }
 
   @override
@@ -2048,12 +2143,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String settingsWebAccessStartFailed(String error) {
-    return 'Failed to start web access: $error';
+    return 'Failed to enable access: $error';
   }
 
   @override
   String settingsWebAccessStopFailed(String error) {
-    return 'Failed to stop web access: $error';
+    return 'Failed to turn off access: $error';
   }
 
   @override
@@ -2440,56 +2535,56 @@ class AppLocalizationsEn extends AppLocalizations {
       'Language follows the localization configuration loaded at app startup.';
 
   @override
-  String get settingsDataRuntimeSection => 'Runtime';
+  String get settingsDataRuntimeSection => 'Data overview';
 
   @override
-  String get settingsDataCoreVersion => 'Core version';
+  String get settingsDataCoreVersion => 'Current version';
 
   @override
-  String get settingsDataTokenSection => 'Token statistics';
+  String get settingsDataTokenSection => 'Usage statistics';
 
   @override
-  String get settingsDataInputTokens => 'Input tokens';
+  String get settingsDataInputTokens => 'Input';
 
   @override
-  String get settingsDataOutputTokens => 'Output tokens';
+  String get settingsDataOutputTokens => 'Output';
 
   @override
-  String get settingsDataRefreshTokenStats => 'Refresh cumulative statistics';
+  String get settingsDataRefreshTokenStats => 'Refresh statistics';
 
   @override
-  String get settingsDataResetTokenStats => 'Reset token statistics';
+  String get settingsDataResetTokenStats => 'Reset statistics';
 
   @override
-  String get settingsDataBackupSection => 'Backup';
+  String get settingsDataBackupSection => 'Backup & restore';
 
   @override
-  String get settingsDataChatHistoriesBackup => 'Chat history backup';
+  String get settingsDataChatHistoriesBackup => 'Chat data';
 
   @override
   String get settingsDataChatHistoriesBackupDescription =>
-      'Copy all chats and messages as JSON. Import updates or creates chats by chat ID.';
+      'Back up all chats and messages. Restore updates or creates chats by chat ID.';
 
   @override
-  String get settingsDataCharacterCardsBackup => 'Character card backup';
+  String get settingsDataCharacterCardsBackup => 'Character card data';
 
   @override
   String get settingsDataCharacterCardsBackupDescription =>
-      'Copy all character cards and referenced tags as JSON. Import updates or creates items by original ID.';
+      'Back up all character cards and referenced tags. Restore updates or creates items by original ID.';
 
   @override
-  String get settingsDataCharacterGroupsBackup => 'Group backup';
+  String get settingsDataCharacterGroupsBackup => 'Group data';
 
   @override
   String get settingsDataCharacterGroupsBackupDescription =>
-      'Copy all groups as JSON. Import keeps member references and ordering.';
+      'Back up all groups. Restore keeps member references and ordering.';
 
   @override
-  String get settingsDataModelConfigsBackup => 'Model config backup';
+  String get settingsDataModelConfigsBackup => 'Model settings';
 
   @override
   String get settingsDataModelConfigsBackupDescription =>
-      'Copy all model configs as JSON. Import updates or creates items by config ID, including model parameters and API key pools.';
+      'Back up all model settings, including model parameters and API key pools.';
 
   @override
   String settingsDataBackupCount(int count) {
@@ -2497,17 +2592,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsDataCopyBackupJson => 'Copy backup JSON';
+  String get settingsDataCopyBackupJson => 'Copy backup';
 
   @override
-  String get settingsDataImportBackupJson => 'Import backup JSON';
+  String get settingsDataImportBackupJson => 'Restore data';
 
   @override
-  String get settingsDataBackupJsonInput => 'Backup JSON content';
+  String get settingsDataBackupJsonInput => 'Restore content';
 
   @override
   String settingsDataBackupCopied(String name) {
-    return 'Copied backup JSON for “$name”.';
+    return 'Copied backup for “$name”.';
   }
 
   @override
@@ -2516,28 +2611,70 @@ class AppLocalizationsEn extends AppLocalizations {
     int updatedCount,
     int skippedCount,
   ) {
-    return 'Import complete: $newCount new, $updatedCount updated, $skippedCount skipped.';
+    return 'Restore complete: $newCount new, $updatedCount updated, $skippedCount skipped.';
   }
 
   @override
   String settingsDataBackupImportError(String error) {
-    return 'Backup import failed: $error';
+    return 'Restore failed: $error';
   }
 
   @override
   String settingsDataBackupCopyError(String error) {
-    return 'Backup copy failed: $error';
+    return 'Copy failed: $error';
   }
 
   @override
-  String get settingsDataExportRawSnapshot => 'Export raw snapshot';
+  String get settingsDataSnapshotBackupTitle => 'Full snapshot';
+
+  @override
+  String get settingsDataExportRawSnapshot => 'Export snapshot';
+
+  @override
+  String get settingsDataImportRawSnapshot => 'Restore snapshot';
 
   @override
   String get settingsDataExportRawSnapshotDescription =>
-      'Generate the current data snapshot from runtime and show its byte size.';
+      'Pack chats, characters, model settings, and local files into one backup file. Restoring replaces current data with the backup.';
 
   @override
   String settingsDataSnapshotBytes(int bytes) {
-    return 'Snapshot generated: $bytes bytes';
+    return 'Snapshot size: $bytes bytes';
   }
+
+  @override
+  String get settingsDataSnapshotImported => 'Snapshot restored.';
+
+  @override
+  String settingsDataSnapshotExportError(String error) {
+    return 'Snapshot export failed: $error';
+  }
+
+  @override
+  String settingsDataSnapshotImportError(String error) {
+    return 'Snapshot restore failed: $error';
+  }
+
+  @override
+  String get settingsDataSnapshotRestoreConfirmTitle => 'Restore full snapshot';
+
+  @override
+  String settingsDataSnapshotRestoreConfirmMessage(
+    int formatVersion,
+    int fileCount,
+    String createdAt,
+    int bytes,
+  ) {
+    return 'Restoring will replace the current runtime data.\nFormat version: $formatVersion\nFiles: $fileCount\nCreated: $createdAt\nSnapshot size: $bytes bytes';
+  }
+
+  @override
+  String get settingsDataSnapshotRestoreConfirmAction => 'Restore';
+
+  @override
+  String get settingsDataAdvancedBackupOptions => 'Advanced options';
+
+  @override
+  String get settingsDataAdvancedBackupOptionsDescription =>
+      'Single-item JSON export and restore';
 }

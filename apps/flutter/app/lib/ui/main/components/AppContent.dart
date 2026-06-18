@@ -20,7 +20,6 @@ class AppContent extends StatefulWidget {
     required this.isTabletSidebarExpanded,
     required this.canGoBack,
     required this.enableNavigationAnimation,
-    required this.navigationTransitionSource,
     required this.isNavigatingBack,
     required this.topBarController,
     required this.onGoBack,
@@ -35,7 +34,6 @@ class AppContent extends StatefulWidget {
   final bool isTabletSidebarExpanded;
   final bool canGoBack;
   final bool enableNavigationAnimation;
-  final NavigationTransitionSource navigationTransitionSource;
   final bool isNavigatingBack;
   final TopBarController topBarController;
   final VoidCallback onGoBack;
@@ -52,12 +50,8 @@ class _AppContentState extends State<AppContent> {
   static const Duration _disabledPageTransitionDuration = Duration(
     milliseconds: 400,
   );
-  static const Duration _drawerRelayTransitionDuration = Duration(
-    milliseconds: 320,
-  );
   static const double _phonePageTransitionOffset = 20;
   static const double _tabletPageTransitionOffset = 28;
-  static const double _phoneDrawerNavigationOffset = 30;
   static const double _topBarHeight = 64;
   static const double _navigationIconStartPadding = 4;
   static const double _navigationIconSize = 48;
@@ -134,14 +128,6 @@ class _AppContentState extends State<AppContent> {
     });
   }
 
-  bool get _isDrawerRelayTransition {
-    return !widget.useTabletLayout &&
-        widget.navigationTransitionSource ==
-            NavigationTransitionSource.drawer &&
-        !widget.isNavigatingBack &&
-        _transitionAllowsCrossfade;
-  }
-
   Duration get _pageTransitionDuration {
     return widget.enableNavigationAnimation
         ? _enabledPageTransitionDuration
@@ -149,9 +135,7 @@ class _AppContentState extends State<AppContent> {
   }
 
   Duration get _activeTransitionDuration {
-    return _isDrawerRelayTransition
-        ? _drawerRelayTransitionDuration
-        : _pageTransitionDuration;
+    return _pageTransitionDuration;
   }
 
   void _removePendingScreen(String currentScreenKey) {
@@ -289,13 +273,11 @@ class _AppContentState extends State<AppContent> {
                         isNavigatingBack: widget.isNavigatingBack,
                         enableNavigationAnimation:
                             widget.enableNavigationAnimation,
-                        isDrawerRelayTransition: _isDrawerRelayTransition,
                         allowCrossfade: _transitionAllowsCrossfade,
                         duration: _activeTransitionDuration,
                         pageOffset: widget.useTabletLayout
                             ? _tabletPageTransitionOffset
                             : _phonePageTransitionOffset,
-                        drawerNavigationOffset: _phoneDrawerNavigationOffset,
                         child: MainScreenActivityScope(
                           isCurrentScreen: screenKey == currentScreenKey,
                           child: _screenCache[screenKey]!,
@@ -324,11 +306,9 @@ class _AnimatedScreenSlot extends StatefulWidget {
     required this.snapshotDuringExit,
     required this.isNavigatingBack,
     required this.enableNavigationAnimation,
-    required this.isDrawerRelayTransition,
     required this.allowCrossfade,
     required this.duration,
     required this.pageOffset,
-    required this.drawerNavigationOffset,
     required this.child,
   });
 
@@ -338,11 +318,9 @@ class _AnimatedScreenSlot extends StatefulWidget {
   final bool snapshotDuringExit;
   final bool isNavigatingBack;
   final bool enableNavigationAnimation;
-  final bool isDrawerRelayTransition;
   final bool allowCrossfade;
   final Duration duration;
   final double pageOffset;
-  final double drawerNavigationOffset;
   final Widget child;
 
   @override
@@ -471,15 +449,6 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
     if (!widget.allowCrossfade) {
       return 0.0;
     }
-    if (widget.isDrawerRelayTransition) {
-      if (_visible) {
-        return 0.0;
-      }
-      if (widget.isCurrentScreen) {
-        return -widget.drawerNavigationOffset;
-      }
-      return widget.drawerNavigationOffset * 0.18;
-    }
     if (!widget.enableNavigationAnimation) {
       return 0.0;
     }
@@ -497,15 +466,6 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
   double get _targetScale {
     if (!widget.allowCrossfade) {
       return 1.0;
-    }
-    if (widget.isDrawerRelayTransition) {
-      if (_visible) {
-        return 1.0;
-      }
-      if (widget.isCurrentScreen) {
-        return 0.975;
-      }
-      return 0.995;
     }
     if (!widget.enableNavigationAnimation) {
       return 1.0;

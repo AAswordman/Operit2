@@ -3,6 +3,7 @@ use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
+use crate::core::files::PathMapper::PathMapper;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatMessage::ChatMessage;
@@ -464,6 +465,9 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) {
+        let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace).expect(
+            "ChatServiceCore.bindChatToWorkspace requires a workspace path that maps to VFS",
+        );
         self.chatHistoryDelegate
             .bindChatToWorkspace(chatId, workspace);
     }
@@ -504,6 +508,9 @@ impl ChatServiceCore {
         newWorkspace: String,
         newTitle: String,
     ) {
+        let newWorkspace = PathMapper::normalizeWorkspaceBindingPath(&newWorkspace).expect(
+            "ChatServiceCore.renameWorkspaceAndChat requires a workspace path that maps to VFS",
+        );
         self.chatHistoryDelegate
             .renameWorkspaceAndChat(chatId, newWorkspace, newTitle);
     }
@@ -1312,11 +1319,24 @@ fn isXmlLikeTagNameChar(value: u8) -> bool {
 fn resolveAttachmentPath(filePath: &str) -> Result<PathBuf, String> {
     if filePath.starts_with("file://") {
         let url = Url::parse(filePath).map_err(|_| format!("无法添加附件: {filePath}"))?;
-        return url
-            .to_file_path()
-            .map_err(|_| format!("无法添加附件: {filePath}"));
+        return fileUrlToPathBuf(&url).map_err(|_| format!("无法添加附件: {filePath}"));
     }
     Ok(PathBuf::from(filePath))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(non_snake_case)]
+fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
+    url.to_file_path().map_err(|_| ())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
+    if url.scheme() != "file" {
+        return Err(());
+    }
+    Ok(PathBuf::from(url.path()))
 }
 
 #[allow(non_snake_case)]

@@ -177,7 +177,7 @@ impl WorkspaceService {
             .chatDao
             .getAllChatsDirectly()
             .map_err(|error| error.to_string())?;
-        let workspaceRootText = PathMapper::workspaceCollectionPath().to_string();
+        let workspaceRootText = self.workspaceCollectionRoot.to_string_lossy().to_string();
         let mut boundWorkspaceNames = std::collections::HashSet::new();
         let mut boundChatCount = 0i32;
 
@@ -276,7 +276,6 @@ impl WorkspaceService {
                 self.runtimeStoreRoot.clone(),
                 self.appFilesRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
-                Some(workspaceRoot.to_string()),
             ),
         )
     }

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../bridge/CoreProxy.dart';
 import '../bridge/PlatformCoreProxy.dart';
+import '../link/CoreLinkProtocol.dart';
 import '../link/RemoteRuntimeLinkClient.dart';
 import 'RuntimeConnectionConfigStore.dart';
 
@@ -28,15 +29,12 @@ class RuntimeConnectionConfig {
     );
   }
 
-  factory RuntimeConnectionConfig.fromJson(Map<String, Object?> json) {
+  factory RuntimeConnectionConfig.fromJson(
+    Map<String, Object?> json, {
+    Map<String, PairedRemoteSessionRecord> remoteSessions =
+        const <String, PairedRemoteSessionRecord>{},
+  }) {
     final modeName = json['mode'] as String;
-    final remoteSessionsJson = json['remoteSessions'] as Map<String, Object?>;
-    final remoteSessions = remoteSessionsJson.map(
-      (key, value) => MapEntry(
-        key,
-        PairedRemoteSessionRecord.fromJson(value as Map<String, Object?>),
-      ),
-    );
     return RuntimeConnectionConfig(
       mode: RuntimeConnectionMode.values.byName(modeName),
       activeRemoteName: json['activeRemoteName'] as String,
@@ -74,9 +72,6 @@ class RuntimeConnectionConfig {
     return {
       'mode': mode.name,
       'activeRemoteName': activeRemoteName,
-      'remoteSessions': remoteSessions.map(
-        (key, value) => MapEntry(key, value.toJson()),
-      ),
       'updatedAt': updatedAt,
     };
   }
@@ -87,9 +82,14 @@ class RuntimeConnectionManager extends ChangeNotifier {
 
   static final RuntimeConnectionManager instance = RuntimeConnectionManager._();
   static const Duration _remoteStartupProbeTimeout = Duration(seconds: 4);
+  static const Duration _remoteIssueProbeDelay = Duration(milliseconds: 700);
+  static const Duration _remoteIssueProbeTimeout = Duration(seconds: 2);
+  static const int _remoteIssueProbeAttempts = 3;
 
   RuntimeConnectionConfig _config = RuntimeConnectionConfig.local();
   RemoteRuntimeLinkClient? _remoteLinkClient;
+  CoreLinkError? _pendingRemoteError;
+  bool _remoteIssueProbeRunning = false;
 
   RuntimeConnectionConfig get config => _config;
 
@@ -98,6 +98,85 @@ class RuntimeConnectionManager extends ChangeNotifier {
       RuntimeConnectionMode.local => platformCoreProxy,
       RuntimeConnectionMode.remote => _remoteLinkClient!,
     };
+  }
+
+  CoreLinkError? consumePendingRemoteError() {
+    final error = _pendingRemoteError;
+    _pendingRemoteError = null;
+    return error;
+  }
+
+  void _onRemoteLinkConnectionIssue(CoreLinkError error) {
+    final linkClient = _remoteLinkClient;
+    if (_config.mode != RuntimeConnectionMode.remote || linkClient == null) {
+      return;
+    }
+    if (_remoteIssueProbeRunning) {
+      return;
+    }
+    _remoteIssueProbeRunning = true;
+    unawaited(_confirmRemoteConnection(error, linkClient));
+  }
+
+  Future<void> _confirmRemoteConnection(
+    CoreLinkError firstError,
+    RemoteRuntimeLinkClient linkClient,
+  ) async {
+    var latestError = firstError;
+    try {
+      for (var attempt = 0; attempt < _remoteIssueProbeAttempts; attempt++) {
+        await Future<void>.delayed(_remoteIssueProbeDelay);
+        if (_config.mode != RuntimeConnectionMode.remote ||
+            !identical(_remoteLinkClient, linkClient)) {
+          return;
+        }
+        try {
+          await _verifyRemoteSession(
+            linkClient,
+            linkClient.session,
+            _remoteIssueProbeTimeout,
+          );
+          return;
+        } catch (error) {
+          latestError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
+        }
+      }
+      if (_config.mode != RuntimeConnectionMode.remote ||
+          !identical(_remoteLinkClient, linkClient)) {
+        return;
+      }
+      _pendingRemoteError = latestError;
+      await _apply(
+        _config.copyWith(
+          mode: RuntimeConnectionMode.local,
+          activeRemoteName: '',
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+        persist: true,
+      );
+    } finally {
+      _remoteIssueProbeRunning = false;
+    }
+  }
+
+  CoreLinkError _asCoreLinkError(Object error, String code) {
+    return error is CoreLinkError
+        ? error
+        : CoreLinkError(code: code, message: error.toString());
+  }
+
+  Future<void> _verifyRemoteSession(
+    RemoteRuntimeLinkClient linkClient,
+    PairedRemoteSessionRecord session,
+    Duration timeout,
+  ) async {
+    final info = await linkClient.sessionInfo().timeout(timeout);
+    if (info.coreDeviceId != session.coreDeviceId) {
+      throw CoreLinkError(
+        code: 'REMOTE_DEVICE_CHANGED',
+        message: 'remote runtime identity changed',
+      );
+    }
   }
 
   Future<void> initialize() async {
@@ -119,7 +198,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
     );
   }
 
-  Future<void> setRemote({
+  Future<bool> setRemote({
     required String name,
     required PairedRemoteSessionRecord session,
   }) async {
@@ -134,10 +213,10 @@ class RuntimeConnectionManager extends ChangeNotifier {
       ),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    await _applyRemote(remoteConfig, persist: true, verify: true);
+    return _applyRemote(remoteConfig, persist: true, verify: true);
   }
 
-  Future<void> usePairedRemote(String name) async {
+  Future<bool> usePairedRemote(String name) async {
     if (!_config.remoteSessions.containsKey(name)) {
       throw StateError('paired remote runtime does not exist: $name');
     }
@@ -146,7 +225,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
       activeRemoteName: name,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    await _applyRemote(remoteConfig, persist: true, verify: true);
+    return _applyRemote(remoteConfig, persist: true, verify: true);
   }
 
   Future<void> removePairedRemote(String name) async {
@@ -159,17 +238,15 @@ class RuntimeConnectionManager extends ChangeNotifier {
     final activeRemoved =
         _config.mode == RuntimeConnectionMode.remote &&
         _config.activeRemoteName == name;
-    await _apply(
-      RuntimeConnectionConfig(
-        mode: activeRemoved ? RuntimeConnectionMode.local : _config.mode,
-        activeRemoteName: activeRemoved ? '' : _config.activeRemoteName,
-        remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-          remoteSessions,
-        ),
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
+    final next = RuntimeConnectionConfig(
+      mode: activeRemoved ? RuntimeConnectionMode.local : _config.mode,
+      activeRemoteName: activeRemoved ? '' : _config.activeRemoteName,
+      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
+        remoteSessions,
       ),
-      persist: true,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
+    await _apply(next, persist: true);
   }
 
   Future<void> _apply(
@@ -183,16 +260,20 @@ class RuntimeConnectionManager extends ChangeNotifier {
       if (session == null) {
         throw StateError('remote runtime session is required');
       }
-      _remoteLinkClient = RemoteRuntimeLinkClient(session: session);
+      _remoteLinkClient = RemoteRuntimeLinkClient(
+        session: session,
+        onConnectionIssue: _onRemoteLinkConnectionIssue,
+      );
     }
     _config = config;
     if (persist) {
+      await OutboundLinkSessionStore.write(config.remoteSessions);
       await RuntimeConnectionConfigStore.write(config);
     }
     notifyListeners();
   }
 
-  Future<void> _applyRemote(
+  Future<bool> _applyRemote(
     RuntimeConnectionConfig config, {
     required bool persist,
     required bool verify,
@@ -206,17 +287,34 @@ class RuntimeConnectionManager extends ChangeNotifier {
     final linkClient = RemoteRuntimeLinkClient(session: session);
     try {
       if (verify) {
-        await linkClient.hostDescriptor().timeout(_remoteStartupProbeTimeout);
+        await _verifyRemoteSession(
+          linkClient,
+          session,
+          _remoteStartupProbeTimeout,
+        );
       }
+      linkClient.setConnectionIssueHandler(_onRemoteLinkConnectionIssue);
       _remoteLinkClient = linkClient;
       _config = config;
       if (persist) {
+        await OutboundLinkSessionStore.write(config.remoteSessions);
         await RuntimeConnectionConfigStore.write(config);
       }
       notifyListeners();
-    } catch (_) {
+      return true;
+    } catch (error) {
       linkClient.dispose();
-      rethrow;
+      _pendingRemoteError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
+      await _apply(
+        RuntimeConnectionConfig(
+          mode: RuntimeConnectionMode.local,
+          activeRemoteName: '',
+          remoteSessions: config.remoteSessions,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+        persist: persist,
+      );
+      return false;
     }
   }
 }

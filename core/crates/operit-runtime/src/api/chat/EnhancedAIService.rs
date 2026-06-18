@@ -1891,9 +1891,8 @@ impl EnhancedAIService {
                 );
                 return Ok(());
             }
-            let pureThinkingWarning = ConversationMarkupManager::createWarningStatus(
-                ENHANCED_PURE_THINKING_ONLY_WARNING,
-            );
+            let pureThinkingWarning =
+                ConversationMarkupManager::createWarningStatus(ENHANCED_PURE_THINKING_ONLY_WARNING);
             context
                 .roundManager
                 .appendContent(&format!("\n{pureThinkingWarning}"));

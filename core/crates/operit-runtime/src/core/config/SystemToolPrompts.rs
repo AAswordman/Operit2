@@ -611,7 +611,7 @@ fn hostPathParameterDescription(
 
 #[allow(non_snake_case)]
 fn hostHeaderVfsPaths(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
-    let mut paths = vec!["/app", "/workspace", "/app/workspaces"];
+    let mut paths = vec!["/app", "/app/workspaces"];
     match host_environment.id.as_str() {
         "windows" => paths.push("/mnt/windows/<drive>"),
         "android" => paths.push("/mnt/android/sdcard"),
@@ -624,7 +624,7 @@ fn hostHeaderVfsPaths(host_environment: &HostEnvironmentDescriptor) -> Vec<&'sta
 
 #[allow(non_snake_case)]
 fn hostToolPathExamples(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
-    let mut paths = vec!["/workspace", "/app/files"];
+    let mut paths = vec!["/app/workspaces/<workspace-id>", "/app/files"];
     match host_environment.id.as_str() {
         "windows" => paths.push("/mnt/windows/d"),
         "android" => paths.push("/mnt/android/sdcard"),
@@ -922,7 +922,7 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
 
 fn file_system_tools_en() -> SystemToolPromptCategory {
     category("File System Tools", vec![
-        tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/workspace\" or \"/mnt/android/sdcard/Download\"", true, None)]),
+        tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/app/workspaces/<workspace-id>\" or \"/mnt/android/sdcard/Download\"", true, None)]),
         tool("read_file", "Read the content of a file. For image files (jpg, jpeg, png, gif, bmp), it automatically extracts text using OCR.", vec![
             param("path", "string", "VFS file path", true, None),
             param("intent", "string", "optional, your question about the media/file (used for backend recognition)", false, None),
@@ -944,7 +944,7 @@ fn file_system_tools_en() -> SystemToolPromptCategory {
 
 fn file_system_tools_cn() -> SystemToolPromptCategory {
     category("文件系统工具", vec![
-        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/workspace\" 或 \"/mnt/android/sdcard/Download\"", true, None)]),
+        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/app/workspaces/<workspace-id>\" 或 \"/mnt/android/sdcard/Download\"", true, None)]),
         tool("read_file", "读取文件内容。对于图片文件(jpg, jpeg, png, gif, bmp)，自动使用OCR提取文本。", vec![
             param("path", "string", "VFS 文件路径", true, None),
             param("intent", "string", "可选，用户对媒体/文件的问题（用于后端识别模型）", false, None),

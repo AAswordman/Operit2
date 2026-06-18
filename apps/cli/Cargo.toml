@@ -18,6 +18,7 @@ crossterm = "0.28"
 futures-util = "0.3"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
+mdns-sd = "0.12"
 include_dir = "0.7"
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
@@ -37,6 +38,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [target.'cfg(windows)'.dependencies]
 operit-host-windows-native = { path = "../../hosts/windows" }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_WindowsProgramming"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 operit-host-linux-native = { path = "../../hosts/linux" }

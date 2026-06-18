@@ -180,7 +180,6 @@ impl WorkspaceBackupManager {
                 runtimeStoreRoot,
                 self.context.appFilesRoot.clone(),
                 runtimeStorePaths.workspace_dir(),
-                Some(workspacePath.to_string()),
             ),
         )
     }
@@ -951,7 +950,6 @@ fn makeRelativePath(root: &str, fullPath: &str) -> Option<String> {
     }
     let normalizedFullPath = GitIgnoreFilter::normalizePath(fullPath);
     makeRelativePathForNormalizedRoot(&normalizedRoot, &normalizedFullPath)
-        .or_else(|| makeRelativePathForNormalizedRoot("/workspace", &normalizedFullPath))
 }
 
 fn makeRelativePathForNormalizedRoot(root: &str, fullPath: &str) -> Option<String> {

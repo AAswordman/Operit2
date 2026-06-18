@@ -10,23 +10,24 @@ import 'package:flutter/services.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../path/OperitClientPaths.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
-import 'WebAccessConfig.dart';
+import 'LinkHostConfig.dart';
 
-class FlutterWebAccessServer extends ChangeNotifier {
-  FlutterWebAccessServer._();
+class LinkHostServer extends ChangeNotifier {
+  LinkHostServer._();
 
-  static final FlutterWebAccessServer instance = FlutterWebAccessServer._();
+  static final LinkHostServer instance = LinkHostServer._();
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
 
   bool _running = false;
-  WebAccessConfig? _config;
+  LinkHostConfig? _config;
   String? _shutdownToken;
   Timer? _pairingCodePoller;
   int _pairingCodeStartedAt = 0;
-  WebAccessPairingCodeRecord? _lastPairingCode;
+  PendingLinkPairingCodeRecord? _lastPairingCode;
 
   bool get isRunning => _running;
-  WebAccessPairingCodeRecord? get lastPairingCode => _lastPairingCode;
+  LinkHostConfig? get currentConfig => _config;
+  PendingLinkPairingCodeRecord? get lastPairingCode => _lastPairingCode;
 
   String? get baseUrl {
     final config = _config;
@@ -36,7 +37,15 @@ class FlutterWebAccessServer extends ChangeNotifier {
     return _baseUrlForBindAddress(config.bindAddress);
   }
 
-  Future<List<String>> pairingBaseUrls(WebAccessConfig config) async {
+  Future<String> discoverDevices(int timeoutMs) async {
+    final responseText = await _runtimeChannel.invokeMethod<String>(
+      'discoverDevices',
+      <String, Object?>{'timeoutMs': timeoutMs.toString()},
+    );
+    return responseText ?? '[]';
+  }
+
+  Future<List<String>> pairingBaseUrls(LinkHostConfig config) async {
     final endpoint = _parseBindAddress(config.bindAddress);
     if (_isWildcardHost(endpoint.host)) {
       final hosts = await _lanIpv4Hosts();
@@ -51,31 +60,36 @@ class FlutterWebAccessServer extends ChangeNotifier {
   }
 
   Future<void> initializeFromConfig() async {
-    final config = await WebAccessConfigStore.read();
-    if (config.enabled) {
+    final config = await LinkHostConfigStore.read();
+    if (config.webAccessEnabled || config.discoveryEnabled) {
       await start(config);
     }
   }
 
-  Future<void> start(WebAccessConfig config) async {
+  Future<void> start(LinkHostConfig config) async {
     if (_running) {
       await stop(updateConfig: false);
     }
     final webRoot = await _materializeWebAccessBundle();
-    final shutdownToken = WebAccessToken.generate();
-    _config = config;
+    final shutdownToken = LinkHostToken.generate();
     _shutdownToken = shutdownToken;
     _pairingCodeStartedAt = DateTime.now().millisecondsSinceEpoch;
+    late final LinkHostConfig runningConfig;
     try {
-      await _startNativeWebAccessServer(config, shutdownToken, webRoot);
+      runningConfig = await _startNativeWebAccessServerWithPortMode(
+        config,
+        shutdownToken,
+        webRoot,
+      );
     } catch (_) {
       _config = null;
       _shutdownToken = null;
       rethrow;
     }
+    _config = runningConfig;
     _running = true;
     _startPairingCodePolling();
-    await _writeState(config);
+    await _writeState(runningConfig);
   }
 
   Future<void> stop({bool updateConfig = true}) async {
@@ -95,10 +109,10 @@ class FlutterWebAccessServer extends ChangeNotifier {
     _shutdownToken = null;
     await _removeState();
     if (updateConfig) {
-      final config = await WebAccessConfigStore.read();
-      await WebAccessConfigStore.write(
+      final config = await LinkHostConfigStore.read();
+      await LinkHostConfigStore.write(
         config.copyWith(
-          enabled: false,
+          webAccessEnabled: false,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         ),
       );
@@ -114,7 +128,7 @@ class FlutterWebAccessServer extends ChangeNotifier {
   }
 
   Future<void> _pollPairingCode() async {
-    final record = await WebAccessPairingCodeStore.read();
+    final record = await PendingLinkPairingCodeStore.read();
     if (record == null || record.createdAt < _pairingCodeStartedAt) {
       return;
     }
@@ -125,12 +139,16 @@ class FlutterWebAccessServer extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _writeState(WebAccessConfig config) async {
-    final file = await OperitClientPaths.webAccessStateFile();
+  Future<void> _writeState(LinkHostConfig config) async {
+    final file = await OperitClientPaths.linkHostStateFile();
     await file.parent.create(recursive: true);
+    final deviceId = await LinkHostDeviceIdStore.read();
     final content = const JsonEncoder.withIndent('  ').convert({
+      'deviceId': deviceId,
       'bindAddress': config.bindAddress,
       'baseUrl': _baseUrlForBindAddress(config.bindAddress),
+      'webAccessEnabled': config.webAccessEnabled,
+      'discoveryEnabled': config.discoveryEnabled,
       'shutdownToken': _shutdownToken,
       'processId': pid,
       'startedAt': DateTime.now().millisecondsSinceEpoch,
@@ -139,14 +157,14 @@ class FlutterWebAccessServer extends ChangeNotifier {
   }
 
   Future<void> _removeState() async {
-    final file = await OperitClientPaths.webAccessStateFile();
+    final file = await OperitClientPaths.linkHostStateFile();
     if (await file.exists()) {
       await file.delete();
     }
   }
 
   Future<Directory> _materializeWebAccessBundle() async {
-    final directory = await OperitClientPaths.webAccessBundleDir();
+    final directory = await OperitClientPaths.linkHostWebAccessBundleDir();
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final assetKeys =
         manifest
@@ -169,14 +187,16 @@ class FlutterWebAccessServer extends ChangeNotifier {
   }
 
   Future<void> _startNativeWebAccessServer(
-    WebAccessConfig config,
+    LinkHostConfig config,
     String shutdownToken,
     Directory webRoot,
   ) async {
-    final acceptedSessions = await WebAccessAcceptedSessionStore.read();
+    final acceptedSessions = await InboundLinkSessionStore.read();
     final acceptedSessionsFile =
-        await OperitClientPaths.webAccessAcceptedSessionsFile();
-    final pairingCodeFile = await OperitClientPaths.webAccessPairingCodeFile();
+        await OperitClientPaths.inboundLinkSessionsFile();
+    final pairingCodeFile =
+        await OperitClientPaths.pendingLinkPairingCodeFile();
+    final deviceId = await LinkHostDeviceIdStore.read();
     final deviceInfo = await RuntimeDeviceInfoProvider.current();
     final responseText = await _runtimeChannel
         .invokeMethod<String>('startWebAccessServer', <String, Object?>{
@@ -184,14 +204,45 @@ class FlutterWebAccessServer extends ChangeNotifier {
           'token': config.token,
           'shutdownToken': shutdownToken,
           'webRoot': webRoot.path,
+          'deviceId': deviceId,
           'acceptedSessions': jsonEncode(
             acceptedSessions.map((key, value) => MapEntry(key, value.toJson())),
           ),
           'acceptedSessionStorePath': acceptedSessionsFile.path,
           'pairingCodePath': pairingCodeFile.path,
           'deviceInfo': jsonEncode(deviceInfo.toJson()),
+          'enableWebAccess': config.webAccessEnabled.toString(),
+          'enableDiscovery': config.discoveryEnabled.toString(),
         });
     _throwNativeWebAccessError(responseText);
+  }
+
+  Future<LinkHostConfig> _startNativeWebAccessServerWithPortMode(
+    LinkHostConfig config,
+    String shutdownToken,
+    Directory webRoot,
+  ) async {
+    if (config.portMode == LinkHostPortMode.fixed) {
+      await _startNativeWebAccessServer(config, shutdownToken, webRoot);
+      return config;
+    }
+    final endpoint = _parseBindAddress(config.bindAddress);
+    Object? lastError;
+    StackTrace? lastStackTrace;
+    for (final bindAddress in _automaticBindAddresses(endpoint.host)) {
+      final candidate = config.copyWith(bindAddress: bindAddress);
+      try {
+        await _startNativeWebAccessServer(candidate, shutdownToken, webRoot);
+        return candidate;
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+      }
+    }
+    if (lastError != null && lastStackTrace != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace);
+    }
+    throw StateError('no web access ports configured');
   }
 
   Future<void> _stopNativeWebAccessServer() async {
@@ -293,6 +344,12 @@ Future<List<String>> _lanIpv4Hosts() async {
   }
   final sorted = hosts.toList(growable: false)..sort();
   return sorted;
+}
+
+List<String> _automaticBindAddresses(String host) {
+  return LinkHostConfig.automaticPortSequence
+      .map((port) => '$host:$port')
+      .toList(growable: false);
 }
 
 String _joinPath(List<String> segments) {

@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use operit_host_api::FileEntry;
 
 const ROOT_APP: &str = "app";
-const ROOT_WORKSPACE: &str = "workspace";
 const ROOT_MNT: &str = "mnt";
 const ROOT_SDCARD: &str = "sdcard";
 const ROOT_DATA: &str = "data";
@@ -28,7 +27,6 @@ pub struct PathMapper {
     runtimeStoreRoot: PathBuf,
     appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
-    currentWorkspacePath: Option<String>,
 }
 
 impl PathMapper {
@@ -36,13 +34,11 @@ impl PathMapper {
         runtimeStoreRoot: PathBuf,
         appFilesRoot: Option<PathBuf>,
         workspaceCollectionRoot: PathBuf,
-        currentWorkspacePath: Option<String>,
     ) -> Self {
         Self {
             runtimeStoreRoot,
             appFilesRoot,
             workspaceCollectionRoot,
-            currentWorkspacePath,
         }
     }
 
@@ -64,6 +60,27 @@ impl PathMapper {
     #[allow(non_snake_case)]
     pub fn normalizeVfsPath(path: &str) -> Result<String, String> {
         normalizeAbsoluteVfsPath(path)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn normalizeWorkspaceBindingPath(path: &str) -> Result<String, String> {
+        let text = path.trim().replace('\\', "/");
+        if text.is_empty() {
+            return Err("workspace path is required".to_string());
+        }
+        if text.starts_with('/') {
+            let normalizedPath = normalizeAbsoluteVfsPath(&text)?;
+            if let Some(vfsPath) = normalizeWorkspaceBindingVfsPath(&normalizedPath)? {
+                return Ok(vfsPath);
+            }
+            return normalizeAbsoluteHostWorkspacePath(&normalizedPath);
+        }
+        if let Some(vfsPath) = normalizeWindowsHostWorkspacePath(&text)? {
+            return Ok(vfsPath);
+        }
+        Err(format!(
+            "Workspace binding must use a VFS path or an absolute host path: {path}"
+        ))
     }
 
     #[allow(non_snake_case)]
@@ -105,7 +122,7 @@ impl PathMapper {
         let segments = pathSegments(&normalizedPath);
         match segments.as_slice() {
             [] => {
-                let mut entries = vec![directoryEntry(ROOT_APP), directoryEntry(ROOT_WORKSPACE)];
+                let mut entries = vec![directoryEntry(ROOT_APP)];
                 if !mntMountEntries().is_empty() {
                     entries.push(directoryEntry(ROOT_MNT));
                 }
@@ -138,7 +155,6 @@ impl PathMapper {
         match segments.as_slice() {
             [] => Err("VFS root is a virtual directory".to_string()),
             [ROOT_APP] | [ROOT_MNT] => Err(format!("{normalizedPath} is a virtual directory")),
-            [ROOT_WORKSPACE, rest @ ..] => self.resolveWorkspace(rest),
             [ROOT_APP, APP_DATA, rest @ ..] => Ok(ResolvedVfsPath {
                 vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_DATA], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.runtimeStoreRoot, rest)),
@@ -235,26 +251,6 @@ impl PathMapper {
         let relative = &childPhysical[prefix.len()..];
         Self::joinVfsPath(&base.vfsPath, relative)
     }
-
-    fn resolveWorkspace(&self, rest: &[&str]) -> Result<ResolvedVfsPath, String> {
-        let Some(workspacePath) = self.currentWorkspacePath.as_ref() else {
-            return Err("Current chat has no VFS workspace binding".to_string());
-        };
-        let workspacePath = normalizeAbsoluteVfsPath(workspacePath)?;
-        let workspaceSegments = pathSegments(&workspacePath);
-        if workspaceSegments.first() == Some(&ROOT_WORKSPACE) {
-            return Err("Workspace binding cannot point to /workspace".to_string());
-        }
-        let targetPath = if rest.is_empty() {
-            workspacePath
-        } else {
-            Self::joinVfsPath(&workspacePath, &rest.join("/"))?
-        };
-        self.resolve(&targetPath).map(|resolved| ResolvedVfsPath {
-            vfsPath: joinNormalizedSegments(&[ROOT_WORKSPACE], rest),
-            physicalPath: resolved.physicalPath,
-        })
-    }
 }
 
 impl Default for PathMapper {
@@ -263,7 +259,6 @@ impl Default for PathMapper {
             runtimeStoreRoot: PathBuf::new(),
             appFilesRoot: None,
             workspaceCollectionRoot: PathBuf::new(),
-            currentWorkspacePath: None,
         }
     }
 }
@@ -339,6 +334,69 @@ fn pathSegments(path: &str) -> Vec<&str> {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect()
+}
+
+#[allow(non_snake_case)]
+fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String> {
+    let segments = pathSegments(path);
+    match segments.as_slice() {
+        [ROOT_APP, APP_WORKSPACES, workspaceId, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[ROOT_APP, APP_WORKSPACES, workspaceId],
+            rest,
+        ))),
+        [ROOT_MNT, MNT_WINDOWS, drive, rest @ ..] => {
+            let driveLetter = normalizeDriveLetter(drive)?;
+            Ok(Some(joinNormalizedSegments(
+                &[ROOT_MNT, MNT_WINDOWS, &driveLetter],
+                rest,
+            )))
+        }
+        [ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
+            rest,
+        ))),
+        [ROOT_MNT, MNT_LINUX, rest @ ..] => {
+            Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], rest)))
+        }
+        [ROOT_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_SDCARD], rest))),
+        [ROOT_DATA, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_DATA], rest))),
+        ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
+        [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
+            "Workspace binding must use /app/workspaces/<id> or a mounted VFS path: {path}"
+        )),
+        _ => Ok(None),
+    }
+}
+
+#[allow(non_snake_case)]
+fn normalizeWindowsHostWorkspacePath(path: &str) -> Result<Option<String>, String> {
+    let bytes = path.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return Ok(None);
+    }
+    let driveLetter = (bytes[0] as char).to_ascii_lowercase().to_string();
+    let rest = normalizeRelativePath(path[2..].trim_start_matches('/'))?;
+    let restSegments = pathSegments(&rest);
+    Ok(Some(joinNormalizedSegments(
+        &[ROOT_MNT, MNT_WINDOWS, &driveLetter],
+        &restSegments,
+    )))
+}
+
+#[allow(non_snake_case)]
+fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
+    let segments = pathSegments(path);
+    match segments.as_slice() {
+        ["storage", "emulated", "0", rest @ ..] => Ok(joinNormalizedSegments(
+            &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
+            rest,
+        )),
+        ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
+        [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
+            "Workspace binding must use /app/workspaces/<id> or a mounted VFS path: {path}"
+        )),
+        _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], &segments)),
+    }
 }
 
 #[allow(non_snake_case)]
@@ -498,13 +556,12 @@ mod tests {
             PathBuf::from("D:/operit"),
             Some(PathBuf::from("D:/operit/files")),
             PathBuf::from("D:/operit-workspaces"),
-            Some("/app/workspaces/chat-a".to_string()),
         )
     }
 
     #[test]
     fn rootListShowsVisibleRootsOnly() {
-        let mut expected = vec!["app".to_string(), "workspace".to_string()];
+        let mut expected = vec!["app".to_string()];
         if !mntMountEntries().is_empty() {
             expected.push("mnt".to_string());
         }
@@ -524,16 +581,6 @@ mod tests {
             .resolve("/app/workspaces/chat-a/src/main.rs")
             .unwrap();
         assert_eq!(resolved.vfsPath, "/app/workspaces/chat-a/src/main.rs");
-        assert_eq!(
-            resolved.physicalPath,
-            "D:/operit-workspaces/chat-a/src/main.rs"
-        );
-    }
-
-    #[test]
-    fn currentWorkspaceUsesBoundWorkspace() {
-        let resolved = mapper().resolve("/workspace/src/main.rs").unwrap();
-        assert_eq!(resolved.vfsPath, "/workspace/src/main.rs");
         assert_eq!(
             resolved.physicalPath,
             "D:/operit-workspaces/chat-a/src/main.rs"
@@ -618,6 +665,32 @@ mod tests {
             assert!(mapper().resolve("/sdcard/Download/Operit").is_err());
             assert!(mapper().resolve("/data/local/tmp").is_err());
         }
+    }
+
+    #[test]
+    fn workspaceBindingPathUsesExplicitVfsRoots() {
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("/app/workspaces/chat-a").unwrap(),
+            "/app/workspaces/chat-a"
+        );
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("/mnt/windows/D/code").unwrap(),
+            "/mnt/windows/d/code"
+        );
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("D:/code").unwrap(),
+            "/mnt/windows/d/code"
+        );
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("/home/user/project").unwrap(),
+            "/mnt/linux/home/user/project"
+        );
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("/storage/emulated/0/Download").unwrap(),
+            "/mnt/android/sdcard/Download"
+        );
+        assert!(PathMapper::normalizeWorkspaceBindingPath("/workspace").is_err());
+        assert!(PathMapper::normalizeWorkspaceBindingPath("relative/path").is_err());
     }
 
     #[test]

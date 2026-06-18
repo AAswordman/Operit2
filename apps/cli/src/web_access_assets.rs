@@ -6,7 +6,7 @@ use include_dir::{include_dir, Dir};
 static WEB_ACCESS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../flutter/app/build/web");
 
 pub(crate) fn materialize_web_access_bundle() -> Result<PathBuf, String> {
-    let target = crate::client_paths::web_access_bundle_dir();
+    let target = crate::client_paths::link_host_web_access_bundle_dir();
     if target.exists() {
         fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
     }

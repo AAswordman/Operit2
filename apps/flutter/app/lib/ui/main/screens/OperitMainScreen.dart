@@ -45,8 +45,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   bool _isNavigatingBack = false;
   bool _requestedInitialToolPkgNavigationRefresh = false;
   int _backPressedTime = 0;
-  NavigationTransitionSource _navigationTransitionSource =
-      NavigationTransitionSource.defaultSource;
 
   @override
   void initState() {
@@ -92,9 +90,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       throw StateError('Unknown routeId: $routeId');
     }
     _isNavigatingBack = false;
-    _navigationTransitionSource = source == RouteEntrySource.drawer
-        ? NavigationTransitionSource.drawer
-        : NavigationTransitionSource.defaultSource;
     if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
       _topBarController.clear();
     }
@@ -116,9 +111,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       throw StateError('Unknown routeId: $routeId');
     }
     _isNavigatingBack = false;
-    _navigationTransitionSource = source == RouteEntrySource.drawer
-        ? NavigationTransitionSource.drawer
-        : NavigationTransitionSource.defaultSource;
     if (!_shouldPreserveTopBarTitle(routeId, args, source)) {
       _topBarController.clear();
     }
@@ -194,7 +186,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     setState(() {
       _drawerOpen = false;
       _isNavigatingBack = false;
-      _navigationTransitionSource = NavigationTransitionSource.drawer;
     });
     _resetToRoute(entry.routeId, entry.routeArgs, RouteEntrySource.drawer);
   }
@@ -235,7 +226,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     setState(() {
       _drawerOpen = false;
       _isNavigatingBack = false;
-      _navigationTransitionSource = NavigationTransitionSource.drawer;
     });
     _resetToRoute(entry.routeId, <String, Object?>{
       'conversationActivatedAt': DateTime.now().microsecondsSinceEpoch,
@@ -244,7 +234,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   void _goBack() {
     _isNavigatingBack = true;
-    _navigationTransitionSource = NavigationTransitionSource.defaultSource;
     _topBarController.clear();
     _mainLayoutController.clear();
     _routerState.pop();
@@ -256,7 +245,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       throw StateError('Unknown navigation entry: main.ai_chat');
     }
     _isNavigatingBack = true;
-    _navigationTransitionSource = NavigationTransitionSource.defaultSource;
     _topBarController.clear();
     _mainLayoutController.clear();
     _routerState.resetTo(
@@ -336,7 +324,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           isTabletSidebarExpanded: _isTabletSidebarExpanded,
           canGoBack: _routerState.canPop,
           enableNavigationAnimation: true,
-          navigationTransitionSource: _navigationTransitionSource,
           isNavigatingBack: _isNavigatingBack,
           topBarController: _topBarController,
           onGoBack: _goBack,

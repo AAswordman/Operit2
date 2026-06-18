@@ -413,12 +413,12 @@
   "settingsCategoryAppearanceTitle": "外观与交互",
   "settingsCategoryAppearanceSubtitle": "主题、语言",
   "settingsCategoryAppearanceDescription": "调整客户端主题和当前本地化显示。",
-  "settingsCategoryDataTitle": "数据与诊断",
-  "settingsCategoryDataSubtitle": "历史、备份、日志",
-  "settingsCategoryDataDescription": "管理聊天历史、备份恢复、Token 统计、Host 能力、日志和版本更新。",
-  "settingsCategoryAccessLinksTitle": "访问与链接",
-  "settingsCategoryAccessLinksSubtitle": "Runtime、Web 访问",
-  "settingsCategoryAccessLinksDescription": "管理当前客户端连接的 runtime、本机 Web 访问入口、绑定地址和访问 Token。",
+  "settingsCategoryDataTitle": "数据与备份",
+  "settingsCategoryDataSubtitle": "备份、恢复、统计",
+  "settingsCategoryDataDescription": "备份聊天、角色和模型配置，恢复备份内容，并查看数据统计。",
+  "settingsCategoryAccessLinksTitle": "设备与访问",
+  "settingsCategoryAccessLinksSubtitle": "连接、同步、访问",
+  "settingsCategoryAccessLinksDescription": "连接另一台设备，同步数据，或允许浏览器访问这台设备。",
   "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。",
   "settingsAdvanced": "高级设置",
   "settingsActive": "当前",
@@ -931,25 +931,25 @@
     }
   },
   "settingsWorkspaceRefresh": "刷新",
-  "settingsRuntimeConnection": "Runtime 连接",
-  "settingsRuntimeConnectionDescription": "当前客户端的所有 core 调用都会走这里选择的 runtime；Web 访问入口也会跟随它。",
-  "settingsRuntimeUseLocal": "使用本地 runtime",
-  "settingsRuntimeLocalTitle": "本地 runtime",
-  "settingsRuntimeLocalDescription": "使用当前设备内置的 core，不需要填写连接信息。",
-  "settingsRuntimeRemoteTitle": "远程 runtime",
-  "settingsRuntimeRemoteDescription": "管理已配对的远程 core，可从列表里切换到指定远程。",
-  "settingsRuntimeTesting": "正在测试 runtime…",
-  "settingsRuntimePairRemote": "配对新远程",
-  "settingsRuntimeNoPairedRemote": "还没有已配对的远程 core。",
-  "settingsRuntimePairToken": "配对 Token",
+  "settingsRuntimeConnection": "当前设备",
+  "settingsRuntimeConnectionDescription": "选择让聊天和工具运行在这台设备，还是运行在另一台已连接设备。",
+  "settingsRuntimeUseLocal": "使用这台设备",
+  "settingsRuntimeLocalTitle": "这台设备",
+  "settingsRuntimeLocalDescription": "聊天和工具会在这台设备上运行。",
+  "settingsRuntimeRemoteTitle": "已连接的设备",
+  "settingsRuntimeRemoteDescription": "这些设备已经完成连接，可以切换使用或移除。",
+  "settingsRuntimeTesting": "正在检查连接…",
+  "settingsRuntimePairRemote": "连接另一台设备",
+  "settingsRuntimeNoPairedRemote": "还没有已连接的设备。",
+  "settingsRuntimePairToken": "连接 Token",
   "settingsRuntimePairCode": "配对码",
-  "settingsRuntimeStartPairing": "开始配对",
-  "settingsRuntimeFinishPairing": "完成配对",
-  "settingsRuntimeBaseUrl": "远程地址",
-  "settingsRuntimeTestCurrent": "测试当前 runtime",
-  "settingsRuntimeSwitchedLocal": "已切换到本地 runtime。",
-  "settingsRuntimeSwitchedRemote": "已切换到远程 runtime。",
-  "settingsRuntimeTestResult": "Runtime 可用：{version}",
+  "settingsRuntimeStartPairing": "开始连接",
+  "settingsRuntimeFinishPairing": "完成连接",
+  "settingsRuntimeBaseUrl": "设备地址",
+  "settingsRuntimeTestCurrent": "检查连接",
+  "settingsRuntimeSwitchedLocal": "已切换到这台设备。",
+  "settingsRuntimeSwitchedRemote": "已切换到已连接设备。",
+  "settingsRuntimeTestResult": "设备可用：{version}",
   "@settingsRuntimeTestResult": {
     "placeholders": {
       "version": {
@@ -957,7 +957,7 @@
       }
     }
   },
-  "settingsRuntimeTestFailed": "Runtime 测试失败：{error}",
+  "settingsRuntimeTestFailed": "连接检查失败：{error}",
   "@settingsRuntimeTestFailed": {
     "placeholders": {
       "error": {
@@ -965,8 +965,8 @@
       }
     }
   },
-  "settingsRuntimeRemoteDisconnected": "远程 runtime 已断开",
-  "settingsRuntimeRemoteDisconnectedMessage": "已切换到本地 core。\n\n{error}",
+  "settingsRuntimeRemoteDisconnected": "已连接设备断开",
+  "settingsRuntimeRemoteDisconnectedMessage": "已切换到这台设备。\n\n{error}",
   "@settingsRuntimeRemoteDisconnectedMessage": {
     "placeholders": {
       "error": {
@@ -974,30 +974,94 @@
       }
     }
   },
-  "settingsWebAccessService": "Web 访问服务",
-  "settingsWebAccessServiceDescription": "开启后，当前客户端会在本机启动一个 HTTP 入口，浏览器可通过 Token 访问 core。",
-  "settingsWebAccessEnable": "开启 Web 访问",
-  "settingsWebAccessBindAddress": "绑定地址",
-  "settingsWebAccessToken": "访问 Token",
-  "settingsWebAccessRotateToken": "轮换 Token",
-  "settingsWebAccessCopyToken": "复制 Token",
-  "settingsWebAccessAccessUrl": "地址",
-  "settingsWebAccessLocalUrl": "本机访问",
-  "settingsWebAccessPairingUrl": "远程配对",
-  "settingsWebAccessPairingUrlLocalOnly": "仅本机",
+  "settingsRuntimePairingRejected": "有设备的连接请求被拒绝",
+  "settingsRuntimePairedChecking": "检测中",
+  "settingsRuntimePairedOnline": "在线",
+  "settingsRuntimePairedOffline": "离线",
+  "settingsRuntimeSync": "同步数据",
+  "settingsRuntimeSyncing": "同步中…",
+  "settingsRuntimeSyncCompleted": "同步完成：本机 {localApplied} 项，远端 {remoteApplied} 项。",
+  "@settingsRuntimeSyncCompleted": {
+    "placeholders": {
+      "localApplied": {
+        "type": "int"
+      },
+      "remoteApplied": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeSyncFailed": "同步失败：{error}",
+  "@settingsRuntimeSyncFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDiscoverDevices": "发现设备",
+  "settingsRuntimeDiscoverDevicesDescription": "扫描附近设备或手动输入地址来建立连接。",
+  "settingsRuntimeScan": "扫描",
+  "settingsRuntimeScanning": "扫描中…",
+  "settingsRuntimeEnterManually": "手动输入",
+  "settingsRuntimeConnect": "连接",
+  "settingsRuntimeEnableDiscovery": "允许其他设备发现这台设备",
+  "settingsRuntimeEnableDiscoveryDescription": "开启后，同网络下的设备能自动搜索到这台设备。",
+  "settingsRuntimeEnableDiscoveryFailed": "无法开启设备发现：{error}",
+  "@settingsRuntimeEnableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisableDiscoveryFailed": "无法关闭设备发现：{error}",
+  "@settingsRuntimeDisableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeUsingLocal": "正在使用：这台设备",
+  "settingsRuntimeUsingRemote": "正在使用：{device}",
+  "@settingsRuntimeUsingRemote": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeRemoteInUseDescription": "聊天和工具会在这台已连接设备上运行。",
+  "settingsWebAccessService": "允许访问",
+  "settingsWebAccessServiceDescription": "开启后，浏览器可以通过地址和口令访问这台设备。",
+  "settingsWebAccessEnable": "允许外部访问",
+  "settingsWebAccessPortMode": "端口模式",
+  "settingsWebAccessPortAutomatic": "自动",
+  "settingsWebAccessPortFixed": "固定",
+  "settingsWebAccessPortAutomaticDescription": "端口由系统自动选择，不需要手动配置。",
+  "settingsWebAccessPortFixedDescription": "只使用监听地址中填写的端口。",
+  "settingsWebAccessBindAddress": "监听地址",
+  "settingsWebAccessToken": "访问口令",
+  "settingsWebAccessRotateToken": "更换口令",
+  "settingsWebAccessCopyToken": "复制口令",
+  "settingsWebAccessAccessUrl": "访问地址",
+  "settingsWebAccessLocalUrl": "本机",
+  "settingsWebAccessPairingUrl": "配对地址",
+  "settingsWebAccessPairingUrlLocalOnly": "仅本机可用",
   "settingsWebAccessPairingUrlUnavailable": "未找到局域网地址",
   "settingsWebAccessCopyUrl": "复制地址",
-  "settingsWebAccessOpenUrl": "打开",
-  "settingsWebAccessRunning": "运行中",
-  "settingsWebAccessStopped": "未开启",
-  "settingsWebAccessSaved": "Web 访问设置已保存。",
-  "settingsWebAccessTokenCopied": "访问 Token 已复制。",
+  "settingsWebAccessOpenUrl": "打开地址",
+  "settingsWebAccessRunning": "已开启",
+  "settingsWebAccessStopped": "已关闭",
+  "settingsWebAccessSaved": "访问设置已保存。",
+  "settingsWebAccessTokenCopied": "访问口令已复制。",
   "settingsWebAccessUrlCopied": "访问地址已复制。",
-  "settingsWebAccessPairedClients": "已配对客户端",
-  "settingsWebAccessNoPairedClients": "还没有客户端配对此设备。",
-  "settingsWebAccessPairedDeleted": "已删除配对客户端。",
-  "settingsWebAccessPairingRequest": "远程配对请求",
-  "settingsWebAccessPairingRequestMessage": "配对码：{code}\n客户端：{client}",
+  "settingsWebAccessPairedClients": "已授权设备",
+  "settingsWebAccessNoPairedClients": "还没有设备被授权。",
+  "settingsWebAccessPairedDeleted": "已删除授权设备。",
+  "settingsWebAccessPairingRequest": "配对请求",
+  "settingsWebAccessPairingRequestMessage": "配对码：{code}\n设备：{client}",
   "@settingsWebAccessPairingRequestMessage": {
     "placeholders": {
       "code": {
@@ -1009,7 +1073,7 @@
     }
   },
   "settingsWebAccessInvalidBindAddress": "绑定地址格式应为 host:port。",
-  "settingsWebAccessStartFailed": "启动 Web 访问失败：{error}",
+  "settingsWebAccessStartFailed": "开启访问失败：{error}",
   "@settingsWebAccessStartFailed": {
     "placeholders": {
       "error": {
@@ -1017,7 +1081,7 @@
       }
     }
   },
-  "settingsWebAccessStopFailed": "关闭 Web 访问失败：{error}",
+  "settingsWebAccessStopFailed": "关闭访问失败：{error}",
   "@settingsWebAccessStopFailed": {
     "placeholders": {
       "error": {
@@ -1158,22 +1222,22 @@
   "settingsAppearanceLanguageSection": "语言",
   "settingsAppearanceLanguage": "当前语言",
   "settingsAppearanceLanguageDescription": "语言跟随应用启动时的本地化配置。",
-  "settingsDataRuntimeSection": "Runtime",
-  "settingsDataCoreVersion": "Core 版本",
-  "settingsDataTokenSection": "Token 统计",
-  "settingsDataInputTokens": "输入 Token",
-  "settingsDataOutputTokens": "输出 Token",
-  "settingsDataRefreshTokenStats": "刷新累计统计",
-  "settingsDataResetTokenStats": "重置 Token 统计",
-  "settingsDataBackupSection": "备份",
-  "settingsDataChatHistoriesBackup": "聊天记录备份",
-  "settingsDataChatHistoriesBackupDescription": "复制全部聊天和消息为 JSON；导入时会按聊天 ID 更新或新增。",
-  "settingsDataCharacterCardsBackup": "角色卡备份",
-  "settingsDataCharacterCardsBackupDescription": "复制全部角色卡和已引用标签为 JSON；导入时会按原 ID 更新或新增。",
-  "settingsDataCharacterGroupsBackup": "群组备份",
-  "settingsDataCharacterGroupsBackupDescription": "复制全部群组为 JSON；导入时会保留组内角色引用和顺序。",
-  "settingsDataModelConfigsBackup": "模型配置备份",
-  "settingsDataModelConfigsBackupDescription": "复制全部模型配置为 JSON；导入时会按配置 ID 更新或新增，包含模型参数和 API Key 池。",
+  "settingsDataRuntimeSection": "数据概览",
+  "settingsDataCoreVersion": "当前版本",
+  "settingsDataTokenSection": "使用统计",
+  "settingsDataInputTokens": "输入",
+  "settingsDataOutputTokens": "输出",
+  "settingsDataRefreshTokenStats": "刷新统计",
+  "settingsDataResetTokenStats": "重置统计",
+  "settingsDataBackupSection": "备份与恢复",
+  "settingsDataChatHistoriesBackup": "聊天数据",
+  "settingsDataChatHistoriesBackupDescription": "备份全部聊天和消息；恢复时按聊天 ID 更新或新增。",
+  "settingsDataCharacterCardsBackup": "角色卡数据",
+  "settingsDataCharacterCardsBackupDescription": "备份全部角色卡和已引用标签；恢复时按原 ID 更新或新增。",
+  "settingsDataCharacterGroupsBackup": "群组数据",
+  "settingsDataCharacterGroupsBackupDescription": "备份全部群组；恢复时保留组内角色引用和顺序。",
+  "settingsDataModelConfigsBackup": "模型配置",
+  "settingsDataModelConfigsBackupDescription": "备份全部模型配置，包含模型参数和 API Key 池。",
   "settingsDataBackupCount": "当前 {count} 项",
   "@settingsDataBackupCount": {
     "placeholders": {
@@ -1182,10 +1246,10 @@
       }
     }
   },
-  "settingsDataCopyBackupJson": "复制备份 JSON",
-  "settingsDataImportBackupJson": "导入备份 JSON",
-  "settingsDataBackupJsonInput": "备份 JSON 内容",
-  "settingsDataBackupCopied": "已复制“{name}”备份 JSON。",
+  "settingsDataCopyBackupJson": "复制备份",
+  "settingsDataImportBackupJson": "恢复数据",
+  "settingsDataBackupJsonInput": "恢复内容",
+  "settingsDataBackupCopied": "已复制“{name}”备份。",
   "@settingsDataBackupCopied": {
     "placeholders": {
       "name": {
@@ -1193,7 +1257,7 @@
       }
     }
   },
-  "settingsDataBackupImportResult": "导入完成：新增 {newCount}，更新 {updatedCount}，跳过 {skippedCount}。",
+  "settingsDataBackupImportResult": "恢复完成：新增 {newCount}，更新 {updatedCount}，跳过 {skippedCount}。",
   "@settingsDataBackupImportResult": {
     "placeholders": {
       "newCount": {
@@ -1207,7 +1271,7 @@
       }
     }
   },
-  "settingsDataBackupImportError": "导入备份失败：{error}",
+  "settingsDataBackupImportError": "恢复失败：{error}",
   "@settingsDataBackupImportError": {
     "placeholders": {
       "error": {
@@ -1215,7 +1279,7 @@
       }
     }
   },
-  "settingsDataBackupCopyError": "复制备份失败：{error}",
+  "settingsDataBackupCopyError": "复制失败：{error}",
   "@settingsDataBackupCopyError": {
     "placeholders": {
       "error": {
@@ -1223,14 +1287,54 @@
       }
     }
   },
-  "settingsDataExportRawSnapshot": "导出原始快照",
-  "settingsDataExportRawSnapshotDescription": "从 runtime 生成当前数据快照并显示字节数。",
-  "settingsDataSnapshotBytes": "已生成快照：{bytes} 字节",
+  "settingsDataSnapshotBackupTitle": "完整快照",
+  "settingsDataExportRawSnapshot": "导出快照",
+  "settingsDataImportRawSnapshot": "恢复快照",
+  "settingsDataExportRawSnapshotDescription": "把聊天、角色、模型设置和本地文件打包成一个备份文件。恢复时会用备份里的数据覆盖当前数据。",
+  "settingsDataSnapshotBytes": "快照大小：{bytes} 字节",
   "@settingsDataSnapshotBytes": {
     "placeholders": {
       "bytes": {
         "type": "int"
       }
     }
-  }
+  },
+  "settingsDataSnapshotImported": "快照恢复完成。",
+  "settingsDataSnapshotExportError": "快照导出失败：{error}",
+  "@settingsDataSnapshotExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotImportError": "快照恢复失败：{error}",
+  "@settingsDataSnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmTitle": "恢复完整快照",
+  "settingsDataSnapshotRestoreConfirmMessage": "恢复会替换当前 runtime 数据。\n格式版本：{formatVersion}\n文件数量：{fileCount}\n创建时间：{createdAt}\n快照大小：{bytes} 字节",
+  "@settingsDataSnapshotRestoreConfirmMessage": {
+    "placeholders": {
+      "formatVersion": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "createdAt": {
+        "type": "String"
+      },
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmAction": "确认恢复",
+  "settingsDataAdvancedBackupOptions": "高级选项",
+  "settingsDataAdvancedBackupOptionsDescription": "单项 JSON 导出与恢复"
 }

@@ -6,7 +6,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/logging/ClientLogger.dart';
 import 'core/runtime/RuntimeConnectionManager.dart';
-import 'core/web_access/FlutterWebAccessServer.dart';
+import 'core/link_host/LinkHostServer.dart';
 import 'ui/main/OperitApp.dart';
 
 void main() async {
@@ -18,7 +18,7 @@ void main() async {
       await RuntimeConnectionManager.instance.initialize();
       String? startupWebAccessError;
       try {
-        await FlutterWebAccessServer.instance.initializeFromConfig();
+        await LinkHostServer.instance.initializeFromConfig();
       } catch (error, stackTrace) {
         startupWebAccessError = error.toString();
         ClientLogger.e(

@@ -5,7 +5,6 @@ use crate::core::tools::defaultTool::standard::StandardHttpTools::StandardHttpTo
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::StandardSystemOperationTools;
 use crate::core::tools::defaultTool::standard::StandardTerminalTools::StandardTerminalTools;
 use crate::core::tools::defaultTool::standard::StandardWebVisitTool::StandardWebVisitTool;
-use crate::data::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 pub struct ToolGetter;
@@ -18,10 +17,6 @@ impl ToolGetter {
         context.fileSystemHost.clone().and_then(|fileSystemHost| {
             let runtimeStoreRoot = context.runtimeStorageHost.as_ref()?.rootDir()?;
             let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
-            let chatDao =
-                AppDatabase::getDatabase(RuntimeStorePaths::new(runtimeStoreRoot.clone()))
-                    .expect("AppDatabase must initialize for StandardFileSystemTools")
-                    .chatDao();
             Some(StandardFileSystemTools::new(
                 fileSystemHost,
                 context
@@ -32,7 +27,6 @@ impl ToolGetter {
                 runtimeStoreRoot,
                 context.appFilesRoot.clone(),
                 runtimeStorePaths.workspace_dir(),
-                chatDao,
             ))
         })
     }
