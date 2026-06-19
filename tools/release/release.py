@@ -27,7 +27,7 @@ ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
 CLI_MANIFEST = REPO_ROOT / "apps" / "cli" / "Cargo.toml"
 RUNTIME_MANIFEST = REPO_ROOT / "core" / "crates" / "operit-runtime" / "Cargo.toml"
-DEFAULT_GITHUB_ENV = REPO_ROOT.parent / "assistance" / "tools" / "github" / ".env"
+DEFAULT_GITHUB_ENV = SECRETS_DIR / "github.env"
 DEFAULT_RELEASE_REPO = "AAswordman/Operit2"
 SEMVER_RE = re.compile(
     r"(0|[1-9][0-9]*)\."
@@ -664,6 +664,22 @@ def publish_release(tag, repo_value, draft, prerelease, auth):
         upload_release_asset(upload_url, asset, auth)
 
 
+def verify_github_publish_access(repo_value, auth):
+    repo = parse_github_repo(repo_value)
+    try:
+        github_request(
+            "GET",
+            github_api_url(auth, repo, ""),
+            auth,
+            expected_statuses=(200,),
+        )
+    except RuntimeError as error:
+        raise RuntimeError(
+            "GitHub publish preflight failed. Check GITHUB_TOKEN and repository access for "
+            f"{repo.owner}/{repo.name}: {error}"
+        ) from error
+
+
 def delete_existing_release_asset(asset_name, existing_assets, auth, repo):
     for existing_asset in existing_assets:
         if existing_asset.get("name") != asset_name:
@@ -740,6 +756,12 @@ def main():
         raise RuntimeError("--prerelease was set for a stable release version")
     products = products_for_scope(args.scope, args.products)
 
+    publish_auth = None
+    if not args.build_only:
+        load_env_file(Path(args.github_env))
+        publish_auth = github_auth()
+        verify_github_publish_access(args.repo, publish_auth)
+
     reset_dir(DIST_DIR)
     reset_dir(WORK_DIR)
 
@@ -774,8 +796,7 @@ def main():
         print(f" - {asset.name}")
 
     if not args.build_only:
-        load_env_file(Path(args.github_env))
-        publish_release(tag, args.repo, args.draft, version.is_prerelease, github_auth())
+        publish_release(tag, args.repo, args.draft, version.is_prerelease, publish_auth)
 
 
 if __name__ == "__main__":

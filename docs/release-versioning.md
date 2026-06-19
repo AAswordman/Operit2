@@ -129,6 +129,14 @@ The release script is:
 tools/release/release.py
 ```
 
+GitHub publish credentials live in:
+
+```text
+tools/release/secrets/github.env
+```
+
+That directory is ignored by git.
+
 Default publish command on Windows:
 
 ```powershell

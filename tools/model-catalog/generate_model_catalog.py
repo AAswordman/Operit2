@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import ssl
 import sys
 import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+
+import certifi
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -15,7 +18,6 @@ TARGET = REPO_ROOT / "core" / "crates" / "operit-runtime" / "src" / "data" / "co
 
 USER_AGENT = "operit-model-catalog-generator/1.0"
 MODELS_DEV_URL = "https://models.dev/api.json"
-OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ PROVIDERS = [
     SourceProvider(
         "OPENROUTER",
         "openrouter",
-        "openrouter",
+        "models.dev",
     ),
     SourceProvider(
         "SILICONFLOW",
@@ -65,8 +67,9 @@ PROVIDERS = [
 
 
 def fetch_json(url: str) -> Any:
+    ctx = ssl.create_default_context(cafile=certifi.where())
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=60, context=ctx) as response:
         return json.load(response)
 
 
@@ -118,10 +121,6 @@ def format_decimal(value: Decimal) -> str:
     if text == "-0":
         text = "0"
     return text
-
-
-def per_token_to_per_million(value: Decimal) -> Decimal:
-    return value * Decimal("1000000")
 
 
 def tokens_to_k(value: Decimal) -> Decimal:
@@ -229,53 +228,12 @@ def collect_models_dev(provider: SourceProvider, data: dict[str, Any]) -> list[s
     return rows
 
 
-def collect_openrouter(provider: SourceProvider, data: dict[str, Any]) -> list[str]:
-    models = required_list(data.get("data"), "openrouter.data")
-    rows: list[str] = []
-    for index, model_value in enumerate(models):
-        model = required_object(model_value, f"openrouter.data[{index}]")
-        architecture = required_object(model.get("architecture"), f"openrouter.data[{index}].architecture")
-        input_modalities = required_list(architecture.get("input_modalities"), f"openrouter.data[{index}].architecture.input_modalities")
-        output_modalities = required_list(architecture.get("output_modalities"), f"openrouter.data[{index}].architecture.output_modalities")
-        if not has_text_output(output_modalities, f"openrouter.data[{index}].architecture.output_modalities"):
-            continue
-
-        pricing = required_object(model.get("pricing"), f"openrouter.data[{index}].pricing")
-        supported_parameters = required_list(model.get("supported_parameters"), f"openrouter.data[{index}].supported_parameters")
-        parameters = [
-            required_string(item, f"openrouter.data[{index}].supported_parameters[{parameter_index}]")
-            for parameter_index, item in enumerate(supported_parameters)
-        ]
-        image, audio, video = modality_flags(input_modalities, f"openrouter.data[{index}].architecture.input_modalities")
-        cache_read = optional_number(pricing.get("input_cache_read"), f"openrouter.data[{index}].pricing.input_cache_read")
-        rows.append(
-            model_row(
-                provider.provider_type_id,
-                required_string(model.get("id"), f"openrouter.data[{index}].id"),
-                per_token_to_per_million(required_number(pricing.get("prompt"), f"openrouter.data[{index}].pricing.prompt")),
-                per_token_to_per_million(cache_read) if cache_read is not None else None,
-                per_token_to_per_million(required_number(pricing.get("completion"), f"openrouter.data[{index}].pricing.completion")),
-                "USD",
-                required_number(model.get("context_length"), f"openrouter.data[{index}].context_length"),
-                image,
-                audio,
-                video,
-                "tools" in parameters,
-            )
-        )
-    rows.sort(key=str.lower)
-    return rows
-
-
 def generate_rows() -> list[str]:
     models_dev = required_object(fetch_json(MODELS_DEV_URL), "models.dev")
-    openrouter = required_object(fetch_json(OPENROUTER_MODELS_URL), "openrouter")
     model_rows: list[str] = []
     for provider in PROVIDERS:
         if provider.source == "models.dev":
             rows = collect_models_dev(provider, models_dev)
-        elif provider.source == "openrouter":
-            rows = collect_openrouter(provider, openrouter)
         else:
             raise ValueError(f"unknown source: {provider.source}")
         if len(rows) == 0:
