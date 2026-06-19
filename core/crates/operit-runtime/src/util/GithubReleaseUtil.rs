@@ -17,6 +17,7 @@ use reqwest::blocking::Client;
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, RANGE, USER_AGENT};
 use serde::Deserialize;
+use std::cmp::Ordering as CmpOrdering;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
@@ -74,12 +75,29 @@ pub enum FullUpdateStage {
     Ready,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedVersion {
-    major: i32,
-    minor: i32,
-    patch: i32,
-    patchIndex: i32,
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: PreRelease,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreRelease {
+    identifiers: Vec<PreReleaseIdentifier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PreReleaseIdentifier {
+    Numeric(u64),
+    Text(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullUpdateChannel {
+    Stable,
+    Preview,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -87,6 +105,8 @@ struct GitHubRelease {
     tag_name: String,
     body: Option<String>,
     html_url: String,
+    draft: bool,
+    prerelease: bool,
     assets: Vec<GitHubReleaseAsset>,
 }
 
@@ -102,9 +122,15 @@ impl GithubReleaseUtil {
         currentVersion: &str,
         target: FullUpdateTarget,
     ) -> Result<FullUpdateStatus, String> {
-        let releaseInfo =
-            Self::fetchLatestReleaseInfo(GITHUB_RELEASE_OWNER, GITHUB_RELEASE_REPO, target).await?;
-        if Self::compareVersions(&releaseInfo.version, currentVersion) > 0 {
+        let current = parseVersion(currentVersion)?;
+        let channel = channelForCurrentVersion(&current);
+        let Some(releaseInfo) =
+            Self::findLatestReleaseInfo(GITHUB_RELEASE_OWNER, GITHUB_RELEASE_REPO, target, channel)
+                .await?
+        else {
+            return Ok(FullUpdateStatus::UpToDate);
+        };
+        if Self::compareVersions(&releaseInfo.version, currentVersion)? > 0 {
             Ok(FullUpdateStatus::Available(releaseInfo))
         } else {
             Ok(FullUpdateStatus::UpToDate)
@@ -115,12 +141,18 @@ impl GithubReleaseUtil {
         currentVersion: &str,
         target: FullUpdateTarget,
     ) -> Result<FullUpdateStatus, String> {
-        let releaseInfo = Self::fetchLatestReleaseInfoBlocking(
+        let current = parseVersion(currentVersion)?;
+        let channel = channelForCurrentVersion(&current);
+        let Some(releaseInfo) = Self::findLatestReleaseInfoBlocking(
             GITHUB_RELEASE_OWNER,
             GITHUB_RELEASE_REPO,
             target,
-        )?;
-        if Self::compareVersions(&releaseInfo.version, currentVersion) > 0 {
+            channel,
+        )?
+        else {
+            return Ok(FullUpdateStatus::UpToDate);
+        };
+        if Self::compareVersions(&releaseInfo.version, currentVersion)? > 0 {
             Ok(FullUpdateStatus::Available(releaseInfo))
         } else {
             Ok(FullUpdateStatus::UpToDate)
@@ -131,12 +163,32 @@ impl GithubReleaseUtil {
         repoOwner: &str,
         repoName: &str,
         target: FullUpdateTarget,
+        channel: FullUpdateChannel,
     ) -> Result<ReleaseInfo, String> {
+        let targetAssetName = target.assetName()?;
+        match Self::findLatestReleaseInfo(repoOwner, repoName, target, channel).await? {
+            Some(releaseInfo) => Ok(releaseInfo),
+            None => Err(missingTargetAssetMessage(
+                repoOwner,
+                repoName,
+                channel,
+                &targetAssetName,
+            )),
+        }
+    }
+
+    async fn findLatestReleaseInfo(
+        repoOwner: &str,
+        repoName: &str,
+        target: FullUpdateTarget,
+        channel: FullUpdateChannel,
+    ) -> Result<Option<ReleaseInfo>, String> {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = repoOwner;
             let _ = repoName;
             let _ = target;
+            let _ = channel;
             return Err("full update release query is not available in wasm runtime".to_string());
         }
 
@@ -145,7 +197,7 @@ impl GithubReleaseUtil {
             let owner = repoOwner.to_string();
             let repo = repoName.to_string();
             tokio::task::spawn_blocking(move || {
-                Self::fetchLatestReleaseInfoBlocking(&owner, &repo, target)
+                Self::findLatestReleaseInfoBlocking(&owner, &repo, target, channel)
             })
             .await
             .map_err(|error| error.to_string())?
@@ -187,31 +239,43 @@ impl GithubReleaseUtil {
         }
     }
 
-    pub fn compareVersions(v1: &str, v2: &str) -> i32 {
-        let p1 = parseVersion(v1);
-        let p2 = parseVersion(v2);
-        if p1.major != p2.major {
-            return p1.major.cmp(&p2.major) as i32;
-        }
-        if p1.minor != p2.minor {
-            return p1.minor.cmp(&p2.minor) as i32;
-        }
-        if p1.patch != p2.patch {
-            return p1.patch.cmp(&p2.patch) as i32;
-        }
-        p1.patchIndex.cmp(&p2.patchIndex) as i32
+    pub fn compareVersions(v1: &str, v2: &str) -> Result<i32, String> {
+        Ok(orderToI32(compareParsedVersions(
+            &parseVersion(v1)?,
+            &parseVersion(v2)?,
+        )))
     }
 
     pub fn fetchLatestReleaseInfoBlocking(
         repoOwner: &str,
         repoName: &str,
         target: FullUpdateTarget,
+        channel: FullUpdateChannel,
     ) -> Result<ReleaseInfo, String> {
+        let targetAssetName = target.assetName()?;
+        match Self::findLatestReleaseInfoBlocking(repoOwner, repoName, target, channel)? {
+            Some(releaseInfo) => Ok(releaseInfo),
+            None => Err(missingTargetAssetMessage(
+                repoOwner,
+                repoName,
+                channel,
+                &targetAssetName,
+            )),
+        }
+    }
+
+    fn findLatestReleaseInfoBlocking(
+        repoOwner: &str,
+        repoName: &str,
+        target: FullUpdateTarget,
+        channel: FullUpdateChannel,
+    ) -> Result<Option<ReleaseInfo>, String> {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = repoOwner;
             let _ = repoName;
             let _ = target;
+            let _ = channel;
             return Err("full update release query is not available in wasm runtime".to_string());
         }
 
@@ -219,7 +283,7 @@ impl GithubReleaseUtil {
         {
             let targetAssetName = target.assetName()?;
             let url = format!(
-                "{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=1"
+                "{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=30"
             );
             let client = Client::builder()
                 .connect_timeout(Duration::from_secs(30))
@@ -246,27 +310,7 @@ impl GithubReleaseUtil {
             let releases = response
                 .json::<Vec<GitHubRelease>>()
                 .map_err(|error| error.to_string())?;
-            let latestRelease = releases
-                .into_iter()
-                .next()
-                .ok_or_else(|| format!("No releases found for {repoOwner}/{repoName}"))?;
-            let packageAsset = latestRelease
-                .assets
-                .iter()
-                .find(|asset| asset.name == targetAssetName)
-                .ok_or_else(|| {
-                    format!(
-                        "Release {} is missing asset {}",
-                        latestRelease.tag_name, targetAssetName
-                    )
-                })?;
-            Ok(ReleaseInfo {
-                version: latestRelease.tag_name.trim_start_matches('v').to_string(),
-                assetName: packageAsset.name.clone(),
-                downloadUrl: packageAsset.browser_download_url.clone(),
-                releaseNotes: latestRelease.body.unwrap_or_default(),
-                releasePageUrl: latestRelease.html_url,
-            })
+            selectLatestReleaseInfo(releases, &targetAssetName, channel)
         }
     }
 
@@ -408,32 +452,271 @@ fn validatePackageFileName(name: &str) -> Result<(), String> {
 }
 
 #[allow(non_snake_case)]
-fn parseVersion(v: &str) -> ParsedVersion {
+fn parseVersion(v: &str) -> Result<ParsedVersion, String> {
     let s = v.trim().trim_start_matches('v');
-    let plusIdx = s.find('+');
-    let base = match plusIdx {
-        Some(index) => &s[..index],
-        None => s,
+    if s.is_empty() {
+        return Err("Version is empty".to_string());
+    }
+    let (without_build, build) = splitOnceOptional(s, '+')?;
+    if let Some(build) = build {
+        validateBuildMetadata(build)?;
+    }
+    let (core, prerelease) = splitOnceOptional(without_build, '-')?;
+    let coreParts = core.split('.').collect::<Vec<_>>();
+    if coreParts.len() != 3 {
+        return Err(format!("Version must use major.minor.patch: {v}"));
+    }
+    Ok(ParsedVersion {
+        major: parseNumericIdentifier(coreParts[0], "major")?,
+        minor: parseNumericIdentifier(coreParts[1], "minor")?,
+        patch: parseNumericIdentifier(coreParts[2], "patch")?,
+        prerelease: parsePreRelease(prerelease)?,
+    })
+}
+
+#[allow(non_snake_case)]
+fn splitOnceOptional(value: &str, separator: char) -> Result<(&str, Option<&str>), String> {
+    let mut parts = value.split(separator);
+    let first = parts
+        .next()
+        .ok_or_else(|| "Version parser received an empty segment".to_string())?;
+    let second = parts.next();
+    if parts.next().is_some() {
+        return Err(format!(
+            "Version contains more than one '{separator}' separator: {value}"
+        ));
+    }
+    Ok((first, second))
+}
+
+#[allow(non_snake_case)]
+fn parseNumericIdentifier(value: &str, name: &str) -> Result<u64, String> {
+    if value.is_empty() {
+        return Err(format!("Version {name} number is empty"));
+    }
+    if value.len() > 1 && value.starts_with('0') {
+        return Err(format!("Version {name} number has a leading zero: {value}"));
+    }
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("Version {name} number is not numeric: {value}"));
+    }
+    value
+        .parse::<u64>()
+        .map_err(|error| format!("Version {name} number is invalid: {error}"))
+}
+
+#[allow(non_snake_case)]
+fn parsePreRelease(value: Option<&str>) -> Result<PreRelease, String> {
+    let Some(value) = value else {
+        return Ok(PreRelease {
+            identifiers: Vec::new(),
+        });
     };
-    let patchIndex = match plusIdx {
-        Some(index) => s[index + 1..].parse::<i32>().ok().unwrap_or(0),
-        None => 0,
-    };
-    let parts = base.split('.').collect::<Vec<_>>();
-    ParsedVersion {
-        major: parts
-            .get(0)
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(0),
-        minor: parts
-            .get(1)
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(0),
-        patch: parts
-            .get(2)
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(0),
-        patchIndex,
+    if value.is_empty() {
+        return Err("Version prerelease segment is empty".to_string());
+    }
+    let mut identifiers = Vec::new();
+    for item in value.split('.') {
+        if item.is_empty() {
+            return Err(format!("Version prerelease identifier is empty: {value}"));
+        }
+        if !item
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return Err(format!(
+                "Version prerelease identifier contains invalid characters: {item}"
+            ));
+        }
+        if item.bytes().all(|byte| byte.is_ascii_digit()) {
+            identifiers.push(PreReleaseIdentifier::Numeric(parseNumericIdentifier(
+                item,
+                "prerelease",
+            )?));
+        } else {
+            identifiers.push(PreReleaseIdentifier::Text(item.to_string()));
+        }
+    }
+    Ok(PreRelease { identifiers })
+}
+
+#[allow(non_snake_case)]
+fn validateBuildMetadata(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err("Version build metadata is empty".to_string());
+    }
+    for item in value.split('.') {
+        if item.is_empty() {
+            return Err(format!("Version build metadata identifier is empty: {value}"));
+        }
+        if !item
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return Err(format!(
+                "Version build metadata identifier contains invalid characters: {item}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
+fn compareParsedVersions(left: &ParsedVersion, right: &ParsedVersion) -> CmpOrdering {
+    left.major
+        .cmp(&right.major)
+        .then_with(|| left.minor.cmp(&right.minor))
+        .then_with(|| left.patch.cmp(&right.patch))
+        .then_with(|| comparePreRelease(&left.prerelease, &right.prerelease))
+}
+
+#[allow(non_snake_case)]
+fn comparePreRelease(left: &PreRelease, right: &PreRelease) -> CmpOrdering {
+    if left.identifiers.is_empty() && right.identifiers.is_empty() {
+        return CmpOrdering::Equal;
+    }
+    if left.identifiers.is_empty() {
+        return CmpOrdering::Greater;
+    }
+    if right.identifiers.is_empty() {
+        return CmpOrdering::Less;
+    }
+    let pairCount = left.identifiers.len().min(right.identifiers.len());
+    for index in 0..pairCount {
+        let order = comparePreReleaseIdentifier(&left.identifiers[index], &right.identifiers[index]);
+        if order != CmpOrdering::Equal {
+            return order;
+        }
+    }
+    left.identifiers.len().cmp(&right.identifiers.len())
+}
+
+#[allow(non_snake_case)]
+fn comparePreReleaseIdentifier(
+    left: &PreReleaseIdentifier,
+    right: &PreReleaseIdentifier,
+) -> CmpOrdering {
+    match (left, right) {
+        (PreReleaseIdentifier::Numeric(left), PreReleaseIdentifier::Numeric(right)) => {
+            left.cmp(right)
+        }
+        (PreReleaseIdentifier::Numeric(_), PreReleaseIdentifier::Text(_)) => CmpOrdering::Less,
+        (PreReleaseIdentifier::Text(_), PreReleaseIdentifier::Numeric(_)) => CmpOrdering::Greater,
+        (PreReleaseIdentifier::Text(left), PreReleaseIdentifier::Text(right)) => left.cmp(right),
+    }
+}
+
+#[allow(non_snake_case)]
+fn orderToI32(order: CmpOrdering) -> i32 {
+    match order {
+        CmpOrdering::Less => -1,
+        CmpOrdering::Equal => 0,
+        CmpOrdering::Greater => 1,
+    }
+}
+
+#[allow(non_snake_case)]
+fn channelForCurrentVersion(version: &ParsedVersion) -> FullUpdateChannel {
+    if version.prerelease.identifiers.is_empty() {
+        FullUpdateChannel::Stable
+    } else {
+        FullUpdateChannel::Preview
+    }
+}
+
+#[allow(non_snake_case)]
+fn channelForReleaseVersion(version: &ParsedVersion) -> FullUpdateChannel {
+    channelForCurrentVersion(version)
+}
+
+#[allow(non_snake_case)]
+fn channelAccepts(current: FullUpdateChannel, release: FullUpdateChannel) -> bool {
+    match current {
+        FullUpdateChannel::Stable => release == FullUpdateChannel::Stable,
+        FullUpdateChannel::Preview => true,
+    }
+}
+
+#[allow(non_snake_case)]
+fn validateReleaseChannelMarker(
+    release: &GitHubRelease,
+    parsed: &ParsedVersion,
+) -> Result<(), String> {
+    let isPrereleaseVersion = !parsed.prerelease.identifiers.is_empty();
+    if isPrereleaseVersion && !release.prerelease {
+        return Err(format!(
+            "Release {} has a prerelease tag but is not marked prerelease on GitHub",
+            release.tag_name
+        ));
+    }
+    if !isPrereleaseVersion && release.prerelease {
+        return Err(format!(
+            "Release {} has a stable tag but is marked prerelease on GitHub",
+            release.tag_name
+        ));
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
+fn selectLatestReleaseInfo(
+    releases: Vec<GitHubRelease>,
+    targetAssetName: &str,
+    channel: FullUpdateChannel,
+) -> Result<Option<ReleaseInfo>, String> {
+    let mut selected: Option<(ParsedVersion, GitHubRelease, GitHubReleaseAsset)> = None;
+    for release in releases {
+        if release.draft {
+            continue;
+        }
+        let Some(packageAsset) = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == targetAssetName)
+            .cloned()
+        else {
+            continue;
+        };
+        let parsed = parseVersion(&release.tag_name)?;
+        validateReleaseChannelMarker(&release, &parsed)?;
+        if !channelAccepts(channel, channelForReleaseVersion(&parsed)) {
+            continue;
+        }
+        let replace = match selected.as_ref() {
+            Some((selectedVersion, _, _)) => {
+                compareParsedVersions(&parsed, selectedVersion) == CmpOrdering::Greater
+            }
+            None => true,
+        };
+        if replace {
+            selected = Some((parsed, release, packageAsset));
+        }
+    }
+    Ok(selected.map(|(_, latestRelease, packageAsset)| ReleaseInfo {
+        version: latestRelease.tag_name.trim_start_matches('v').to_string(),
+        assetName: packageAsset.name.clone(),
+        downloadUrl: packageAsset.browser_download_url.clone(),
+        releaseNotes: latestRelease.body.unwrap_or_default(),
+        releasePageUrl: latestRelease.html_url,
+    }))
+}
+
+#[allow(non_snake_case)]
+fn missingTargetAssetMessage(
+    repoOwner: &str,
+    repoName: &str,
+    channel: FullUpdateChannel,
+    targetAssetName: &str,
+) -> String {
+    format!("No {channel} release found for {repoOwner}/{repoName} asset {targetAssetName}")
+}
+
+impl std::fmt::Display for FullUpdateChannel {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FullUpdateChannel::Stable => formatter.write_str("stable"),
+            FullUpdateChannel::Preview => formatter.write_str("preview"),
+        }
     }
 }
 
@@ -658,7 +941,10 @@ fn blockingDownloadClient() -> Result<Client, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FullUpdateTarget, GithubReleaseUtil};
+    use super::{
+        selectLatestReleaseInfo, FullUpdateChannel, FullUpdateTarget, GitHubRelease,
+        GitHubReleaseAsset, GithubReleaseUtil,
+    };
 
     #[test]
     fn builds_cli_asset_names_from_release_spec() {
@@ -697,9 +983,84 @@ mod tests {
     }
 
     #[test]
+    fn selects_release_by_exact_target_asset() {
+        let releases = vec![GitHubRelease {
+            tag_name: "v2.0.0-preview.1".to_string(),
+            body: Some("CLI preview".to_string()),
+            html_url: "https://github.com/AAswordman/Operit2/releases/tag/v2.0.0-preview.1"
+                .to_string(),
+            draft: false,
+            prerelease: true,
+            assets: vec![GitHubReleaseAsset {
+                name: "operit2-cli-windows-x86_64.zip".to_string(),
+                browser_download_url:
+                    "https://github.com/AAswordman/Operit2/releases/download/v2.0.0-preview.1/operit2-cli-windows-x86_64.zip"
+                        .to_string(),
+            }],
+        }];
+
+        let cli = selectLatestReleaseInfo(
+            releases.clone(),
+            "operit2-cli-windows-x86_64.zip",
+            FullUpdateChannel::Preview,
+        )
+        .unwrap();
+        assert_eq!(cli.unwrap().version, "2.0.0-preview.1");
+
+        let app = selectLatestReleaseInfo(
+            releases,
+            "operit2-app-windows-x86_64.zip",
+            FullUpdateChannel::Preview,
+        )
+        .unwrap();
+        assert!(app.is_none());
+    }
+
+    #[test]
     fn compares_release_tags_with_build_number() {
-        assert!(GithubReleaseUtil::compareVersions("v1.0.0+2", "1.0.0+1") > 0);
-        assert!(GithubReleaseUtil::compareVersions("v1.0.1+1", "1.0.0+99") > 0);
-        assert_eq!(GithubReleaseUtil::compareVersions("v1.0.0+1", "1.0.0+1"), 0);
+        assert_eq!(
+            GithubReleaseUtil::compareVersions(
+                "v2.0.0+20260619.shaabcdef",
+                "2.0.0+20260618.sha123456"
+            )
+            .unwrap(),
+            0
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions("v2.0.1-dev.1", "2.0.0")
+                .unwrap()
+                > 0
+        );
+    }
+
+    #[test]
+    fn compares_release_tags_with_prerelease_order() {
+        assert!(
+            GithubReleaseUtil::compareVersions("v2.0.0-preview.2", "2.0.0-preview.1")
+                .unwrap()
+                > 0
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions("v2.0.0-rc.1", "2.0.0-preview.9")
+                .unwrap()
+                > 0
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions("v2.0.0", "2.0.0-rc.9")
+                .unwrap()
+                > 0
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions("v2.0.0-dev.20260619", "2.0.0-preview.1")
+                .unwrap()
+                < 0
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_release_tags() {
+        assert!(GithubReleaseUtil::compareVersions("2.0", "2.0.0").is_err());
+        assert!(GithubReleaseUtil::compareVersions("2.0.0-preview..1", "2.0.0").is_err());
+        assert!(GithubReleaseUtil::compareVersions("2.0.0+build+extra", "2.0.0").is_err());
     }
 }

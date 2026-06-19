@@ -23,6 +23,24 @@
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
+        },
+        {
+            "name": "Python: 当前文件 (.venv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+        },
+        {
+            "name": "Operit2: 交互发布 (.venv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}\\tools\\release\\release_interactive.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
         }
     ]
 }

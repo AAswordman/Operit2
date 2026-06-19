@@ -139,7 +139,7 @@ apps/cli/Cargo.toml 是 CLI 产品入口
 apps/flutter/app/pubspec.yaml 是 Flutter App 产品入口
 hosts/* 是平台能力实现
 plugins/* 是 ToolPkg 开发与打包区域
-tools/release/RELEASE_SPEC.md 是发布产物规范
+docs/release-versioning.md 是发布版本与产物规范
 ```
 
 ## 3. Rust Core Workspace
@@ -1771,7 +1771,7 @@ WakeWordPreferences
 规范：
 
 ```text
-tools/release/RELEASE_SPEC.md
+docs/release-versioning.md
 ```
 
 脚本：
@@ -1783,7 +1783,7 @@ tools/release/release.py
 Tag：
 
 ```text
-v{major}.{minor}.{patch}+{build}
+v{major}.{minor}.{patch}[-prerelease][+build]
 ```
 
 Asset：
@@ -1985,7 +1985,7 @@ Flutter bridge
   core/crates/operit-runtime/assets/workspace_templates/*
 
 发布
-  tools/release/RELEASE_SPEC.md
+  docs/release-versioning.md
   tools/release/release.py
 ```
 
@@ -2005,7 +2005,7 @@ ToolRegistration 注册公开工具、内部工具、包工具、MCP 工具
 ToolExecutionManager 完成 XML 解析、权限检查、执行、结果格式化
 PackageManager 连接内置插件、安装包、ToolPkg bridge
 WorkspaceShell 连接 UI panel 与 WorkspaceService
-Release asset 命名符合 RELEASE_SPEC
+Release asset 命名符合 docs/release-versioning.md
 Android runtime assets 和 JNI libs 按 ABI 放置
 Rust runtime 文件持续对齐 Kotlin Operit 原实现
 ```

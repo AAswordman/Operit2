@@ -122,6 +122,15 @@ operit2 cli mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--appr
 
 ## 市场与更新
 
+发布版本、GitHub tag、更新通道和包文件名规范见 [docs/release-versioning.md](docs/release-versioning.md)。
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release_interactive.py
+.\.venv\Scripts\python.exe tools\release\release.py
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\release.py --scope app
+```
+
 ```powershell
 operit2 cli market stats <skill|mcp|package|script>
 operit2 cli market rank <skill|mcp|package|script> [updated|downloads|likes] [page]

@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "operit-cli"
-version = "0.1.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "arboard",
  "async-trait",
@@ -1952,7 +1952,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0"
+version = "2.0.0-preview.1"
 dependencies = [
  "aes",
  "async-trait",
