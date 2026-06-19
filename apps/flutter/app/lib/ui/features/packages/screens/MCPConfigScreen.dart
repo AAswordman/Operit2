@@ -10,6 +10,7 @@ import '../components/EmptyState.dart';
 import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 import '../dialogs/MCPDetailsDialog.dart';
+import '../utils/MCPCommandRunner.dart';
 
 class MCPConfigScreen extends StatefulWidget {
   const MCPConfigScreen({
@@ -92,6 +93,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
   Future<void> _setServerEnabled(String serverId, bool enabled) async {
     final current = _servers[serverId];
     final previous = current != null && !current.disabled;
+    var saved = false;
     if (current != null) {
       setState(() {
         _servers = <String, core_proxy.ServerConfig>{
@@ -111,12 +113,24 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     }
     try {
       await _localServer.setServerEnabled(serverId: serverId, enabled: enabled);
+      saved = true;
+      await applyMcpServerLifecycle(
+        clients: widget.clients,
+        serverId: serverId,
+        enabled: enabled,
+      );
+      await _loadMcp();
     } catch (error, stackTrace) {
       debugPrint('Failed to update MCP enabled state: $error\n$stackTrace');
       if (!mounted) {
         return;
       }
-      if (current != null) {
+      if (saved) {
+        await _loadMcp();
+        if (!mounted) {
+          return;
+        }
+      } else if (current != null) {
         setState(() {
           _servers = <String, core_proxy.ServerConfig>{
             ..._servers,

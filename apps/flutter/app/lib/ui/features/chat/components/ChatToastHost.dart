@@ -5,6 +5,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../common/OperitLogoMark.dart';
+
 class ChatToastHost extends StatefulWidget {
   const ChatToastHost({
     super.key,
@@ -82,12 +84,7 @@ class _ChatToastHostState extends State<ChatToastHost> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: <Widget>[
-                    Image.asset(
-                      'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.contain,
-                    ),
+                    const OperitLogoMark(size: 36),
                     const SizedBox(width: 8),
                     Expanded(
                       child: ConstrainedBox(

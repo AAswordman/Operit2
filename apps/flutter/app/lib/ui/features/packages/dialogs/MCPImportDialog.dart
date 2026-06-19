@@ -7,11 +7,22 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../theme/OperitFormStyles.dart';
+import '../utils/MCPCommandRunner.dart';
 
 class MCPImportResult {
   const MCPImportResult({required this.message});
 
   final String message;
+}
+
+class _ImportedMcpServerLifecycle {
+  const _ImportedMcpServerLifecycle({
+    required this.serverId,
+    required this.enabled,
+  });
+
+  final String serverId;
+  final bool enabled;
 }
 
 class MCPImportDialog extends StatefulWidget {
@@ -224,18 +235,22 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       return;
     }
     await _run(() async {
+      final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
       final count = await widget.clients.mcpLocalServer.mergeConfigFromJson(
         jsonConfig: jsonConfig,
       );
+      await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });
   }
 
   Future<void> _mergeFormConfig(String jsonConfig) async {
     await _run(() async {
+      final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
       final count = await widget.clients.mcpLocalServer.mergeConfigFromJson(
         jsonConfig: jsonConfig,
       );
+      await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });
   }
@@ -261,22 +276,79 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       final pluginId = _pluginIdController.text.trim();
       final name = _nameController.text.trim();
       if (_mode == _MCPImportMode.zip) {
-        return widget.clients.mcpRepository.installMcpServerFromZipForFlutter(
-          pluginId: pluginId,
-          zipPath: _zipFile!.path,
-          name: name,
-          description: '',
-          mcpConfig: '',
-        );
+        return widget.clients.mcpRepository
+            .installMcpServerFromZipForFlutter(
+              pluginId: pluginId,
+              zipPath: _zipFile!.path,
+              name: name,
+              description: '',
+              mcpConfig: '',
+            )
+            .then((path) async {
+              await startMcpServer(clients: widget.clients, serverId: pluginId);
+              return path;
+            });
       }
-      return widget.clients.mcpRepository.installMcpServerWithObjectForFlutter(
-        pluginId: pluginId,
-        repoUrl: _repoUrlController.text.trim(),
-        name: name,
-        description: '',
-        mcpConfig: '',
+      return widget.clients.mcpRepository
+          .installMcpServerWithObjectForFlutter(
+            pluginId: pluginId,
+            repoUrl: _repoUrlController.text.trim(),
+            name: name,
+            description: '',
+            mcpConfig: '',
+          )
+          .then((path) async {
+            await startMcpServer(clients: widget.clients, serverId: pluginId);
+            return path;
+          });
+    }, successMessage: '已安装并启动 MCP');
+  }
+
+  List<_ImportedMcpServerLifecycle> _serverLifecyclesFromConfig(
+    String jsonConfig,
+  ) {
+    final decoded = jsonDecode(jsonConfig);
+    if (decoded is! Map<Object?, Object?>) {
+      throw const FormatException('MCP 配置必须是 JSON object');
+    }
+    final rawServers = decoded['mcpServers'];
+    if (rawServers is! Map<Object?, Object?>) {
+      throw const FormatException('MCP 配置缺少 mcpServers');
+    }
+    final lifecycles = <_ImportedMcpServerLifecycle>[];
+    for (final entry in rawServers.entries) {
+      final rawServerId = entry.key;
+      if (rawServerId is! String || rawServerId.trim().isEmpty) {
+        throw const FormatException('mcpServers 的 key 必须是非空字符串');
+      }
+      final rawConfig = entry.value;
+      if (rawConfig is! Map<Object?, Object?>) {
+        throw FormatException('$rawServerId 配置必须是 JSON object');
+      }
+      final rawDisabled = rawConfig['disabled'];
+      if (rawDisabled != null && rawDisabled is! bool) {
+        throw FormatException('$rawServerId disabled 必须是 bool');
+      }
+      lifecycles.add(
+        _ImportedMcpServerLifecycle(
+          serverId: rawServerId.trim(),
+          enabled: rawDisabled != true,
+        ),
       );
-    }, successMessage: '已安装 MCP');
+    }
+    return lifecycles;
+  }
+
+  Future<void> _applyImportedServerLifecycles(
+    List<_ImportedMcpServerLifecycle> lifecycles,
+  ) async {
+    for (final lifecycle in lifecycles) {
+      await applyMcpServerLifecycle(
+        clients: widget.clients,
+        serverId: lifecycle.serverId,
+        enabled: lifecycle.enabled,
+      );
+    }
   }
 
   Future<void> _run(

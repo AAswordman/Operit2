@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
@@ -108,9 +110,20 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
             )
             .toList(growable: false)
           ..sort(_compareToolAccessOption);
+    final cards = await cardManager.getAllCharacterCards();
+    final groups = await groupManager.getAllCharacterGroupCards();
+    final preferencesManager = UserPreferencesManager(clients: widget.clients);
     return _CharacterSettingsData(
-      cards: await cardManager.getAllCharacterCards(),
-      groups: await groupManager.getAllCharacterGroupCards(),
+      cards: cards,
+      groups: groups,
+      cardAvatarUris: await _loadCharacterCardAvatarUris(
+        cards,
+        preferencesManager,
+      ),
+      groupAvatarUris: await _loadCharacterGroupAvatarUris(
+        groups,
+        preferencesManager,
+      ),
       sharedMemoryStores: await sharedMemoryManager.getAllSharedMemoryStores(),
       tags: await promptTagManager.getAllTags(),
       modelSummaries: await modelManager.getAllModelSummaries(),
@@ -127,6 +140,46 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       disableUserPreferenceDescription: await apiPreferences
           .disableUserPreferenceDescriptionFlowSnapshot(),
     );
+  }
+
+  Future<Map<String, String>> _loadCharacterCardAvatarUris(
+    List<core_proxy.CharacterCard> cards,
+    UserPreferencesManager preferencesManager,
+  ) async {
+    final avatarUris = <String, String>{};
+    for (final card in cards) {
+      final hasTheme = await preferencesManager.hasCharacterCardTheme(card.id);
+      if (hasTheme) {
+        final snapshot = await preferencesManager
+            .resolveThemePreferenceSnapshot(characterCardId: card.id);
+        final avatarUri = snapshot.customAiAvatarUri?.trim();
+        if (avatarUri != null && avatarUri.isNotEmpty) {
+          avatarUris[card.id] = avatarUri;
+        }
+      }
+    }
+    return avatarUris;
+  }
+
+  Future<Map<String, String>> _loadCharacterGroupAvatarUris(
+    List<core_proxy.CharacterGroupCard> groups,
+    UserPreferencesManager preferencesManager,
+  ) async {
+    final avatarUris = <String, String>{};
+    for (final group in groups) {
+      final hasTheme = await preferencesManager.hasCharacterGroupTheme(
+        group.id,
+      );
+      if (hasTheme) {
+        final snapshot = await preferencesManager
+            .resolveThemePreferenceSnapshot(characterGroupId: group.id);
+        final avatarUri = snapshot.customAiAvatarUri?.trim();
+        if (avatarUri != null && avatarUri.isNotEmpty) {
+          avatarUris[group.id] = avatarUri;
+        }
+      }
+    }
+    return avatarUris;
   }
 
   void _reload() {
@@ -366,19 +419,20 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     if (result == null) {
       return;
     }
-    final edited = switch (result) {
-      _CharacterCardEditorSave(:final card) => card,
-      _CharacterCardEditorCopyJson() ||
-      _CharacterCardEditorCopyTavernJson() ||
-      _CharacterCardEditorDelete() => null,
-    };
-    if (edited == null) {
-      return;
+    switch (result) {
+      case _CharacterCardEditorSave(:final card, :final tagChanges):
+        final edited = await _applyCharacterCardTagChanges(
+          card: card,
+          tagChanges: tagChanges,
+        );
+        await widget.clients.preferencesCharacterCardManager
+            .createCharacterCard(card: edited);
+        _reload();
+      case _CharacterCardEditorCopyJson() ||
+          _CharacterCardEditorCopyTavernJson() ||
+          _CharacterCardEditorDelete():
+        return;
     }
-    await widget.clients.preferencesCharacterCardManager.createCharacterCard(
-      card: edited,
-    );
-    _reload();
   }
 
   Future<void> _editCard(
@@ -403,9 +457,13 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       return;
     }
     switch (result) {
-      case _CharacterCardEditorSave(:final card):
+      case _CharacterCardEditorSave(:final card, :final tagChanges):
+        final edited = await _applyCharacterCardTagChanges(
+          card: card,
+          tagChanges: tagChanges,
+        );
         await widget.clients.preferencesCharacterCardManager
-            .updateCharacterCard(card: card);
+            .updateCharacterCard(card: edited);
         _reload();
       case _CharacterCardEditorCopyJson():
         await _copyCharacterCardJson(card);
@@ -423,70 +481,45 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _reload();
   }
 
-  Future<void> _createTag() async {
-    final l10n = AppLocalizations.of(context)!;
-    final edited = await _PromptTagEditorDialog.show(
-      context: context,
-      title: l10n.settingsCharactersCreateTag,
-    );
-    if (edited == null) {
-      return;
+  Future<core_proxy.CharacterCard> _applyCharacterCardTagChanges({
+    required core_proxy.CharacterCard card,
+    required _PromptTagChangeSet tagChanges,
+  }) async {
+    final promptTagManager = widget.clients.preferencesPromptTagManager;
+    final createdTagIds = <String, String>{};
+    for (final draft in tagChanges.created) {
+      final createdId = await promptTagManager.createPromptTag(
+        name: draft.values.name,
+        description: draft.values.description,
+        promptContent: draft.values.promptContent,
+        tagType: core_proxy.TagType.custom,
+      );
+      createdTagIds[draft.draftId] = createdId;
     }
-    await widget.clients.preferencesPromptTagManager.createPromptTag(
-      name: edited.name,
-      description: edited.description,
-      promptContent: edited.promptContent,
-      tagType: 'CUSTOM',
-    );
-    _reload();
-  }
-
-  Future<void> _editTag(core_proxy.PromptTag tag) async {
-    final l10n = AppLocalizations.of(context)!;
-    final edited = await _PromptTagEditorDialog.show(
-      context: context,
-      title: l10n.settingsCharactersEditTag,
-      tag: tag,
-    );
-    if (edited == null) {
-      return;
+    for (final draft in tagChanges.updated) {
+      await promptTagManager.updatePromptTag(
+        id: draft.tagId,
+        name: draft.values.name,
+        description: draft.values.description,
+        promptContent: draft.values.promptContent,
+        tagType: draft.tagType,
+      );
     }
-    await widget.clients.preferencesPromptTagManager.updatePromptTag(
-      id: tag.id,
-      name: edited.name,
-      description: edited.description,
-      promptContent: edited.promptContent,
-      tagType: tag.tagType,
-    );
-    _reload();
-  }
-
-  Future<void> _deleteTag(core_proxy.PromptTag tag) async {
-    final l10n = AppLocalizations.of(context)!;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.settingsCharactersDeleteTag),
-        content: Text(l10n.settingsCharactersDeleteTagMessage(tag.name)),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(l10n.delete),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) {
-      return;
+    for (final tagId in tagChanges.deletedTagIds) {
+      await promptTagManager.deletePromptTag(id: tagId);
     }
-    await widget.clients.preferencesPromptTagManager.deletePromptTag(
-      id: tag.id,
-    );
-    _reload();
+    final deletedTagIds = tagChanges.deletedTagIds.toSet();
+    final attachedTagIds = <String>[];
+    for (final tagId in card.attachedTagIds) {
+      final resolvedTagId = createdTagIds[tagId] ?? tagId;
+      if (deletedTagIds.contains(tagId) ||
+          deletedTagIds.contains(resolvedTagId) ||
+          attachedTagIds.contains(resolvedTagId)) {
+        continue;
+      }
+      attachedTagIds.add(resolvedTagId);
+    }
+    return _characterCardWith(card, attachedTagIds: attachedTagIds);
   }
 
   Future<void> _activateCard(core_proxy.CharacterCard card) async {
@@ -705,6 +738,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                   _CharacterCardTile(
                     card: card,
                     tags: data.tags,
+                    avatarUri: data.cardAvatarUris[card.id],
                     active: card.id == data.activeCardId,
                     onActivate: () => _activateCard(card),
                     onEdit: () => _editCard(card, data),
@@ -717,29 +751,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                       titleName: card.name,
                     ),
                   ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsCharactersTagsSection,
-              action: FilledButton.icon(
-                onPressed: _createTag,
-                style: SettingsControlStyles.sectionFilledButton(),
-                icon: const Icon(Icons.add, size: 18),
-                label: Text(l10n.create),
-              ),
-              children: <Widget>[
-                if (data.tags.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(l10n.settingsCharactersNoTags),
-                  )
-                else
-                  for (final tag in data.tags)
-                    _PromptTagTile(
-                      tag: tag,
-                      onEdit: () => _editTag(tag),
-                      onDelete: () => _deleteTag(tag),
-                    ),
               ],
             ),
             _SectionCard(
@@ -769,6 +780,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     group: group,
                     active: group.id == data.activeGroupId,
                     cards: data.cards,
+                    avatarUri: data.groupAvatarUris[group.id],
                     onActivate: () => _activateGroup(group),
                     onEdit: () => _editGroup(group, data),
                   ),
@@ -823,6 +835,8 @@ class _CharacterSettingsData {
   const _CharacterSettingsData({
     required this.cards,
     required this.groups,
+    required this.cardAvatarUris,
+    required this.groupAvatarUris,
     required this.sharedMemoryStores,
     required this.tags,
     required this.modelSummaries,
@@ -838,6 +852,8 @@ class _CharacterSettingsData {
 
   final List<core_proxy.CharacterCard> cards;
   final List<core_proxy.CharacterGroupCard> groups;
+  final Map<String, String> cardAvatarUris;
+  final Map<String, String> groupAvatarUris;
   final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<core_proxy.PromptTag> tags;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
@@ -855,6 +871,7 @@ class _CharacterCardTile extends StatelessWidget {
   const _CharacterCardTile({
     required this.card,
     required this.tags,
+    required this.avatarUri,
     required this.active,
     required this.onActivate,
     required this.onEdit,
@@ -864,6 +881,7 @@ class _CharacterCardTile extends StatelessWidget {
 
   final core_proxy.CharacterCard card;
   final List<core_proxy.PromptTag> tags;
+  final String? avatarUri;
   final bool active;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
@@ -875,7 +893,11 @@ class _CharacterCardTile extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
     return _SettingsEntityTile(
-      leading: Icon(active ? Icons.check_circle : Icons.face_outlined),
+      leading: _SettingsListAvatar(
+        imagePath: avatarUri,
+        placeholderIcon: Icons.face_outlined,
+        active: active,
+      ),
       title: Text(card.name),
       subtitle: Text(
         [
@@ -908,46 +930,12 @@ class _CharacterCardTile extends StatelessWidget {
   }
 }
 
-class _PromptTagTile extends StatelessWidget {
-  const _PromptTagTile({
-    required this.tag,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final core_proxy.PromptTag tag;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return _SettingsEntityTile(
-      leading: const Icon(Icons.sell_outlined),
-      title: Text(tag.name),
-      subtitle: Text(
-        [
-          if (tag.description.trim().isNotEmpty) tag.description.trim(),
-          _tagTypeText(tag.tagType),
-        ].join(' · '),
-      ),
-      onTap: onEdit,
-      actions: <Widget>[
-        SettingsEntityIconButton(
-          tooltip: l10n.delete,
-          icon: Icons.delete_outline,
-          onPressed: onDelete,
-        ),
-      ],
-    );
-  }
-}
-
 class _CharacterGroupTile extends StatelessWidget {
   const _CharacterGroupTile({
     required this.group,
     required this.active,
     required this.cards,
+    required this.avatarUri,
     required this.onActivate,
     required this.onEdit,
   });
@@ -955,6 +943,7 @@ class _CharacterGroupTile extends StatelessWidget {
   final core_proxy.CharacterGroupCard group;
   final bool active;
   final List<core_proxy.CharacterCard> cards;
+  final String? avatarUri;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
 
@@ -966,7 +955,11 @@ class _CharacterGroupTile extends StatelessWidget {
         .nonNulls
         .join(', ');
     return _SettingsEntityTile(
-      leading: Icon(active ? Icons.check_circle : Icons.groups_outlined),
+      leading: _SettingsListAvatar(
+        imagePath: avatarUri,
+        placeholderIcon: Icons.groups_outlined,
+        active: active,
+      ),
       title: Text(group.name),
       subtitle: Text(
         [
@@ -983,6 +976,67 @@ class _CharacterGroupTile extends StatelessWidget {
                 onPressed: onActivate,
               ),
       ],
+    );
+  }
+}
+
+class _SettingsListAvatar extends StatelessWidget {
+  const _SettingsListAvatar({
+    required this.imagePath,
+    required this.placeholderIcon,
+    required this.active,
+  });
+
+  final String? imagePath;
+  final IconData placeholderIcon;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final path = imagePath;
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                shape: BoxShape.circle,
+              ),
+              child: ClipOval(
+                child: path != null && path.isNotEmpty
+                    ? Image.file(File(path), fit: BoxFit.cover)
+                    : Center(
+                        child: Icon(
+                          placeholderIcon,
+                          size: 18,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          if (active)
+            Positioned(
+              right: -1,
+              bottom: -1,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: colorScheme.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colorScheme.surface, width: 1.5),
+                ),
+                child: Icon(Icons.check, color: colorScheme.onPrimary, size: 9),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1146,9 +1200,7 @@ class _SettingsEntityTile extends StatelessWidget {
 }
 
 class _SharedMemoryStoreEditResult {
-  const _SharedMemoryStoreEditResult({
-    required this.name,
-  });
+  const _SharedMemoryStoreEditResult({required this.name});
 
   final String name;
 }
@@ -1163,6 +1215,37 @@ class _PromptTagEditResult {
   final String name;
   final String description;
   final String promptContent;
+}
+
+class _PromptTagCreateDraft {
+  const _PromptTagCreateDraft({required this.draftId, required this.values});
+
+  final String draftId;
+  final _PromptTagEditResult values;
+}
+
+class _PromptTagUpdateDraft {
+  const _PromptTagUpdateDraft({
+    required this.tagId,
+    required this.values,
+    required this.tagType,
+  });
+
+  final String tagId;
+  final _PromptTagEditResult values;
+  final core_proxy.TagType tagType;
+}
+
+class _PromptTagChangeSet {
+  const _PromptTagChangeSet({
+    required this.created,
+    required this.updated,
+    required this.deletedTagIds,
+  });
+
+  final List<_PromptTagCreateDraft> created;
+  final List<_PromptTagUpdateDraft> updated;
+  final List<String> deletedTagIds;
 }
 
 class _PromptTagEditorDialog extends StatefulWidget {
@@ -1316,11 +1399,9 @@ class _SharedMemoryStoreEditorDialogState
     if (!_formKey.currentState!.validate()) {
       return;
     }
-    Navigator.of(context).pop(
-      _SharedMemoryStoreEditResult(
-        name: _nameController.text.trim(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).pop(_SharedMemoryStoreEditResult(name: _nameController.text.trim()));
   }
 
   @override
@@ -1432,8 +1513,8 @@ class _UserMarkdownEditorDialogState extends State<_UserMarkdownEditorDialog> {
               fontFamily: 'monospace',
               height: 1.35,
             ),
-            decoration: const InputDecoration(
-              labelText: 'USER.md',
+            decoration: InputDecoration(
+              labelText: l10n.settingsCharactersUserMarkdownContent,
               alignLabelWithHint: true,
             ),
           ),
@@ -1448,9 +1529,13 @@ sealed class _CharacterCardEditorResult {
 }
 
 class _CharacterCardEditorSave extends _CharacterCardEditorResult {
-  const _CharacterCardEditorSave(this.card);
+  const _CharacterCardEditorSave({
+    required this.card,
+    required this.tagChanges,
+  });
 
   final core_proxy.CharacterCard card;
+  final _PromptTagChangeSet tagChanges;
 }
 
 class _CharacterCardEditorCopyJson extends _CharacterCardEditorResult {
@@ -1540,6 +1625,13 @@ class _CharacterCardEditorDialogState
   String? _chatModelId;
   late List<core_proxy.CharacterSharedMemoryMount> _sharedMemoryMounts;
   late List<String> _attachedTagIds;
+  late List<core_proxy.PromptTag> _tags;
+  final List<_PromptTagCreateDraft> _createdTagDrafts =
+      <_PromptTagCreateDraft>[];
+  final Map<String, _PromptTagUpdateDraft> _updatedTagDrafts =
+      <String, _PromptTagUpdateDraft>{};
+  final Set<String> _deletedTagIds = <String>{};
+  int _nextDraftTagIndex = 0;
   late core_proxy.CharacterCardToolAccessConfig _toolAccessConfig;
 
   @override
@@ -1572,6 +1664,7 @@ class _CharacterCardEditorDialogState
       card.sharedMemoryMounts,
     );
     _attachedTagIds = List<String>.from(card.attachedTagIds);
+    _tags = List<core_proxy.PromptTag>.from(widget.tags);
     _toolAccessConfig = _normalizedToolAccessConfig(card.toolAccessConfig);
   }
 
@@ -1611,7 +1704,7 @@ class _CharacterCardEditorDialogState
     final card = widget.card;
     Navigator.of(context).pop(
       _CharacterCardEditorSave(
-        core_proxy.CharacterCard(
+        card: core_proxy.CharacterCard(
           id: card.id,
           name: _nameController.text.trim(),
           description: _descriptionController.text.trim(),
@@ -1634,7 +1727,196 @@ class _CharacterCardEditorDialogState
           createdAt: card.createdAt,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         ),
+        tagChanges: _PromptTagChangeSet(
+          created: List<_PromptTagCreateDraft>.from(_createdTagDrafts),
+          updated: List<_PromptTagUpdateDraft>.from(_updatedTagDrafts.values),
+          deletedTagIds: List<String>.from(_deletedTagIds),
+        ),
       ),
+    );
+  }
+
+  Future<void> _createTag() async {
+    final l10n = AppLocalizations.of(context)!;
+    final edited = await _PromptTagEditorDialog.show(
+      context: context,
+      title: l10n.settingsCharactersCreateTag,
+    );
+    if (!mounted || edited == null) {
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final draftId = 'draft_prompt_tag_${++_nextDraftTagIndex}';
+    final tag = core_proxy.PromptTag(
+      id: draftId,
+      name: edited.name,
+      description: edited.description,
+      promptContent: edited.promptContent,
+      tagType: core_proxy.TagType.custom,
+      createdAt: now,
+      updatedAt: now,
+    );
+    setState(() {
+      _tags = <core_proxy.PromptTag>[..._tags, tag];
+      _createdTagDrafts.add(
+        _PromptTagCreateDraft(draftId: draftId, values: edited),
+      );
+      _attachedTagIds = <String>[..._attachedTagIds, draftId];
+    });
+  }
+
+  Future<void> _editTag(core_proxy.PromptTag tag) async {
+    final l10n = AppLocalizations.of(context)!;
+    final edited = await _PromptTagEditorDialog.show(
+      context: context,
+      title: l10n.settingsCharactersEditTag,
+      tag: tag,
+    );
+    if (!mounted || edited == null) {
+      return;
+    }
+    final updatedTag = core_proxy.PromptTag(
+      id: tag.id,
+      name: edited.name,
+      description: edited.description,
+      promptContent: edited.promptContent,
+      tagType: tag.tagType,
+      createdAt: tag.createdAt,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    final tagIndex = _tags.indexWhere((item) => item.id == tag.id);
+    if (tagIndex < 0) {
+      throw StateError('Unknown prompt tag: ${tag.id}');
+    }
+    final draftIndex = _createdTagDrafts.indexWhere(
+      (draft) => draft.draftId == tag.id,
+    );
+    setState(() {
+      _tags = <core_proxy.PromptTag>[
+        ..._tags.take(tagIndex),
+        updatedTag,
+        ..._tags.skip(tagIndex + 1),
+      ];
+      if (draftIndex >= 0) {
+        _createdTagDrafts[draftIndex] = _PromptTagCreateDraft(
+          draftId: tag.id,
+          values: edited,
+        );
+      } else {
+        _updatedTagDrafts[tag.id] = _PromptTagUpdateDraft(
+          tagId: tag.id,
+          values: edited,
+          tagType: tag.tagType,
+        );
+      }
+    });
+  }
+
+  Future<void> _deleteTag(core_proxy.PromptTag tag) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.settingsCharactersDeleteTag),
+        content: Text(l10n.settingsCharactersDeleteTagMessage(tag.name)),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.delete),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+    final tagIndex = _tags.indexWhere((item) => item.id == tag.id);
+    if (tagIndex < 0) {
+      throw StateError('Unknown prompt tag: ${tag.id}');
+    }
+    final draftIndex = _createdTagDrafts.indexWhere(
+      (draft) => draft.draftId == tag.id,
+    );
+    setState(() {
+      _tags = <core_proxy.PromptTag>[
+        ..._tags.take(tagIndex),
+        ..._tags.skip(tagIndex + 1),
+      ];
+      _attachedTagIds = <String>[
+        for (final tagId in _attachedTagIds)
+          if (tagId != tag.id) tagId,
+      ];
+      if (draftIndex >= 0) {
+        _createdTagDrafts.removeAt(draftIndex);
+      } else {
+        _updatedTagDrafts.remove(tag.id);
+        _deletedTagIds.add(tag.id);
+      }
+    });
+  }
+
+  void _setTagSelected(String tagId, bool selected) {
+    setState(() {
+      if (selected) {
+        if (!_attachedTagIds.contains(tagId)) {
+          _attachedTagIds.add(tagId);
+        }
+      } else {
+        _attachedTagIds.remove(tagId);
+      }
+    });
+  }
+
+  Future<void> _openTagManager() async {
+    final l10n = AppLocalizations.of(context)!;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> runTagAction(Future<void> Function() action) async {
+              await action();
+              if (mounted) {
+                setDialogState(() {});
+              }
+            }
+
+            return OperitDialogScaffold(
+              title: l10n.settingsCharactersManageTags,
+              maxWidth: 560,
+              maxHeight: 560,
+              showCloseButton: true,
+              onClose: () => Navigator.of(dialogContext).pop(),
+              contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              actions: <Widget>[
+                TextButton.icon(
+                  onPressed: () => runTagAction(_createTag),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(l10n.settingsCharactersCreateTag),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(l10n.close),
+                ),
+              ],
+              child: _CharacterTagManagerList(
+                tags: _tags,
+                selectedTagIds: _attachedTagIds,
+                onChanged: (tagId, selected) {
+                  _setTagSelected(tagId, selected);
+                  setDialogState(() {});
+                },
+                onEditTag: (tag) => runTagAction(() => _editTag(tag)),
+                onDeleteTag: (tag) => runTagAction(() => _deleteTag(tag)),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1745,6 +2027,14 @@ class _CharacterCardEditorDialogState
                 controller: _descriptionController,
                 label: l10n.settingsCharactersDescription,
               ),
+              _CharacterTagPicker(
+                tags: _tags,
+                selectedTagIds: _attachedTagIds,
+                onManageTags: _openTagManager,
+                onChanged: (tagId, selected) {
+                  _setTagSelected(tagId, selected);
+                },
+              ),
               _DialogExpandableTextField(
                 controller: _characterSettingController,
                 label: l10n.settingsCharactersCharacterSetting,
@@ -1793,21 +2083,6 @@ class _CharacterCardEditorDialogState
                       controller: _marksController,
                       label: l10n.settingsCharactersMarks,
                       maxLines: 3,
-                    ),
-                    _CharacterTagPicker(
-                      tags: widget.tags,
-                      selectedTagIds: _attachedTagIds,
-                      onChanged: (tagId, selected) {
-                        setState(() {
-                          if (selected) {
-                            if (!_attachedTagIds.contains(tagId)) {
-                              _attachedTagIds.add(tagId);
-                            }
-                          } else {
-                            _attachedTagIds.remove(tagId);
-                          }
-                        });
-                      },
                     ),
                     _DialogDropdown<String>(
                       label: l10n.settingsCharactersChatModelBindingMode,
@@ -2114,56 +2389,190 @@ class _CharacterTagPicker extends StatelessWidget {
   const _CharacterTagPicker({
     required this.tags,
     required this.selectedTagIds,
+    required this.onManageTags,
     required this.onChanged,
   });
 
   final List<core_proxy.PromptTag> tags;
   final List<String> selectedTagIds;
+  final VoidCallback onManageTags;
   final void Function(String tagId, bool selected) onChanged;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final selectedNames = _tagNamesFor(tags, selectedTagIds);
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            l10n.settingsCharactersTags,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  l10n.settingsCharactersTags,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onManageTags,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.tune_outlined, size: 18),
+                label: Text(l10n.settingsCharactersManageTags),
+              ),
+            ],
           ),
           const SizedBox(height: 6),
           if (tags.isEmpty)
             Text(
               l10n.settingsCharactersNoTags,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             )
           else
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [
+              children: <Widget>[
                 for (final tag in tags)
                   FilterChip(
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
                     selected: selectedTagIds.contains(tag.id),
-                    onSelected: (selected) => onChanged(tag.id, selected),
-                    label: Text(tag.name),
+                    label: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 160),
+                      child: Text(tag.name, overflow: TextOverflow.ellipsis),
+                    ),
+                    onSelected: (value) => onChanged(tag.id, value),
                   ),
               ],
             ),
-          if (selectedNames.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              selectedNames.join(' · '),
-              style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ],
+      ),
+    );
+  }
+}
+
+class _CharacterTagManagerList extends StatelessWidget {
+  const _CharacterTagManagerList({
+    required this.tags,
+    required this.selectedTagIds,
+    required this.onChanged,
+    required this.onEditTag,
+    required this.onDeleteTag,
+  });
+
+  final List<core_proxy.PromptTag> tags;
+  final List<String> selectedTagIds;
+  final void Function(String tagId, bool selected) onChanged;
+  final ValueChanged<core_proxy.PromptTag> onEditTag;
+  final ValueChanged<core_proxy.PromptTag> onDeleteTag;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    if (tags.isEmpty) {
+      return Center(
+        child: Text(
+          l10n.settingsCharactersNoTags,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return ListView.separated(
+      itemCount: tags.length,
+      separatorBuilder: (context, index) =>
+          Divider(height: 1, color: colorScheme.outlineVariant),
+      itemBuilder: (context, index) {
+        final tag = tags[index];
+        return _CharacterTagManagerRow(
+          tag: tag,
+          selected: selectedTagIds.contains(tag.id),
+          onSelected: (selected) => onChanged(tag.id, selected),
+          onEdit: () => onEditTag(tag),
+          onDelete: () => onDeleteTag(tag),
+        );
+      },
+    );
+  }
+}
+
+class _CharacterTagManagerRow extends StatelessWidget {
+  const _CharacterTagManagerRow({
+    required this.tag,
+    required this.selected,
+    required this.onSelected,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final core_proxy.PromptTag tag;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final subtitleParts = <String>[
+      if (tag.description.trim().isNotEmpty) tag.description.trim(),
+      _tagTypeText(tag.tagType),
+    ];
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      horizontalTitleGap: 8,
+      minLeadingWidth: 28,
+      onTap: () => onSelected(!selected),
+      leading: Checkbox(
+        value: selected,
+        visualDensity: VisualDensity.compact,
+        onChanged: (value) {
+          if (value == null) {
+            return;
+          }
+          onSelected(value);
+        },
+      ),
+      title: Text(
+        tag.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+      ),
+      subtitle: subtitleParts.isEmpty
+          ? null
+          : Text(
+              subtitleParts.join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
-          ],
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          IconButton(
+            tooltip: l10n.settingsCharactersEditTag,
+            visualDensity: VisualDensity.compact,
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            tooltip: l10n.settingsCharactersDeleteTag,
+            visualDensity: VisualDensity.compact,
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline),
+          ),
         ],
       ),
     );
@@ -3008,20 +3417,8 @@ List<String> _tagNamesFor(List<core_proxy.PromptTag> tags, List<String> ids) {
   return names;
 }
 
-String _tagTypeText(Object? tagType) {
-  final value = '$tagType';
-  final buffer = StringBuffer();
-  for (final codeUnit in value.codeUnits) {
-    final isUppercase = codeUnit >= 65 && codeUnit <= 90;
-    final isUnderscore = codeUnit == 95;
-    if (isUppercase || isUnderscore) {
-      buffer.writeCharCode(codeUnit);
-    } else if (buffer.isNotEmpty) {
-      break;
-    }
-  }
-  final text = buffer.toString();
-  return text.isEmpty ? value : text;
+String _tagTypeText(core_proxy.TagType tagType) {
+  return tagType.value;
 }
 
 const String _chatModelFollowGlobal = 'FOLLOW_GLOBAL';
@@ -3206,6 +3603,7 @@ Object? _convertJsonNode(Object? value) {
 core_proxy.CharacterCard _characterCardWith(
   core_proxy.CharacterCard card, {
   String? id,
+  List<String>? attachedTagIds,
   bool? isDefault,
   int? createdAt,
   int? updatedAt,
@@ -3218,14 +3616,12 @@ core_proxy.CharacterCard _characterCardWith(
     openingStatement: card.openingStatement,
     otherContentChat: card.otherContentChat,
     otherContentVoice: card.otherContentVoice,
-    attachedTagIds: card.attachedTagIds,
+    attachedTagIds: attachedTagIds ?? card.attachedTagIds,
     advancedCustomPrompt: card.advancedCustomPrompt,
     marks: card.marks,
     chatModelBindingMode: card.chatModelBindingMode,
     chatModelId: card.chatModelId,
-    sharedMemoryMounts: _normalizedSharedMemoryMounts(
-      card.sharedMemoryMounts,
-    ),
+    sharedMemoryMounts: _normalizedSharedMemoryMounts(card.sharedMemoryMounts),
     toolAccessConfig: card.toolAccessConfig,
     isDefault: isDefault ?? card.isDefault,
     createdAt: createdAt ?? card.createdAt,

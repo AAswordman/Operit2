@@ -24,11 +24,9 @@ impl OperitTui {
             let attachment = self.create_paste_attachment(text);
             let token = format!("@{}", attachment.fileName);
             self.insert_attachment_token(&token);
-            self.status_message = format!(
-                "attached pasted text: {} ({})",
-                attachment.fileName,
-                format_bytes(attachment.fileSize)
-            );
+            self.status_message = self
+                .text()
+                .attached_pasted_text(&attachment.fileName, &format_bytes(attachment.fileSize));
             self.queued_attachment_tokens.push(QueuedAttachmentToken {
                 token,
                 kind: QueuedAttachmentTokenKind::Inline {
@@ -316,11 +314,11 @@ impl OperitTui {
 
     fn attach_clipboard_image(&mut self) -> Result<(), String> {
         let Ok(mut clipboard) = arboard::Clipboard::new() else {
-            self.status_message = "clipboard unavailable".to_string();
+            self.status_message = self.text().clipboard_unavailable().to_string();
             return Ok(());
         };
         let Ok(image) = clipboard.get_image() else {
-            self.status_message = "clipboard has no image".to_string();
+            self.status_message = self.text().clipboard_no_image().to_string();
             return Ok(());
         };
         let mut png = Vec::new();
@@ -335,11 +333,9 @@ impl OperitTui {
         let attachment = self.create_clipboard_image_attachment(png);
         let token = format!("@{}", attachment.fileName);
         self.insert_attachment_token(&token);
-        self.status_message = format!(
-            "attached clipboard image: {} ({})",
-            attachment.fileName,
-            format_bytes(attachment.fileSize)
-        );
+        self.status_message = self
+            .text()
+            .attached_clipboard_image(&attachment.fileName, &format_bytes(attachment.fileSize));
         self.queued_attachment_tokens.push(QueuedAttachmentToken {
             token,
             kind: QueuedAttachmentTokenKind::Inline {
@@ -360,13 +356,15 @@ impl OperitTui {
             let file_name = path
                 .file_name()
                 .and_then(|value| value.to_str())
-                .ok_or_else(|| format!("attachment file name invalid: {display_path}"))?
+                .ok_or_else(|| self.text().attachment_file_name_invalid(&display_path))?
                 .to_string();
             let token = format!("@{file_name}");
             let mime_type = guess_mime_type(&display_path);
             if mime_type.starts_with("image/") {
-                let bytes = fs::read(&path)
-                    .map_err(|error| format!("attachment read failed: {display_path}: {error}"))?;
+                let bytes = fs::read(&path).map_err(|error| {
+                    self.text()
+                        .attachment_read_failed(&display_path, &error.to_string())
+                })?;
                 self.queued_inline_attachments.push(AttachmentInfo {
                     filePath: display_path.clone(),
                     fileName: file_name.clone(),
@@ -389,10 +387,9 @@ impl OperitTui {
             }
             self.insert_attachment_token(&token);
         }
-        self.status_message = format!(
-            "attached files: {} total",
-            self.queued_attachment_tokens.len()
-        );
+        self.status_message = self
+            .text()
+            .attached_files_total(self.queued_attachment_tokens.len());
         Ok(true)
     }
 

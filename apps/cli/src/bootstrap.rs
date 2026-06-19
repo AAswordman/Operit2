@@ -3,6 +3,7 @@ use std::sync::Arc;
 use operit_core_proxy::LocalCoreProxy;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
+    LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
     LinuxExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
     LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
@@ -12,6 +13,7 @@ use operit_host_linux_native::{
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
+    WindowsBrowserAutomationHost as NativeBrowserAutomationHost,
     WindowsExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
     WindowsFileSystemHost as NativeFileSystemHost, WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
@@ -45,6 +47,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
     }
     context = context.withExternalRuntimeEventHost(Arc::new(NativeExternalRuntimeEventHost::new()));
+    context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
         let output =

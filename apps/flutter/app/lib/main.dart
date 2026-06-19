@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/logging/ClientLogger.dart';
+import 'core/host/RuntimeHostInteractionSubscriber.dart';
 import 'core/runtime/RuntimeConnectionManager.dart';
 import 'core/link_host/LinkHostServer.dart';
 import 'ui/main/OperitApp.dart';
@@ -15,6 +16,7 @@ void main() async {
       WidgetsFlutterBinding.ensureInitialized();
       await ClientLogger.initialize();
       _installClientLogHooks();
+      RuntimeHostInteractionSubscriber.install();
       await RuntimeConnectionManager.instance.initialize();
       String? startupWebAccessError;
       try {

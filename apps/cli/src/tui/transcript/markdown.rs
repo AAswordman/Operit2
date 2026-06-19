@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
+use super::i18n::{TuiLanguage, TuiText};
 use super::theme;
 
 const TOOL_CALL_INLINE_DETAIL_CHAR_LIMIT: usize = 160;
@@ -30,11 +31,16 @@ struct CachedMarkdownBlock {
 struct MarkdownBlockRenderKey {
     content_width: usize,
     node_hash: u64,
+    language: TuiLanguage,
 }
 
-pub(super) fn render_markdown_lines(content: &str, content_width: usize) -> Vec<Line<'static>> {
+pub(super) fn render_markdown_lines(
+    content: &str,
+    content_width: usize,
+    text: TuiText,
+) -> Vec<Line<'static>> {
     let nodes = content.nativeMarkdownSplitByBlock();
-    render_markdown_nodes_lines(&nodes, content_width)
+    render_markdown_nodes_lines(&nodes, content_width, text)
 }
 
 pub(super) fn render_markdown_lines_cached(
@@ -42,14 +48,16 @@ pub(super) fn render_markdown_lines_cached(
     content_width: usize,
     cache: &mut MarkdownRenderCache,
     is_streaming: bool,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let nodes = content.nativeMarkdownSplitByBlock();
-    render_markdown_nodes_lines_cached(&nodes, content_width, cache, is_streaming)
+    render_markdown_nodes_lines_cached(&nodes, content_width, cache, is_streaming, text)
 }
 
 pub(super) fn render_markdown_nodes_lines(
     nodes: &[MarkdownNodeStable],
     content_width: usize,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut previous_kind: Option<RenderedBlockKind> = None;
@@ -62,7 +70,7 @@ pub(super) fn render_markdown_nodes_lines(
             lines.push(Line::from(""));
         }
         let before_len = lines.len();
-        lines.extend(render_markdown_block_lines(node, content_width));
+        lines.extend(render_markdown_block_lines(node, content_width, text));
         if lines.len() > before_len {
             previous_kind = Some(kind);
         }
@@ -78,6 +86,7 @@ pub(super) fn render_markdown_nodes_lines_cached(
     content_width: usize,
     cache: &mut MarkdownRenderCache,
     is_streaming: bool,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut previous_kind: Option<RenderedBlockKind> = None;
@@ -105,6 +114,7 @@ pub(super) fn render_markdown_nodes_lines_cached(
             content_width,
             cache,
             index >= tail_start_index,
+            text,
         );
         lines.extend(block_lines);
         if lines.len() > before_len {
@@ -138,17 +148,19 @@ fn render_cached_markdown_block(
     content_width: usize,
     cache: &mut MarkdownRenderCache,
     render_live_tail: bool,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let key = MarkdownBlockRenderKey {
         content_width,
         node_hash: stable_markdown_node_hash(node),
+        language: text.language(),
     };
     if !render_live_tail {
         if let Some(cached) = cache.blocks.get(&index).filter(|cached| cached.key == key) {
             return cached.lines.clone();
         }
     }
-    let lines = render_markdown_block_lines(node, content_width);
+    let lines = render_markdown_block_lines(node, content_width, text);
     cache.blocks.insert(
         index,
         CachedMarkdownBlock {
@@ -162,9 +174,10 @@ fn render_cached_markdown_block(
 fn render_markdown_block_lines(
     node: &MarkdownNodeStable,
     content_width: usize,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    render_block_node(node, content_width, &mut lines);
+    render_block_node(node, content_width, &mut lines, text);
     lines
 }
 
@@ -272,6 +285,7 @@ fn render_block_node(
     node: &MarkdownNodeStable,
     content_width: usize,
     lines: &mut Vec<Line<'static>>,
+    text: TuiText,
 ) {
     match node.r#type {
         MarkdownProcessorType::Header => render_header(node, lines),
@@ -285,7 +299,9 @@ fn render_block_node(
         ))),
         MarkdownProcessorType::BlockLatex => render_latex_block(&node.content, lines),
         MarkdownProcessorType::Table => render_table_block(&node.content, lines),
-        MarkdownProcessorType::XmlBlock => render_xml_block(&node.content, content_width, lines),
+        MarkdownProcessorType::XmlBlock => {
+            render_xml_block(&node.content, content_width, lines, text)
+        }
         MarkdownProcessorType::Image => {
             lines.extend(render_inline_nodes(&[node.clone()], Style::default()))
         }
@@ -460,7 +476,12 @@ fn render_table_block(content: &str, lines: &mut Vec<Line<'static>>) {
     }
 }
 
-fn render_xml_block(content: &str, content_width: usize, lines: &mut Vec<Line<'static>>) {
+fn render_xml_block(
+    content: &str,
+    content_width: usize,
+    lines: &mut Vec<Line<'static>>,
+    text: TuiText,
+) {
     let raw_tag = ChatMarkupRegex::extract_opening_tag_name(content);
     let tag = ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref());
     match tag.as_deref() {
@@ -470,7 +491,7 @@ fn render_xml_block(content: &str, content_width: usize, lines: &mut Vec<Line<'s
         Some("image_link") | Some("audio_link") | Some("video_link") | Some("media_link") => {
             render_media_link_xml(content, lines)
         }
-        Some("error") => render_error_xml(content, lines),
+        Some("error") => render_error_xml(content, lines, text),
         Some("think") | Some("thinking") => render_named_xml_body("thinking", content, lines),
         Some("status") => render_status_xml(content, lines),
         Some("meta") => {}
@@ -1003,7 +1024,7 @@ fn render_status_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     ]));
 }
 
-fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>) {
+fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>, text: TuiText) {
     let body = tag_body(content, "error")
         .map(xml_unescape)
         .or_else(|| attr_value(content, "message"))
@@ -1013,7 +1034,7 @@ fn render_error_xml(content: &str, lines: &mut Vec<Line<'static>>) {
         .to_string();
     lines.push(Line::from(vec![
         Span::styled(
-            "error: ".to_string(),
+            text.error_prefix().to_string(),
             Style::default()
                 .fg(theme::ERROR)
                 .add_modifier(Modifier::BOLD),

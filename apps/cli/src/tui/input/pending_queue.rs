@@ -49,10 +49,9 @@ impl OperitTui {
         self.input.clear();
         self.input_cursor = 0;
         self.autocomplete_index = 0;
-        self.status_message = format!(
-            "queued message #{id} ({} total)",
-            self.pending_queue_messages.len()
-        );
+        self.status_message = self
+            .text()
+            .queued_message(id, self.pending_queue_messages.len());
         true
     }
 
@@ -115,29 +114,29 @@ impl OperitTui {
                 self.pending_queue_messages.clear();
                 self.pending_queue_auto_send_at = None;
                 self.clamp_pending_queue_selection();
-                self.status_message = format!("message queue cleared ({count})");
+                self.status_message = self.text().message_queue_cleared(count);
             }
             Some("delete") => {
-                let id = pending_queue_command_id(args, "usage: /queue delete <id>")?;
+                let id = pending_queue_command_id(args, self.text().queue_delete_usage())?;
                 self.remove_pending_queue_message_by_id(id)?;
-                self.status_message = format!("deleted queued message #{id}");
+                self.status_message = self.text().deleted_queued_message(id);
             }
             Some("edit") => {
-                let id = pending_queue_command_id(args, "usage: /queue edit <id>")?;
+                let id = pending_queue_command_id(args, self.text().queue_edit_usage())?;
                 let message = self.remove_pending_queue_message_by_id(id)?;
                 self.input = message.text;
                 self.input_cursor = self.input.chars().count();
                 self.autocomplete_index = 0;
                 self.focus = FocusArea::Input;
-                self.status_message = format!("editing queued message #{id}");
+                self.status_message = self.text().editing_queued_message(id);
             }
             Some("send") => {
-                let id = pending_queue_command_id(args, "usage: /queue send <id>")?;
+                let id = pending_queue_command_id(args, self.text().queue_send_usage())?;
                 let message = self.remove_pending_queue_message_by_id(id)?;
                 self.send_pending_queue_message_now(message).await?;
             }
             Some(command) => {
-                return Err(format!("unknown queue command: {command}"));
+                return Err(self.text().unknown_queue_command(command));
             }
         }
         Ok(())
@@ -226,7 +225,7 @@ impl OperitTui {
             self.suppress_next_pending_queue_auto_send = true;
             self.pending_queue_auto_send_at = None;
             self.cancel_current_request().await?;
-            self.status_message = format!("queued message #{id} selected for send");
+            self.status_message = self.text().queued_message_selected(id);
             return Ok(());
         }
         self.send_pending_queue_message(message).await
@@ -238,7 +237,7 @@ impl OperitTui {
     ) -> Result<(), String> {
         let chat_id = self.current_chat_id()?;
         self.follow_transcript = true;
-        self.status_message = "connecting...".to_string();
+        self.status_message = self.text().connecting().to_string();
         let send_args = ChatSendArgs {
             chatId: Some(chat_id),
             message: message.text,
@@ -250,7 +249,7 @@ impl OperitTui {
         self.select_chat_by_id(&active_chat_id);
         self.last_current_chat_loading = true;
         self.awaiting_runtime_loading = true;
-        self.status_message = "streaming".to_string();
+        self.status_message = self.text().streaming().to_string();
         Ok(())
     }
 
@@ -266,7 +265,7 @@ impl OperitTui {
 
     fn delete_selected_pending_queue_message(&mut self) {
         let message = self.remove_selected_pending_queue_message();
-        self.status_message = format!("deleted queued message #{}", message.id);
+        self.status_message = self.text().deleted_queued_message(message.id);
     }
 
     fn edit_selected_pending_queue_message(&mut self) {
@@ -276,7 +275,7 @@ impl OperitTui {
         self.input_cursor = self.input.chars().count();
         self.autocomplete_index = 0;
         self.focus = FocusArea::Input;
-        self.status_message = format!("editing queued message #{id}");
+        self.status_message = self.text().editing_queued_message(id);
     }
 
     async fn send_selected_pending_queue_message(&mut self) -> Result<(), String> {
@@ -297,7 +296,7 @@ impl OperitTui {
             .pending_queue_messages
             .iter()
             .position(|message| message.id == id)
-            .ok_or_else(|| format!("queued message not found: #{id}"))?;
+            .ok_or_else(|| self.text().queued_message_not_found(id))?;
         Ok(self.remove_pending_queue_message_at(index))
     }
 
@@ -315,7 +314,7 @@ impl OperitTui {
 
     fn pending_queue_status(&self) -> String {
         if self.pending_queue_messages.is_empty() {
-            return "queue=none".to_string();
+            return self.text().queue_none().to_string();
         }
         let items = self
             .pending_queue_messages
@@ -328,7 +327,7 @@ impl OperitTui {
                 )
             })
             .collect::<Vec<_>>();
-        format!("queue: {}", items.join(" | "))
+        self.text().queue_status(&items.join(" | "))
     }
 }
 

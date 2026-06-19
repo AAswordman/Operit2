@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import '../proxy/generated/CoreProxyModels.g.dart';
+
 class BrowserAutomationRequest {
   const BrowserAutomationRequest({
     required this.requestId,
@@ -12,6 +14,20 @@ class BrowserAutomationRequest {
   final String requestId;
   final String toolName;
   final Map<String, String> parameters;
+
+  factory BrowserAutomationRequest.fromHostPayload(
+    RuntimeHostInteractionBrowserAutomationPayload payload,
+  ) {
+    final parametersJson =
+        jsonDecode(payload.parametersJson) as Map<String, Object?>;
+    return BrowserAutomationRequest(
+      requestId: payload.requestId,
+      toolName: payload.toolName,
+      parameters: parametersJson.map(
+        (key, value) => MapEntry<String, String>(key, value as String),
+      ),
+    );
+  }
 
   static BrowserAutomationRequest? decode(String? responseText) {
     if (responseText == null || responseText == 'null') {

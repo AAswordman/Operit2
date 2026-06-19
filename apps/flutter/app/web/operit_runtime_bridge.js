@@ -13,6 +13,7 @@
 
   const webAccessSessionStorageKey = "operit2.webAccess.session";
   const pairingServiceVersion = 1;
+  let webAccessSessionReloading = false;
   const webAccessConfig = globalThis.__OPERIT_WEB_ACCESS__;
   if (webAccessConfig && webAccessConfig.mode === "pair") {
     installPairingWebRuntime(webAccessConfig);
@@ -38,15 +39,6 @@
       async closeWatchStream(subscriptionId) {
         return (await runtimePromise).closeWatchStream(subscriptionId);
       },
-      async hostDescriptor() {
-        return (await runtimePromise).hostDescriptor();
-      },
-      async currentPermissionRequest() {
-        return (await runtimePromise).currentPermissionRequest();
-      },
-      async handlePermissionResult(result) {
-        return (await runtimePromise).handlePermissionResult(result);
-      },
     };
   }
 
@@ -58,6 +50,14 @@
     const session = await pairWebAccessSession(baseUrl);
     localStorage.setItem(webAccessSessionStorageKey, JSON.stringify(session));
     return session;
+  }
+
+  function resetWebAccessSession() {
+    localStorage.removeItem(webAccessSessionStorageKey);
+    if (!webAccessSessionReloading) {
+      webAccessSessionReloading = true;
+      globalThis.location.reload();
+    }
   }
 
   async function pairWebAccessSession(baseUrl) {
@@ -215,8 +215,6 @@
     const streamQueues = new Map();
     const streamChannels = new Map();
     const channels = new Map();
-    const permissionRequestTimes = new Map();
-    let currentPermissionRequestId = null;
     let hmacKeyPromise = null;
     let openingChannelPromise = null;
     const maxSubscriptionsPerChannel = 16;
@@ -262,9 +260,20 @@
       });
       const text = await response.text();
       if (!response.ok) {
+        handleLinkErrorResponse(response.status, text);
         throw new Error(text);
       }
       return text;
+    }
+
+    function handleLinkErrorResponse(status, text) {
+      if (status !== 401) {
+        return;
+      }
+      const error = JSON.parse(text);
+      if (error.code === "UNAUTHORIZED" && error.message === "invalid session") {
+        resetWebAccessSession();
+      }
     }
 
     async function openChannel() {
@@ -285,6 +294,7 @@
       });
       const errorText = response.ok ? null : await response.text();
       if (errorText !== null) {
+        handleLinkErrorResponse(response.status, errorText);
         throw new Error(errorText);
       }
       channels.set(channelId, channel);
@@ -362,19 +372,6 @@
       return openingChannelPromise;
     }
 
-    function permissionResult(value) {
-      if (value === "ALLOW") {
-        return "allow";
-      }
-      if (value === "ALWAYS_ALLOW") {
-        return "always_allow";
-      }
-      if (value === "DENY") {
-        return "deny";
-      }
-      throw new Error(`unknown permission result: ${value}`);
-    }
-
     return {
       async call(request) {
         return postText("/link/call", {
@@ -437,66 +434,6 @@
             channels.delete(channelId);
           }
         }
-        return "{}";
-      },
-      async hostDescriptor() {
-        const nonce = `web-${Date.now()}`;
-        const status = JSON.parse(await postText("/link/session", { nonce }));
-        return JSON.stringify({
-          id: `web-access:${status.coreDeviceId}`,
-          displayName: "Web Access Operit Core",
-          pathStyleDescriptionEn: "Web access core path style",
-          pathStyleDescriptionCn: "Web Access 核心路径风格",
-          examplePaths: [],
-          usesEnvironmentParameter: false,
-          environmentParameterDescriptionEn: "",
-          environmentParameterDescriptionCn: "",
-          capabilities: status.transports,
-          fileSystemHost: true,
-          webVisitHost: true,
-          systemOperationHost: true,
-          managedRuntimeHost: true,
-          runtimeStorageHost: true,
-          runtimeSqliteHost: true,
-        });
-      },
-      async currentPermissionRequest() {
-        const text = await postText("/host/interaction/poll", {
-          timeoutMs: 0,
-        });
-        const response = JSON.parse(text);
-        const request = response.request;
-        if (request === null) {
-          return "null";
-        }
-        if (request.kind !== "tool_permission") {
-          return "null";
-        }
-        currentPermissionRequestId = request.requestId;
-        let requestedAtMillis = permissionRequestTimes.get(request.requestId);
-        if (requestedAtMillis === undefined) {
-          requestedAtMillis = Date.now();
-          permissionRequestTimes.set(request.requestId, requestedAtMillis);
-        }
-        return JSON.stringify({
-          tool: request.payload.tool,
-          description: request.payload.description,
-          requestedAtMillis,
-        });
-      },
-      async handlePermissionResult(result) {
-        if (currentPermissionRequestId === null) {
-          throw new Error("no pending web access permission request");
-        }
-        const requestId = currentPermissionRequestId;
-        currentPermissionRequestId = null;
-        permissionRequestTimes.delete(requestId);
-        await postText("/host/interaction/respond", {
-          requestId,
-          response: {
-            result: permissionResult(result),
-          },
-        });
         return "{}";
       },
     };
@@ -1055,15 +992,6 @@
     },
     async closeWatchStream(subscriptionId) {
       return (await bridge()).closeWatchStream(subscriptionId);
-    },
-    async hostDescriptor() {
-      return (await bridge()).hostDescriptor();
-    },
-    async currentPermissionRequest() {
-      return (await bridge()).currentPermissionRequest();
-    },
-    async handlePermissionResult(result) {
-      return (await bridge()).handlePermissionResult(result);
     },
   };
 })();

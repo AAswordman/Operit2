@@ -458,13 +458,6 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        FloatingActionButton.small(
-          heroTag: null,
-          onPressed: _loadSnapshot,
-          tooltip: '刷新',
-          child: const Icon(Icons.refresh),
-        ),
-        const SizedBox(height: 12),
         FloatingActionButton(
           heroTag: null,
           onPressed: () => _openMarket(marketTab),

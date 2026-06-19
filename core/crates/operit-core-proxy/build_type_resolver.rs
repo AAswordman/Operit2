@@ -153,14 +153,25 @@ fn serializable_struct_type(
 }
 
 fn serializable_enum_type(full_type: String, item_enum: &ItemEnum) -> SerializableType {
+    let unit_only = item_enum
+        .variants
+        .iter()
+        .all(|variant| matches!(variant.fields, Fields::Unit));
     SerializableType {
         full_type,
         kind: SerializableTypeKind::Enum {
             variants: item_enum
                 .variants
                 .iter()
-                .map(|variant| variant.ident.to_string())
+                .map(|variant| {
+                    let name = variant.ident.to_string();
+                    SerializableEnumVariant {
+                        json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
+                        name,
+                    }
+                })
                 .collect(),
+            unit_only,
         },
     }
 }

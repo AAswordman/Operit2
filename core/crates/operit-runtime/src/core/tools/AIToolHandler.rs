@@ -111,6 +111,43 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    pub fn unregisterMcpServerTools(&mut self, serverName: &str) -> usize {
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        let toolNames = guard
+            .availableTools
+            .keys()
+            .filter(|toolName| {
+                matches!(toolName.split_once(':'), Some((name, _)) if name == serverName)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let count = toolNames.len();
+        for toolName in toolNames {
+            guard.availableTools.remove(&toolName);
+            guard.toolVisibility.remove(&toolName);
+        }
+        count
+    }
+
+    #[allow(non_snake_case)]
+    pub fn unregisterMcpServerPackage(&mut self, serverName: &str) -> bool {
+        let packageManager = {
+            self.inner
+                .lock()
+                .expect("AIToolHandler mutex poisoned")
+                .packageManager
+                .clone()
+        };
+        let Some(packageManager) = packageManager else {
+            return false;
+        };
+        let mut guard = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        guard.unregisterMCPServerPackage(serverName)
+    }
+
+    #[allow(non_snake_case)]
     pub fn getToolPermissionSystem(&self) -> ToolPermissionSystem {
         self.inner
             .lock()

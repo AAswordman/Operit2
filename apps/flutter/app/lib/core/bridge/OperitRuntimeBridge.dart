@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 
 abstract class OperitRuntimeBridge {
@@ -56,5 +55,5 @@ abstract class OperitRuntimeBridge {
     );
   }
 
-  Future<HostEnvironmentDescriptor> hostDescriptor();
+  Future<String> dispatchHostEvent(String source, String payloadJson);
 }

@@ -12,6 +12,7 @@ use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
 use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
+use super::i18n::TuiText;
 use super::markdown::{
     render_markdown_lines, render_markdown_lines_cached, render_markdown_nodes_lines,
     render_markdown_nodes_lines_cached, MarkdownRenderCache,
@@ -27,9 +28,10 @@ pub(super) fn render_message_lines(
     input_state: &InputProcessingState,
     thinking_line: &Line<'static>,
     typewriter_state: &mut TypewriterState,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     if messages.is_empty() {
-        return render_blue_cat_lines(content_width);
+        return render_blue_cat_lines(content_width, text);
     }
 
     let active_message_timestamps = messages
@@ -49,6 +51,7 @@ pub(super) fn render_message_lines(
             is_loading,
             thinking_line,
             typewriter_state,
+            text,
         ));
     }
     if is_loading && matches!(messages.last(), Some(message) if message.sender == "user") {
@@ -58,7 +61,7 @@ pub(super) fn render_message_lines(
             thinking_line,
         ));
     }
-    lines.extend(render_input_error_lines(input_state));
+    lines.extend(render_input_error_lines(input_state, text));
     lines
 }
 
@@ -70,6 +73,7 @@ pub(super) fn render_transcript_message_lines(
     is_loading: bool,
     thinking_line: &Line<'static>,
     typewriter_state: &mut TypewriterState,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     render_transcript_message_lines_with_cache(
         message,
@@ -79,6 +83,7 @@ pub(super) fn render_transcript_message_lines(
         is_loading,
         thinking_line,
         typewriter_state,
+        text,
         None,
         None,
     )
@@ -92,6 +97,7 @@ pub(super) fn render_transcript_message_lines_with_cache(
     is_loading: bool,
     thinking_line: &Line<'static>,
     typewriter_state: &mut TypewriterState,
+    text: TuiText,
     stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
     mut markdown_cache: Option<&mut MarkdownRenderCache>,
 ) -> Vec<Line<'static>> {
@@ -133,7 +139,13 @@ pub(super) fn render_transcript_message_lines_with_cache(
     };
     let mut lines = Vec::new();
     if message.sender == "user" {
-        append_user_message_card(&mut lines, header_spans, &message.content, content_width);
+        append_user_message_card(
+            &mut lines,
+            header_spans,
+            &message.content,
+            content_width,
+            text,
+        );
         return lines;
     }
     lines.push(style_message_line(
@@ -206,6 +218,7 @@ pub(super) fn render_transcript_message_lines_with_cache(
             is_streaming_message,
             stream_markdown_nodes,
             markdown_cache.as_deref_mut(),
+            text,
         );
         lines.extend(
             wrap_message_lines(rendered_lines, message_content_width)
@@ -232,6 +245,7 @@ fn render_message_markdown_lines(
     is_streaming_message: bool,
     stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
     markdown_cache: Option<&mut MarkdownRenderCache>,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     if let Some(nodes) = stream_markdown_nodes {
         let visible_nodes = visible_markdown_nodes_for_tui(nodes);
@@ -241,8 +255,9 @@ fn render_message_markdown_lines(
                 message_content_width,
                 cache,
                 is_streaming_message,
+                text,
             ),
-            None => render_markdown_nodes_lines(&visible_nodes, message_content_width),
+            None => render_markdown_nodes_lines(&visible_nodes, message_content_width, text),
         };
     }
 
@@ -252,8 +267,9 @@ fn render_message_markdown_lines(
             message_content_width,
             cache,
             is_streaming_message,
+            text,
         ),
-        None => render_markdown_lines(display_content, message_content_width),
+        None => render_markdown_lines(display_content, message_content_width, text),
     }
 }
 
@@ -284,11 +300,14 @@ pub(super) fn render_loading_ai_placeholder_lines(
     ]
 }
 
-pub(super) fn render_input_error_lines(input_state: &InputProcessingState) -> Vec<Line<'static>> {
+pub(super) fn render_input_error_lines(
+    input_state: &InputProcessingState,
+    text: TuiText,
+) -> Vec<Line<'static>> {
     match input_state {
         InputProcessingState::Error { message } => vec![Line::from(vec![
             Span::styled(
-                "error: ",
+                text.error_prefix(),
                 Style::default()
                     .fg(theme::ERROR)
                     .add_modifier(Modifier::BOLD),
@@ -499,12 +518,13 @@ fn append_user_message_card(
     header_spans: Vec<Span<'static>>,
     content: &str,
     available_width: usize,
+    text: TuiText,
 ) {
     let layout = message_layout("user", available_width);
     let block_style = message_block_style("user");
     let parsed = parse_user_message_content(content);
     if !parsed.trailing_attachments.is_empty() {
-        for line in render_attachment_chip_lines(&parsed.trailing_attachments, layout) {
+        for line in render_attachment_chip_lines(&parsed.trailing_attachments, layout, text) {
             lines.push(line);
         }
     }
@@ -515,7 +535,8 @@ fn append_user_message_card(
         layout,
     ));
 
-    let mut rendered_lines = render_markdown_lines(&parsed.processed_text, layout.content_width);
+    let mut rendered_lines =
+        render_markdown_lines(&parsed.processed_text, layout.content_width, text);
     trim_blank_edge_lines(&mut rendered_lines);
     if rendered_lines.is_empty() {
         rendered_lines.push(Line::from(""));
@@ -674,13 +695,14 @@ fn remove_ranges(content: &str, ranges: &[(usize, usize)]) -> String {
 fn render_attachment_chip_lines(
     attachments: &[UserAttachmentData],
     layout: MessageLayout,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut spans = Vec::new();
     let mut current_width = 0usize;
     let content_width = layout.content_width.max(1);
     for attachment in attachments {
-        let label = attachment_display_label(attachment);
+        let label = attachment_display_label(attachment, text);
         let chip = format!("[{}]", label);
         let chip_width = display_width(&chip);
         let separator_width = if spans.is_empty() { 0 } else { 1 };
@@ -721,11 +743,11 @@ fn left_aligned_attachment_line(
     Line::from(spans)
 }
 
-fn attachment_display_label(attachment: &UserAttachmentData) -> String {
+fn attachment_display_label(attachment: &UserAttachmentData, text: TuiText) -> String {
     if attachment.mime_type == "text/json" && attachment.file_name == "screen_content.json" {
-        "屏幕内容".to_string()
+        text.screen_content_label().to_string()
     } else if attachment.mime_type == "application/vnd.workspace-context+xml" {
-        "工作区状态".to_string()
+        text.workspace_state_label().to_string()
     } else if attachment.file_size > 0 {
         format!(
             "{} {}",
@@ -1007,6 +1029,7 @@ pub(super) fn split_command_line(input: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::i18n::TuiLanguage;
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -1048,6 +1071,7 @@ mod tests {
             &InputProcessingState::Idle,
             &Line::from("thinking"),
             &mut typewriter_state,
+            TuiLanguage::Chinese.text(),
         );
         let rendered = dump_logical_lines(&lines);
 
@@ -1068,6 +1092,7 @@ mod tests {
                 file_size: 1,
             }],
             layout,
+            TuiLanguage::Chinese.text(),
         )
         .remove(0);
         let card_line = style_user_card_line(Line::from("Prompt"), block_style, layout);
@@ -1095,6 +1120,7 @@ mod tests {
             &InputProcessingState::Idle,
             &Line::from("thinking"),
             &mut typewriter_state,
+            TuiLanguage::English.text(),
         );
         let rendered = dump_logical_lines(&lines);
 
@@ -1115,6 +1141,7 @@ mod tests {
             &InputProcessingState::Idle,
             &Line::from("thinking"),
             &mut typewriter_state,
+            TuiLanguage::English.text(),
         );
         let rendered = dump_logical_lines(&lines);
 
@@ -1147,6 +1174,7 @@ mod tests {
             &InputProcessingState::Idle,
             &Line::from("thinking"),
             &mut typewriter_state,
+            TuiLanguage::Chinese.text(),
         );
 
         println!("logical lines:");

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../theme/OperitFormStyles.dart';
+import '../utils/MCPCommandRunner.dart';
 import 'MCPToolRunDialog.dart';
 
 class MCPDetailsDialog extends StatefulWidget {
@@ -147,6 +148,19 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
       ),
       actions: <Widget>[
         TextButton.icon(
+          onPressed:
+              widget.server == null || widget.server?.disabled == true || _busy
+              ? null
+              : _startServer,
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('启动'),
+        ),
+        TextButton.icon(
+          onPressed: widget.server == null || _busy ? null : _killServer,
+          icon: const Icon(Icons.stop_circle_outlined),
+          label: const Text('Kill'),
+        ),
+        TextButton.icon(
           onPressed: _busy ? null : _confirmDelete,
           icon: const Icon(Icons.delete_outline),
           label: const Text('删除'),
@@ -158,6 +172,44 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
         ),
       ],
     );
+  }
+
+  Future<void> _startServer() async {
+    await _runLifecycleAction(() {
+      return startMcpServer(clients: widget.clients, serverId: widget.serverId);
+    });
+  }
+
+  Future<void> _killServer() async {
+    await _runLifecycleAction(() {
+      return killMcpServer(clients: widget.clients, serverId: widget.serverId);
+    });
+  }
+
+  Future<void> _runLifecycleAction(Future<String> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+      await widget.onConfigSaved();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Failed to update MCP lifecycle: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
   }
 
   void _showRunDialog(BuildContext context, core_proxy.CachedToolInfo tool) {
@@ -280,6 +332,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
       _error = null;
     });
     try {
+      await killMcpServer(clients: widget.clients, serverId: widget.serverId);
       await widget.clients.mcpLocalServer.removeMcpServer(
         serverId: widget.serverId,
       );
@@ -798,6 +851,14 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
           _error = '配置未保存，请检查必填字段。';
         });
         return;
+      }
+      if (server.disabled) {
+        await killMcpServer(clients: widget.clients, serverId: widget.serverId);
+      } else {
+        await restartMcpServer(
+          clients: widget.clients,
+          serverId: widget.serverId,
+        );
       }
       await widget.onSaved();
       if (!mounted) {

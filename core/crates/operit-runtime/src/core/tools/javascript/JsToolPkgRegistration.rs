@@ -22,6 +22,8 @@ pub struct ToolPkgMainRegistrationCapture {
     pub chatInputHooks: Vec<String>,
     #[serde(rename = "chatViewHooks", default)]
     pub chatViewHooks: Vec<String>,
+    #[serde(rename = "hostEventHooks", default)]
+    pub hostEventHooks: Vec<String>,
     #[serde(rename = "toolLifecycleHooks", default)]
     pub toolLifecycleHooks: Vec<String>,
     #[serde(rename = "promptInputHooks", default)]
@@ -63,6 +65,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             inputMenuTogglePlugins: [],
             chatInputHooks: [],
             chatViewHooks: [],
+            hostEventHooks: [],
             toolLifecycleHooks: [],
             promptInputHooks: [],
             promptHistoryHooks: [],
@@ -398,6 +401,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             registerInputMenuTogglePlugin: registerFunction('inputMenuTogglePlugins', 'registerInputMenuTogglePlugin'),
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
+            registerHostEventHook: registerFunction('hostEventHooks', 'registerHostEventHook'),
             registerToolLifecycleHook: registerFunction('toolLifecycleHooks', 'registerToolLifecycleHook'),
             registerPromptInputHook: registerFunction('promptInputHooks', 'registerPromptInputHook'),
             registerPromptHistoryHook: registerFunction('promptHistoryHooks', 'registerPromptHistoryHook'),
@@ -424,6 +428,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         root.registerToolPkgInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
         root.registerToolPkgChatInputHook = api.registerChatInputHook;
         root.registerToolPkgChatViewHook = api.registerChatViewHook;
+        root.registerToolPkgHostEventHook = api.registerHostEventHook;
         root.registerToolPkgToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerToolPkgPromptInputHook = api.registerPromptInputHook;
         root.registerToolPkgPromptHistoryHook = api.registerPromptHistoryHook;
@@ -441,6 +446,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         root.registerInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
         root.registerChatInputHook = api.registerChatInputHook;
         root.registerChatViewHook = api.registerChatViewHook;
+        root.registerHostEventHook = api.registerHostEventHook;
         root.registerToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerPromptInputHook = api.registerPromptInputHook;
         root.registerPromptHistoryHook = api.registerPromptHistoryHook;

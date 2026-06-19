@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 
-import '../../../../core/bridge/RuntimeHostBridge.dart';
 import '../../../../core/path/OperitClientPaths.dart';
 import 'ToolPkgComposeDslWebViewResourceServer.dart';
 
@@ -121,22 +120,18 @@ class ComposeDslWebViewStateSnapshot {
 class ComposeDslWebViewHostRegistry {
   ComposeDslWebViewHostRegistry._();
 
-  static bool _runtimeHostBridgeRegistered = false;
+  static bool _hostInteractionRegistered = false;
   static final Map<String, Map<String, _ComposeDslWebViewControllerBinding>>
   _bindings = <String, Map<String, _ComposeDslWebViewControllerBinding>>{};
   static final Map<String, Map<String, Map<String, Map<String, String>>>>
   _javascriptInterfaceActionIds =
       <String, Map<String, Map<String, Map<String, String>>>>{};
 
-  static void ensureRuntimeHostBridgeRegistered() {
-    if (_runtimeHostBridgeRegistered) {
+  static void ensureHostInteractionRegistered() {
+    if (_hostInteractionRegistered) {
       return;
     }
-    RuntimeHostBridge.registerStringHandler(
-      'composeWebViewControllerCommand',
-      handleControllerCommand,
-    );
-    _runtimeHostBridgeRegistered = true;
+    _hostInteractionRegistered = true;
   }
 
   static void bind({

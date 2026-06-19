@@ -298,7 +298,7 @@ fn print_cli_usage() {
     println!("operit2 cli skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
-    println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|meta|meta-set|describe>");
+    println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
         "operit2 cli link <serve|discover|hello|connect|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|sync|sync-status|call|watch|tui|run>"
     );
@@ -554,6 +554,7 @@ fn print_mcp_usage() {
     println!("operit2 cli mcp enable <id>");
     println!("operit2 cli mcp disable <id>");
     println!("operit2 cli mcp start <id>");
+    println!("operit2 cli mcp kill <id>");
     println!("operit2 cli mcp tools <id>");
     println!("operit2 cli mcp config <id>");
     println!("operit2 cli mcp config-set <id> <json-or-@file>");

@@ -800,7 +800,7 @@ impl ChatServiceCore {
     fn attachPackageInternal(&mut self, packageName: &str) {
         if packageName.is_empty() {
             self.messageProcessingDelegate
-                .showToast(format!("添加包附件失败: {packageName}"));
+                .showToast(format!("添加包失败: {packageName}"));
             return;
         }
 
@@ -827,7 +827,7 @@ impl ChatServiceCore {
 
         if !isStandardPackage && !isSkillPackage && !isMcpPackage {
             self.messageProcessingDelegate
-                .showToast(format!("添加包附件失败: {packageName}"));
+                .showToast(format!("添加包失败: {packageName}"));
             return;
         }
 
@@ -841,7 +841,7 @@ impl ChatServiceCore {
             let packageContent = packageManagerGuard.usePackage(packageName);
             if isPackageAttachmentError(packageName, &packageContent) {
                 self.messageProcessingDelegate
-                    .showToast(format!("添加包附件失败: {packageName}"));
+                    .showToast(format!("添加包失败: {packageName}"));
                 return;
             }
 
@@ -858,7 +858,7 @@ impl ChatServiceCore {
         }
 
         self.messageProcessingDelegate
-            .showToast(format!("已添加包附件: {packageName}"));
+            .showToast(format!("已添加包: {packageName}"));
     }
 
     #[allow(non_snake_case)]

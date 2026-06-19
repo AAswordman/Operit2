@@ -7,7 +7,6 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' show Response;
 import 'package:http/http.dart' as http;
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../bridge/CoreProxy.dart';
 
@@ -103,25 +102,14 @@ class RemoteRuntimeLinkClient extends CoreProxy {
   }
 
   @override
-  Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    final info = await sessionInfo();
-    return HostEnvironmentDescriptor(
-      id: 'remote:${info.coreDeviceId}',
-      displayName: 'Remote ${info.coreDeviceInfo.displayName}',
-      pathStyleDescriptionEn: 'Remote core path style',
-      pathStyleDescriptionCn: '远程核心路径风格',
-      examplePaths: const <String>[],
-      usesEnvironmentParameter: false,
-      environmentParameterDescriptionEn: '',
-      environmentParameterDescriptionCn: '',
-      capabilities: info.transports,
-      fileSystemHost: true,
-      webVisitHost: true,
-      systemOperationHost: true,
-      managedRuntimeHost: true,
-      runtimeStorageHost: true,
-      runtimeSqliteHost: true,
-    );
+  Future<String> dispatchHostEvent(String source, String payloadJson) async {
+    final body = jsonEncode(<String, Object?>{
+      'source': source,
+      'payload': jsonDecode(payloadJson),
+    });
+    final response = await _postRequest('/host/event', body);
+    _throwIfRemoteError(response);
+    return response.body;
   }
 
   Future<RemoteSessionInfo> sessionInfo() async {
@@ -132,34 +120,6 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     return RemoteSessionInfo.fromJson(
       jsonDecode(response.body) as Map<String, Object?>,
     );
-  }
-
-  Future<RemoteHostInteractionRequest?> pollHostInteraction({
-    required int timeoutMs,
-  }) async {
-    final body = jsonEncode(<String, Object?>{'timeoutMs': timeoutMs});
-    final response = await _postRequest('/host/interaction/poll', body);
-    _throwIfRemoteError(response);
-    final decoded = jsonDecode(response.body) as Map<String, Object?>;
-    final request = decoded['request'];
-    if (request == null) {
-      return null;
-    }
-    return RemoteHostInteractionRequest.fromJson(
-      request as Map<String, Object?>,
-    );
-  }
-
-  Future<void> respondHostInteraction({
-    required String requestId,
-    required String result,
-  }) async {
-    final body = jsonEncode({
-      'requestId': requestId,
-      'response': <String, String>{'result': result},
-    });
-    final response = await _postRequest('/host/interaction/respond', body);
-    _throwIfRemoteError(response);
   }
 
   void dispose() {
@@ -454,26 +414,6 @@ class _RemoteWatchSubscription {
   final String channelId;
   final String subscriptionId;
   final Stream<CoreEvent> events;
-}
-
-class RemoteHostInteractionRequest {
-  const RemoteHostInteractionRequest({
-    required this.requestId,
-    required this.kind,
-    required this.payload,
-  });
-
-  factory RemoteHostInteractionRequest.fromJson(Map<String, Object?> json) {
-    return RemoteHostInteractionRequest(
-      requestId: json['requestId'] as String,
-      kind: json['kind'] as String,
-      payload: json['payload'] as Map<String, Object?>,
-    );
-  }
-
-  final String requestId;
-  final String kind;
-  final Map<String, Object?> payload;
 }
 
 void _throwRemoteErrorBody(int statusCode, String body) {

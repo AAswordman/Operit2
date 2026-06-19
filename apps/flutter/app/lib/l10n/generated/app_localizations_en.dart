@@ -1472,7 +1472,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsCharactersNoTags =>
-      'No tags available. Create tags in prompt/tag management, then bind them to character cards.';
+      'No tags available. Create one in tag management, then bind it to this character card.';
 
   @override
   String get settingsCharactersImport => 'Import';
@@ -1541,6 +1541,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsCharactersTagsSection => 'Tags';
+
+  @override
+  String get settingsCharactersManageTags => 'Manage tags';
 
   @override
   String get settingsCharactersCreateTag => 'New tag';
@@ -1667,31 +1670,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersMemoryGraphLink => 'Memory link';
 
   @override
-  String get settingsCharactersEditUserMarkdown => 'Edit USER.md';
+  String get settingsCharactersEditUserMarkdown => 'Edit user profile';
 
   @override
   String settingsCharactersUserMarkdownTitle(String profileName) {
-    return '$profileName\'s USER.md';
+    return '$profileName\'s user profile';
   }
 
   @override
-  String get settingsCharactersUserMarkdownSaved => 'USER.md saved';
+  String get settingsCharactersUserMarkdownSaved => 'User profile saved';
 
   @override
-  String get settingsCharactersMemoryAutoUpdate =>
-      'Auto-update memory preferences';
+  String get settingsCharactersUserMarkdownContent => 'User profile content';
+
+  @override
+  String get settingsCharactersMemoryAutoUpdate => 'Auto-update memory stores';
 
   @override
   String get settingsCharactersMemoryAutoUpdateDescription =>
-      'Allow AI to update user preferences and long-term memory from conversations.';
+      'Allow AI to organize conversation info into memory stores.';
 
   @override
   String get settingsCharactersPreferenceDescription =>
-      'Send user preferences to model';
+      'Provide user profile to model';
 
   @override
   String get settingsCharactersPreferenceDescriptionSubtitle =>
-      'Include the active preference profile in chat prompts.';
+      'Include the current user profile in chat prompts.';
 
   @override
   String get settingsCharactersCardsSection => 'Character cards';

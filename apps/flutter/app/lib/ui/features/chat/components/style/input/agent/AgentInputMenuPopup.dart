@@ -88,15 +88,14 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
           chatId: widget.currentChatId,
           featureStates: const <String, bool>{},
           runtime: 'main',
-    );
+        );
     return _AgentInputMenuData(
       enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
           .enableMemoryAutoUpdateFlowSnapshot(),
       enableTools: await _clients.preferencesApiPreferences
           .enableToolsFlowSnapshot(),
-      permissionLevel: _permissionLevelName(
-        await _clients.permissionsToolPermissionSystem.getMasterSwitch(),
-      ),
+      permissionLevel: await _clients.permissionsToolPermissionSystem
+          .getMasterSwitch(),
       disableStreamOutput: await _clients.preferencesApiPreferences
           .disableStreamOutputFlowSnapshot(),
       disableUserPreferenceDescription: await _clients.preferencesApiPreferences
@@ -197,7 +196,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       children: <Widget>[
                         _SwitchRow(
                           icon: Icons.account_circle_outlined,
-                          title: '角色 USER.md',
+                          title: '提供用户资料',
                           value: data.disableUserPreferenceDescription
                               ? '关'
                               : '开',
@@ -211,7 +210,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                           icon: data.enableMemoryAutoUpdate
                               ? Icons.save
                               : Icons.save_outlined,
-                          title: '自动整理',
+                          title: '自动更新记忆库',
                           value: data.enableMemoryAutoUpdate ? '开' : '关',
                           checked: data.enableMemoryAutoUpdate,
                           onTap: () => _toggleMemoryAutoUpdate(data),
@@ -305,13 +304,18 @@ class _AgentInputMenuData {
 
   final bool enableMemoryAutoUpdate;
   final bool enableTools;
-  final String permissionLevel;
+  final core_proxy.PermissionLevel permissionLevel;
   final bool disableStreamOutput;
   final bool disableUserPreferenceDescription;
   final List<core_proxy.InputMenuToggleDefinitionSnapshot> pluginToggles;
 
   String get memorySummary {
-    return disableUserPreferenceDescription ? '关' : '角色';
+    return switch ((disableUserPreferenceDescription, enableMemoryAutoUpdate)) {
+      (true, false) => '关',
+      (false, false) => '用户资料',
+      (true, true) => '记忆库更新',
+      (false, true) => '用户资料 · 记忆库更新',
+    };
   }
 
   _ToolPermissionMode get toolPermissionMode {
@@ -319,9 +323,9 @@ class _AgentInputMenuData {
       return _ToolPermissionMode.forbid;
     }
     return switch (permissionLevel) {
-      'ALLOW' => _ToolPermissionMode.allow,
-      'FORBID' => _ToolPermissionMode.forbid,
-      _ => _ToolPermissionMode.ask,
+      core_proxy.PermissionLevel.allow => _ToolPermissionMode.allow,
+      core_proxy.PermissionLevel.ask => _ToolPermissionMode.ask,
+      core_proxy.PermissionLevel.forbid => _ToolPermissionMode.forbid,
     };
   }
 
@@ -334,19 +338,15 @@ class _AgentInputMenuData {
 }
 
 enum _ToolPermissionMode {
-  forbid('禁用', false, 'FORBID'),
-  ask('询问', true, 'ASK'),
-  allow('允许', true, 'ALLOW');
+  forbid('禁用', false, core_proxy.PermissionLevel.forbid),
+  ask('询问', true, core_proxy.PermissionLevel.ask),
+  allow('允许', true, core_proxy.PermissionLevel.allow);
 
   const _ToolPermissionMode(this.label, this.enableTools, this.permissionLevel);
 
   final String label;
   final bool enableTools;
-  final String permissionLevel;
-}
-
-String _permissionLevelName(Object? value) {
-  return value.toString().split('.').last;
+  final core_proxy.PermissionLevel permissionLevel;
 }
 
 class _MenuSection extends StatelessWidget {

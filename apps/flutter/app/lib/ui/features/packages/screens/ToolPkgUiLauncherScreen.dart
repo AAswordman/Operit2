@@ -49,7 +49,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   @override
   void initState() {
     super.initState();
-    ComposeDslWebViewHostRegistry.ensureRuntimeHostBridgeRegistered();
+    ComposeDslWebViewHostRegistry.ensureHostInteractionRegistered();
   }
 
   @override

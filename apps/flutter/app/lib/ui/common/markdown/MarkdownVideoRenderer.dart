@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../interactions/MessagePressShield.dart';
 import 'MarkdownAudioRenderer.dart';
 import 'MarkdownImageRenderer.dart';
 
@@ -138,16 +139,18 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                                 : _controller.value.aspectRatio,
                             child: VideoPlayer(_controller),
                           ),
-                          IconButton.filledTonal(
-                            onPressed: _togglePlayback,
-                            icon: Icon(
-                              _controller.value.isPlaying
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
+                          MessagePressShieldRegion(
+                            child: IconButton.filledTonal(
+                              onPressed: _togglePlayback,
+                              icon: Icon(
+                                _controller.value.isPlaying
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                              ),
+                              tooltip: _controller.value.isPlaying
+                                  ? 'Pause'
+                                  : 'Play',
                             ),
-                            tooltip: _controller.value.isPlaying
-                                ? 'Pause'
-                                : 'Play',
                           ),
                         ],
                       );

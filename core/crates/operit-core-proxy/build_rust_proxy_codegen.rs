@@ -180,7 +180,9 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
         return String::new();
     };
     match &watch.stream {
-        WatchStreamProtocol::StringStream | WatchStreamProtocol::TextEvent { .. } => {
+        WatchStreamProtocol::JsonStream
+        | WatchStreamProtocol::StringStream
+        | WatchStreamProtocol::TextEvent { .. } => {
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
             format!(

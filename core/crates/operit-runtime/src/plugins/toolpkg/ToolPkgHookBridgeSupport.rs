@@ -86,6 +86,17 @@ pub struct ToolPkgAiProviderRegistration {
     pub calculateInputTokensFunctionSource: Option<String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ToolPkgHostEventRegistration {
+    pub containerPackageName: String,
+    pub hookId: String,
+    pub source: String,
+    pub trigger: serde_json::Value,
+    pub functionName: String,
+    pub functionSource: Option<String>,
+    pub enabled: bool,
+}
+
 #[allow(non_snake_case)]
 pub fn toolPkgPackageManager() -> PackageManager {
     let application = OperitApplication::applicationContext();

@@ -11,6 +11,7 @@ use super::helpers::{
     is_streaming_message_for_tui, render_input_error_lines, render_loading_ai_placeholder_lines,
     render_transcript_message_lines_with_cache,
 };
+use super::i18n::{TuiLanguage, TuiText};
 use super::markdown::MarkdownRenderCache;
 use super::stream_markdown::TuiMarkdownStreamState;
 use super::typewriter::TypewriterState;
@@ -38,10 +39,15 @@ pub(super) struct TranscriptMessageRenderKey {
     model_name: String,
     output_tokens: i32,
     content_hash: u64,
+    language: TuiLanguage,
 }
 
 impl TranscriptMessageRenderKey {
-    pub(super) fn build(message: &ChatMessage, content_width: usize) -> Self {
+    pub(super) fn build(
+        message: &ChatMessage,
+        content_width: usize,
+        language: TuiLanguage,
+    ) -> Self {
         Self {
             timestamp: message.timestamp,
             content_width,
@@ -51,6 +57,7 @@ impl TranscriptMessageRenderKey {
             model_name: message.modelName.clone(),
             output_tokens: message.outputTokens,
             content_hash: stable_content_hash(&message.content),
+            language,
         }
     }
 }
@@ -65,9 +72,10 @@ pub(super) fn render_transcript_lines(
     typewriter_state: &mut TypewriterState,
     transcript_cache: &mut TranscriptRenderCache,
     stream_markdown_state: Option<&TuiMarkdownStreamState>,
+    text: TuiText,
 ) -> Vec<Line<'static>> {
     if messages.is_empty() {
-        return render_blue_cat_lines(content_width);
+        return render_blue_cat_lines(content_width, text);
     }
 
     transcript_cache.ensure_chat_id(current_chat_id);
@@ -93,7 +101,7 @@ pub(super) fn render_transcript_lines(
                 .messages
                 .entry(message.timestamp)
                 .or_insert_with(|| TranscriptMessageRenderCache {
-                    key: TranscriptMessageRenderKey::build(message, content_width),
+                    key: TranscriptMessageRenderKey::build(message, content_width, text.language()),
                     lines: Vec::new(),
                     markdown: MarkdownRenderCache::default(),
                 });
@@ -105,16 +113,17 @@ pub(super) fn render_transcript_lines(
                 is_loading,
                 thinking_line,
                 typewriter_state,
+                text,
                 stream_markdown_nodes,
                 Some(&mut cache.markdown),
             );
-            cache.key = TranscriptMessageRenderKey::build(message, content_width);
+            cache.key = TranscriptMessageRenderKey::build(message, content_width, text.language());
             cache.lines = rendered.clone();
             lines.extend(rendered);
             continue;
         }
 
-        let key = TranscriptMessageRenderKey::build(message, content_width);
+        let key = TranscriptMessageRenderKey::build(message, content_width, text.language());
         if let Some(cached) = transcript_cache
             .messages
             .get(&message.timestamp)
@@ -132,6 +141,7 @@ pub(super) fn render_transcript_lines(
             is_loading,
             thinking_line,
             typewriter_state,
+            text,
             None,
             None,
         );
@@ -152,11 +162,16 @@ pub(super) fn render_transcript_lines(
             thinking_line,
         ));
     }
-    lines.extend(render_input_error_lines(input_state));
+    lines.extend(render_input_error_lines(input_state, text));
     lines
 }
 
 impl TranscriptRenderCache {
+    pub(super) fn clear(&mut self) {
+        self.chat_id = None;
+        self.messages.clear();
+    }
+
     fn ensure_chat_id(&mut self, chat_id: Option<&str>) {
         let next_chat_id = chat_id.map(ToString::to_string);
         if self.chat_id == next_chat_id {

@@ -84,15 +84,25 @@ fn render_schema_types(serializable_types: &HashMap<String, SerializableType>) -
                     fields_json
                 )
             }
-            SerializableTypeKind::Enum { variants } => {
+            SerializableTypeKind::Enum {
+                variants,
+                unit_only,
+            } => {
                 let variants_json = variants
                     .iter()
-                    .map(|variant| json_string(variant))
+                    .map(|variant| {
+                        format!(
+                            "{{\"name\":{},\"jsonName\":{}}}",
+                            json_string(&variant.name),
+                            json_string(&variant.json_name)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 format!(
-                    "{}:{{\"kind\":\"enum\",\"variants\":[{}]}}",
+                    "{}:{{\"kind\":\"enum\",\"unitOnly\":{},\"variants\":[{}]}}",
                     json_string(&ty.full_type),
+                    unit_only,
                     variants_json
                 )
             }
@@ -109,16 +119,19 @@ fn render_schema_protocol(protocol: &MethodProtocol) -> String {
         }
         MethodProtocol::Watch(watch) => {
             let payload = match watch.stream {
-                WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
-                    "Json"
-                }
+                WatchStreamProtocol::JsonFlow { .. }
+                | WatchStreamProtocol::JsonState { .. }
+                | WatchStreamProtocol::JsonStream => "Json",
                 WatchStreamProtocol::StringStream => "String",
                 WatchStreamProtocol::TextEvent { .. } => "TextStreamEvent",
             };
-            let initial = if watch.snapshot_type.is_some() {
-                "Snapshot"
-            } else {
-                "None"
+            let initial = match watch.stream {
+                WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
+                    "Snapshot"
+                }
+                WatchStreamProtocol::JsonStream
+                | WatchStreamProtocol::StringStream
+                | WatchStreamProtocol::TextEvent { .. } => "None",
             };
             format!("{{\"mode\":\"Watch\",\"payload\":\"{payload}\",\"initial\":\"{initial}\"}}")
         }

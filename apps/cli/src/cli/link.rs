@@ -4,7 +4,7 @@ use crate::create_local_core;
 use crate::access::{
     link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
     AcceptedRemoteSessionStore, PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo,
-    RemoteHostInteractionBroker, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+    RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
 };
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
@@ -13,9 +13,13 @@ use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_runtime::services::RuntimeHostInteractionService::{
+    requestOwnerToolPermission, RuntimeHostInteractionToolPermissionPayload,
+    RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
+};
 use std::io::{self, Write};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
@@ -98,8 +102,7 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN);
     main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
-    let host_interaction_broker = RemoteHostInteractionBroker::new();
-    install_remote_host_permission_requester(&mut core, host_interaction_broker.clone());
+    install_link_permission_requester(&mut core);
     let accepted_sessions = load_link_server_sessions()?;
     let accepted_session_loader: AcceptedRemoteSessionLoader = Arc::new(load_link_server_sessions);
     let accepted_session_store: AcceptedRemoteSessionStore = Arc::new(save_link_server_session);
@@ -110,9 +113,9 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
+            localControlToken: None,
             deviceId: device_id,
             deviceInfo: device_info,
-            hostInteractionBroker: Some(host_interaction_broker),
             webAccess: None,
             printStartupInfo: true,
             acceptedSessions: accepted_sessions,
@@ -143,45 +146,41 @@ pub(crate) fn load_link_host_device_id() -> Result<String, String> {
     Ok(device_id)
 }
 
-pub(crate) fn install_remote_host_permission_requester(
-    core: &mut operit_core_proxy::LocalCoreProxy,
-    broker: RemoteHostInteractionBroker,
-) {
+pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::LocalCoreProxy) {
     let context = core.localApplicationMut().applicationContext.clone();
     let handler = AIToolHandler::getInstance(context);
     handler
         .getToolPermissionSystem()
         .setPermissionRequester(move |tool, description| {
-            let response = broker.requestInteraction(
-                "tool_permission",
-                serde_json::json!({
-                    "tool": tool_to_json(tool),
-                    "description": description,
-                }),
-                std::time::Duration::from_secs(60),
-            );
-            match response
-                .as_ref()
-                .and_then(|value| value.get("result"))
-                .and_then(|value| value.as_str())
-            {
-                Some("allow") => PermissionRequestResult::ALLOW,
-                Some("always_allow") => PermissionRequestResult::ALWAYS_ALLOW,
-                _ => PermissionRequestResult::DENY,
+            let response = requestOwnerToolPermission(
+                RuntimeHostInteractionToolPermissionPayload {
+                    tool: tool_to_permission_payload(tool),
+                    description: description.to_string(),
+                },
+                Duration::from_secs(60),
+            )
+            .expect("permission request failed");
+            match response.result.as_str() {
+                "allow" => PermissionRequestResult::ALLOW,
+                "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
+                "deny" => PermissionRequestResult::DENY,
+                other => panic!("unknown permission response result: {other}"),
             }
         });
 }
 
-fn tool_to_json(tool: &AITool) -> serde_json::Value {
-    serde_json::json!({
-        "name": &tool.name,
-        "parameters": tool.parameters.iter().map(|parameter| {
-            serde_json::json!({
-                "name": &parameter.name,
-                "value": &parameter.value,
+fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermissionTool {
+    RuntimeHostInteractionToolPermissionTool {
+        name: tool.name.clone(),
+        parameters: tool
+            .parameters
+            .iter()
+            .map(|parameter| RuntimeHostInteractionToolPermissionToolParameter {
+                name: parameter.name.clone(),
+                value: parameter.value.clone(),
             })
-        }).collect::<Vec<_>>(),
-    })
+            .collect(),
+    }
 }
 
 async fn run_link_hello_command(args: &[String]) -> Result<(), String> {

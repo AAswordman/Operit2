@@ -41,6 +41,11 @@ pub(crate) fn object_specs(runtime_src: &Path) -> Vec<ObjectSpec> {
         "data/repository",
         "repository",
     ));
+    specs.extend(discover_constructible_objects(
+        runtime_src,
+        "services",
+        "services",
+    ));
     specs.extend(discover_constructible_objects_recursive(
         runtime_src,
         "core/tools",
@@ -662,11 +667,14 @@ fn classify_return_protocol(ty: &str, resolver: &TypeResolver) -> MethodProtocol
             stream: WatchStreamProtocol::TextEvent { optional },
         });
     }
-    if is_plain_string_stream_type(ty, resolver) {
-        return MethodProtocol::Watch(WatchProtocol {
-            snapshot_type: None,
-            stream: WatchStreamProtocol::StringStream,
-        });
+    if let Some(stream_item) = plain_stream_item_type(ty, resolver) {
+        if stream_item == "String" {
+            return MethodProtocol::Watch(WatchProtocol {
+                snapshot_type: None,
+                stream: WatchStreamProtocol::StringStream,
+            });
+        }
+        return classify_json_watch(&stream_item, WatchStreamProtocol::JsonStream, resolver);
     }
     if ty.starts_with('&') {
         return MethodProtocol::Unsupported(format!(
@@ -703,13 +711,12 @@ fn text_event_watch_optionality(ty: &str, resolver: &TypeResolver) -> Option<boo
     is_text_event_stream_type(inner, resolver).then_some(true)
 }
 
-fn is_plain_string_stream_type(ty: &str, resolver: &TypeResolver) -> bool {
+fn plain_stream_item_type(ty: &str, resolver: &TypeResolver) -> Option<String> {
     let resolved = resolver.type_registry.resolve_alias(ty);
     resolver
         .type_registry
         .stream_item(&resolved)
-        .map(|item| item == "String")
-        .unwrap_or(false)
+        .map(|item| item.to_string())
 }
 
 fn is_text_event_stream_type(ty: &str, resolver: &TypeResolver) -> bool {

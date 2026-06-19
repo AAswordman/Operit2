@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../utils/MCPCommandRunner.dart';
 
 class MCPToolRunDialog extends StatefulWidget {
   const MCPToolRunDialog({
@@ -163,9 +164,7 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
       _result = null;
     });
     try {
-      await widget.clients.permissionsPackToolPackageManager.useMcpServer(
-        serverName: widget.serverId,
-      );
+      await startMcpServer(clients: widget.clients, serverId: widget.serverId);
       final parameters = _parameters
           .where(
             (parameter) =>

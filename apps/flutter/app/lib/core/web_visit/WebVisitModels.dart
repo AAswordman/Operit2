@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import '../proxy/generated/CoreProxyModels.g.dart';
+
 class WebVisitHeader {
   const WebVisitHeader({required this.name, required this.value});
 
@@ -30,6 +32,25 @@ class WebVisitRequest {
   final List<WebVisitHeader> headers;
   final String userAgent;
   final bool includeImageLinks;
+
+  factory WebVisitRequest.fromHostPayload(
+    RuntimeHostInteractionWebVisitPayload payload,
+  ) {
+    return WebVisitRequest(
+      requestId: payload.requestId,
+      url: payload.url,
+      headers: payload.headers
+          .map(
+            (header) => WebVisitHeader(
+              name: header.name,
+              value: header.value,
+            ),
+          )
+          .toList(growable: false),
+      userAgent: payload.userAgent,
+      includeImageLinks: payload.includeImageLinks,
+    );
+  }
 
   static WebVisitRequest? decode(String? responseText) {
     if (responseText == null || responseText == 'null') {

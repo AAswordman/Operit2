@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 
 abstract class CoreProxy {
@@ -12,5 +11,5 @@ abstract class CoreProxy {
 
   Stream<CoreEvent> watchStream(CoreWatchRequest request);
 
-  Future<HostEnvironmentDescriptor> hostDescriptor();
+  Future<String> dispatchHostEvent(String source, String payloadJson);
 }

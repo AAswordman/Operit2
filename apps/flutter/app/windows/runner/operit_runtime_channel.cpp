@@ -4,7 +4,15 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <wtsapi32.h>
+#include <dbt.h>
+#include <initguid.h>
+#include <devguid.h>
+#include <iphlpapi.h>
+#include <setupapi.h>
 
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -22,11 +30,7 @@
 namespace {
 
 using BridgeHandle = void*;
-using BridgeRuntimeHostRequestCallback =
-    char* (*)(const char*, const unsigned char*, size_t, void*);
-using BridgeRuntimeHostRequestFree = void (*)(char*, void*);
-using BridgeCreateWithRuntimeHostBridge = BridgeHandle (*)(
-    BridgeRuntimeHostRequestCallback, BridgeRuntimeHostRequestFree, void*);
+using BridgeCreate = BridgeHandle (*)();
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
@@ -42,13 +46,18 @@ using BridgeStartWebAccessServer =
 using BridgeDiscoverDevices =
     char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
-using BridgeHostDescriptor = char* (*)(BridgeHandle);
-using BridgeCurrentPermissionRequest = char* (*)(BridgeHandle);
-using BridgeHandlePermissionResult = char* (*)(BridgeHandle, const char*);
+using BridgeDispatchHostEvent = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeRemotePairStart =
     char* (*)(BridgeHandle, const char*, const char*, const char*);
 using BridgeRemotePairFinish = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeFreeString = void (*)(char*);
+
+constexpr GUID kGuidDevinterfaceBluetooth = {
+    0x0850302a,
+    0xb344,
+    0x4fda,
+    {0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0},
+};
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
     g_operit_runtime_channel;
@@ -92,176 +101,6 @@ bool PostOperitRuntimePlatformTask(Callback&& callback) {
   return true;
 }
 
-std::string JsonString(const std::string& value) {
-  std::string output = "\"";
-  for (char ch : value) {
-    switch (ch) {
-      case '\\':
-        output += "\\\\";
-        break;
-      case '"':
-        output += "\\\"";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        if (static_cast<unsigned char>(ch) < 0x20) {
-          char buffer[7];
-          std::snprintf(buffer, sizeof(buffer), "\\u%04x",
-                        static_cast<unsigned char>(ch));
-          output += buffer;
-        } else {
-          output += ch;
-        }
-        break;
-    }
-  }
-  output += "\"";
-  return output;
-}
-
-char* CopyRuntimeHostBridgeResponse(const std::string& value) {
-  char* copy = static_cast<char*>(std::malloc(value.size() + 1));
-  if (copy == nullptr) {
-    return nullptr;
-  }
-  std::memcpy(copy, value.c_str(), value.size() + 1);
-  return copy;
-}
-
-void FreeRuntimeHostBridgeResponse(char* value, void* user_data) {
-  (void)user_data;
-  std::free(value);
-}
-
-std::string RuntimeHostBridgeSuccess(const std::string& value) {
-  return std::string("{\"ok\":true,\"value\":") + JsonString(value) + "}";
-}
-
-std::string RuntimeHostBridgeError(const std::string& error) {
-  return std::string("{\"ok\":false,\"error\":") + JsonString(error) + "}";
-}
-
-struct BlockingMethodResultState {
-  std::mutex mutex;
-  std::condition_variable changed;
-  bool completed = false;
-  bool ok = false;
-  std::string value;
-  std::string error;
-};
-
-class BlockingStringMethodResult
-    : public flutter::MethodResult<flutter::EncodableValue> {
- public:
-  explicit BlockingStringMethodResult(
-      std::shared_ptr<BlockingMethodResultState> state)
-      : state_(std::move(state)) {}
-
- protected:
-  void SuccessInternal(const flutter::EncodableValue* result) override {
-    std::lock_guard<std::mutex> lock(state_->mutex);
-    if (result != nullptr) {
-      if (const std::string* value = std::get_if<std::string>(result)) {
-        state_->value = *value;
-        state_->ok = true;
-      } else {
-        state_->error = "runtime host handler returned a non-string value";
-      }
-    } else {
-      state_->value = "";
-      state_->ok = true;
-    }
-    state_->completed = true;
-    state_->changed.notify_all();
-  }
-
-  void ErrorInternal(const std::string& error_code,
-                     const std::string& error_message,
-                     const flutter::EncodableValue* error_details) override {
-    (void)error_details;
-    std::lock_guard<std::mutex> lock(state_->mutex);
-    state_->error = error_code + ": " + error_message;
-    state_->completed = true;
-    state_->changed.notify_all();
-  }
-
-  void NotImplementedInternal() override {
-    std::lock_guard<std::mutex> lock(state_->mutex);
-    state_->error = "runtime host method is not implemented";
-    state_->completed = true;
-    state_->changed.notify_all();
-  }
-
- private:
-  std::shared_ptr<BlockingMethodResultState> state_;
-};
-
-void InvokeRuntimeHostMethodOnPlatformThread(
-    std::string method_name,
-    std::string payload,
-    std::shared_ptr<BlockingMethodResultState> state) {
-  g_operit_runtime_channel->InvokeMethod(
-      method_name,
-      std::make_unique<flutter::EncodableValue>(std::move(payload)),
-      std::make_unique<BlockingStringMethodResult>(std::move(state)));
-}
-
-char* HandleRuntimeHostRequest(const char* method_name,
-                               const unsigned char* payload,
-                               size_t payload_length,
-                               void* user_data) {
-  (void)user_data;
-  if (method_name == nullptr) {
-    return CopyRuntimeHostBridgeResponse(
-        RuntimeHostBridgeError("runtime host method pointer is null"));
-  }
-  if (payload == nullptr) {
-    return CopyRuntimeHostBridgeResponse(
-        RuntimeHostBridgeError("runtime host payload pointer is null"));
-  }
-  if (!g_operit_runtime_channel) {
-    return CopyRuntimeHostBridgeResponse(
-        RuntimeHostBridgeError("operit/runtime channel is not initialized"));
-  }
-  auto state = std::make_shared<BlockingMethodResultState>();
-  if (::GetCurrentThreadId() == g_operit_runtime_platform_thread_id) {
-    return CopyRuntimeHostBridgeResponse(RuntimeHostBridgeError(
-        "runtime host request cannot block the platform thread"));
-  }
-  std::string method_name_string(method_name);
-  std::string payload_string(reinterpret_cast<const char*>(payload),
-                             payload_length);
-  if (!PostOperitRuntimePlatformTask(
-          [method_name_string = std::move(method_name_string),
-           payload_string = std::move(payload_string), state]() mutable {
-            InvokeRuntimeHostMethodOnPlatformThread(
-                std::move(method_name_string), std::move(payload_string),
-                std::move(state));
-          })) {
-    return CopyRuntimeHostBridgeResponse(RuntimeHostBridgeError(
-        "operit/runtime platform task could not be posted"));
-  }
-  std::unique_lock<std::mutex> lock(state->mutex);
-  state->changed.wait(lock, [&state]() { return state->completed; });
-  return CopyRuntimeHostBridgeResponse(
-      state->ok ? RuntimeHostBridgeSuccess(state->value)
-                : RuntimeHostBridgeError(state->error));
-}
-
 class OperitRuntimeLibrary {
  public:
   OperitRuntimeLibrary() = default;
@@ -286,9 +125,8 @@ class OperitRuntimeLibrary {
         AssignError(error, "operit_flutter_bridge.dll was not found");
         return false;
       }
-      create_with_runtime_host_bridge_ =
-          reinterpret_cast<BridgeCreateWithRuntimeHostBridge>(GetProcAddress(
-              library_, "operit_flutter_bridge_create_with_runtime_host_bridge"));
+      create_ = reinterpret_cast<BridgeCreate>(
+          GetProcAddress(library_, "operit_flutter_bridge_create"));
       create_error_ = reinterpret_cast<BridgeCreateError>(
           GetProcAddress(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
@@ -311,34 +149,28 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_start_web_access_server"));
       stop_web_access_server_ = reinterpret_cast<BridgeStopWebAccessServer>(
           GetProcAddress(library_, "operit_flutter_bridge_stop_web_access_server"));
-      host_descriptor_ = reinterpret_cast<BridgeHostDescriptor>(
-          GetProcAddress(library_, "operit_flutter_bridge_host_descriptor"));
-      current_permission_request_ = reinterpret_cast<BridgeCurrentPermissionRequest>(
-          GetProcAddress(library_, "operit_flutter_bridge_current_permission_request"));
-      handle_permission_result_ = reinterpret_cast<BridgeHandlePermissionResult>(
-          GetProcAddress(library_, "operit_flutter_bridge_handle_permission_result"));
+      dispatch_host_event_ = reinterpret_cast<BridgeDispatchHostEvent>(
+          GetProcAddress(library_, "operit_flutter_bridge_dispatch_host_event"));
       remote_pair_start_ = reinterpret_cast<BridgeRemotePairStart>(
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_start"));
       remote_pair_finish_ = reinterpret_cast<BridgeRemotePairFinish>(
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_finish"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
-      if (create_with_runtime_host_bridge_ == nullptr ||
+      if (create_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           poll_watch_stream_ == nullptr || poll_watch_streams_ == nullptr ||
           close_watch_stream_ == nullptr ||
           start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
-          host_descriptor_ == nullptr || current_permission_request_ == nullptr ||
-          handle_permission_result_ == nullptr ||
+          dispatch_host_event_ == nullptr ||
           remote_pair_start_ == nullptr || remote_pair_finish_ == nullptr ||
           free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
     }
-    handle_ = create_with_runtime_host_bridge_(
-        HandleRuntimeHostRequest, FreeRuntimeHostBridgeResponse, nullptr);
+    handle_ = create_();
     if (handle_ == nullptr) {
       AssignError(error, ReadCreateError());
       return false;
@@ -447,28 +279,15 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  bool HostDescriptor(std::string* response, std::string* error) {
+  bool DispatchHostEvent(const std::string& source,
+                         const std::string& payload,
+                         std::string* response,
+                         std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = host_descriptor_(handle_);
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool CurrentPermissionRequest(std::string* response, std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response = current_permission_request_(handle_);
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool HandlePermissionResult(const std::string& permission_result,
-                              std::string* response, std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response = handle_permission_result_(handle_, permission_result.c_str());
+    char* raw_response =
+        dispatch_host_event_(handle_, source.c_str(), payload.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -535,7 +354,7 @@ class OperitRuntimeLibrary {
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
   std::mutex mutex_;
-  BridgeCreateWithRuntimeHostBridge create_with_runtime_host_bridge_ = nullptr;
+  BridgeCreate create_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
@@ -547,15 +366,208 @@ class OperitRuntimeLibrary {
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
   BridgeDiscoverDevices discover_devices_ = nullptr;
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
-  BridgeHostDescriptor host_descriptor_ = nullptr;
-  BridgeCurrentPermissionRequest current_permission_request_ = nullptr;
-  BridgeHandlePermissionResult handle_permission_result_ = nullptr;
+  BridgeDispatchHostEvent dispatch_host_event_ = nullptr;
   BridgeRemotePairStart remote_pair_start_ = nullptr;
   BridgeRemotePairFinish remote_pair_finish_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
 std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
+
+// ── Windows native event monitor for ToolPkg host event hooks ────────────
+
+class WindowsEventMonitor {
+ public:
+  WindowsEventMonitor() = default;
+  ~WindowsEventMonitor() { Stop(); }
+
+  void Start(std::shared_ptr<class OperitRuntimeLibrary> library) {
+    Stop();
+    library_ = std::move(library);
+    power_requested_ = true;
+    session_requested_ = true;
+    network_requested_ = true;
+    bluetooth_requested_ = true;
+    RegisterNotifications();
+  }
+
+  void Stop() {
+    UnregisterNotifications();
+    running_ = false;
+    if (network_thread_.joinable()) network_thread_.join();
+    library_.reset();
+  }
+
+  bool HandleWindowMessage(UINT message, WPARAM wparam, LPARAM lparam) {
+    if (!library_) return false;
+    if (message == WM_POWERBROADCAST) {
+      OnPowerBroadcast(wparam, lparam);
+      return true;
+    }
+    if (message == WM_WTSSESSION_CHANGE) {
+      OnSessionChange(wparam, lparam);
+      return true;
+    }
+    if (message == WM_DEVICECHANGE) {
+      OnDeviceChange(wparam, lparam);
+      return true;
+    }
+    return false;
+  }
+
+ private:
+  std::shared_ptr<class OperitRuntimeLibrary> library_;
+  HDEVNOTIFY power_notification_ = nullptr;
+  HDEVNOTIFY bluetooth_notification_ = nullptr;
+  bool power_requested_ = false;
+  bool session_requested_ = false;
+  bool network_requested_ = false;
+  bool bluetooth_requested_ = false;
+  std::atomic<bool> running_{false};
+  std::thread network_thread_;
+
+  void RegisterNotifications() {
+    if (!g_operit_runtime_window) return;
+    if (power_requested_ || session_requested_) {
+      WTSRegisterSessionNotification(g_operit_runtime_window, NOTIFY_FOR_THIS_SESSION);
+      DEV_BROADCAST_DEVICEINTERFACE_W filter = {};
+      filter.dbcc_size = sizeof(filter);
+      filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+      power_notification_ = RegisterDeviceNotificationW(
+          g_operit_runtime_window, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    }
+    if (bluetooth_requested_) {
+      DEV_BROADCAST_DEVICEINTERFACE_W bt_filter = {};
+      bt_filter.dbcc_size = sizeof(bt_filter);
+      bt_filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+      bt_filter.dbcc_classguid = kGuidDevinterfaceBluetooth;
+      bluetooth_notification_ = RegisterDeviceNotificationW(
+          g_operit_runtime_window, &bt_filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    }
+    if (network_requested_) {
+      running_ = true;
+      network_thread_ = std::thread(&WindowsEventMonitor::NetworkThreadLoop, this);
+    }
+  }
+
+  void UnregisterNotifications() {
+    if (g_operit_runtime_window) {
+      if (power_notification_) {
+        UnregisterDeviceNotification(power_notification_);
+        power_notification_ = nullptr;
+      }
+      if (bluetooth_notification_) {
+        UnregisterDeviceNotification(bluetooth_notification_);
+        bluetooth_notification_ = nullptr;
+      }
+    }
+  }
+
+  void OnPowerBroadcast(WPARAM wparam, LPARAM lparam) {
+    if (!power_requested_) return;
+    std::string event_name;
+    switch (wparam) {
+      case PBT_APMPOWERSTATUSCHANGE:
+      {
+        SYSTEM_POWER_STATUS status;
+        if (GetSystemPowerStatus(&status)) {
+          event_name = (status.ACLineStatus == 1)
+              ? "system.power.connected"
+              : "system.power.disconnected";
+        }
+        break;
+      }
+      case PBT_APMRESUMESUSPEND:
+        event_name = "system.power.wake";
+        break;
+      case PBT_APMSUSPEND:
+        event_name = "system.power.sleep";
+        break;
+    }
+    if (!event_name.empty()) {
+      DispatchTopic(event_name);
+    }
+  }
+
+  void OnSessionChange(WPARAM wparam, LPARAM lparam) {
+    if (!session_requested_) return;
+    std::string event_name;
+    switch (wparam) {
+      case WTS_SESSION_LOCK: event_name = "system.session.lock"; break;
+      case WTS_SESSION_UNLOCK: event_name = "system.session.unlock"; break;
+    }
+    if (!event_name.empty()) {
+      DispatchTopic(event_name);
+    }
+  }
+
+  void OnDeviceChange(WPARAM wparam, LPARAM lparam) {
+    if (!bluetooth_requested_) return;
+    std::string topic;
+    switch (wparam) {
+      case DBT_DEVICEARRIVAL:
+        topic = "bluetooth.device.connected";
+        break;
+      case DBT_DEVICEREMOVECOMPLETE:
+        topic = "bluetooth.device.disconnected";
+        break;
+    }
+    if (!topic.empty()) {
+      DispatchTopic(topic);
+    }
+  }
+
+  void NetworkThreadLoop() {
+    while (running_) {
+      HANDLE notify_handle = nullptr;
+      OVERLAPPED overlapped = {};
+      HANDLE event_handle = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+      if (event_handle == nullptr) break;
+      overlapped.hEvent = event_handle;
+
+      DWORD ret = NotifyAddrChange(&notify_handle, &overlapped);
+      if (ret == NO_ERROR) {
+        DispatchTopic("system.network.changed");
+        CloseHandle(event_handle);
+        break;
+      } else if (ret == ERROR_IO_PENDING) {
+        HANDLE wait_handles[2] = {event_handle};
+        DWORD wait_result = WaitForMultipleObjects(1, wait_handles, FALSE, INFINITE);
+        if (wait_result == WAIT_OBJECT_0) {
+          DispatchTopic("system.network.changed");
+          CancelIo(notify_handle);
+        }
+        CloseHandle(notify_handle);
+        CloseHandle(event_handle);
+        break;
+      } else {
+        CloseHandle(event_handle);
+        if (!running_) break;
+        Sleep(10000);
+      }
+    }
+  }
+
+  void DispatchEvent(const std::string& source, const std::string& payload) {
+    if (!library_) return;
+    std::string response, error;
+    library_->DispatchHostEvent(source, payload, &response, &error);
+  }
+
+  void DispatchTopic(const std::string& topic) {
+    DispatchEvent("broadcast", R"({"topic":")" + topic +
+        R"(","platform":"windows","receivedAtMillis":)" +
+        std::to_string(CurrentTimeMillis()) + "}");
+  }
+
+  static int64_t CurrentTimeMillis() {
+    return static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+  }
+};
+
+std::shared_ptr<WindowsEventMonitor> g_windows_event_monitor;
 
 const std::string* StringArgument(
     const flutter::MethodCall<flutter::EncodableValue>& method_call) {
@@ -612,7 +624,16 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
                                              WPARAM wparam,
                                              LPARAM lparam,
                                              LRESULT* result) {
-  (void)lparam;
+  if (message == WM_POWERBROADCAST || message == WM_WTSSESSION_CHANGE ||
+      message == WM_DEVICECHANGE) {
+    if (g_windows_event_monitor &&
+        g_windows_event_monitor->HandleWindowMessage(message, wparam, lparam)) {
+      if (result != nullptr) {
+        *result = 0;
+      }
+      return true;
+    }
+  }
   if (message != kOperitRuntimePlatformTaskMessage) {
     return false;
   }
@@ -631,6 +652,8 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
   g_operit_runtime_window = window;
   g_operit_runtime_platform_thread_id = ::GetCurrentThreadId();
   g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
+  g_windows_event_monitor = std::make_shared<WindowsEventMonitor>();
+  g_windows_event_monitor->Start(g_operit_runtime_library);
   g_operit_runtime_channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           engine->messenger(), "operit/runtime",
@@ -802,30 +825,16 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           }
           return;
         }
-        if (method_call.method_name().compare("hostDescriptor") == 0) {
-          if (g_operit_runtime_library->HostDescriptor(&response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("currentPermissionRequest") == 0) {
-          if (g_operit_runtime_library->CurrentPermissionRequest(&response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("handlePermissionResult") == 0) {
-          const std::string* permission_result = StringArgument(method_call);
-          if (permission_result == nullptr) {
-            result->Error("INVALID_ARGS", "handlePermissionResult expects a result string");
+        if (method_call.method_name().compare("dispatchHostEvent") == 0) {
+          const std::string* source = StringMapValue(method_call, "source");
+          const std::string* payload = StringMapValue(method_call, "payload");
+          if (source == nullptr || payload == nullptr) {
+            result->Error("INVALID_ARGS",
+                          "dispatchHostEvent expects source and payload");
             return;
           }
-          if (g_operit_runtime_library->HandlePermissionResult(
-                  *permission_result, &response, &error)) {
+          if (g_operit_runtime_library->DispatchHostEvent(
+                  *source, *payload, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);

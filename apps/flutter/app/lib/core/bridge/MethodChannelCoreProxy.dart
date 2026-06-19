@@ -5,7 +5,6 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
 
@@ -87,17 +86,18 @@ class MethodChannelCoreProxy extends CoreProxy {
   }
 
   @override
-  Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    final responseText = await _channel.invokeMethod<String>('hostDescriptor');
+  Future<String> dispatchHostEvent(String source, String payloadJson) async {
+    final responseText = await _channel.invokeMethod<String>(
+      'dispatchHostEvent',
+      <String, String>{'source': source, 'payload': payloadJson},
+    );
     if (responseText == null) {
       throw const CoreLinkError(
-        code: 'EMPTY_HOST_DESCRIPTOR',
-        message: 'runtime bridge returned empty host descriptor',
+        code: 'EMPTY_RESPONSE',
+        message: 'runtime bridge returned empty host event response',
       );
     }
-    return HostEnvironmentDescriptor.fromJson(
-      jsonDecode(responseText) as Map<String, Object?>,
-    );
+    return responseText;
   }
 }
 
@@ -158,14 +158,15 @@ class _MethodChannelWatchPump {
           decodedEvents.containsKey('message')) {
         throw CoreLinkError.fromJson(decodedEvents);
       }
-      final eventsBySubscription =
-          (decodedEvents as Map<String, Object?>).cast<String, Object?>();
+      final eventsBySubscription = (decodedEvents as Map<String, Object?>)
+          .cast<String, Object?>();
       for (final subscriptionId in subscriptionIds) {
         final controller = _controllers[subscriptionId];
         if (controller == null) {
           continue;
         }
-        final eventsJson = eventsBySubscription[subscriptionId] as List<Object?>;
+        final eventsJson =
+            eventsBySubscription[subscriptionId] as List<Object?>;
         for (final eventJson in eventsJson.cast<Map<String, Object?>>()) {
           final event = CoreEvent.fromJson(eventJson);
           controller.add(event);
@@ -191,9 +192,7 @@ class _MethodChannelWatchPump {
       _timer?.cancel();
       _timer = null;
       for (final entry in entries) {
-        unawaited(
-          _channel.invokeMethod<String>('closeWatchStream', entry.key),
-        );
+        unawaited(_channel.invokeMethod<String>('closeWatchStream', entry.key));
         final controller = entry.value;
         controller.addError(error, stackTrace);
         controller.onCancel = null;

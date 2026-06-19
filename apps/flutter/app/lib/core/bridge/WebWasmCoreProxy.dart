@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
 
@@ -86,14 +85,8 @@ class WebWasmCoreProxy extends CoreProxy {
   }
 
   @override
-  Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    final responseText = await _invokeString(
-      'hostDescriptor',
-      const <Object?>[],
-    );
-    return HostEnvironmentDescriptor.fromJson(
-      jsonDecode(responseText) as Map<String, Object?>,
-    );
+  Future<String> dispatchHostEvent(String source, String payloadJson) {
+    return _invokeString('dispatchHostEvent', <Object?>[source, payloadJson]);
   }
 }
 

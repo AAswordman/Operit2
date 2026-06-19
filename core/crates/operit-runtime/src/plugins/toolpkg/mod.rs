@@ -10,6 +10,9 @@ pub mod ToolPkgMessageProcessingBridge;
 #[path = "ToolPkgAiProviderRegistry.rs"]
 pub mod ToolPkgAiProviderRegistry;
 
+#[path = "ToolPkgHostEventHookBridge.rs"]
+pub mod ToolPkgHostEventHookBridge;
+
 #[path = "ToolPkgPromptHookBridge.rs"]
 pub mod ToolPkgPromptHookBridge;
 

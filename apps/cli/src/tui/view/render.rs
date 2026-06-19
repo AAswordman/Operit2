@@ -81,7 +81,7 @@ impl OperitTui {
             .iter()
             .find(|item| item.id == current_chat_id)
             .map(|item| item.title.as_str())
-            .unwrap_or("New Chat");
+            .unwrap_or(self.text().new_chat_title());
         let spans = Line::from(vec![
             Span::styled(
                 format!(" {} ", short_chat_label(&current_chat_id)),
@@ -98,7 +98,7 @@ impl OperitTui {
 
     fn render_chat_list(&self, frame: &mut Frame, area: Rect) {
         let items = if self.chats.is_empty() {
-            vec![ListItem::new(Line::from("no chats"))]
+            vec![ListItem::new(Line::from(self.text().no_chats()))]
         } else {
             self.chats
                 .iter()
@@ -125,7 +125,7 @@ impl OperitTui {
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title("Chats")
+                    .title(self.text().chats_title())
                     .borders(Borders::ALL)
                     .border_style(border_style),
             )
@@ -151,7 +151,8 @@ impl OperitTui {
         let messages = self.current_messages();
         let is_loading = self.current_chat_is_loading();
         let input_state = self.current_chat_input_processing_state();
-        let thinking_line = thinking_indicator_line();
+        let text = self.text();
+        let thinking_line = thinking_indicator_line(text.thinking());
         let content_width = area.width.saturating_sub(2).max(1) as usize;
         let current_chat_id = self.current_chat_id_cache.clone();
         let stream_markdown_state = current_chat_id
@@ -167,6 +168,7 @@ impl OperitTui {
             &mut self.typewriter_state,
             &mut self.transcript_render_cache,
             stream_markdown_state,
+            text,
         );
         self.transcript_copy_lines = transcript_lines.iter().map(transcript_copy_line).collect();
         apply_transcript_selection(&mut transcript_lines, &self.transcript_selection);
@@ -181,7 +183,11 @@ impl OperitTui {
         }
 
         let paragraph = Paragraph::new(Text::from(transcript_lines))
-            .block(Block::default().title("Conversation").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(self.text().conversation_title())
+                    .borders(Borders::ALL),
+            )
             .scroll((self.transcript_scroll, 0));
         frame.render_widget(paragraph, area);
     }
@@ -233,7 +239,7 @@ impl OperitTui {
             return Vec::new();
         }
         let mut lines = vec![Line::from(Span::styled(
-            format!("Queue ({})", self.pending_queue_messages.len()),
+            self.text().queue_title(self.pending_queue_messages.len()),
             Style::default()
                 .fg(theme::TEXT_SUBTLE)
                 .add_modifier(Modifier::BOLD),
@@ -280,9 +286,9 @@ impl OperitTui {
                 .len()
                 .saturating_sub(visible_range.end);
             let hidden_label = match (hidden_before, hidden_after) {
-                (0, after) => format!(" +{after} below"),
-                (before, 0) => format!(" +{before} above"),
-                (before, after) => format!(" +{before} above / +{after} below"),
+                (0, after) => self.text().queue_more_below(after),
+                (before, 0) => self.text().queue_more_above(before),
+                (before, after) => self.text().queue_more_around(before, after),
             };
             lines.push(Line::from(Span::styled(
                 hidden_label,
@@ -349,14 +355,18 @@ impl OperitTui {
                 ListItem::new(Line::from(vec![
                     Span::styled(spec.usage.to_string(), style),
                     Span::styled(
-                        format!("  {}", spec.description),
+                        format!("  {}", spec.description(self.language)),
                         Style::default().fg(theme::TEXT_SUBTLE),
                     ),
                 ]))
             })
             .collect::<Vec<_>>();
         let popup = List::new(items)
-            .block(Block::default().title("Commands").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(self.text().commands_title())
+                    .borders(Borders::ALL),
+            )
             .highlight_symbol("");
         frame.render_widget(Clear, area);
         frame.render_widget(popup, area);
@@ -364,7 +374,7 @@ impl OperitTui {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let status_text = if self.status_message.is_empty() {
-            "Ready".to_string()
+            self.text().ready().to_string()
         } else {
             self.status_message.clone()
         };
@@ -389,7 +399,11 @@ impl OperitTui {
             .model_choices
             .iter()
             .map(|choice| {
-                let marker = if choice.selected { "current" } else { "" };
+                let marker = if choice.selected {
+                    self.text().current_marker()
+                } else {
+                    ""
+                };
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(
@@ -419,7 +433,7 @@ impl OperitTui {
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title("Choose Chat Model")
+                    .title(self.text().choose_chat_model_title())
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme::ACCENT)),
             )
@@ -443,45 +457,28 @@ impl OperitTui {
     fn render_help_modal(&self, frame: &mut Frame) {
         let popup = centered_rect(72, 60, frame.area());
         frame.render_widget(Clear, popup);
-        let lines = vec![
-            Line::from(Span::styled(
-                "Operit2 TUI",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from("Tab: complete command / switch focus"),
-            Line::from("Enter: send message / activate selected chat"),
-            Line::from("F3 or /switch: toggle chat list"),
-            Line::from("/resume: resume previous chat"),
-            Line::from("Up/Down: select chat when chat list is focused"),
-            Line::from("Ctrl+J: insert newline in input"),
-            Line::from("Ctrl+N: create new chat"),
-            Line::from("Ctrl+C: press twice to quit"),
-            Line::from("Ctrl+Q: quit"),
-            Line::from("PageUp/PageDown: scroll conversation by page"),
-            Line::from("Ctrl+U/Ctrl+D: scroll conversation by half page"),
-            Line::from("Ctrl+Home/Ctrl+End: top / bottom conversation"),
-            Line::from("Queue focus: Up/Down select | Enter/s send | e edit | Delete remove"),
-            Line::from("Esc: cancel request / close help / clear status"),
-            Line::from(""),
-            Line::from("Local commands:"),
-            Line::from("/help"),
-            Line::from("/new [--character <name>] [--group-card <id>] [--group <name>]"),
-            Line::from("/switch"),
-            Line::from("/resume"),
-            Line::from("/max"),
-            Line::from("/model current | /model list | /model choose"),
-            Line::from("/model use <provider-id> <model-id>"),
-            Line::from("/approval | /approval list|allow|ask|forbid"),
-            Line::from("/approval tool <tool> <allow|ask|forbid|clear>"),
-            Line::from("/queue | /queue clear|delete|edit|send"),
-            Line::from("/attach <path>"),
-            Line::from("/attachments"),
-            Line::from("/clear-attachments"),
-            Line::from("/quit"),
-        ];
+        let lines = self
+            .text()
+            .help_lines()
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    Line::from(Span::styled(
+                        *line,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ))
+                } else {
+                    Line::from(*line)
+                }
+            })
+            .collect::<Vec<_>>();
         let help = Paragraph::new(Text::from(lines))
-            .block(Block::default().title("Help").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(self.text().help_title())
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: false });
         frame.render_widget(help, popup);
     }
@@ -490,6 +487,7 @@ impl OperitTui {
         let Some(prompt) = self.startup_workspace_prompt.as_ref() else {
             return;
         };
+        let text = self.text();
         let popup = centered_rect(70, 22, frame.area());
         frame.render_widget(Clear, popup);
         let yes_style = if prompt.accept_selected {
@@ -509,7 +507,7 @@ impl OperitTui {
                 .add_modifier(Modifier::BOLD)
         };
         let lines = vec![
-            Line::from("Use current folder as workspace?"),
+            Line::from(text.workspace_question()),
             Line::from(""),
             Line::from(Span::styled(
                 prompt.path.clone(),
@@ -517,15 +515,15 @@ impl OperitTui {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled(" Y Yes ", yes_style),
+                Span::styled(text.yes_button(), yes_style),
                 Span::raw("  "),
-                Span::styled(" N No ", no_style),
+                Span::styled(text.no_button(), no_style),
             ]),
         ];
         let modal = Paragraph::new(Text::from(lines))
             .block(
                 Block::default()
-                    .title("Workspace")
+                    .title(text.workspace_title())
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme::ACCENT_DIM)),
             )
@@ -537,6 +535,7 @@ impl OperitTui {
         let Some(prompt) = self.startup_update_prompt.as_ref() else {
             return;
         };
+        let text = self.text();
         let popup = centered_rect(78, 42, frame.area());
         frame.render_widget(Clear, popup);
         let download_style = if prompt.download_selected {
@@ -559,7 +558,7 @@ impl OperitTui {
             .release_info
             .as_ref()
             .map(|info| info.version.clone())
-            .unwrap_or_else(|| "unknown".to_string());
+            .unwrap_or_else(|| text.release_unknown().to_string());
         let release_page = prompt
             .release_info
             .as_ref()
@@ -567,21 +566,27 @@ impl OperitTui {
             .unwrap_or_else(String::new);
         let mut lines = vec![
             Line::from(Span::styled(
-                "Full update available",
+                text.full_update_available(),
                 Style::default()
                     .fg(theme::ACCENT)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("version: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    text.version_label(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
                 Span::styled(
                     release_version,
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("release: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    text.release_label(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
                 Span::styled(release_page, Style::default().fg(theme::TEXT_MUTED)),
             ]),
             Line::from(""),
@@ -590,13 +595,13 @@ impl OperitTui {
         match &prompt.download_state {
             FullUpdateDownloadState::Ready => {
                 lines.push(Line::from(vec![
-                    Span::styled(" 1 Download ", download_style),
+                    Span::styled(text.download_button(), download_style),
                     Span::raw("  "),
-                    Span::styled(" 2 Skip ", skip_style),
+                    Span::styled(text.skip_button(), skip_style),
                 ]));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Enter selects | Left/Right changes | d/s | Esc=skip",
+                    text.update_prompt_help(),
                     Style::default().fg(theme::TEXT_SUBTLE),
                 )));
             }
@@ -614,7 +619,7 @@ impl OperitTui {
                 };
                 let bar = progress_bar(percent, 34);
                 lines.push(Line::from(vec![
-                    Span::styled("stage: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::styled(text.stage_label(), Style::default().fg(theme::TEXT_SUBTLE)),
                     Span::raw(format!("{stage:?}")),
                 ]));
                 lines.push(Line::from(message.clone()));
@@ -624,7 +629,7 @@ impl OperitTui {
                     Span::raw(format!(" {percent}%")),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("bytes: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::styled(text.bytes_label(), Style::default().fg(theme::TEXT_SUBTLE)),
                     Span::raw(format!(
                         "{} / {}",
                         format_bytes(*read_bytes),
@@ -632,13 +637,13 @@ impl OperitTui {
                     )),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("speed: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                    Span::styled(text.speed_label(), Style::default().fg(theme::TEXT_SUBTLE)),
                     Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
                 ]));
             }
             FullUpdateDownloadState::Complete { package_path } => {
                 lines.push(Line::from(Span::styled(
-                    "Package ready",
+                    text.package_ready(),
                     Style::default()
                         .fg(theme::ACCENT_STRONG)
                         .add_modifier(Modifier::BOLD),
@@ -650,13 +655,13 @@ impl OperitTui {
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Enter closes",
+                    text.enter_closes(),
                     Style::default().fg(theme::TEXT_SUBTLE),
                 )));
             }
             FullUpdateDownloadState::Error { message } => {
                 lines.push(Line::from(Span::styled(
-                    "Download failed",
+                    text.download_failed(),
                     Style::default()
                         .fg(theme::ERROR)
                         .add_modifier(Modifier::BOLD),
@@ -668,13 +673,13 @@ impl OperitTui {
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Enter closes",
+                    text.enter_closes(),
                     Style::default().fg(theme::TEXT_SUBTLE),
                 )));
             }
             FullUpdateDownloadState::CheckError { message } => {
                 lines.push(Line::from(Span::styled(
-                    "Update check failed",
+                    text.update_check_failed(),
                     Style::default()
                         .fg(theme::ERROR)
                         .add_modifier(Modifier::BOLD),
@@ -686,7 +691,7 @@ impl OperitTui {
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "Enter closes",
+                    text.enter_closes(),
                     Style::default().fg(theme::TEXT_SUBTLE),
                 )));
             }
@@ -695,7 +700,7 @@ impl OperitTui {
         let modal = Paragraph::new(Text::from(lines))
             .block(
                 Block::default()
-                    .title("Update")
+                    .title(text.update_title())
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme::ACCENT_DIM)),
             )
@@ -707,11 +712,12 @@ impl OperitTui {
         let Some(request) = self.approval_bridge.current() else {
             return;
         };
+        let text = self.text();
         let popup = centered_rect(76, 44, frame.area());
         frame.render_widget(Clear, popup);
         let elapsed = request.requested_at.elapsed().as_secs();
         let params = if request.tool.parameters.is_empty() {
-            "params: none".to_string()
+            text.params_none().to_string()
         } else {
             request
                 .tool
@@ -723,29 +729,38 @@ impl OperitTui {
         };
         let lines = vec![
             Line::from(Span::styled(
-                "Tool approval required",
+                text.tool_approval_required(),
                 Style::default()
                     .fg(theme::ACCENT)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("tool: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(text.tool_label(), Style::default().fg(theme::TEXT_SUBTLE)),
                 Span::styled(
                     request.tool.name.clone(),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("operation: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    text.operation_label(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
                 Span::raw(request.description),
             ]),
             Line::from(vec![
-                Span::styled("parameters: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    text.parameters_label(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
                 Span::styled(params, Style::default().fg(theme::TEXT_MUTED)),
             ]),
             Line::from(vec![
-                Span::styled("timeout: ", Style::default().fg(theme::TEXT_SUBTLE)),
+                Span::styled(
+                    text.timeout_label(),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
                 Span::raw(format!("{}s / 60s", elapsed.min(60))),
             ]),
             Line::from(""),
@@ -756,7 +771,7 @@ impl OperitTui {
                         .fg(theme::ACCENT_STRONG)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("yes, allow once"),
+                Span::raw(text.approval_yes_once()),
             ]),
             Line::from(vec![
                 Span::styled(
@@ -765,7 +780,7 @@ impl OperitTui {
                         .fg(theme::ERROR)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("no, deny"),
+                Span::raw(text.approval_no()),
             ]),
             Line::from(vec![
                 Span::styled(
@@ -774,18 +789,18 @@ impl OperitTui {
                         .fg(theme::ACCENT_DIM)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("yes, always allow this tool"),
+                Span::raw(text.approval_yes_always()),
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "Shortcuts: y=yes, n=no, a=always, Esc=no",
+                text.approval_shortcuts(),
                 Style::default().fg(theme::TEXT_SUBTLE),
             )),
         ];
         let modal = Paragraph::new(Text::from(lines))
             .block(
                 Block::default()
-                    .title("Approval")
+                    .title(text.approval_title())
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme::ACCENT_DIM)),
             )
@@ -815,12 +830,11 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn thinking_indicator_line() -> Line<'static> {
+fn thinking_indicator_line(text: &'static str) -> Line<'static> {
     let elapsed_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_millis();
-    let text = "thinking";
     let chars = text.chars().collect::<Vec<_>>();
     let sweep_len = chars.len() + 5;
     let sweep = ((elapsed_ms / 145) % sweep_len as u128) as isize - 2;

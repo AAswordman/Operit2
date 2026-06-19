@@ -1,9 +1,14 @@
 use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_runtime::core::tools::mcp::MCPManager::MCPManager;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_runtime::data::mcp::plugins::MCPBridge::MCPBridge;
+use operit_runtime::data::mcp::plugins::MCPStarter::{MCPStarter, StartStatus};
 use operit_runtime::data::mcp::MCPLocalServer::{MCPLocalServer, PluginMetadata};
 use operit_runtime::data::mcp::MCPRepository::MCPRepository;
+use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub fn run_mcp_command(
@@ -26,6 +31,7 @@ pub fn run_mcp_command(
         Some("enable") => set_mcp_enabled(context, args, true, output),
         Some("disable") => set_mcp_enabled(context, args, false, output),
         Some("start") => start_mcp_server(context, args, output),
+        Some("kill") => kill_mcp_server(context, args, output),
         Some("tools") => print_mcp_tools(context, args, output),
         Some("config") => print_mcp_config(context, args, output),
         Some("config-set") => save_mcp_config(context, args, output),
@@ -186,11 +192,58 @@ fn start_mcp_server(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let id = required_arg(args, 1, "operit2 mcp start <id>")?;
-    let packageManager = AIToolHandler::getInstance(context).getOrCreatePackageManager();
-    let mut guard = packageManager
-        .lock()
-        .expect("package manager mutex poisoned");
-    output.push_stdout_line(guard.useMCPServer(id));
+    require_mcp_server(&context, id)?;
+    let timeoutSeconds = ApiPreferences::getInstance()
+        .getMcpStartupTimeoutSeconds()
+        .map_err(|error| error.to_string())?;
+    let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
+    let starter = MCPStarter::new(context.clone());
+    let mut statuses = Vec::new();
+    let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
+        statuses.push(status);
+    });
+    for status in &statuses {
+        print_start_status(status, output);
+    }
+    if !started {
+        return Err(format!("MCP start failed: {id}"));
+    }
+    mcp_local_server(&context).updateServerStatus(
+        id.to_string(),
+        None,
+        None,
+        Some(current_time_millis()),
+        None,
+    )?;
+    output.push_stdout_line(format!("started={id}"));
+    Ok(())
+}
+
+fn kill_mcp_server(
+    context: OperitApplicationContext,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let id = required_arg(args, 1, "operit2 mcp kill <id>")?;
+    require_mcp_server(&context, id)?;
+
+    let bridgeResult = MCPBridge::getInstance(&context).unregisterMcpService(id);
+    require_bridge_success(&bridgeResult)?;
+
+    MCPManager::getInstance(context.clone()).unregisterServer(id);
+    let mut toolHandler = AIToolHandler::getInstance(context.clone());
+    let removedTools = toolHandler.unregisterMcpServerTools(id);
+    let removedPackage = toolHandler.unregisterMcpServerPackage(id);
+    mcp_local_server(&context).updateServerStatus(
+        id.to_string(),
+        None,
+        None,
+        None,
+        Some(current_time_millis()),
+    )?;
+    output.push_stdout_line(format!("killed={id}"));
+    output.push_stdout_line(format!("unregisteredTools={removedTools}"));
+    output.push_stdout_line(format!("unregisteredPackage={removedPackage}"));
     Ok(())
 }
 
@@ -485,6 +538,48 @@ fn print_optional_status(server: &MCPLocalServer, id: &str, output: &mut CoreCom
     }
 }
 
+fn print_start_status(status: &StartStatus, output: &mut CoreCommandOutput) {
+    match status {
+        StartStatus::NotStarted => output.push_stdout_line("status=not_started"),
+        StartStatus::InProgress(message) => {
+            output.push_stdout_line(format!("status=in_progress\tmessage={message}"))
+        }
+        StartStatus::Success(message) => {
+            output.push_stdout_line(format!("status=success\tmessage={message}"))
+        }
+        StartStatus::Error(message) => {
+            output.push_stdout_line(format!("status=error\tmessage={message}"))
+        }
+        StartStatus::TerminalServiceUnavailable(message) => output.push_stdout_line(format!(
+            "status=terminal_service_unavailable\tmessage={message}"
+        )),
+        StartStatus::PnpmMissing(message) => {
+            output.push_stdout_line(format!("status=pnpm_missing\tmessage={message}"))
+        }
+    }
+}
+
+fn require_bridge_success(value: &Value) -> Result<(), String> {
+    match value.get("success").and_then(Value::as_bool) {
+        Some(true) => Ok(()),
+        _ => match value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+        {
+            Some(message) => Err(message.to_string()),
+            None => Err("MCP bridge command failed".to_string()),
+        },
+    }
+}
+
+fn current_time_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time must be after UNIX_EPOCH")
+        .as_millis() as i64
+}
+
 fn required_arg<'a>(args: &'a [String], index: usize, usage: &str) -> Result<&'a String, String> {
     args.get(index).ok_or_else(|| format!("usage: {usage}"))
 }
@@ -503,6 +598,7 @@ fn print_mcp_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 mcp enable <id>");
     output.push_stdout_line("operit2 mcp disable <id>");
     output.push_stdout_line("operit2 mcp start <id>");
+    output.push_stdout_line("operit2 mcp kill <id>");
     output.push_stdout_line("operit2 mcp tools <id>");
     output.push_stdout_line("operit2 mcp config <id>");
     output.push_stdout_line("operit2 mcp config-set <id> <json-or-@file>");
