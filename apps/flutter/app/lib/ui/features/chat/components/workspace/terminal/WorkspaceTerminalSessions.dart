@@ -80,8 +80,8 @@ class WorkspaceTerminalSessions {
 
   final GeneratedCoreProxyClients _clients;
 
-  GeneratedRepositoryRuntimeTerminalServiceCoreProxy get _terminal =>
-      _clients.repositoryRuntimeTerminalService;
+  GeneratedServicesRuntimeTerminalServiceCoreProxy get _terminal =>
+      _clients.servicesRuntimeTerminalService;
 
   Future<List<WorkspaceTerminalSessionInfo>> listSessions() async {
     final sessions = await _terminal.listTerminalSessions();

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -42,9 +43,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
           ..sort();
     return _ToolSettingsData(
       enableTools: await apiPreferences.enableToolsFlowSnapshot(),
-      permissionLevel: _permissionLevelName(
-        await permissionSystem.getMasterSwitch(),
-      ),
+      permissionLevel: await permissionSystem.getMasterSwitch(),
       toolNames: toolNames,
       overrides: await permissionSystem.getToolPermissionOverrides(),
       mcpStartupTimeoutSeconds: await apiPreferences
@@ -63,7 +62,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
       isEnabled: mode.enableTools,
     );
     await widget.clients.permissionsToolPermissionSystem.saveMasterSwitch(
-      level: mode.levelName,
+      level: mode.level,
     );
     _reload();
   }
@@ -75,7 +74,10 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
     _reload();
   }
 
-  Future<void> _saveToolPermission(String toolName, String level) async {
+  Future<void> _saveToolPermission(
+    String toolName,
+    core_proxy.PermissionLevel level,
+  ) async {
     await widget.clients.permissionsToolPermissionSystem.saveToolPermission(
       toolName: toolName,
       level: level,
@@ -83,11 +85,14 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
     _reload();
   }
 
-  Future<void> _openToolSelector(_ToolSettingsData data, String level) async {
+  Future<void> _openToolSelector(
+    _ToolSettingsData data,
+    core_proxy.PermissionLevel level,
+  ) async {
     final l10n = AppLocalizations.of(context)!;
     final toolName = await _ToolSelectorDialog.show(
       context: context,
-      title: level == 'ALLOW'
+      title: level == core_proxy.PermissionLevel.allow
           ? l10n.settingsToolsAddAllowTool
           : l10n.settingsToolsAddForbidTool,
       tools: data.toolNames,
@@ -152,20 +157,24 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                 _ToolPermissionGroup(
                   title: l10n.settingsToolsAlwaysAllow,
                   description: l10n.settingsToolsAlwaysAllowDescription,
-                  level: 'ALLOW',
-                  tools: data.toolsForLevel('ALLOW'),
+                  level: core_proxy.PermissionLevel.allow,
+                  tools: data.toolsForLevel(core_proxy.PermissionLevel.allow),
                   allToolCount: data.toolNames.length,
-                  onAdd: () => _openToolSelector(data, 'ALLOW'),
+                  onAdd: () =>
+                      _openToolSelector(data, core_proxy.PermissionLevel.allow),
                   onRemove: _clearToolPermission,
                 ),
                 const SizedBox(height: 12),
                 _ToolPermissionGroup(
                   title: l10n.settingsToolsAlwaysForbid,
                   description: l10n.settingsToolsAlwaysForbidDescription,
-                  level: 'FORBID',
-                  tools: data.toolsForLevel('FORBID'),
+                  level: core_proxy.PermissionLevel.forbid,
+                  tools: data.toolsForLevel(core_proxy.PermissionLevel.forbid),
                   allToolCount: data.toolNames.length,
-                  onAdd: () => _openToolSelector(data, 'FORBID'),
+                  onAdd: () => _openToolSelector(
+                    data,
+                    core_proxy.PermissionLevel.forbid,
+                  ),
                   onRemove: _clearToolPermission,
                 ),
               ],
@@ -231,14 +240,14 @@ class _ToolSettingsData {
   });
 
   final bool enableTools;
-  final String permissionLevel;
+  final core_proxy.PermissionLevel permissionLevel;
   final List<String> toolNames;
-  final Map<String, Object?> overrides;
+  final Map<String, core_proxy.PermissionLevel> overrides;
   final int mcpStartupTimeoutSeconds;
 
-  List<String> toolsForLevel(String level) {
+  List<String> toolsForLevel(core_proxy.PermissionLevel level) {
     return overrides.entries
-        .where((entry) => _permissionLevelName(entry.value) == level)
+        .where((entry) => entry.value == level)
         .map((entry) => entry.key)
         .toList(growable: false)
       ..sort();
@@ -246,13 +255,13 @@ class _ToolSettingsData {
 }
 
 enum _PermissionMode {
-  allow('ALLOW', true),
-  ask('ASK', true),
-  forbid('FORBID', false);
+  allow(core_proxy.PermissionLevel.allow, true),
+  ask(core_proxy.PermissionLevel.ask, true),
+  forbid(core_proxy.PermissionLevel.forbid, false);
 
-  const _PermissionMode(this.levelName, this.enableTools);
+  const _PermissionMode(this.level, this.enableTools);
 
-  final String levelName;
+  final core_proxy.PermissionLevel level;
   final bool enableTools;
 }
 
@@ -263,31 +272,33 @@ class _PermissionModeSelector extends StatelessWidget {
     required this.onSelected,
   });
 
-  final String selectedLevel;
+  final core_proxy.PermissionLevel selectedLevel;
   final bool enableTools;
   final ValueChanged<_PermissionMode> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final selected = enableTools ? selectedLevel : 'FORBID';
+    final selected = enableTools
+        ? selectedLevel
+        : core_proxy.PermissionLevel.forbid;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: <Widget>[
         _ModeChip(
           label: l10n.allow,
-          selected: selected == 'ALLOW',
+          selected: selected == core_proxy.PermissionLevel.allow,
           onTap: () => onSelected(_PermissionMode.allow),
         ),
         _ModeChip(
           label: l10n.settingsToolsAsk,
-          selected: selected == 'ASK',
+          selected: selected == core_proxy.PermissionLevel.ask,
           onTap: () => onSelected(_PermissionMode.ask),
         ),
         _ModeChip(
           label: l10n.deny,
-          selected: selected == 'FORBID',
+          selected: selected == core_proxy.PermissionLevel.forbid,
           onTap: () => onSelected(_PermissionMode.forbid),
         ),
       ],
@@ -329,7 +340,7 @@ class _ToolPermissionGroup extends StatelessWidget {
 
   final String title;
   final String description;
-  final String level;
+  final core_proxy.PermissionLevel level;
   final List<String> tools;
   final int allToolCount;
   final VoidCallback onAdd;
@@ -339,7 +350,9 @@ class _ToolPermissionGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
-    final color = level == 'ALLOW' ? colorScheme.primary : colorScheme.error;
+    final color = level == core_proxy.PermissionLevel.allow
+        ? colorScheme.primary
+        : colorScheme.error;
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: color.withValues(alpha: 0.28)),
@@ -631,8 +644,8 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-String _permissionLevelName(Object? value) {
-  return value?.toString().split('.').last.toUpperCase() ?? 'ASK';
+String _permissionLevelName(core_proxy.PermissionLevel level) {
+  return level.value;
 }
 
 const Set<String> _hiddenToolNames = <String>{

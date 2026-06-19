@@ -2,10 +2,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::sync::OnceLock;
 use std::time::Instant;
+use unicode_width::UnicodeWidthStr;
 
+use super::i18n::TuiText;
 use super::theme;
 
-pub(super) fn render_blue_cat_lines(content_width: usize) -> Vec<Line<'static>> {
+pub(super) fn render_blue_cat_lines(content_width: usize, text: TuiText) -> Vec<Line<'static>> {
     let cat_style = Style::default()
         .fg(theme::ACCENT_STRONG)
         .add_modifier(Modifier::BOLD);
@@ -26,7 +28,7 @@ pub(super) fn render_blue_cat_lines(content_width: usize) -> Vec<Line<'static>> 
     }
     lines.push(Line::from(""));
     lines.push(centered_styled_line(
-        "Type a message to start.",
+        text.empty_state_hint(),
         content_width,
         hint_style,
     ));
@@ -255,7 +257,7 @@ fn operit_logo_lines(content_width: usize) -> &'static [&'static str] {
 }
 
 fn centered_styled_line(content: &str, content_width: usize, style: Style) -> Line<'static> {
-    let padding = content_width.saturating_sub(content.chars().count()) / 2;
+    let padding = content_width.saturating_sub(content.width()) / 2;
     Line::from(vec![
         Span::raw(" ".repeat(padding)),
         Span::styled(content.to_string(), style),

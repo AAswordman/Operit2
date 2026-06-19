@@ -1,13 +1,13 @@
 #![allow(non_snake_case)]
 
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use operit_core_proxy::LocalCoreProxy;
@@ -36,6 +36,20 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_runtime::services::RuntimeHostInteractionService::{
+    requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
+    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
+    requestOwnerToolPermission, requestOwnerWebVisit,
+    RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionComposeWebViewControllerPayload,
+    RuntimeHostInteractionSystemRecognizeTextPayload,
+    RuntimeHostInteractionToolPermissionPayload,
+    RuntimeHostInteractionToolPermissionTool,
+    RuntimeHostInteractionToolPermissionToolParameter,
+    RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
+};
+use operit_runtime::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgHostEventRegistration;
+use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
@@ -83,8 +97,6 @@ pub struct OperitFlutterBridge {
     proxyCore: Arc<ConcurrentLocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
-    approvalBridge: FlutterApprovalBridge,
-    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
     #[cfg(not(target_arch = "wasm32"))]
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -121,216 +133,13 @@ impl ConcurrentLocalCoreProxy {
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
 
-trait RuntimeHostRequestBridge: Send + Sync {
-    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String>;
-}
-
-#[derive(Clone)]
-struct FlutterRuntimeHostBridge {
-    inner: Arc<dyn RuntimeHostRequestBridge>,
-}
-
-impl FlutterRuntimeHostBridge {
-    fn new(inner: Arc<dyn RuntimeHostRequestBridge>) -> Self {
-        Self { inner }
-    }
-
-    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
-        self.inner.handleRequest(methodName, payloadJson)
-    }
-}
-
-type RuntimeHostRequestCallback =
-    unsafe extern "C" fn(*const c_char, *const u8, usize, *mut c_void) -> *mut c_char;
-type RuntimeHostRequestFree = unsafe extern "C" fn(*mut c_char, *mut c_void);
-
-struct CallbackRuntimeHostBridge {
-    callback: RuntimeHostRequestCallback,
-    free: RuntimeHostRequestFree,
-    userData: usize,
-}
-
-unsafe impl Send for CallbackRuntimeHostBridge {}
-unsafe impl Sync for CallbackRuntimeHostBridge {}
-
-impl RuntimeHostRequestBridge for CallbackRuntimeHostBridge {
-    fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
-        let methodName = CString::new(methodName)
-            .map_err(|error| format!("runtime host method is invalid: {error}"))?;
-        let raw = unsafe {
-            (self.callback)(
-                methodName.as_ptr(),
-                payloadJson.as_ptr(),
-                payloadJson.len(),
-                self.userData as *mut c_void,
-            )
-        };
-        if raw.is_null() {
-            return Err("runtime host bridge returned null".to_string());
-        }
-        let bytes = unsafe { CStr::from_ptr(raw).to_bytes().to_vec() };
-        unsafe {
-            (self.free)(raw, self.userData as *mut c_void);
-        }
-        let envelope = String::from_utf8(bytes)
-            .map_err(|error| format!("runtime host bridge returned non UTF-8: {error}"))?;
-        let value = serde_json::from_str::<serde_json::Value>(&envelope)
-            .map_err(|error| format!("runtime host bridge response is invalid JSON: {error}"))?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| "runtime host bridge response must be a JSON object".to_string())?;
-        let ok = object
-            .get("ok")
-            .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| "runtime host bridge response is missing ok".to_string())?;
-        if ok {
-            return object
-                .get("value")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| "runtime host bridge response is missing value".to_string());
-        }
-        let error = object
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "runtime host bridge response is missing error".to_string())?;
-        Err(error)
-    }
-}
-
-#[derive(Clone)]
-struct FlutterApprovalBridge {
-    inner: Arc<ApprovalInner>,
-}
-
-struct ApprovalInner {
-    state: Mutex<ApprovalState>,
-    changed: Condvar,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-struct PendingApproval {
-    tool: AITool,
-    description: String,
-    requestedAtMillis: u64,
-    #[serde(skip)]
-    requestedAt: Instant,
-}
-
-#[derive(Debug)]
-struct ApprovalState {
-    pending: Option<PendingApproval>,
-    response: Option<PermissionRequestResult>,
-}
-
-impl FlutterApprovalBridge {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(ApprovalInner {
-                state: Mutex::new(ApprovalState {
-                    pending: None,
-                    response: None,
-                }),
-                changed: Condvar::new(),
-            }),
-        }
-    }
-
-    fn request(&self, tool: &AITool, description: &str) -> PermissionRequestResult {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("approval state mutex poisoned");
-        state.pending = Some(PendingApproval {
-            tool: tool.clone(),
-            description: description.to_string(),
-            requestedAtMillis: current_time_millis_u64(),
-            requestedAt: Instant::now(),
-        });
-        state.response = None;
-        self.inner.changed.notify_all();
-
-        let timeout = Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS);
-        loop {
-            if let Some(response) = state.response.take() {
-                state.pending = None;
-                self.inner.changed.notify_all();
-                return response;
-            }
-            let pendingStartedAt = state.pending.as_ref().map(|pending| pending.requestedAt);
-            let Some(startedAt) = pendingStartedAt else {
-                return PermissionRequestResult::DENY;
-            };
-            let elapsed = startedAt.elapsed();
-            if elapsed >= timeout {
-                state.pending = None;
-                self.inner.changed.notify_all();
-                return PermissionRequestResult::DENY;
-            }
-            let wait = timeout.saturating_sub(elapsed);
-            let (nextState, result) = self
-                .inner
-                .changed
-                .wait_timeout(state, wait)
-                .expect("approval state mutex poisoned");
-            state = nextState;
-            if result.timed_out() {
-                state.pending = None;
-                self.inner.changed.notify_all();
-                return PermissionRequestResult::DENY;
-            }
-        }
-    }
-
-    fn current(&self) -> Option<PendingApproval> {
-        self.inner
-            .state
-            .lock()
-            .expect("approval state mutex poisoned")
-            .pending
-            .clone()
-    }
-
-    fn respond(&self, response: PermissionRequestResult) -> bool {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("approval state mutex poisoned");
-        if state.pending.is_some() {
-            state.response = Some(response);
-            self.inner.changed.notify_all();
-            return true;
-        }
-        false
-    }
-}
-
 #[derive(Clone)]
 struct FlutterBrowserAutomationBridge {
-    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-struct PendingBrowserAutomationRequest {
-    requestId: String,
-    toolName: String,
-    parametersJson: String,
-    requestedAtMillis: u64,
-}
-
-#[derive(Clone, Debug)]
-struct BrowserAutomationToolResponse {
-    success: bool,
-    result: String,
-    error: Option<String>,
 }
 
 impl FlutterBrowserAutomationBridge {
-    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
-        Self { runtimeHostBridge }
+    fn new() -> Self {
+        Self {}
     }
 }
 
@@ -340,25 +149,18 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
         request: operit_host_api::BrowserAutomationRequest,
     ) -> operit_host_api::HostResult<operit_host_api::BrowserAutomationResponse> {
         let requestId = request.requestId.clone();
-        let pending = PendingBrowserAutomationRequest {
+        let pending = RuntimeHostInteractionBrowserAutomationPayload {
             requestId: request.requestId,
             toolName: request.toolName,
             parametersJson: request.parametersJson,
             requestedAtMillis: current_time_millis_u64(),
         };
-        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
-            operit_host_api::HostError::new("runtime host bridge is not installed")
-        })?;
-        let payloadJson = serde_json::to_string(&pending)
-            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
-        let resultJson = runtimeHostBridge
-            .handleRequest("browserAutomationRequest", &payloadJson)
+        let response = requestOwnerBrowserAutomation(pending, Duration::from_secs(60))
             .map_err(operit_host_api::HostError::new)?;
-        let (responseRequestId, response) = parse_browser_automation_result(&resultJson)
-            .map_err(operit_host_api::HostError::new)?;
-        if responseRequestId != requestId {
+        if response.requestId != requestId {
             return Err(operit_host_api::HostError::new(format!(
-                "browser automation response requestId mismatch: {responseRequestId} != {requestId}"
+                "browser automation response requestId mismatch: {} != {requestId}",
+                response.requestId
             )));
         }
         if response.success {
@@ -377,35 +179,11 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
 
 #[derive(Clone)]
 struct FlutterWebVisitBridge {
-    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-struct PendingWebVisitHeader {
-    name: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-struct PendingWebVisitRequest {
-    requestId: String,
-    url: String,
-    headers: Vec<PendingWebVisitHeader>,
-    userAgent: String,
-    includeImageLinks: bool,
-    requestedAtMillis: u64,
-}
-
-#[derive(Clone, Debug)]
-struct WebVisitToolResponse {
-    success: bool,
-    result: Option<operit_host_api::WebVisitResult>,
-    error: Option<String>,
 }
 
 impl FlutterWebVisitBridge {
-    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
-        Self { runtimeHostBridge }
+    fn new() -> Self {
+        Self {}
     }
 }
 
@@ -420,31 +198,25 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
             current_time_millis_u64(),
             NEXT_WEB_VISIT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
         );
-        let pending = PendingWebVisitRequest {
+        let pending = RuntimeHostInteractionWebVisitPayload {
             requestId: requestId.clone(),
             url: request.url,
             headers: request
                 .headers
                 .into_iter()
-                .map(|(name, value)| PendingWebVisitHeader { name, value })
+                .map(|(name, value)| RuntimeHostInteractionWebVisitHeader { name, value })
                 .collect(),
             userAgent: request.userAgent,
             includeImageLinks: request.includeImageLinks,
             requestedAtMillis: current_time_millis_u64(),
         };
-        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
-            operit_host_api::HostError::new("runtime host bridge is not installed")
-        })?;
-        let payloadJson = serde_json::to_string(&pending)
-            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
-        let resultJson = runtimeHostBridge
-            .handleRequest("webVisitRequest", &payloadJson)
-            .map_err(operit_host_api::HostError::new)?;
-        let (responseRequestId, response) =
-            parse_web_visit_result(&resultJson).map_err(operit_host_api::HostError::new)?;
-        if responseRequestId != requestId {
+        let response =
+            requestOwnerWebVisit(pending, Duration::from_secs(60))
+                .map_err(operit_host_api::HostError::new)?;
+        if response.requestId != requestId {
             return Err(operit_host_api::HostError::new(format!(
-                "web visit response requestId mismatch: {responseRequestId} != {requestId}"
+                "web visit response requestId mismatch: {} != {requestId}",
+                response.requestId
             )));
         }
         if response.success {
@@ -453,7 +225,25 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
                     "web visit result is missing",
                 ));
             };
-            return Ok(result);
+            return Ok(operit_host_api::WebVisitResult {
+                url: result.url,
+                title: result.title,
+                content: result.content,
+                metadata: result
+                    .metadata
+                    .into_iter()
+                    .map(|entry| (entry.name, entry.value))
+                    .collect(),
+                links: result
+                    .links
+                    .into_iter()
+                    .map(|link| operit_host_api::WebVisitLinkData {
+                        url: link.url,
+                        text: link.text,
+                    })
+                    .collect(),
+                imageLinks: result.imageLinks,
+            });
         }
         let Some(error) = response.error else {
             return Err(operit_host_api::HostError::new(
@@ -466,68 +256,41 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
 
 #[derive(Clone)]
 struct FlutterComposeDslWebViewBridge {
-    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
 }
 
 impl FlutterComposeDslWebViewBridge {
-    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
-        Self { runtimeHostBridge }
+    fn new() -> Self {
+        Self {}
     }
 }
 
 impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
     fn handleControllerCommand(&self, payloadJson: &str) -> operit_host_api::HostResult<String> {
-        let runtimeHostBridge = self.runtimeHostBridge.as_ref().ok_or_else(|| {
-            operit_host_api::HostError::new("runtime host bridge is not installed")
-        })?;
-        runtimeHostBridge
-            .handleRequest("composeWebViewControllerCommand", payloadJson)
-            .map_err(operit_host_api::HostError::new)
+        let response = requestOwnerComposeWebViewController(
+            RuntimeHostInteractionComposeWebViewControllerPayload {
+                commandJson: payloadJson.to_string(),
+            },
+            Duration::from_secs(60),
+        )
+        .map_err(operit_host_api::HostError::new)?;
+        Ok(response.result)
     }
 }
 
 #[cfg(target_os = "android")]
 #[derive(Clone)]
 struct FlutterSystemOperationBridge {
-    runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
     native: NativeSystemOperationHost,
 }
 
 #[cfg(target_os = "android")]
-#[derive(Debug, serde::Serialize)]
-struct PendingOCRRequest {
-    imagePath: String,
-    language: String,
-    quality: String,
-}
-
-#[cfg(target_os = "android")]
 impl FlutterSystemOperationBridge {
-    fn new(runtimeHostBridge: Option<FlutterRuntimeHostBridge>) -> Self {
+    fn new() -> Self {
         Self {
-            runtimeHostBridge,
             native: NativeSystemOperationHost::new(),
         }
     }
 
-    fn bridge(&self) -> operit_host_api::HostResult<&FlutterRuntimeHostBridge> {
-        self.runtimeHostBridge
-            .as_ref()
-            .ok_or_else(|| operit_host_api::HostError::new("runtime host bridge is not installed"))
-    }
-
-    fn requestJson(
-        &self,
-        methodName: &str,
-        payloadJson: &str,
-    ) -> operit_host_api::HostResult<serde_json::Value> {
-        let resultJson = self
-            .bridge()?
-            .handleRequest(methodName, payloadJson)
-            .map_err(operit_host_api::HostError::new)?;
-        serde_json::from_str::<serde_json::Value>(&resultJson)
-            .map_err(|error| operit_host_api::HostError::new(error.to_string()))
-    }
 }
 
 #[cfg(target_os = "android")]
@@ -630,8 +393,9 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
     }
 
     fn captureScreenshot(&self) -> operit_host_api::HostResult<String> {
-        let value = self.requestJson("systemCaptureScreenshot", "{}")?;
-        json_string_field(&value, "path")
+        let response = requestOwnerSystemCaptureScreenshot(Duration::from_secs(60))
+            .map_err(operit_host_api::HostError::new)?;
+        Ok(response.path)
     }
 
     fn recognizeText(
@@ -640,28 +404,15 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
         language: operit_host_api::OCRLanguage,
         quality: operit_host_api::OCRQuality,
     ) -> operit_host_api::HostResult<String> {
-        let request = PendingOCRRequest {
+        let request = RuntimeHostInteractionSystemRecognizeTextPayload {
             imagePath: imagePath.to_string(),
             language: language.asHostValue().to_string(),
             quality: quality.asHostValue().to_string(),
         };
-        let payloadJson = serde_json::to_string(&request)
-            .map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
-        let value = self.requestJson("systemRecognizeText", &payloadJson)?;
-        json_string_field(&value, "text")
+        let response = requestOwnerSystemRecognizeText(request, Duration::from_secs(60))
+            .map_err(operit_host_api::HostError::new)?;
+        Ok(response.text)
     }
-}
-
-#[cfg(target_os = "android")]
-fn json_string_field(
-    value: &serde_json::Value,
-    fieldName: &str,
-) -> operit_host_api::HostResult<String> {
-    value
-        .get(fieldName)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| operit_host_api::HostError::new(format!("{fieldName} is missing")))
 }
 
 impl OperitFlutterBridge {
@@ -670,13 +421,6 @@ impl OperitFlutterBridge {
     }
 
     fn new_with_storage_root(storage_root: Option<PathBuf>) -> Result<Self, String> {
-        Self::new_with_storage_root_and_runtime_host_bridge(storage_root, None)
-    }
-
-    fn new_with_storage_root_and_runtime_host_bridge(
-        storage_root: Option<PathBuf>,
-        runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
-    ) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = {
             let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
@@ -685,13 +429,9 @@ impl OperitFlutterBridge {
                 .build()
                 .map_err(|error| error.to_string())?
         };
-        let approvalBridge = FlutterApprovalBridge::new();
-        let runtimeHostBridgeForServer = runtimeHostBridge.clone();
-        let browserAutomationBridge =
-            FlutterBrowserAutomationBridge::new(runtimeHostBridge.clone());
-        let webVisitBridge = FlutterWebVisitBridge::new(runtimeHostBridge.clone());
-        let composeDslWebViewBridge =
-            FlutterComposeDslWebViewBridge::new(runtimeHostBridge.clone());
+        let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
+        let webVisitBridge = FlutterWebVisitBridge::new();
+        let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new();
         #[cfg(any(windows, target_os = "linux", target_os = "android"))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
@@ -699,12 +439,11 @@ impl OperitFlutterBridge {
             Arc::new(webVisitBridge),
             Some(Arc::new(browserAutomationBridge)),
             Some(Arc::new(composeDslWebViewBridge)),
-            runtimeHostBridge.clone(),
             #[cfg(any(windows, target_os = "linux", target_os = "android"))]
             terminalHost.clone(),
         )?;
         core.localApplicationMut().onCreate()?;
-        install_permission_requester(&mut core, approvalBridge.clone());
+        install_permission_requester(&mut core);
         let mainCore = core
             .localApplicationMut()
             .chatRuntimeHolder
@@ -724,8 +463,6 @@ impl OperitFlutterBridge {
             proxyCore: Arc::new(ConcurrentLocalCoreProxy::new(core)),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
-            approvalBridge,
-            runtimeHostBridge: runtimeHostBridgeForServer,
             #[cfg(not(target_arch = "wasm32"))]
             webAccessTask: Mutex::new(None),
             #[cfg(not(target_arch = "wasm32"))]
@@ -771,32 +508,6 @@ impl OperitFlutterBridge {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.runtime.block_on(proxyCore.watchSnapshot(request))
-    }
-
-    fn hostDescriptor(&self) -> serde_json::Value {
-        let mut proxyCore = self.proxyCore.lock().expect("core proxy lock poisoned");
-        let application = proxyCore.localApplicationMut();
-        let context = &application.applicationContext;
-        let host = &context.hostEnvironment;
-        serde_json::json!({
-            "id": host.id,
-            "displayName": host.displayName,
-            "pathStyleDescriptionEn": host.pathStyleDescriptionEn,
-            "pathStyleDescriptionCn": host.pathStyleDescriptionCn,
-            "examplePaths": host.examplePaths,
-            "usesEnvironmentParameter": host.usesEnvironmentParameter,
-            "environmentParameterDescriptionEn": host.environmentParameterDescriptionEn,
-            "environmentParameterDescriptionCn": host.environmentParameterDescriptionCn,
-            "capabilities": host.capabilities,
-            "fileSystemHost": context.fileSystemHost.is_some(),
-            "webVisitHost": context.webVisitHost.is_some(),
-            "systemOperationHost": context.systemOperationHost.is_some(),
-            "managedRuntimeHost": context.managedRuntimeHost.is_some(),
-            "terminalHost": context.terminalHost.is_some(),
-            "runtimeStorageHost": context.runtimeStorageHost.is_some(),
-            "runtimeSqliteHost": context.runtimeSqliteHost.is_some(),
-            "browserAutomationHost": context.browserAutomationHost.is_some(),
-        })
     }
 
     fn watchStream(&self, request: CoreWatchRequest) -> Result<String, CoreLinkError> {
@@ -870,24 +581,19 @@ impl OperitFlutterBridge {
         }
     }
 
-    fn currentPermissionRequest(&self) -> String {
-        json_string(&self.approvalBridge.current())
-    }
-
-    fn handlePermissionResult(&self, result: &str) -> String {
-        let response = match result {
-            "ALLOW" | "allow" => PermissionRequestResult::ALLOW,
-            "DENY" | "deny" => PermissionRequestResult::DENY,
-            "ALWAYS_ALLOW" | "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
-            other => {
+    fn dispatchHostEvent(&self, source: &str, payloadJson: &str) -> String {
+        let payloadValue: serde_json::Value = match serde_json::from_str(payloadJson) {
+            Ok(value) => value,
+            Err(error) => {
                 return serde_json::json!({
                     "ok": false,
-                    "error": format!("unknown permission result: {other}")
+                    "error": format!("host event payload is invalid JSON: {error}"),
                 })
                 .to_string();
             }
         };
-        serde_json::json!({ "ok": self.approvalBridge.respond(response) }).to_string()
+        ToolPkgHostEventHookBridge::dispatchHostEvent(source, payloadValue);
+        serde_json::json!({"ok": true}).to_string()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -997,9 +703,9 @@ impl OperitFlutterBridge {
                 RemoteLinkServerConfig {
                     bindAddress,
                     token: token.clone(),
+                    localControlToken: Some(shutdownToken.clone()),
                     deviceId,
                     deviceInfo,
-                    hostInteractionBroker: None,
                     webAccess: if enableWebAccess {
                         Some(RemoteWebAccessConfig {
                             token,
@@ -1146,12 +852,41 @@ impl CoreLinkClient for SharedFlutterCoreClient {
     }
 }
 
-fn install_permission_requester(core: &mut LocalCoreProxy, approvalBridge: FlutterApprovalBridge) {
+fn install_permission_requester(core: &mut LocalCoreProxy) {
     let context = core.localApplicationMut().applicationContext.clone();
     let handler = AIToolHandler::getInstance(context);
-    handler
-        .getToolPermissionSystem()
-        .setPermissionRequester(move |tool, description| approvalBridge.request(tool, description));
+    handler.getToolPermissionSystem().setPermissionRequester(
+        move |tool, description| {
+            let response = requestOwnerToolPermission(
+                RuntimeHostInteractionToolPermissionPayload {
+                    tool: tool_to_permission_payload(tool),
+                    description: description.to_string(),
+                },
+                Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS),
+            );
+            let response = response.expect("permission request failed");
+            match response.result.as_str() {
+                "allow" => PermissionRequestResult::ALLOW,
+                "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
+                "deny" => PermissionRequestResult::DENY,
+                other => panic!("unknown permission response result: {other}"),
+            }
+        },
+    );
+}
+
+fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermissionTool {
+    RuntimeHostInteractionToolPermissionTool {
+        name: tool.name.clone(),
+        parameters: tool
+            .parameters
+            .iter()
+            .map(|parameter| RuntimeHostInteractionToolPermissionToolParameter {
+                name: parameter.name.clone(),
+                value: parameter.value.clone(),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "android"))]
@@ -1160,9 +895,6 @@ fn create_local_core(
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
-    #[cfg_attr(not(target_os = "android"), allow(unused_variables))] runtimeHostBridge: Option<
-        FlutterRuntimeHostBridge,
-    >,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
     let root_dir = match storage_root {
@@ -1174,7 +906,7 @@ fn create_local_core(
     let runtimeSqliteHost = runtimeStorageHost.clone();
     #[cfg(target_os = "android")]
     let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
-        Arc::new(FlutterSystemOperationBridge::new(runtimeHostBridge));
+        Arc::new(FlutterSystemOperationBridge::new());
     #[cfg(not(target_os = "android"))]
     let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
         Arc::new(NativeSystemOperationHost::new());
@@ -1217,7 +949,6 @@ fn create_local_core(
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
-    _runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
@@ -1253,7 +984,6 @@ fn create_local_core(
     _webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     _composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
-    _runtimeHostBridge: Option<FlutterRuntimeHostBridge>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))] _terminalHost: Arc<
         NativeTerminalHost,
     >,
@@ -1264,35 +994,6 @@ fn create_local_core(
 #[no_mangle]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
     match OperitFlutterBridge::new() {
-        Ok(bridge) => Box::into_raw(Box::new(bridge)),
-        Err(error) => {
-            set_last_create_error(error);
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_create_with_runtime_host_bridge(
-    callback: Option<RuntimeHostRequestCallback>,
-    free: Option<RuntimeHostRequestFree>,
-    user_data: *mut c_void,
-) -> *mut OperitFlutterBridge {
-    let (Some(callback), Some(free)) = (callback, free) else {
-        set_last_create_error("runtime host bridge callback is required".to_string());
-        return std::ptr::null_mut();
-    };
-    let runtimeHostBridge = Some(FlutterRuntimeHostBridge::new(Arc::new(
-        CallbackRuntimeHostBridge {
-            callback,
-            free,
-            userData: user_data as usize,
-        },
-    )));
-    match OperitFlutterBridge::new_with_storage_root_and_runtime_host_bridge(
-        None,
-        runtimeHostBridge,
-    ) {
         Ok(bridge) => Box::into_raw(Box::new(bridge)),
         Err(error) => {
             set_last_create_error(error);
@@ -1759,46 +1460,43 @@ fn bridge_watch_snapshot_json(handle: &OperitFlutterBridge, request_bytes: &[u8]
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_host_descriptor(
+pub unsafe extern "C" fn operit_flutter_bridge_dispatch_host_event(
     handle: *mut OperitFlutterBridge,
+    source_ptr: *const c_char,
+    payload_ptr: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
         return string_to_ptr(
-            serde_json::json!({
-                "error": "runtime bridge is not initialized"
-            })
-            .to_string(),
+            serde_json::json!({"ok": false, "error": "bridge handle is null"}).to_string(),
         );
     }
-    string_to_ptr((*handle).hostDescriptor().to_string())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_current_permission_request(
-    handle: *mut OperitFlutterBridge,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr("null");
+    if source_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({"ok": false, "error": "source is null"}).to_string(),
+        );
     }
-    string_to_ptr((*handle).currentPermissionRequest())
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_handle_permission_result(
-    handle: *mut OperitFlutterBridge,
-    result_ptr: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
+    if payload_ptr.is_null() {
+        return string_to_ptr(
+            serde_json::json!({"ok": false, "error": "payload is null"}).to_string(),
+        );
     }
-    if result_ptr.is_null() {
-        return string_to_ptr(serde_json::json!({"ok": false}).to_string());
-    }
-    let result = match CStr::from_ptr(result_ptr).to_str() {
+    let source = match CStr::from_ptr(source_ptr).to_str() {
         Ok(value) => value,
-        Err(_) => return string_to_ptr(serde_json::json!({"ok": false}).to_string()),
+        Err(_) => {
+            return string_to_ptr(
+                serde_json::json!({"ok": false, "error": "source is not UTF-8"}).to_string(),
+            )
+        }
     };
-    string_to_ptr((*handle).handlePermissionResult(result))
+    let payload = match CStr::from_ptr(payload_ptr).to_str() {
+        Ok(value) => value,
+        Err(_) => {
+            return string_to_ptr(
+                serde_json::json!({"ok": false, "error": "payload is not UTF-8"}).to_string(),
+            )
+        }
+    };
+    string_to_ptr((*handle).dispatchHostEvent(source, payload))
 }
 
 #[no_mangle]
@@ -2011,150 +1709,13 @@ impl OperitFlutterBridgeWasm {
     }
 
     #[allow(non_snake_case)]
-    pub fn hostDescriptor(&self) -> String {
-        self.inner.hostDescriptor().to_string()
-    }
-
-    #[allow(non_snake_case)]
-    pub fn currentPermissionRequest(&self) -> String {
-        self.inner.currentPermissionRequest()
-    }
-
-    #[allow(non_snake_case)]
-    pub fn handlePermissionResult(&self, result: &str) -> String {
-        self.inner.handlePermissionResult(result)
+    pub fn dispatchHostEvent(&self, source: &str, payloadJson: &str) -> String {
+        self.inner.dispatchHostEvent(source, payloadJson)
     }
 }
 
 fn error_response(requestId: impl Into<String>, message: impl Into<String>) -> *mut c_char {
     string_to_ptr(error_response_string(requestId, message))
-}
-
-fn parse_browser_automation_result(
-    resultJson: &str,
-) -> Result<(String, BrowserAutomationToolResponse), String> {
-    let value =
-        serde_json::from_str::<serde_json::Value>(resultJson).map_err(|error| error.to_string())?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "browser automation result must be a JSON object".to_string())?;
-    let requestId = object
-        .get("requestId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "browser automation result is missing requestId".to_string())?;
-    let success = object
-        .get("success")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| "browser automation result is missing success".to_string())?;
-    let result = object
-        .get("result")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "browser automation result is missing result".to_string())?;
-    let error = object
-        .get("error")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    Ok((
-        requestId,
-        BrowserAutomationToolResponse {
-            success,
-            result,
-            error,
-        },
-    ))
-}
-
-fn parse_web_visit_result(resultJson: &str) -> Result<(String, WebVisitToolResponse), String> {
-    let value =
-        serde_json::from_str::<serde_json::Value>(resultJson).map_err(|error| error.to_string())?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "web visit result must be a JSON object".to_string())?;
-    let requestId = object
-        .get("requestId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "web visit result is missing requestId".to_string())?;
-    let success = object
-        .get("success")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| "web visit result is missing success".to_string())?;
-    let error = object
-        .get("error")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    if !success {
-        return Ok((
-            requestId,
-            WebVisitToolResponse {
-                success,
-                result: None,
-                error,
-            },
-        ));
-    }
-    let resultValue = object
-        .get("result")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| "web visit result is missing result".to_string())?;
-    let metadata = resultValue
-        .get("metadata")
-        .and_then(serde_json::Value::as_object)
-        .into_iter()
-        .flat_map(|object| {
-            object.iter().filter_map(|(key, value)| {
-                value.as_str().map(|value| (key.clone(), value.to_string()))
-            })
-        })
-        .collect::<Vec<_>>();
-    let links = resultValue
-        .get("links")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            Some(operit_host_api::WebVisitLinkData {
-                url: item.get("url")?.as_str()?.to_string(),
-                text: item.get("text")?.as_str()?.to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let imageLinks = resultValue
-        .get("imageLinks")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    Ok((
-        requestId,
-        WebVisitToolResponse {
-            success,
-            result: Some(operit_host_api::WebVisitResult {
-                url: required_string(resultValue, "url")?,
-                title: required_string(resultValue, "title")?,
-                content: required_string(resultValue, "content")?,
-                metadata,
-                links,
-                imageLinks,
-            }),
-            error,
-        },
-    ))
-}
-
-fn required_string(
-    object: &serde_json::Map<String, serde_json::Value>,
-    name: &str,
-) -> Result<String, String> {
-    object
-        .get(name)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| format!("web visit result is missing {name}"))
 }
 
 fn error_response_string(requestId: impl Into<String>, message: impl Into<String>) -> String {
@@ -2202,55 +1763,16 @@ fn set_last_create_error(value: String) {
 #[cfg(target_os = "android")]
 mod android_jni {
     use super::*;
-    use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
+    use jni::objects::{JByteArray, JClass, JObject, JString};
     use jni::sys::{jlong, jstring};
-    use jni::{JNIEnv, JavaVM};
-
-    struct AndroidRuntimeHostBridge {
-        javaVm: JavaVM,
-        host: GlobalRef,
-    }
-
-    impl RuntimeHostRequestBridge for AndroidRuntimeHostBridge {
-        fn handleRequest(&self, methodName: &str, payloadJson: &str) -> Result<String, String> {
-            let mut env = self
-                .javaVm
-                .attach_current_thread()
-                .map_err(|error| error.to_string())?;
-            let methodName = env
-                .new_string(methodName)
-                .map_err(|error| error.to_string())?;
-            let payloadJson = env
-                .new_string(payloadJson)
-                .map_err(|error| error.to_string())?;
-            let methodNameObject = JObject::from(methodName);
-            let payloadJsonObject = JObject::from(payloadJson);
-            let result = env
-                .call_method(
-                    self.host.as_obj(),
-                    "handleRuntimeHostRequest",
-                    "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                    &[
-                        JValue::Object(&methodNameObject),
-                        JValue::Object(&payloadJsonObject),
-                    ],
-                )
-                .map_err(|error| error.to_string())?
-                .l()
-                .map_err(|error| error.to_string())?;
-            let result = JString::from(result);
-            env.get_string(&result)
-                .map(String::from)
-                .map_err(|error| error.to_string())
-        }
-    }
+    use jni::JNIEnv;
 
     #[no_mangle]
     pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
         mut env: JNIEnv,
         _class: JClass,
         storage_root: JString,
-        host: JObject,
+        _host: JObject,
     ) -> jlong {
         let storage_root = match env.get_string(&storage_root) {
             Ok(value) => PathBuf::from(String::from(value)),
@@ -2259,26 +1781,7 @@ mod android_jni {
                 return 0;
             }
         };
-        let javaVm = match env.get_java_vm() {
-            Ok(value) => value,
-            Err(error) => {
-                set_last_create_error(format!("runtime host JavaVM is unavailable: {error}"));
-                return 0;
-            }
-        };
-        let host = match env.new_global_ref(host) {
-            Ok(value) => value,
-            Err(error) => {
-                set_last_create_error(format!("runtime host reference is unavailable: {error}"));
-                return 0;
-            }
-        };
-        let runtimeHostBridge =
-            FlutterRuntimeHostBridge::new(Arc::new(AndroidRuntimeHostBridge { javaVm, host }));
-        match OperitFlutterBridge::new_with_storage_root_and_runtime_host_bridge(
-            Some(storage_root),
-            Some(runtimeHostBridge),
-        ) {
+        match OperitFlutterBridge::new_with_storage_root(Some(storage_root)) {
             Ok(bridge) => Box::into_raw(Box::new(bridge)) as jlong,
             Err(error) => {
                 set_last_create_error(error);
@@ -2496,18 +1999,6 @@ mod android_jni {
             }
         }
         new_java_string(env, "{\"ok\":true}")
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_hostDescriptor(
-        env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, "{\"error\":\"runtime bridge is not initialized\"}");
-        };
-        new_java_string(env, &bridge.hostDescriptor().to_string())
     }
 
     #[no_mangle]
@@ -2872,34 +2363,25 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_currentPermissionRequest(
-        env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(env, "null");
-        };
-        new_java_string(env, &bridge.currentPermissionRequest())
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_handlePermissionResult(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_dispatchHostEvent(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
-        permissionResult: JString,
+        source: JString,
+        payload: JString,
     ) -> jstring {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
         };
-        let permissionResult = match env.get_string(&permissionResult) {
+        let source = match env.get_string(&source) {
             Ok(value) => String::from(value),
-            Err(_) => {
-                return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
-            }
+            Err(_) => return new_java_string(env, &serde_json::json!({"ok": false}).to_string()),
         };
-        new_java_string(env, &bridge.handlePermissionResult(&permissionResult))
+        let payload = match env.get_string(&payload) {
+            Ok(value) => String::from(value),
+            Err(_) => return new_java_string(env, &serde_json::json!({"ok": false}).to_string()),
+        };
+        new_java_string(env, &bridge.dispatchHostEvent(&source, &payload))
     }
 
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {

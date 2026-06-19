@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import '../host/HostEnvironmentDescriptor.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../runtime/RuntimeConnectionManager.dart';
 import 'CoreProxy.dart';
@@ -34,7 +33,7 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
   }
 
   @override
-  Future<HostEnvironmentDescriptor> hostDescriptor() {
-    return _coreProxy.hostDescriptor();
+  Future<String> dispatchHostEvent(String source, String payloadJson) {
+    return _coreProxy.dispatchHostEvent(source, payloadJson);
   }
 }

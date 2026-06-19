@@ -9,7 +9,7 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::*;
 use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgRegisteredAiProvider,
     ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
-    ToolPkgRegisteredFunctionHook, ToolPkgRegisteredNavigationEntry,
+    ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook, ToolPkgRegisteredNavigationEntry,
     ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule, ToolPkgRegisteredUiRoute,
 };
 use crate::core::tools::ToolPackage::LocalizedText;
@@ -147,6 +147,11 @@ fn parseCapturedRegistration(
         chatViewHooks: parseRegisteredItems(
             &captured.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
+            toolPkgId,
+        )?,
+        hostEventHooks: parseRegisteredItems(
+            &captured.hostEventHooks,
+            TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,
             toolPkgId,
         )?,
         toolLifecycleHooks: parseRegisteredItems(
@@ -345,6 +350,16 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
 
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
+        requireNotBlank(&self.function, "function", registryName, index)
+    }
+}
+
+impl ValidateToolPkgRegistration for ToolPkgRegisteredHostEventHook {
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
+
+    fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
+        requireNotBlank(&self.id, "id", registryName, index)?;
+        requireNotBlank(&self.source, "source", registryName, index)?;
         requireNotBlank(&self.function, "function", registryName, index)
     }
 }

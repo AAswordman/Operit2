@@ -40,7 +40,8 @@ export namespace ToolPkg {
         | SystemPromptComposeEventName
         | ToolPromptComposeEventName
         | PromptFinalizeEventName
-        | SummaryGenerateEventName;
+        | SummaryGenerateEventName
+        | HostEventHookEventName;
 
     export type HookReturn = JsonValue | void | Promise<JsonValue | void>;
 
@@ -705,6 +706,319 @@ export namespace ToolPkg {
         function: HookHandler<ChatViewHookEvent>;
     }
 
+    export type HostEventTimerSource = `${"timer"}`;
+    export type HostEventIntervalSource = `${"interval"}`;
+    export type HostEventBroadcastSource = `${"broadcast"}`;
+
+    export type HostEventSource =
+        | HostEventTimerSource
+        | HostEventIntervalSource
+        | HostEventBroadcastSource;
+
+    export type HostEventHookEventName = "toolpkg_host_event";
+
+    export type BroadcastPlatform = `${"android" | "windows" | "linux"}`;
+
+    export type BroadcastTopic =
+        | `${"toolpkg.packages.changed"}`
+        | `${"toolpkg.host_event"}`
+        | `${"system.boot.completed"}`
+        | `${"system.power.connected"}`
+        | `${"system.power.disconnected"}`
+        | `${"system.power.sleep"}`
+        | `${"system.power.wake"}`
+        | `${"system.battery.low"}`
+        | `${"system.battery.okay"}`
+        | `${"system.screen.on"}`
+        | `${"system.screen.off"}`
+        | `${"system.user.present"}`
+        | `${"system.time.tick"}`
+        | `${"system.date.changed"}`
+        | `${"system.timezone.changed"}`
+        | `${"system.airplane_mode.changed"}`
+        | `${"system.headset.plug"}`
+        | `${"system.session.lock"}`
+        | `${"system.session.unlock"}`
+        | `${"system.network.changed"}`
+        | `${"bluetooth.device.found"}`
+        | `${"bluetooth.device.name_changed"}`
+        | `${"bluetooth.device.connected"}`
+        | `${"bluetooth.device.disconnected"}`
+        | `${"bluetooth.device.bond_state_changed"}`
+        | `${"bluetooth.adapter.connection_state_changed"}`
+        | `${"bluetooth.adapter.powered_changed"}`
+        | `${"android.${string}"}`
+        | `${"windows.${string}"}`
+        | `${"linux.${string}"}`;
+
+    export interface BroadcastSystemData extends JsonObject {
+        action?: string;
+        extras: JsonObject;
+    }
+
+    export interface BroadcastBluetoothDeviceData extends JsonObject {
+        action?: string;
+        deviceName?: string | null;
+        deviceAddress?: string | null;
+        extras?: JsonObject;
+    }
+
+    export interface BroadcastPowerSleepData extends JsonObject {
+        preparingForSleep: boolean;
+    }
+
+    export interface BroadcastNetworkChangedData extends JsonObject {
+        state?: number;
+        action?: string;
+        extras?: JsonObject;
+    }
+
+    export interface BroadcastAdapterData extends JsonObject {
+        action?: string;
+        extras?: JsonObject;
+    }
+
+    export interface ToolPkgPackagesChangedData extends JsonObject {
+        source: string;
+        outputDir: string;
+        signature: string;
+    }
+
+    export interface RawBroadcastData extends JsonObject {
+        [key: string]: JsonValue;
+    }
+
+    export type BroadcastDataForTopic<TTopic extends BroadcastTopic> =
+        TTopic extends "toolpkg.packages.changed" ? ToolPkgPackagesChangedData :
+        TTopic extends "toolpkg.host_event" ? RawBroadcastData :
+        TTopic extends "system.power.sleep" | "system.power.wake" ? BroadcastPowerSleepData :
+        TTopic extends "system.network.changed" ? BroadcastNetworkChangedData :
+        TTopic extends
+            | "system.boot.completed"
+            | "system.power.connected"
+            | "system.power.disconnected"
+            | "system.battery.low"
+            | "system.battery.okay"
+            | "system.screen.on"
+            | "system.screen.off"
+            | "system.user.present"
+            | "system.time.tick"
+            | "system.date.changed"
+            | "system.timezone.changed"
+            | "system.airplane_mode.changed"
+            | "system.headset.plug"
+            ? BroadcastSystemData :
+        TTopic extends
+            | "bluetooth.device.found"
+            | "bluetooth.device.name_changed"
+            | "bluetooth.device.connected"
+            | "bluetooth.device.disconnected"
+            | "bluetooth.device.bond_state_changed"
+            ? BroadcastBluetoothDeviceData :
+        TTopic extends
+            | "bluetooth.adapter.connection_state_changed"
+            | "bluetooth.adapter.powered_changed"
+            ? BroadcastAdapterData :
+        TTopic extends `android.${string}` | `windows.${string}` | `linux.${string}` ? RawBroadcastData :
+        never;
+
+    export type HostEventBroadcastPayload<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > =
+        BroadcastDataForTopic<TTopic> extends never
+            ? {
+                topic: TTopic;
+                platform: BroadcastPlatform;
+                data?: never;
+                receivedAtMillis: number;
+            }
+            : {
+                topic: TTopic;
+                platform: BroadcastPlatform;
+                data: BroadcastDataForTopic<TTopic>;
+                receivedAtMillis: number;
+            };
+
+    export interface HostEventTimerTrigger<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        kind: `${"timer"}`;
+        delayMs: number;
+        payload?: TPayload;
+    }
+
+    export interface HostEventIntervalTrigger<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        kind: `${"interval"}`;
+        intervalMs: number;
+        payload?: TPayload;
+    }
+
+    export type HostEventBroadcastTrigger<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > = {
+        kind: `${"broadcast"}`;
+        topic: TTopic;
+        topics?: never;
+    } | {
+        kind: `${"broadcast"}`;
+        topic?: never;
+        topics: TTopic[];
+    };
+
+    export type HostEventTrigger =
+        | HostEventTimerTrigger
+        | HostEventIntervalTrigger
+        | HostEventBroadcastTrigger;
+
+    export type HostEventTriggerForSource<TSource extends HostEventSource> =
+        TSource extends "timer" ? HostEventTimerTrigger :
+        TSource extends "interval" ? HostEventIntervalTrigger :
+        TSource extends "broadcast" ? HostEventBroadcastTrigger :
+        never;
+
+    export interface HostEventTimerPayload<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        hookId: string;
+        source: HostEventTimerSource;
+        trigger: HostEventTimerTrigger<TPayload>;
+        payload?: TPayload;
+        scheduledAtMillis: number;
+        delayMs?: number;
+        intervalMs?: number;
+    }
+
+    export interface HostEventIntervalPayload<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        hookId: string;
+        source: HostEventIntervalSource;
+        trigger: HostEventIntervalTrigger<TPayload>;
+        payload?: TPayload;
+        scheduledAtMillis: number;
+        intervalMs: number;
+    }
+
+    export type HostEventPayloadForSource<TSource extends HostEventSource> =
+        TSource extends "timer" ? HostEventTimerPayload :
+        TSource extends "interval" ? HostEventIntervalPayload :
+        TSource extends "broadcast" ? HostEventBroadcastPayload :
+        never;
+
+    export interface HostEventTimerHookRegistration<
+        TPayload extends JsonObject = JsonObject
+    > {
+        id: string;
+        source: `${"timer"}`;
+        trigger: HostEventTimerTrigger<TPayload>;
+        function: HostEventTimerHookHandler<TPayload>;
+        enabled?: boolean;
+    }
+
+    export interface HostEventIntervalHookRegistration<
+        TPayload extends JsonObject = JsonObject
+    > {
+        id: string;
+        source: `${"interval"}`;
+        trigger: HostEventIntervalTrigger<TPayload>;
+        function: HostEventIntervalHookHandler<TPayload>;
+        enabled?: boolean;
+    }
+
+    export interface HostEventBroadcastHookRegistration<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > {
+        id: string;
+        source: `${"broadcast"}`;
+        trigger: HostEventBroadcastTrigger<TTopic>;
+        function: HostEventBroadcastHookHandler<TTopic>;
+        enabled?: boolean;
+    }
+
+    export type HostEventHookRegistration =
+        | HostEventTimerHookRegistration
+        | HostEventIntervalHookRegistration
+        | HostEventBroadcastHookRegistration;
+
+    export interface HostEventHookEvent<
+        TSource extends HostEventSource = HostEventSource
+    > extends HookEventBase<HostEventHookEventName, HostEventHookEventPayload<TSource>> {}
+
+    export interface HostEventTimerHookEvent<
+        TPayload extends JsonObject = JsonObject
+    > extends HookEventBase<
+        HostEventHookEventName,
+        HostEventTimerHookEventPayload<TPayload>
+    > {}
+
+    export interface HostEventIntervalHookEvent<
+        TPayload extends JsonObject = JsonObject
+    > extends HookEventBase<
+        HostEventHookEventName,
+        HostEventIntervalHookEventPayload<TPayload>
+    > {}
+
+    export interface HostEventBroadcastHookEvent<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > extends HookEventBase<
+        HostEventHookEventName,
+        HostEventBroadcastHookEventPayload<TTopic>
+    > {}
+
+    export interface HostEventHookEventPayload<
+        TSource extends HostEventSource = HostEventSource
+    > extends JsonObject {
+        eventSource: `${TSource}`;
+        hookId: string;
+        trigger: HostEventTriggerForSource<TSource>;
+        payload: HostEventPayloadForSource<TSource>;
+    }
+
+    export interface HostEventTimerHookEventPayload<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        eventSource: `${"timer"}`;
+        hookId: string;
+        trigger: HostEventTimerTrigger<TPayload>;
+        payload: HostEventTimerPayload<TPayload>;
+    }
+
+    export interface HostEventIntervalHookEventPayload<
+        TPayload extends JsonObject = JsonObject
+    > extends JsonObject {
+        eventSource: `${"interval"}`;
+        hookId: string;
+        trigger: HostEventIntervalTrigger<TPayload>;
+        payload: HostEventIntervalPayload<TPayload>;
+    }
+
+    export interface HostEventBroadcastHookEventPayload<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > extends JsonObject {
+        eventSource: `${"broadcast"}`;
+        hookId: string;
+        trigger: HostEventBroadcastTrigger<TTopic>;
+        payload: HostEventBroadcastPayload<TTopic>;
+    }
+
+    export type HostEventHookHandler<
+        TSource extends HostEventSource = HostEventSource
+    > = (event: HostEventHookEvent<TSource>) => HookReturn;
+
+    export type HostEventTimerHookHandler<
+        TPayload extends JsonObject = JsonObject
+    > = (event: HostEventTimerHookEvent<TPayload>) => HookReturn;
+
+    export type HostEventIntervalHookHandler<
+        TPayload extends JsonObject = JsonObject
+    > = (event: HostEventIntervalHookEvent<TPayload>) => HookReturn;
+
+    export type HostEventBroadcastHookHandler<
+        TTopic extends BroadcastTopic = BroadcastTopic
+    > = (event: HostEventBroadcastHookEvent<TTopic>) => HookReturn;
+
     export interface ToolLifecycleHookRegistration {
         id: string;
         function: ToolLifecycleHookHandler;
@@ -816,6 +1130,15 @@ export namespace ToolPkg {
         registerInputMenuTogglePlugin(definition: InputMenuTogglePluginRegistration): void;
         registerChatInputHook(definition: ChatInputHookRegistration): void;
         registerChatViewHook(definition: ChatViewHookRegistration): void;
+        registerHostEventHook<TPayload extends JsonObject = JsonObject>(
+            definition: HostEventTimerHookRegistration<TPayload>
+        ): void;
+        registerHostEventHook<TPayload extends JsonObject = JsonObject>(
+            definition: HostEventIntervalHookRegistration<TPayload>
+        ): void;
+        registerHostEventHook<TTopic extends BroadcastTopic>(
+            definition: HostEventBroadcastHookRegistration<TTopic>
+        ): void;
         registerToolLifecycleHook(definition: ToolLifecycleHookRegistration): void;
         registerPromptInputHook(definition: PromptInputHookRegistration): void;
         registerPromptHistoryHook(definition: PromptHistoryHookRegistration): void;
@@ -852,6 +1175,16 @@ declare global {
     function registerToolPkgChatInputHook(definition: ToolPkg.ChatInputHookRegistration): void;
 
     function registerToolPkgChatViewHook(definition: ToolPkg.ChatViewHookRegistration): void;
+
+    function registerToolPkgHostEventHook<TPayload extends ToolPkg.JsonObject = ToolPkg.JsonObject>(
+        definition: ToolPkg.HostEventTimerHookRegistration<TPayload>
+    ): void;
+    function registerToolPkgHostEventHook<TPayload extends ToolPkg.JsonObject = ToolPkg.JsonObject>(
+        definition: ToolPkg.HostEventIntervalHookRegistration<TPayload>
+    ): void;
+    function registerToolPkgHostEventHook<TTopic extends ToolPkg.BroadcastTopic>(
+        definition: ToolPkg.HostEventBroadcastHookRegistration<TTopic>
+    ): void;
 
     function registerToolPkgToolLifecycleHook(definition: ToolPkg.ToolLifecycleHookRegistration): void;
 

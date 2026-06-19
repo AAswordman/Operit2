@@ -43,8 +43,19 @@ fn render_dart_models(
 
     let mut output = generated_header();
     for ty in types {
-        if let SerializableTypeKind::Struct { fields } = &ty.kind {
-            output.push_str(&render_dart_struct(ty, fields, serializable_types));
+        match &ty.kind {
+            SerializableTypeKind::Struct { fields } => {
+                output.push_str(&render_dart_struct(ty, fields, serializable_types));
+            }
+            SerializableTypeKind::Enum {
+                variants,
+                unit_only: true,
+            } => {
+                output.push_str(&render_dart_enum(ty, variants, serializable_types));
+            }
+            SerializableTypeKind::Enum {
+                unit_only: false, ..
+            } => {}
         }
     }
     output
@@ -151,7 +162,7 @@ fn render_dart_call_method(
     if return_type != "void" {
         output.push_str(&format!(
             "    return {};\n",
-            dart_decode_expr("value", &return_type)
+            dart_decode_expr("value", &return_type, serializable_types)
         ));
     }
     output.push_str("  }\n\n");
@@ -224,7 +235,7 @@ fn render_dart_watch_method(
     output.push_str("    );\n");
     output.push_str(&format!(
         "    return {};\n",
-        dart_decode_expr("event.value", &value_type)
+        dart_decode_expr("event.value", &value_type, serializable_types)
     ));
     output.push_str("  }\n\n");
     output.push_str(&format!(
@@ -237,7 +248,7 @@ fn render_dart_watch_method(
     ));
     output.push_str(&format!(
         "        .map((event) => {});\n",
-        dart_decode_expr("event.value", &value_type)
+        dart_decode_expr("event.value", &value_type, serializable_types)
     ));
     output.push_str("  }\n\n");
     output
@@ -251,27 +262,39 @@ fn render_dart_struct(
     let class_name = dart_class_name(&ty.full_type, serializable_types);
     let mut output = String::new();
     output.push_str(&format!("class {class_name} {{\n"));
-    output.push_str(&format!("  const {class_name}({{\n"));
-    for field in fields {
-        output.push_str(&format!(
-            "    required this.{},\n",
-            dart_identifier(&field.name)
-        ));
+    if fields.is_empty() {
+        output.push_str(&format!("  const {class_name}();\n\n"));
+    } else {
+        output.push_str(&format!("  const {class_name}({{\n"));
+        for field in fields {
+            output.push_str(&format!(
+                "    required this.{},\n",
+                dart_identifier(&field.name)
+            ));
+        }
+        output.push_str("  });\n\n");
     }
-    output.push_str("  });\n\n");
     output.push_str(&format!(
         "  factory {class_name}.fromJson(Map<String, Object?> json) {{\n"
     ));
-    output.push_str(&format!("    return {class_name}(\n"));
-    for field in fields {
-        let field_type = dart_type(&field.ty, serializable_types);
-        output.push_str(&format!(
-            "      {}: {},\n",
-            dart_identifier(&field.name),
-            dart_decode_expr(&format!("json['{}']", field.json_name), &field_type)
-        ));
+    if fields.is_empty() {
+        output.push_str(&format!("    return {class_name}();\n"));
+    } else {
+        output.push_str(&format!("    return {class_name}(\n"));
+        for field in fields {
+            let field_type = dart_type(&field.ty, serializable_types);
+            output.push_str(&format!(
+                "      {}: {},\n",
+                dart_identifier(&field.name),
+                dart_decode_expr(
+                    &format!("json['{}']", field.json_name),
+                    &field_type,
+                    serializable_types
+                )
+            ));
+        }
+        output.push_str("    );\n");
     }
-    output.push_str("    );\n");
     output.push_str("  }\n\n");
     output.push_str("  Map<String, Object?> toJson() {\n");
     output.push_str("    return <String, Object?>{\n");
@@ -280,7 +303,7 @@ fn render_dart_struct(
         output.push_str(&format!(
             "      '{}': {},\n",
             field.json_name,
-            dart_encode_expr(&dart_identifier(&field.name), &field_type)
+            dart_encode_expr(&dart_identifier(&field.name), &field_type, serializable_types)
         ));
     }
     output.push_str("    };\n");
@@ -292,6 +315,44 @@ fn render_dart_struct(
             dart_identifier(&field.name)
         ));
     }
+    output.push_str("}\n\n");
+    output
+}
+
+fn render_dart_enum(
+    ty: &SerializableType,
+    variants: &[SerializableEnumVariant],
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let enum_name = dart_class_name(&ty.full_type, serializable_types);
+    let mut output = String::new();
+    output.push_str(&format!("enum {enum_name} {{\n"));
+    for variant in variants {
+        output.push_str(&format!(
+            "  {}('{}'),\n",
+            dart_identifier(&variant.name),
+            dart_string_literal(&variant.json_name)
+        ));
+    }
+    output.push_str(&format!(
+        "  ;\n\n  const {enum_name}(this.value);\n\n  final String value;\n\n"
+    ));
+    output.push_str(&format!(
+        "  factory {enum_name}.fromJson(Object? value) {{\n"
+    ));
+    output.push_str("    return switch (value) {\n");
+    for variant in variants {
+        output.push_str(&format!(
+            "      '{}' => {}.{},\n",
+            dart_string_literal(&variant.json_name),
+            enum_name,
+            dart_identifier(&variant.name)
+        ));
+    }
+    output.push_str(&format!(
+        "      _ => throw ArgumentError('Unknown {enum_name}: $value'),\n"
+    ));
+    output.push_str("    };\n  }\n\n  String toJson() => value;\n");
     output.push_str("}\n\n");
     output
 }
@@ -331,7 +392,7 @@ fn render_dart_args_map(
             format!(
                 "'{}': {}",
                 arg.name,
-                dart_encode_expr(&dart_parameter_name(&arg.name), &arg_type)
+                dart_encode_expr(&dart_parameter_name(&arg.name), &arg_type, serializable_types)
             )
         })
         .collect::<Vec<_>>()
@@ -442,7 +503,17 @@ fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -
                 ..
             }) => dart_class_name(ty, serializable_types),
             Some(SerializableType {
-                kind: SerializableTypeKind::Enum { .. },
+                kind:
+                    SerializableTypeKind::Enum {
+                        unit_only: true, ..
+                    },
+                ..
+            }) => dart_class_name(ty, serializable_types),
+            Some(SerializableType {
+                kind:
+                    SerializableTypeKind::Enum {
+                        unit_only: false, ..
+                    },
                 ..
             }) => "Object?".to_string(),
             None => "Object?".to_string(),
@@ -450,14 +521,18 @@ fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -
     }
 }
 
-fn dart_decode_expr(value: &str, dart_type: &str) -> String {
+fn dart_decode_expr(
+    value: &str,
+    dart_type: &str,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
     if dart_type == "Object?" {
         return value.to_string();
     }
     if let Some(inner) = dart_type.strip_suffix('?') {
         return format!(
             "{value} == null ? null : {}",
-            dart_decode_expr(value, inner)
+            dart_decode_expr(value, inner, serializable_types)
         );
     }
     if dart_type == "void" {
@@ -472,20 +547,27 @@ fn dart_decode_expr(value: &str, dart_type: &str) -> String {
     if let Some(inner) = list_inner(dart_type) {
         return format!(
             "({value} as List<Object?>).map((item) => {}).toList(growable: false)",
-            dart_decode_expr("item", inner)
+            dart_decode_expr("item", inner, serializable_types)
         );
     }
     if let Some((key, value_type)) = map_inner(dart_type) {
         return format!(
             "({value} as Map<Object?, Object?>).map((key, value) => MapEntry({}, {}))",
-            dart_decode_expr("key", key),
-            dart_decode_expr("value", value_type)
+            dart_decode_expr("key", key, serializable_types),
+            dart_decode_expr("value", value_type, serializable_types)
         );
+    }
+    if dart_is_unit_enum_type(dart_type, serializable_types) {
+        return format!("{dart_type}.fromJson({value})");
     }
     format!("{dart_type}.fromJson({value} as Map<String, Object?>)")
 }
 
-fn dart_encode_expr(value: &str, dart_type: &str) -> String {
+fn dart_encode_expr(
+    value: &str,
+    dart_type: &str,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
     if dart_type == "Object?" {
         return value.to_string();
     }
@@ -493,17 +575,20 @@ fn dart_encode_expr(value: &str, dart_type: &str) -> String {
         if inner == "Object?" || matches!(inner, "bool" | "int" | "double" | "String" | "void") {
             return value.to_string();
         }
+        if dart_is_unit_enum_type(inner, serializable_types) {
+            return format!("{value}?.toJson()");
+        }
         if let Some(list_inner) = list_inner(inner) {
             return format!(
                 "{value}?.map((item) => {}).toList(growable: false)",
-                dart_encode_expr("item", list_inner)
+                dart_encode_expr("item", list_inner, serializable_types)
             );
         }
         if let Some((key, value_type)) = map_inner(inner) {
             return format!(
                 "{value}?.map((key, value) => MapEntry({}, {}))",
-                dart_encode_expr("key", key),
-                dart_encode_expr("value", value_type)
+                dart_encode_expr("key", key, serializable_types),
+                dart_encode_expr("value", value_type, serializable_types)
             );
         }
         return format!("{value}?.toJson()");
@@ -514,17 +599,35 @@ fn dart_encode_expr(value: &str, dart_type: &str) -> String {
     if let Some(inner) = list_inner(dart_type) {
         return format!(
             "{value}.map((item) => {}).toList(growable: false)",
-            dart_encode_expr("item", inner)
+            dart_encode_expr("item", inner, serializable_types)
         );
     }
     if let Some((key, value_type)) = map_inner(dart_type) {
         return format!(
             "{value}.map((key, value) => MapEntry({}, {}))",
-            dart_encode_expr("key", key),
-            dart_encode_expr("value", value_type)
+            dart_encode_expr("key", key, serializable_types),
+            dart_encode_expr("value", value_type, serializable_types)
         );
     }
+    if dart_is_unit_enum_type(dart_type, serializable_types) {
+        return format!("{value}.toJson()");
+    }
     format!("{value}.toJson()")
+}
+
+fn dart_is_unit_enum_type(
+    dart_type: &str,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> bool {
+    serializable_types.values().any(|ty| {
+        matches!(
+            &ty.kind,
+            SerializableTypeKind::Enum {
+                unit_only: true,
+                ..
+            }
+        ) && dart_class_name(&ty.full_type, serializable_types) == dart_type
+    })
 }
 
 fn list_inner(dart_type: &str) -> Option<&str> {
@@ -809,4 +912,13 @@ fn dart_reserved_word(value: &str) -> bool {
 
 fn generated_header() -> String {
     "// GENERATED CODE - DO NOT MODIFY BY HAND\n\n".to_string()
+}
+
+fn dart_string_literal(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('$', "\\$")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }

@@ -100,8 +100,9 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     final targets = Set<String>.from(_selectedWorkspaceNames);
     setState(() => _deleteInProgress = true);
     try {
-      await widget.clients.repositoryWorkspaceService
-          .deleteUnboundWorkspaces(workspaceNames: targets.toList());
+      await widget.clients.repositoryWorkspaceService.deleteUnboundWorkspaces(
+        workspaceNames: targets.toList(),
+      );
       if (!mounted) {
         return;
       }
@@ -178,6 +179,7 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
                 _InfoLine(
                   label: l10n.settingsWorkspaceInternalRoot,
                   value: data.workspaceRoot,
+                  fullWidthValue: true,
                 ),
               ],
             ),
@@ -212,10 +214,7 @@ class _WorkspaceSettingsData {
 }
 
 class _UnboundWorkspaceInfo {
-  const _UnboundWorkspaceInfo({
-    required this.name,
-    required this.fullPath,
-  });
+  const _UnboundWorkspaceInfo({required this.name, required this.fullPath});
 
   final String name;
   final String fullPath;
@@ -334,9 +333,7 @@ class _UnboundWorkspaceCard extends StatelessWidget {
                     final workspace = workspaces[index];
                     return _UnboundWorkspaceRow(
                       workspaceInfo: workspace,
-                      selected: selectedWorkspaceNames.contains(
-                        workspace.name,
-                      ),
+                      selected: selectedWorkspaceNames.contains(workspace.name),
                       deleteInProgress: deleteInProgress,
                       onSelectionChange: (selected) =>
                           onSelectionChange(workspace.name, selected),
@@ -425,8 +422,7 @@ class _UnboundWorkspaceRow extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     workspaceInfo.fullPath,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    softWrap: true,
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 ],
@@ -497,14 +493,35 @@ class _BodyText extends StatelessWidget {
 }
 
 class _InfoLine extends StatelessWidget {
-  const _InfoLine({required this.label, required this.value});
+  const _InfoLine({
+    required this.label,
+    required this.value,
+    this.fullWidthValue = false,
+  });
 
   final String label;
   final String value;
+  final bool fullWidthValue;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (fullWidthValue) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            SelectableText(
+              value,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(

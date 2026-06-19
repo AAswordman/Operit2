@@ -1420,7 +1420,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersTags => '标签';
 
   @override
-  String get settingsCharactersNoTags => '当前没有可选标签。可在提示词/标签管理中创建后绑定到角色卡。';
+  String get settingsCharactersNoTags => '当前没有可选标签。可在标签管理中创建后绑定到角色卡。';
 
   @override
   String get settingsCharactersImport => '导入';
@@ -1488,6 +1488,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsCharactersTagsSection => '标签';
+
+  @override
+  String get settingsCharactersManageTags => '管理标签';
 
   @override
   String get settingsCharactersCreateTag => '新建标签';
@@ -1606,29 +1609,32 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersMemoryGraphLink => '记忆关系';
 
   @override
-  String get settingsCharactersEditUserMarkdown => '编辑 USER.md';
+  String get settingsCharactersEditUserMarkdown => '编辑用户资料';
 
   @override
   String settingsCharactersUserMarkdownTitle(String profileName) {
-    return '$profileName 的 USER.md';
+    return '$profileName 的用户资料';
   }
 
   @override
-  String get settingsCharactersUserMarkdownSaved => 'USER.md 已保存';
+  String get settingsCharactersUserMarkdownSaved => '用户资料已保存';
 
   @override
-  String get settingsCharactersMemoryAutoUpdate => '自动更新记忆偏好';
+  String get settingsCharactersUserMarkdownContent => '用户资料内容';
+
+  @override
+  String get settingsCharactersMemoryAutoUpdate => '自动更新记忆库';
 
   @override
   String get settingsCharactersMemoryAutoUpdateDescription =>
-      '允许 AI 从对话中更新用户偏好与长期记忆。';
+      '允许 AI 从对话中整理信息并写入记忆库。';
 
   @override
-  String get settingsCharactersPreferenceDescription => '向模型提供用户偏好';
+  String get settingsCharactersPreferenceDescription => '向模型提供用户资料';
 
   @override
   String get settingsCharactersPreferenceDescriptionSubtitle =>
-      '聊天时把当前偏好档案写入提示词。';
+      '聊天时把当前用户资料写入提示词。';
 
   @override
   String get settingsCharactersCardsSection => '角色卡';

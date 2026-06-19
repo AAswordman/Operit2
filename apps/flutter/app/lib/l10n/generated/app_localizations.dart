@@ -2759,7 +2759,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersNoTags.
   ///
   /// In en, this message translates to:
-  /// **'No tags available. Create tags in prompt/tag management, then bind them to character cards.'**
+  /// **'No tags available. Create one in tag management, then bind it to this character card.'**
   String get settingsCharactersNoTags;
 
   /// No description provided for @settingsCharactersImport.
@@ -2875,6 +2875,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tags'**
   String get settingsCharactersTagsSection;
+
+  /// No description provided for @settingsCharactersManageTags.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage tags'**
+  String get settingsCharactersManageTags;
 
   /// No description provided for @settingsCharactersCreateTag.
   ///
@@ -3088,43 +3094,49 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersEditUserMarkdown.
   ///
   /// In en, this message translates to:
-  /// **'Edit USER.md'**
+  /// **'Edit user profile'**
   String get settingsCharactersEditUserMarkdown;
 
   /// No description provided for @settingsCharactersUserMarkdownTitle.
   ///
   /// In en, this message translates to:
-  /// **'{profileName}\'s USER.md'**
+  /// **'{profileName}\'s user profile'**
   String settingsCharactersUserMarkdownTitle(String profileName);
 
   /// No description provided for @settingsCharactersUserMarkdownSaved.
   ///
   /// In en, this message translates to:
-  /// **'USER.md saved'**
+  /// **'User profile saved'**
   String get settingsCharactersUserMarkdownSaved;
+
+  /// No description provided for @settingsCharactersUserMarkdownContent.
+  ///
+  /// In en, this message translates to:
+  /// **'User profile content'**
+  String get settingsCharactersUserMarkdownContent;
 
   /// No description provided for @settingsCharactersMemoryAutoUpdate.
   ///
   /// In en, this message translates to:
-  /// **'Auto-update memory preferences'**
+  /// **'Auto-update memory stores'**
   String get settingsCharactersMemoryAutoUpdate;
 
   /// No description provided for @settingsCharactersMemoryAutoUpdateDescription.
   ///
   /// In en, this message translates to:
-  /// **'Allow AI to update user preferences and long-term memory from conversations.'**
+  /// **'Allow AI to organize conversation info into memory stores.'**
   String get settingsCharactersMemoryAutoUpdateDescription;
 
   /// No description provided for @settingsCharactersPreferenceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Send user preferences to model'**
+  /// **'Provide user profile to model'**
   String get settingsCharactersPreferenceDescription;
 
   /// No description provided for @settingsCharactersPreferenceDescriptionSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Include the active preference profile in chat prompts.'**
+  /// **'Include the current user profile in chat prompts.'**
   String get settingsCharactersPreferenceDescriptionSubtitle;
 
   /// No description provided for @settingsCharactersCardsSection.

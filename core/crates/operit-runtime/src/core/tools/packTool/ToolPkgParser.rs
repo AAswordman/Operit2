@@ -97,6 +97,18 @@ pub struct ToolPkgFunctionHookRuntime {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgHostEventHookRuntime {
+    pub id: String,
+    pub source: String,
+    pub trigger: Value,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+    #[serde(default = "defaultTrue")]
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgAiProviderHandlerRuntime {
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
@@ -231,6 +243,19 @@ pub struct ToolPkgRegisteredFunctionHook {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredHostEventHook {
+    pub id: String,
+    pub source: String,
+    pub trigger: Value,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+    #[serde(default = "defaultTrue")]
+    pub enabled: bool,
+}
+fn defaultTrue() -> bool { true }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredAiProviderHandler {
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
@@ -290,6 +315,8 @@ pub struct ToolPkgMainRegistration {
     pub chatInputHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatViewHooks", default)]
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(rename = "hostEventHooks", default)]
+    pub hostEventHooks: Vec<ToolPkgRegisteredHostEventHook>,
     #[serde(rename = "toolLifecycleHooks", default)]
     pub toolLifecycleHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "promptInputHooks", default)]
@@ -365,6 +392,8 @@ pub struct ToolPkgContainerRuntime {
     pub chatInputHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatViewHooks")]
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(rename = "hostEventHooks")]
+    pub hostEventHooks: Vec<ToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
     pub toolLifecycleHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "promptInputHooks")]
@@ -895,6 +924,10 @@ impl ToolPkgArchiveParser {
             &mainRegistration.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
         )?;
+        let hostEventHooks = validateHostEventHooks(
+            &mainRegistration.hostEventHooks,
+            TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,
+        )?;
         let toolLifecycleHooks = validateFunctionHooks(
             &mainRegistration.toolLifecycleHooks,
             TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK,
@@ -974,6 +1007,7 @@ impl ToolPkgArchiveParser {
             inputMenuTogglePlugins,
             chatInputHooks,
             chatViewHooks,
+            hostEventHooks,
             toolLifecycleHooks,
             promptInputHooks,
             promptHistoryHooks,
@@ -1302,6 +1336,48 @@ fn validateFunctionHooksWithEvent(
 }
 
 #[allow(non_snake_case)]
+fn validateHostEventHooks(
+    hooks: &[ToolPkgRegisteredHostEventHook],
+    registryName: &str,
+) -> Result<Vec<ToolPkgHostEventHookRuntime>, String> {
+    let mut runtimes = Vec::new();
+    let mut ids = BTreeSet::new();
+    for (index, hook) in hooks.iter().enumerate() {
+        let id = hook.id.trim().to_string();
+        if id.is_empty() {
+            return Err(format!("{registryName}[{index}].id is required"));
+        }
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!(
+                "Duplicate {} id: {id}",
+                duplicateLabel(registryName)
+            ));
+        }
+        let source = hook.source.trim().to_string();
+        if source.is_empty() {
+            return Err(format!(
+                "{registryName}[{index}].source is required"
+            ));
+        }
+        let function = hook.function.trim().to_string();
+        if function.is_empty() {
+            return Err(format!(
+                "{registryName}[{index}].function is required"
+            ));
+        }
+        runtimes.push(ToolPkgHostEventHookRuntime {
+            id,
+            source,
+            trigger: hook.trigger.clone(),
+            function,
+            functionSource: hook.functionSource.clone(),
+            enabled: hook.enabled,
+        });
+    }
+    Ok(runtimes)
+}
+
+#[allow(non_snake_case)]
 fn validateTagFunctionHooks(
     hooks: &[ToolPkgRegisteredTagFunctionHook],
     registryName: &str,
@@ -1415,6 +1491,7 @@ fn duplicateLabel(registryName: &str) -> &'static str {
         TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN => "input menu toggle plugin",
         TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK => "chat input hook",
         TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK => "chat view hook",
+        TOOLPKG_REGISTRATION_HOST_EVENT_HOOK => "host event hook",
         TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK => "tool lifecycle hook",
         TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK => "prompt input hook",
         TOOLPKG_REGISTRATION_PROMPT_HISTORY_HOOK => "prompt history hook",

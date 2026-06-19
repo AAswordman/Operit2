@@ -41,7 +41,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     await modelManager.initializeIfNeeded();
     await functionManager.initializeIfNeeded();
     final chatBinding = await functionManager.getModelBindingForFunction(
-      functionType: 'CHAT',
+      functionType: core_proxy.FunctionType.chat,
     );
     final data = _ModelSettingsData(
       providers: await modelManager.getProviderProfiles(),
@@ -85,7 +85,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
       return;
     }
     await widget.clients.preferencesFunctionalConfigManager.setModelForFunction(
-      functionType: 'CHAT',
+      functionType: core_proxy.FunctionType.chat,
       providerId: providerId,
       modelId: modelId,
     );
@@ -93,7 +93,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   }
 
   Future<void> _selectFunctionModel(
-    String functionType,
+    core_proxy.FunctionType functionType,
     _ModelSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
@@ -106,7 +106,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     if (selected == null) {
       return;
     }
-    if (functionType == 'CHAT' &&
+    if (functionType == core_proxy.FunctionType.chat &&
         selected.modelId.toLowerCase().contains('autoglm')) {
       if (!mounted) {
         return;
@@ -447,7 +447,10 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     required String modelId,
     required core_proxy.ModelConnectionTestReport report,
   }) async {
-    final chatPassed = _connectionTestSucceeded(report, 'CHAT');
+    final chatPassed = _connectionTestSucceeded(
+      report,
+      core_proxy.ModelConnectionTestType.chat,
+    );
     if (!chatPassed) {
       return;
     }
@@ -456,10 +459,22 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
           providerId: providerId,
           modelId: modelId,
           capabilities: core_proxy.ModelCapabilities(
-            directImage: _connectionTestSucceeded(report, 'IMAGE'),
-            directAudio: _connectionTestSucceeded(report, 'AUDIO'),
-            directVideo: _connectionTestSucceeded(report, 'VIDEO'),
-            toolCall: _connectionTestSucceeded(report, 'TOOL_CALL'),
+            directImage: _connectionTestSucceeded(
+              report,
+              core_proxy.ModelConnectionTestType.image,
+            ),
+            directAudio: _connectionTestSucceeded(
+              report,
+              core_proxy.ModelConnectionTestType.audio,
+            ),
+            directVideo: _connectionTestSucceeded(
+              report,
+              core_proxy.ModelConnectionTestType.video,
+            ),
+            toolCall: _connectionTestSucceeded(
+              report,
+              core_proxy.ModelConnectionTestType.toolCall,
+            ),
           ),
         );
     if (!mounted) {
@@ -551,7 +566,8 @@ class _ModelSettingsData {
   final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding chatBinding;
   final core_proxy.ResolvedModelConfig currentConfig;
-  final Map<Object?, core_proxy.FunctionModelBinding> functionBindings;
+  final Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>
+  functionBindings;
   final int maxImageHistoryUserTurns;
   final int maxMediaHistoryUserTurns;
 
@@ -958,8 +974,9 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
                     leading: const Icon(Icons.add),
                     title: Text(l10n.settingsModelCustomModel),
                     subtitle: Text(l10n.settingsModelModelId),
-                    onTap: () =>
-                        Navigator.of(context).pop(const _AvailableModelCustom()),
+                    onTap: () => Navigator.of(
+                      context,
+                    ).pop(const _AvailableModelCustom()),
                   ),
                 ),
               ],
@@ -1149,7 +1166,9 @@ class _ProviderModelGroup extends StatelessWidget {
                 child: Row(
                   children: <Widget>[
                     Icon(
-                      expanded ? Icons.keyboard_arrow_down : Icons.chevron_right,
+                      expanded
+                          ? Icons.keyboard_arrow_down
+                          : Icons.chevron_right,
                       size: 18,
                       color: colorScheme.onSurfaceVariant,
                     ),
@@ -1468,7 +1487,7 @@ class _FunctionMappingTile extends StatelessWidget {
     required this.onTap,
   });
 
-  final String functionType;
+  final core_proxy.FunctionType functionType;
   final core_proxy.FunctionModelBinding binding;
   final core_proxy.ProviderModelSummary? summary;
   final VoidCallback onTap;
@@ -1557,13 +1576,13 @@ class _FunctionModelSelectorDialog extends StatefulWidget {
     required this.currentBinding,
   });
 
-  final String functionType;
+  final core_proxy.FunctionType functionType;
   final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding currentBinding;
 
   static Future<_FunctionModelSelection?> show({
     required BuildContext context,
-    required String functionType,
+    required core_proxy.FunctionType functionType,
     required List<core_proxy.ProviderModelSummary> summaries,
     required core_proxy.FunctionModelBinding currentBinding,
   }) {
@@ -1891,7 +1910,9 @@ class _ModelSettingsEditorDialogState
         for (var i = 0; i < _builtinTools.length; i++)
           i == index ? updated : _builtinTools[i],
       ];
-      if (enabled && current.exclusivity == 'ExclusiveWithExternalTools') {
+      if (enabled &&
+          current.exclusivity ==
+              core_proxy.BuiltinToolExclusivity.exclusiveWithExternalTools) {
         _toolCall = false;
       }
     });
@@ -1905,12 +1926,27 @@ class _ModelSettingsEditorDialogState
       final report = await widget.onTest();
       if (mounted &&
           report != null &&
-          _connectionTestSucceeded(report, 'CHAT')) {
+          _connectionTestSucceeded(
+            report,
+            core_proxy.ModelConnectionTestType.chat,
+          )) {
         setState(() {
-          _directImage = _connectionTestSucceeded(report, 'IMAGE');
-          _directAudio = _connectionTestSucceeded(report, 'AUDIO');
-          _directVideo = _connectionTestSucceeded(report, 'VIDEO');
-          _toolCall = _connectionTestSucceeded(report, 'TOOL_CALL');
+          _directImage = _connectionTestSucceeded(
+            report,
+            core_proxy.ModelConnectionTestType.image,
+          );
+          _directAudio = _connectionTestSucceeded(
+            report,
+            core_proxy.ModelConnectionTestType.audio,
+          );
+          _directVideo = _connectionTestSucceeded(
+            report,
+            core_proxy.ModelConnectionTestType.video,
+          );
+          _toolCall = _connectionTestSucceeded(
+            report,
+            core_proxy.ModelConnectionTestType.toolCall,
+          );
         });
       }
     } finally {
@@ -2240,11 +2276,11 @@ class _ConnectionTestErrorDialog extends StatelessWidget {
 class _DeleteModelBlockedDialog extends StatelessWidget {
   const _DeleteModelBlockedDialog({required this.functionTypes});
 
-  final List<String> functionTypes;
+  final List<core_proxy.FunctionType> functionTypes;
 
   static Future<void> show({
     required BuildContext context,
-    required List<String> functionTypes,
+    required List<core_proxy.FunctionType> functionTypes,
   }) {
     return showDialog<void>(
       context: context,
@@ -2275,11 +2311,11 @@ class _DeleteModelBlockedDialog extends StatelessWidget {
 class _DeleteProviderBlockedDialog extends StatelessWidget {
   const _DeleteProviderBlockedDialog({required this.functionTypes});
 
-  final List<String> functionTypes;
+  final List<core_proxy.FunctionType> functionTypes;
 
   static Future<void> show({
     required BuildContext context,
-    required List<String> functionTypes,
+    required List<core_proxy.FunctionType> functionTypes,
   }) {
     return showDialog<void>(
       context: context,
@@ -2488,63 +2524,69 @@ class _DialogTextField extends StatelessWidget {
   }
 }
 
-const List<String> _functionTypes = <String>[
-  'CHAT',
-  'SUMMARY',
-  'MEMORY',
-  'UI_CONTROLLER',
-  'TRANSLATION',
-  'GREP',
-  'ROLE_RESPONSE_PLANNER',
-  'IMAGE_RECOGNITION',
-  'AUDIO_RECOGNITION',
-  'VIDEO_RECOGNITION',
+const List<core_proxy.FunctionType> _functionTypes = <core_proxy.FunctionType>[
+  core_proxy.FunctionType.chat,
+  core_proxy.FunctionType.summary,
+  core_proxy.FunctionType.memory,
+  core_proxy.FunctionType.uiController,
+  core_proxy.FunctionType.translation,
+  core_proxy.FunctionType.grep,
+  core_proxy.FunctionType.roleResponsePlanner,
+  core_proxy.FunctionType.imageRecognition,
+  core_proxy.FunctionType.audioRecognition,
+  core_proxy.FunctionType.videoRecognition,
 ];
 
-List<String> _boundFunctionTypesForModel(
-  Map<Object?, core_proxy.FunctionModelBinding> bindings,
+List<core_proxy.FunctionType> _boundFunctionTypesForModel(
+  Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding> bindings,
   String providerId,
   String modelId,
 ) {
-  final result = <String>[];
+  final result = <core_proxy.FunctionType>[];
   for (final entry in bindings.entries) {
-    final functionType = '${entry.key}';
     final binding = entry.value;
     if (binding.providerId == providerId && binding.modelId == modelId) {
-      result.add(functionType);
+      result.add(entry.key);
     }
   }
   return result;
 }
 
-List<String> _boundFunctionTypesForProvider(
-  Map<Object?, core_proxy.FunctionModelBinding> bindings,
+List<core_proxy.FunctionType> _boundFunctionTypesForProvider(
+  Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding> bindings,
   String providerId,
 ) {
-  final result = <String>[];
+  final result = <core_proxy.FunctionType>[];
   for (final entry in bindings.entries) {
-    final functionType = '${entry.key}';
     final binding = entry.value;
     if (binding.providerId == providerId) {
-      result.add(functionType);
+      result.add(entry.key);
     }
   }
   return result;
 }
 
-String _functionTypeTitle(AppLocalizations l10n, String functionType) {
+String _functionTypeTitle(
+  AppLocalizations l10n,
+  core_proxy.FunctionType functionType,
+) {
   return switch (functionType) {
-    'CHAT' => l10n.settingsModelFunctionChat,
-    'SUMMARY' => l10n.settingsModelFunctionSummary,
-    'MEMORY' => l10n.settingsModelFunctionMemory,
-    'UI_CONTROLLER' => l10n.settingsModelFunctionUiController,
-    'TRANSLATION' => l10n.settingsModelFunctionTranslation,
-    'GREP' => l10n.settingsModelFunctionGrep,
-    'ROLE_RESPONSE_PLANNER' => l10n.settingsModelFunctionRoleResponsePlanner,
-    'IMAGE_RECOGNITION' => l10n.settingsModelFunctionImageRecognition,
-    'AUDIO_RECOGNITION' => l10n.settingsModelFunctionAudioRecognition,
-    'VIDEO_RECOGNITION' => l10n.settingsModelFunctionVideoRecognition,
-    _ => functionType,
+    core_proxy.FunctionType.chat => l10n.settingsModelFunctionChat,
+    core_proxy.FunctionType.summary => l10n.settingsModelFunctionSummary,
+    core_proxy.FunctionType.memory => l10n.settingsModelFunctionMemory,
+    core_proxy.FunctionType.uiController =>
+      l10n.settingsModelFunctionUiController,
+    core_proxy.FunctionType.translation =>
+      l10n.settingsModelFunctionTranslation,
+    core_proxy.FunctionType.grep => l10n.settingsModelFunctionGrep,
+    core_proxy.FunctionType.roleResponsePlanner =>
+      l10n.settingsModelFunctionRoleResponsePlanner,
+    core_proxy.FunctionType.imageRecognition =>
+      l10n.settingsModelFunctionImageRecognition,
+    core_proxy.FunctionType.audioRecognition =>
+      l10n.settingsModelFunctionAudioRecognition,
+    core_proxy.FunctionType.videoRecognition =>
+      l10n.settingsModelFunctionVideoRecognition,
   };
 }
 
@@ -2599,50 +2641,62 @@ String _providerTypeLocalName(AppLocalizations l10n, String providerTypeId) {
   };
 }
 
-String _functionTypeDescription(AppLocalizations l10n, String functionType) {
+String _functionTypeDescription(
+  AppLocalizations l10n,
+  core_proxy.FunctionType functionType,
+) {
   return switch (functionType) {
-    'CHAT' => l10n.settingsModelFunctionChatDescription,
-    'SUMMARY' => l10n.settingsModelFunctionSummaryDescription,
-    'MEMORY' => l10n.settingsModelFunctionMemoryDescription,
-    'UI_CONTROLLER' => l10n.settingsModelFunctionUiControllerDescription,
-    'TRANSLATION' => l10n.settingsModelFunctionTranslationDescription,
-    'GREP' => l10n.settingsModelFunctionGrepDescription,
-    'ROLE_RESPONSE_PLANNER' =>
+    core_proxy.FunctionType.chat => l10n.settingsModelFunctionChatDescription,
+    core_proxy.FunctionType.summary =>
+      l10n.settingsModelFunctionSummaryDescription,
+    core_proxy.FunctionType.memory =>
+      l10n.settingsModelFunctionMemoryDescription,
+    core_proxy.FunctionType.uiController =>
+      l10n.settingsModelFunctionUiControllerDescription,
+    core_proxy.FunctionType.translation =>
+      l10n.settingsModelFunctionTranslationDescription,
+    core_proxy.FunctionType.grep => l10n.settingsModelFunctionGrepDescription,
+    core_proxy.FunctionType.roleResponsePlanner =>
       l10n.settingsModelFunctionRoleResponsePlannerDescription,
-    'IMAGE_RECOGNITION' =>
+    core_proxy.FunctionType.imageRecognition =>
       l10n.settingsModelFunctionImageRecognitionDescription,
-    'AUDIO_RECOGNITION' =>
+    core_proxy.FunctionType.audioRecognition =>
       l10n.settingsModelFunctionAudioRecognitionDescription,
-    'VIDEO_RECOGNITION' =>
+    core_proxy.FunctionType.videoRecognition =>
       l10n.settingsModelFunctionVideoRecognitionDescription,
-    _ => functionType,
   };
 }
 
 String? _functionMappingWarning(
   AppLocalizations l10n,
-  String functionType,
+  core_proxy.FunctionType functionType,
   core_proxy.ProviderModelSummary summary,
 ) {
   return switch (functionType) {
-    'IMAGE_RECOGNITION' when !summary.capabilities.directImage =>
+    core_proxy.FunctionType.imageRecognition
+        when !summary.capabilities.directImage =>
       l10n.settingsModelFunctionImageUnsupported,
-    'AUDIO_RECOGNITION' when !summary.capabilities.directAudio =>
+    core_proxy.FunctionType.audioRecognition
+        when !summary.capabilities.directAudio =>
       l10n.settingsModelFunctionAudioUnsupported,
-    'VIDEO_RECOGNITION' when !summary.capabilities.directVideo =>
+    core_proxy.FunctionType.videoRecognition
+        when !summary.capabilities.directVideo =>
       l10n.settingsModelFunctionVideoUnsupported,
     _ => null,
   };
 }
 
 bool _functionModelSupported(
-  String functionType,
+  core_proxy.FunctionType functionType,
   core_proxy.ProviderModelSummary summary,
 ) {
   return switch (functionType) {
-    'IMAGE_RECOGNITION' => summary.capabilities.directImage,
-    'AUDIO_RECOGNITION' => summary.capabilities.directAudio,
-    'VIDEO_RECOGNITION' => summary.capabilities.directVideo,
+    core_proxy.FunctionType.imageRecognition =>
+      summary.capabilities.directImage,
+    core_proxy.FunctionType.audioRecognition =>
+      summary.capabilities.directAudio,
+    core_proxy.FunctionType.videoRecognition =>
+      summary.capabilities.directVideo,
     _ => true,
   };
 }
@@ -2683,7 +2737,8 @@ String _builtinToolSubtitle(
 ) {
   final labels = <String>[];
   labels.add('${tool.requestFormat}');
-  if (tool.exclusivity == 'ExclusiveWithExternalTools') {
+  if (tool.exclusivity ==
+      core_proxy.BuiltinToolExclusivity.exclusiveWithExternalTools) {
     labels.add(l10n.settingsModelBuiltinToolExclusive);
   }
   return labels.join(' · ');
@@ -2702,14 +2757,17 @@ core_proxy.ProviderModelSummary? _summaryForModelOrNull(
   return null;
 }
 
-String _connectionTestTypeLabel(AppLocalizations l10n, Object? type) {
+String _connectionTestTypeLabel(
+  AppLocalizations l10n,
+  core_proxy.ModelConnectionTestType type,
+) {
   return switch (type) {
-    'CHAT' => l10n.settingsModelTestItemChat,
-    'TOOL_CALL' => l10n.settingsModelTestItemToolCall,
-    'IMAGE' => l10n.settingsModelTestItemImage,
-    'AUDIO' => l10n.settingsModelTestItemAudio,
-    'VIDEO' => l10n.settingsModelTestItemVideo,
-    _ => l10n.settingsModelTestItemUnknown,
+    core_proxy.ModelConnectionTestType.chat => l10n.settingsModelTestItemChat,
+    core_proxy.ModelConnectionTestType.toolCall =>
+      l10n.settingsModelTestItemToolCall,
+    core_proxy.ModelConnectionTestType.image => l10n.settingsModelTestItemImage,
+    core_proxy.ModelConnectionTestType.audio => l10n.settingsModelTestItemAudio,
+    core_proxy.ModelConnectionTestType.video => l10n.settingsModelTestItemVideo,
   };
 }
 
@@ -2719,7 +2777,7 @@ String _modelTestKey(String providerId, String modelId) {
 
 bool _connectionTestSucceeded(
   core_proxy.ModelConnectionTestReport report,
-  String type,
+  core_proxy.ModelConnectionTestType type,
 ) {
   return report.items.any((item) => item.type == type && item.success);
 }

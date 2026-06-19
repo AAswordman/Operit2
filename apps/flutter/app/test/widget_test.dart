@@ -12,25 +12,6 @@ void main() {
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
       call,
     ) async {
-      if (call.method == 'hostDescriptor') {
-        return jsonEncode({
-          'id': 'test',
-          'displayName': 'Test Host',
-          'pathStyleDescriptionEn': '',
-          'pathStyleDescriptionCn': '',
-          'examplePaths': const <String>[],
-          'usesEnvironmentParameter': false,
-          'environmentParameterDescriptionEn': '',
-          'environmentParameterDescriptionCn': '',
-          'capabilities': const <String>[],
-          'fileSystemHost': true,
-          'webVisitHost': true,
-          'systemOperationHost': true,
-          'managedRuntimeHost': true,
-          'runtimeStorageHost': true,
-          'runtimeSqliteHost': true,
-        });
-      }
       if (call.method == 'call') {
         final request = jsonDecode(call.arguments as String);
         return jsonEncode({

@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import '../proxy/generated/CoreProxyModels.g.dart';
+
 class ToolApprovalRequest {
   const ToolApprovalRequest({
     required this.tool,
@@ -38,6 +40,22 @@ class ToolApprovalRequest {
 
 class ToolApprovalTool {
   const ToolApprovalTool({required this.name, required this.parameters});
+
+  factory ToolApprovalTool.fromHostPayload(
+    RuntimeHostInteractionToolPermissionTool payload,
+  ) {
+    return ToolApprovalTool(
+      name: payload.name,
+      parameters: payload.parameters
+          .map(
+            (parameter) => ToolApprovalParameter(
+              name: parameter.name,
+              value: parameter.value,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
 
   factory ToolApprovalTool.fromJson(Map<String, Object?> json) {
     return ToolApprovalTool(

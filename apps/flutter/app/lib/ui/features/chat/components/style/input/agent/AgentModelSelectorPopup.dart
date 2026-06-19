@@ -42,7 +42,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     await _clients.preferencesModelConfigManager.initializeIfNeeded();
     await _clients.preferencesFunctionalConfigManager.initializeIfNeeded();
     final binding = await _clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: 'CHAT');
+        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     final config = await _clients.preferencesModelConfigManager
         .getResolvedModelConfig(
           providerId: binding.providerId,
@@ -79,7 +79,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       return;
     }
     await _clients.preferencesFunctionalConfigManager.setModelForFunction(
-      functionType: 'CHAT',
+      functionType: core_proxy.FunctionType.chat,
       providerId: provider.id,
       modelId: model.id,
     );

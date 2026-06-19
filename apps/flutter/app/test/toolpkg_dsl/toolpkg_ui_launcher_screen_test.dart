@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
-import 'package:operit2/core/host/HostEnvironmentDescriptor.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
@@ -795,7 +794,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     version: '1.0.0',
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
-    sourceType: 'EXTERNAL',
+    sourceType: core_proxy.ToolPkgSourceType.externalValue,
     sourcePath: 'test',
     subpackages: <core_proxy.ToolPkgSubpackageRuntime>[],
     resources: <core_proxy.ToolPkgResourceRuntime>[],
@@ -832,6 +831,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     inputMenuTogglePlugins: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatViewHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
+    hostEventHooks: <core_proxy.ToolPkgHostEventHookRuntime>[],
     toolLifecycleHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptHistoryHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
@@ -857,7 +857,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
     version: '1.0.0',
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
-    sourceType: 'EXTERNAL',
+    sourceType: core_proxy.ToolPkgSourceType.externalValue,
     sourcePath: 'test',
     subpackages: <core_proxy.ToolPkgSubpackageRuntime>[],
     resources: <core_proxy.ToolPkgResourceRuntime>[],
@@ -883,6 +883,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
     inputMenuTogglePlugins: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatViewHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
+    hostEventHooks: <core_proxy.ToolPkgHostEventHookRuntime>[],
     toolLifecycleHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptHistoryHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
@@ -921,24 +922,8 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   }
 
   @override
-  Future<HostEnvironmentDescriptor> hostDescriptor() async {
-    return const HostEnvironmentDescriptor(
-      id: 'test',
-      displayName: 'Test',
-      pathStyleDescriptionEn: '',
-      pathStyleDescriptionCn: '',
-      examplePaths: <String>[],
-      usesEnvironmentParameter: false,
-      environmentParameterDescriptionEn: '',
-      environmentParameterDescriptionCn: '',
-      capabilities: <String>[],
-      fileSystemHost: true,
-      webVisitHost: true,
-      systemOperationHost: true,
-      managedRuntimeHost: true,
-      runtimeStorageHost: true,
-      runtimeSqliteHost: true,
-    );
+  Future<String> dispatchHostEvent(String source, String payloadJson) async {
+    return jsonEncode(<String, Object?>{'ok': true});
   }
 
   @override

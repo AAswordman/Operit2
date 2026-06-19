@@ -20,7 +20,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     );
   }
 
-  final GeneratedRepositoryRuntimeTerminalServiceCoreProxy _terminal;
+  final GeneratedServicesRuntimeTerminalServiceCoreProxy _terminal;
   final String _sessionId;
   final _output = StreamController<Uint8List>.broadcast();
   final _exitCode = Completer<int>();
@@ -150,7 +150,7 @@ Future<WorkspacePtyProcess> startWorkspacePtyImpl({
 }) async {
   final terminal = const GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
-  ).repositoryRuntimeTerminalService;
+  ).servicesRuntimeTerminalService;
   final sessionId = await terminal.startTerminalPty(
     sessionName: sessionName,
     workingDir: workingDirectory,
@@ -163,6 +163,6 @@ Future<WorkspacePtyProcess> startWorkspacePtyImpl({
 WorkspacePtyProcess attachWorkspacePtyImpl(String sessionId) {
   final terminal = const GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
-  ).repositoryRuntimeTerminalService;
+  ).servicesRuntimeTerminalService;
   return _BridgeWorkspacePtyProcess(terminal, sessionId);
 }

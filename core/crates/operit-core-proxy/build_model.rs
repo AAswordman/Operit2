@@ -129,7 +129,7 @@ pub(crate) struct SerializableType {
 #[derive(Clone, Debug)]
 pub(crate) enum SerializableTypeKind {
     Struct { fields: Vec<SerializableField> },
-    Enum { variants: Vec<String> },
+    Enum { variants: Vec<SerializableEnumVariant>, unit_only: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +137,12 @@ pub(crate) struct SerializableField {
     pub(crate) name: String,
     pub(crate) json_name: String,
     pub(crate) ty: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SerializableEnumVariant {
+    pub(crate) name: String,
+    pub(crate) json_name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +176,7 @@ pub(crate) struct FactoryProtocol {
 pub(crate) enum WatchStreamProtocol {
     JsonFlow { fallible: bool },
     JsonState { fallible: bool },
+    JsonStream,
     StringStream,
     TextEvent { optional: bool },
 }

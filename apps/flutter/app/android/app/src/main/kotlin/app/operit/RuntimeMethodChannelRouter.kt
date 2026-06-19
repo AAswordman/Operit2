@@ -1,0 +1,37 @@
+package app.operit
+
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodChannel
+
+class RuntimeMethodChannelRouter(
+    activity: MainActivity,
+    runtimeHost: AndroidRuntimeHost,
+    ownerSystem: OwnerSystemCapabilityChannel,
+) {
+    private val coreLinkChannel = RuntimeCoreLinkChannel(runtimeHost)
+    private val linkHostChannel = RuntimeLinkHostChannel(runtimeHost)
+    private val hostEventChannel = HostEventChannel(runtimeHost)
+    private val ownerSystemChannel = ownerSystem
+    private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
+    private var runtimeChannel: MethodChannel? = null
+
+    fun configure(messenger: BinaryMessenger) {
+        runtimeChannel = MethodChannel(messenger, "operit/runtime").also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when {
+                    coreLinkChannel.handle(call, result) -> Unit
+                    linkHostChannel.handle(call, result) -> Unit
+                    hostEventChannel.handle(call, result) -> Unit
+                    ownerSystemChannel.handle(call, result) -> Unit
+                    androidPlatformChannel.handle(call, result) -> Unit
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    fun clear() {
+        runtimeChannel?.setMethodCallHandler(null)
+        runtimeChannel = null
+    }
+}

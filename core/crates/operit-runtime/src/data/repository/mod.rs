@@ -12,8 +12,6 @@ pub mod MemoryAutoSaveCandidateRepository;
 pub mod MemoryRepository;
 #[path = "RuntimeStorageRepository.rs"]
 pub mod RuntimeStorageRepository;
-#[path = "RuntimeTerminalService.rs"]
-pub mod RuntimeTerminalService;
 #[path = "UIHierarchyManager.rs"]
 pub mod UIHierarchyManager;
 #[path = "UserMarkdownRepository.rs"]
@@ -29,7 +27,6 @@ pub use CustomEmojiRepository::*;
 pub use MemoryAutoSaveCandidateRepository::*;
 pub use MemoryRepository::*;
 pub use RuntimeStorageRepository::*;
-pub use RuntimeTerminalService::*;
 pub use UIHierarchyManager::*;
 pub use UserMarkdownRepository::*;
 pub use WorkflowRepository::*;

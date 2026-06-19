@@ -27,6 +27,7 @@ operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
 operit-store = { path = "../../core/crates/operit-store" }
 ratatui = "0.28"
+unicode-width = "0.1"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

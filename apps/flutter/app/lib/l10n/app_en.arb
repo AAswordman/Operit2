@@ -672,7 +672,7 @@
   "settingsCharactersAdvancedPrompt": "Advanced custom prompt",
   "settingsCharactersMarks": "Notes",
   "settingsCharactersTags": "Tags",
-  "settingsCharactersNoTags": "No tags available. Create tags in prompt/tag management, then bind them to character cards.",
+  "settingsCharactersNoTags": "No tags available. Create one in tag management, then bind it to this character card.",
   "settingsCharactersImport": "Import",
   "settingsCharactersExport": "Export",
   "settingsCharactersImportJson": "Import JSON",
@@ -727,6 +727,7 @@
     }
   },
   "settingsCharactersTagsSection": "Tags",
+  "settingsCharactersManageTags": "Manage tags",
   "settingsCharactersCreateTag": "New tag",
   "settingsCharactersEditTag": "Edit tag",
   "settingsCharactersDeleteTag": "Delete tag",
@@ -801,8 +802,8 @@
       }
     },
     "settingsCharactersMemoryGraphLink": "Memory link",
-    "settingsCharactersEditUserMarkdown": "Edit USER.md",
-  "settingsCharactersUserMarkdownTitle": "{profileName}'s USER.md",
+    "settingsCharactersEditUserMarkdown": "Edit user profile",
+  "settingsCharactersUserMarkdownTitle": "{profileName}'s user profile",
   "@settingsCharactersUserMarkdownTitle": {
     "placeholders": {
       "profileName": {
@@ -810,11 +811,12 @@
       }
     }
   },
-  "settingsCharactersUserMarkdownSaved": "USER.md saved",
-  "settingsCharactersMemoryAutoUpdate": "Auto-update memory preferences",
-  "settingsCharactersMemoryAutoUpdateDescription": "Allow AI to update user preferences and long-term memory from conversations.",
-  "settingsCharactersPreferenceDescription": "Send user preferences to model",
-  "settingsCharactersPreferenceDescriptionSubtitle": "Include the active preference profile in chat prompts.",
+  "settingsCharactersUserMarkdownSaved": "User profile saved",
+  "settingsCharactersUserMarkdownContent": "User profile content",
+  "settingsCharactersMemoryAutoUpdate": "Auto-update memory stores",
+  "settingsCharactersMemoryAutoUpdateDescription": "Allow AI to organize conversation info into memory stores.",
+  "settingsCharactersPreferenceDescription": "Provide user profile to model",
+  "settingsCharactersPreferenceDescriptionSubtitle": "Include the current user profile in chat prompts.",
   "settingsCharactersCardsSection": "Character cards",
   "settingsCharactersGroupsSection": "Groups",
   "settingsCharactersGroupMembers": "{count} members",

@@ -1,14 +1,17 @@
 use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::Command;
 use std::time::UNIX_EPOCH;
 
+use globset::GlobBuilder;
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
+use ignore::WalkBuilder;
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
     GrepCodeResult, GrepFileMatch, GrepLineMatch, HostEnvironmentDescriptor, HostError, HostResult,
 };
-use regex::RegexBuilder;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -191,15 +194,42 @@ impl FileSystemHost for LinuxFileSystemHost {
         if request.pattern.trim().is_empty() {
             return Err(HostError::new("pattern parameter is required"));
         }
-        let target = PathBuf::from(&request.path);
+        let target = Path::new(&request.path);
         if !target.exists() {
             return Err(HostError::new(format!(
                 "Base path does not exist: {}",
                 request.path
             )));
         }
+        let matcher = GlobBuilder::new(&request.pattern)
+            .case_insensitive(request.caseInsensitive)
+            .build()
+            .map_err(|error| HostError::new(format!("Invalid file pattern: {error}")))?
+            .compile_matcher();
+        let mut walkBuilder = WalkBuilder::new(target);
+        if request.maxDepth >= 0 {
+            walkBuilder.max_depth(Some(request.maxDepth as usize + 1));
+        }
         let mut files = Vec::new();
-        collect_matching_files(&target, &request, 0, &mut files)?;
+        for entry in walkBuilder.build() {
+            let entry = entry.map_err(|error| HostError::new(format!("walk error: {error}")))?;
+            let entryPath = entry.path();
+            if !entryPath.is_file() {
+                continue;
+            }
+            let candidate = if request.usePathPattern {
+                entryPath
+            } else {
+                Path::new(
+                    entryPath
+                        .file_name()
+                        .expect("walk file entry must have file name"),
+                )
+            };
+            if matcher.is_match(candidate) {
+                files.push(entryPath.to_string_lossy().to_string());
+            }
+        }
         Ok(files)
     }
 
@@ -251,54 +281,60 @@ impl FileSystemHost for LinuxFileSystemHost {
         if request.pattern.trim().is_empty() {
             return Err(HostError::new("Pattern parameter is required"));
         }
+        if request.filePattern.trim().is_empty() {
+            return Err(HostError::new("file_pattern parameter is required"));
+        }
 
-        let regex = RegexBuilder::new(&request.pattern)
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(request.caseInsensitive)
+            .build(&request.pattern)
+            .map_err(|error| HostError::new(format!("Invalid regex pattern: {error}")))?;
+        let fileMatcher = GlobBuilder::new(&request.filePattern)
             .case_insensitive(request.caseInsensitive)
             .build()
-            .map_err(|error| HostError::new(format!("Invalid regex pattern: {error}")))?;
-        let fileRequest = FindFilesRequest {
-            path: request.path.clone(),
-            pattern: request.filePattern.clone(),
-            maxDepth: -1,
-            usePathPattern: false,
-            caseInsensitive: request.caseInsensitive,
-        };
-        let candidates = self.findFiles(fileRequest)?;
+            .map_err(|error| HostError::new(format!("Invalid file pattern: {error}")))?
+            .compile_matcher();
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .binary_detection(BinaryDetection::quit(b'\x00'))
+            .max_matches(Some(request.maxResults as u64))
+            .build();
         let mut matches = Vec::new();
         let mut filesSearched = 0usize;
         let mut totalMatches = 0usize;
-        for filePath in candidates {
+
+        for entry in WalkBuilder::new(&request.path).build() {
+            let entry = entry.map_err(|error| HostError::new(format!("walk error: {error}")))?;
+            let filePath = entry.path();
+            if !filePath.is_file() || !fileMatcher.is_match(filePath) {
+                continue;
+            }
             filesSearched += 1;
-            let content = match fs::read_to_string(&filePath) {
+            let mut sink = RipgrepGrepSink::new();
+            searcher
+                .search_path(&matcher, filePath, &mut sink)
+                .map_err(HostError::from)?;
+            if sink.lineMatches.is_empty() {
+                continue;
+            }
+            let content = match fs::read_to_string(filePath) {
                 Ok(content) => content,
                 Err(_) => continue,
             };
-            let mut lineMatches = Vec::new();
             let lines = content.lines().collect::<Vec<_>>();
-            for (index, line) in lines.iter().enumerate() {
-                if regex.is_match(line) {
-                    totalMatches += 1;
-                    let lineNumber = index + 1;
-                    let start = index.saturating_sub(request.contextLines);
-                    let end = (index + request.contextLines + 1).min(lines.len());
-                    let matchContext = if request.contextLines > 0 {
-                        Some(lines[start..end].join("\n"))
-                    } else {
-                        None
-                    };
-                    lineMatches.push(GrepLineMatch {
-                        lineNumber,
-                        lineContent: (*line).to_string(),
-                        matchContext,
-                    });
-                    if lineMatches.len() >= request.maxResults {
-                        break;
-                    }
+            let mut lineMatches = sink.lineMatches;
+            if request.contextLines > 0 {
+                for lineMatch in &mut lineMatches {
+                    let lineIndex = lineMatch.lineNumber.saturating_sub(1);
+                    let start = lineIndex.saturating_sub(request.contextLines);
+                    let end = (lineIndex + request.contextLines + 1).min(lines.len());
+                    lineMatch.matchContext = Some(lines[start..end].join("\n"));
                 }
             }
+            totalMatches += lineMatches.len();
             if !lineMatches.is_empty() {
                 matches.push(GrepFileMatch {
-                    filePath,
+                    filePath: filePath.to_string_lossy().to_string(),
                     lineMatches,
                 });
             }
@@ -522,64 +558,34 @@ fn zip_file(
     Ok(())
 }
 
-fn collect_matching_files(
-    root: &Path,
-    request: &FindFilesRequest,
-    depth: i32,
-    output: &mut Vec<String>,
-) -> HostResult<()> {
-    if request.maxDepth >= 0 && depth > request.maxDepth {
-        return Ok(());
-    }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let entryPath = entry.path();
-        if entryPath.is_dir() {
-            collect_matching_files(&entryPath, request, depth + 1, output)?;
-        } else if glob_matches(&request.pattern, &entryPath.to_string_lossy(), request.caseInsensitive) {
-            output.push(entryPath.to_string_lossy().to_string());
-        }
-    }
-    Ok(())
+struct RipgrepGrepSink {
+    lineMatches: Vec<GrepLineMatch>,
 }
 
-fn glob_matches(pattern: &str, value: &str, caseInsensitive: bool) -> bool {
-    let patternValue = if caseInsensitive {
-        pattern.to_ascii_lowercase()
-    } else {
-        pattern.to_string()
-    };
-    let valueValue = if caseInsensitive {
-        value.to_ascii_lowercase()
-    } else {
-        value.to_string()
-    };
-    glob_match_bytes(patternValue.as_bytes(), valueValue.as_bytes())
-}
-
-fn glob_match_bytes(pattern: &[u8], value: &[u8]) -> bool {
-    let mut patternIndex = 0usize;
-    let mut valueIndex = 0usize;
-    let mut starIndex = None;
-    let mut matchIndex = 0usize;
-    while valueIndex < value.len() {
-        if patternIndex < pattern.len() && (pattern[patternIndex] == b'?' || pattern[patternIndex] == value[valueIndex]) {
-            patternIndex += 1;
-            valueIndex += 1;
-        } else if patternIndex < pattern.len() && pattern[patternIndex] == b'*' {
-            starIndex = Some(patternIndex);
-            matchIndex = valueIndex;
-            patternIndex += 1;
-        } else if let Some(starIndexValue) = starIndex {
-            patternIndex = starIndexValue + 1;
-            matchIndex += 1;
-            valueIndex = matchIndex;
-        } else {
-            return false;
+impl RipgrepGrepSink {
+    fn new() -> Self {
+        Self {
+            lineMatches: Vec::new(),
         }
     }
-    while patternIndex < pattern.len() && pattern[patternIndex] == b'*' {
-        patternIndex += 1;
+}
+
+impl Sink for RipgrepGrepSink {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let lineContent = bytes_to_search_line(mat.bytes());
+        self.lineMatches.push(GrepLineMatch {
+            lineNumber: mat.line_number().unwrap_or(0) as usize,
+            lineContent,
+            matchContext: None,
+        });
+        Ok(true)
     }
-    patternIndex == pattern.len()
+}
+
+fn bytes_to_search_line(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim_end_matches(&['\r', '\n'][..])
+        .to_string()
 }

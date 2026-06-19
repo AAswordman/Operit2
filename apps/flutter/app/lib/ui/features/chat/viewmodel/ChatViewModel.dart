@@ -217,7 +217,7 @@ class ChatViewModel {
     await _chat.updateUserMessage(message: text);
 
     final binding = await clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: 'CHAT');
+        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     final providerId = binding.providerId.trim();
     final modelId = binding.modelId.trim();
     if (providerId.isEmpty || modelId.isEmpty) {
@@ -228,7 +228,7 @@ class ChatViewModel {
 
     final attachments = await _chat.attachments();
     await _chat.sendUserMessage(
-      promptFunctionType: 'CHAT',
+      promptFunctionType: core_proxy.PromptFunctionType.chat,
       roleCardIdOverride: null,
       chatIdOverride: null,
       messageTextOverride: null,
@@ -380,7 +380,7 @@ class ChatViewModel {
 
   Future<String> currentModelName() async {
     final binding = await clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: 'CHAT');
+        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     final config = await clients.preferencesModelConfigManager
         .getResolvedModelConfig(
           providerId: binding.providerId,

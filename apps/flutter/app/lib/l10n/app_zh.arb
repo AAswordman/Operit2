@@ -672,7 +672,7 @@
   "settingsCharactersAdvancedPrompt": "高级自定义 Prompt",
   "settingsCharactersMarks": "备注",
   "settingsCharactersTags": "标签",
-  "settingsCharactersNoTags": "当前没有可选标签。可在提示词/标签管理中创建后绑定到角色卡。",
+  "settingsCharactersNoTags": "当前没有可选标签。可在标签管理中创建后绑定到角色卡。",
   "settingsCharactersImport": "导入",
   "settingsCharactersExport": "导出",
   "settingsCharactersImportJson": "导入 JSON",
@@ -727,6 +727,7 @@
     }
   },
   "settingsCharactersTagsSection": "标签",
+  "settingsCharactersManageTags": "管理标签",
   "settingsCharactersCreateTag": "新建标签",
   "settingsCharactersEditTag": "编辑标签",
   "settingsCharactersDeleteTag": "删除标签",
@@ -801,8 +802,8 @@
       }
     },
     "settingsCharactersMemoryGraphLink": "记忆关系",
-    "settingsCharactersEditUserMarkdown": "编辑 USER.md",
-  "settingsCharactersUserMarkdownTitle": "{profileName} 的 USER.md",
+    "settingsCharactersEditUserMarkdown": "编辑用户资料",
+  "settingsCharactersUserMarkdownTitle": "{profileName} 的用户资料",
   "@settingsCharactersUserMarkdownTitle": {
     "placeholders": {
       "profileName": {
@@ -810,11 +811,12 @@
       }
     }
   },
-  "settingsCharactersUserMarkdownSaved": "USER.md 已保存",
-  "settingsCharactersMemoryAutoUpdate": "自动更新记忆偏好",
-  "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中更新用户偏好与长期记忆。",
-  "settingsCharactersPreferenceDescription": "向模型提供用户偏好",
-  "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前偏好档案写入提示词。",
+  "settingsCharactersUserMarkdownSaved": "用户资料已保存",
+  "settingsCharactersUserMarkdownContent": "用户资料内容",
+  "settingsCharactersMemoryAutoUpdate": "自动更新记忆库",
+  "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中整理信息并写入记忆库。",
+  "settingsCharactersPreferenceDescription": "向模型提供用户资料",
+  "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前用户资料写入提示词。",
   "settingsCharactersCardsSection": "角色卡",
   "settingsCharactersGroupsSection": "群组",
   "settingsCharactersGroupMembers": "{count} 个成员",

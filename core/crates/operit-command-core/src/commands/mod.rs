@@ -90,7 +90,7 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
         "operit2 skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>",
     );
     output
-        .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
+        .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
     output.push_stdout_line(
         "operit2 market <auth|stats|rank|search|show|install|comments|comment|reactions|react>",
     );

@@ -10,6 +10,8 @@ mod empty_state;
 mod focus;
 #[path = "transcript/helpers.rs"]
 mod helpers;
+#[path = "i18n.rs"]
+mod i18n;
 #[path = "input/input.rs"]
 mod input;
 #[path = "core/link_proxy_rs.rs"]
@@ -34,12 +36,14 @@ mod transcript;
 mod typewriter;
 
 use crate::access::{
-    PairedRemoteSession, PairedRemoteSessionRecord, RemoteHostInteractionBroker,
-    RemoteHostInteractionRequest, RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+    PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
+    RemoteLinkServerConfig,
 };
 use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
 use approval::TuiApprovalBridge;
+use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
+use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
@@ -48,6 +52,11 @@ use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
+use operit_runtime::services::RuntimeHostInteractionService::{
+    RuntimeHostInteractionKind, RuntimeHostInteractionRequest,
+    RuntimeHostInteractionResponse, RuntimeHostInteractionToolPermissionResponse,
+    RuntimeHostInteractionToolPermissionTool,
+};
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
@@ -64,6 +73,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let shell_args = parse_shell_args(args)?;
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
+    let language = TuiLanguage::from_context(&core.localApplicationMut().applicationContext)?;
     let _externalRuntimeEventRegistration =
         operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
             core.localApplicationMut().applicationContext.clone(),
@@ -88,6 +98,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         shell_args,
         initial_chat_id,
         approval_bridge,
+        language,
         startup_update_prompt,
         startup_workspace_prompt_path,
     )
@@ -104,6 +115,8 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
         .clone();
     let shell_args = parse_shell_args(&args[1..])?;
     let session = load_link_session(&session_name)?;
+    let local_application = crate::bootstrap::create_cli_application();
+    let language = TuiLanguage::from_context(&local_application.applicationContext)?;
     let host_interaction_session = session.clone();
     let mut core = tui_core(session);
     let initial_chat_id = initialize_remote_chat(&mut core, &shell_args).await?;
@@ -114,6 +127,7 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
         shell_args,
         initial_chat_id,
         approval_bridge,
+        language,
         None,
         None,
     )
@@ -157,78 +171,78 @@ fn start_remote_host_interaction_loop(
     approval_bridge: TuiApprovalBridge,
 ) {
     tokio::spawn(async move {
-        loop {
-            let request = match session.pollHostInteraction(500).await {
-                Ok(Some(request)) => request,
-                Ok(None) => continue,
-                Err(_) => break,
-            };
-            if request.kind == "tool_permission" {
-                handle_remote_tool_permission_interaction(
-                    session.clone(),
-                    approval_bridge.clone(),
-                    request,
-                )
-                .await;
-            }
+        let mut proxy = GeneratedCoreProxy::new(Box::new(session) as Box<dyn CoreLinkClient + Send>);
+        let mut stream = proxy
+            .services_runtime_host_interaction_service()
+            .ownerHostInteractionEvents(vec![RuntimeHostInteractionKind::ToolPermission])
+            .await
+            .expect("remote host interaction stream must open");
+        while let Some(event) = stream.recv().await {
+            let request: RuntimeHostInteractionRequest =
+                serde_json::from_value(event.value).expect("host interaction event must be typed");
+            handle_remote_tool_permission_interaction(
+                &mut proxy,
+                approval_bridge.clone(),
+                request,
+            )
+            .await;
         }
     });
 }
 
 async fn handle_remote_tool_permission_interaction(
-    session: PairedRemoteSession,
+    proxy: &mut GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>,
     approval_bridge: TuiApprovalBridge,
-    request: RemoteHostInteractionRequest,
+    request: RuntimeHostInteractionRequest,
 ) {
-    let Some(tool) = tool_from_interaction_payload(&request.payload) else {
-        let _ = session
-            .respondHostInteraction(&request.requestId, serde_json::json!({"result": "deny"}))
-            .await;
-        return;
-    };
-    let Some(description) = request
-        .payload
-        .get("description")
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-    else {
-        let _ = session
-            .respondHostInteraction(&request.requestId, serde_json::json!({"result": "deny"}))
-            .await;
-        return;
-    };
+    let payload = request
+        .toolPermission
+        .expect("tool permission payload must be present");
+    let tool = tool_from_permission_payload(&payload.tool);
+    let description = payload.description;
     let result =
         match tokio::task::spawn_blocking(move || approval_bridge.request(&tool, &description))
             .await
         {
             Ok(result) => result,
-            Err(_) => PermissionRequestResult::DENY,
+            Err(error) => panic!("tool approval task failed: {error}"),
         };
     let result = match result {
         PermissionRequestResult::ALLOW => "allow",
         PermissionRequestResult::DENY => "deny",
         PermissionRequestResult::ALWAYS_ALLOW => "always_allow",
     };
-    let _ = session
-        .respondHostInteraction(&request.requestId, serde_json::json!({"result": result}))
-        .await;
+    proxy
+        .services_runtime_host_interaction_service()
+        .respondOwnerHostInteraction(
+            request.requestId,
+            RuntimeHostInteractionResponse {
+                browserAutomation: None,
+                webVisit: None,
+                composeWebViewController: None,
+                systemCaptureScreenshot: None,
+                systemRecognizeText: None,
+                toolPermission: Some(RuntimeHostInteractionToolPermissionResponse {
+                    result: result.to_string(),
+                }),
+            },
+        )
+        .await
+        .expect("tool permission response must be accepted");
 }
 
-fn tool_from_interaction_payload(value: &serde_json::Value) -> Option<AITool> {
-    let tool = value.get("tool")?;
-    let name = tool.get("name")?.as_str()?.to_string();
-    let parameters = tool
-        .get("parameters")?
-        .as_array()?
-        .iter()
-        .map(|parameter| {
-            Some(ToolParameter {
-                name: parameter.get("name")?.as_str()?.to_string(),
-                value: parameter.get("value")?.as_str()?.to_string(),
+fn tool_from_permission_payload(tool: &RuntimeHostInteractionToolPermissionTool) -> AITool {
+    AITool {
+        name: tool.name.clone(),
+        parameters: tool
+            .parameters
+            .iter()
+            .map(|parameter| ToolParameter {
+                name: parameter.name.clone(),
+                value: parameter.value.clone(),
             })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(AITool { name, parameters })
+            .collect(),
+    }
 }
 
 async fn initialize_remote_chat(

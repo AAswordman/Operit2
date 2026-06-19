@@ -236,6 +236,34 @@ where
     receiver
 }
 
+fn core_json_event_stream<S>(mut stream: S, request: CoreWatchRequest) -> CoreEventStream
+where
+    S: Stream + Send + 'static,
+    S::Item: serde::Serialize,
+{
+    let (sender, receiver) = core_event_stream_channel();
+    spawn_core_task(move || {
+        stream.collect(&mut |item| {
+            let value = to_core_value(item).expect("stream item must serialize");
+            let _ = sender.send(CoreEvent {
+                requestId: Some(request.requestId.clone()),
+                targetPath: request.targetPath.clone(),
+                propertyName: request.propertyName.clone(),
+                kind: CoreEventKind::Changed,
+                value,
+            });
+        });
+        let _ = sender.send(CoreEvent {
+            requestId: Some(request.requestId),
+            targetPath: request.targetPath,
+            propertyName: request.propertyName,
+            kind: CoreEventKind::Completed,
+            value: Value::Null,
+        });
+    });
+    receiver
+}
+
 fn send_text_event(
     sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     request_id: &CoreRequestId,

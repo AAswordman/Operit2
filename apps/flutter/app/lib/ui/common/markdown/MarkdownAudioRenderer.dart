@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import '../interactions/MessagePressShield.dart';
 import 'MarkdownImageRenderer.dart';
 
 const Set<String> _markdownAudioExtensions = <String>{
@@ -144,21 +145,25 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Row(
                 children: <Widget>[
-                  IconButton(
-                    onPressed: _togglePlayback,
-                    icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                    tooltip: _isPlaying ? 'Pause' : 'Play',
+                  MessagePressShieldRegion(
+                    child: IconButton(
+                      onPressed: _togglePlayback,
+                      icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+                      tooltip: _isPlaying ? 'Pause' : 'Play',
+                    ),
                   ),
                   Expanded(
-                    child: Slider(
-                      value: currentSeconds,
-                      min: 0,
-                      max: maxSeconds,
-                      onChanged: (value) {
-                        unawaited(
-                          _player.seek(Duration(milliseconds: value.toInt())),
-                        );
-                      },
+                    child: MessagePressShieldRegion(
+                      child: Slider(
+                        value: currentSeconds,
+                        min: 0,
+                        max: maxSeconds,
+                        onChanged: (value) {
+                          unawaited(
+                            _player.seek(Duration(milliseconds: value.toInt())),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ],

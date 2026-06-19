@@ -30,6 +30,7 @@ desktop.ini
 .env.*
 !.env.example
 *.local
+**/__pycache__/
 
 # Dart, Flutter, and Pub
 **/.dart_tool/

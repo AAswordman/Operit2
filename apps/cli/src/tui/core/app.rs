@@ -35,6 +35,7 @@ use operit_runtime::util::GithubReleaseUtil::{
 
 use super::approval::TuiApprovalBridge;
 use super::helpers::{short_chat_label, split_command_line};
+use super::i18n::{TuiLanguage, TuiText};
 use super::link_proxy_rs::TuiCore;
 use super::pending_queue::PendingQueueMessage;
 use super::selection::{
@@ -102,6 +103,7 @@ pub(super) struct OperitTui {
     pub(super) response_stream_revision_tracker_by_chat_id:
         HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
+    pub(super) language: TuiLanguage,
     pub(super) show_help: bool,
     pub(super) startup_update_prompt: Option<StartupUpdatePrompt>,
     pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
@@ -199,6 +201,7 @@ impl OperitTui {
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
         approval_bridge: TuiApprovalBridge,
+        language: TuiLanguage,
         startup_update_prompt: Option<StartupUpdatePrompt>,
         startup_workspace_prompt_path: Option<String>,
     ) -> Result<Self, String> {
@@ -212,9 +215,7 @@ impl OperitTui {
             .iter()
             .position(|item| item.id == initial_chat_id)
             .unwrap_or(0);
-        let status_message =
-            "F3 chats | Enter send | Esc cancel | Ctrl+J newline | Ctrl+N new chat | Ctrl+Q quit | ? help"
-                .to_string();
+        let status_message = language.text().initial_status().to_string();
         let current_chat_id_cache = core
             .chat_runtime_holder_main()
             .currentChatIdFlowSnapshot()
@@ -302,6 +303,7 @@ impl OperitTui {
             response_stream_markdown_by_chat_id: HashMap::new(),
             response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
+            language,
             show_help: false,
             startup_update_prompt,
             startup_workspace_prompt: startup_workspace_prompt_path.map(|path| {
@@ -312,6 +314,10 @@ impl OperitTui {
             }),
             should_quit: false,
         })
+    }
+
+    pub(super) fn text(&self) -> TuiText {
+        self.language.text()
     }
 
     pub(super) async fn run(&mut self) -> Result<(), String> {
@@ -471,16 +477,16 @@ impl OperitTui {
         match arboard::Clipboard::new() {
             Ok(mut clipboard) => match clipboard.set_text(text) {
                 Ok(()) => {
-                    self.status_message = "selection copied".to_string();
+                    self.status_message = self.text().selection_copied().to_string();
                     true
                 }
                 Err(error) => {
-                    self.status_message = format!("copy failed: {error}");
+                    self.status_message = self.text().copy_failed(&error.to_string());
                     true
                 }
             },
             Err(error) => {
-                self.status_message = format!("copy failed: {error}");
+                self.status_message = self.text().copy_failed(&error.to_string());
                 true
             }
         }
@@ -503,7 +509,7 @@ impl OperitTui {
                 self.should_quit = true;
             } else {
                 self.ctrl_c_pending = true;
-                self.status_message = "press Ctrl+C again to quit".to_string();
+                self.status_message = self.text().ctrl_c_again_to_quit().to_string();
             }
             return Ok(());
         }
@@ -547,7 +553,7 @@ impl OperitTui {
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.refresh_chats().await;
-                self.status_message = "chat list refreshed".to_string();
+                self.status_message = self.text().chat_list_refreshed().to_string();
                 return Ok(());
             }
             (KeyCode::F(3), _) => {
@@ -598,7 +604,7 @@ impl OperitTui {
                 if self.show_chat_list && self.focus == FocusArea::Chats {
                     self.show_chat_list = false;
                     self.focus = FocusArea::Input;
-                    self.status_message = "chat list hidden".to_string();
+                    self.status_message = self.text().chat_list_hidden().to_string();
                     return Ok(());
                 }
                 self.status_message.clear();
@@ -741,7 +747,7 @@ impl OperitTui {
             }
             KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.startup_workspace_prompt = None;
-                self.status_message = "workspace not bound".to_string();
+                self.status_message = self.text().workspace_not_bound().to_string();
             }
             KeyCode::Enter => {
                 let Some(accept_selected) = self
@@ -755,7 +761,7 @@ impl OperitTui {
                     self.accept_startup_workspace_prompt().await?;
                 } else {
                     self.startup_workspace_prompt = None;
-                    self.status_message = "workspace not bound".to_string();
+                    self.status_message = self.text().workspace_not_bound().to_string();
                 }
             }
             _ => {}
@@ -801,7 +807,7 @@ impl OperitTui {
             }
             KeyCode::Char('2') | KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Esc => {
                 self.startup_update_prompt = None;
-                self.status_message = "update skipped".to_string();
+                self.status_message = self.text().update_skipped().to_string();
             }
             KeyCode::Enter => {
                 let Some(download_selected) = self
@@ -815,7 +821,7 @@ impl OperitTui {
                     self.start_full_update_download()?;
                 } else {
                     self.startup_update_prompt = None;
-                    self.status_message = "update skipped".to_string();
+                    self.status_message = self.text().update_skipped().to_string();
                 }
             }
             _ => {}
@@ -824,6 +830,7 @@ impl OperitTui {
     }
 
     fn start_full_update_download(&mut self) -> Result<(), String> {
+        let text = self.text();
         let Some(prompt) = self.startup_update_prompt.as_mut() else {
             return Ok(());
         };
@@ -837,12 +844,12 @@ impl OperitTui {
         prompt.progress_rx = Some(rx);
         prompt.download_state = FullUpdateDownloadState::Downloading {
             stage: FullUpdateStage::DownloadingPackage,
-            message: "Downloading full update package".to_string(),
+            message: text.full_update_download_message().to_string(),
             read_bytes: 0,
             total_bytes: 0,
             speed_bytes_per_sec: 0,
         };
-        self.status_message = "downloading full update package".to_string();
+        self.status_message = text.downloading_full_update_package().to_string();
         tokio::spawn(async move {
             let progress_tx = tx.clone();
             let result = operit_runtime::util::GithubReleaseUtil::GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
@@ -872,7 +879,7 @@ impl OperitTui {
         self.refresh_core_snapshot().await?;
         self.refresh_chats().await;
         self.select_chat_by_id(&chat_id);
-        self.status_message = format!("workspace bound: {}", prompt.path);
+        self.status_message = self.text().workspace_bound(&prompt.path);
         Ok(())
     }
 
@@ -886,7 +893,7 @@ impl OperitTui {
         self.last_current_chat_loading = false;
         self.awaiting_runtime_loading = false;
         self.follow_transcript = true;
-        self.status_message = format!("request cancelled: {}", short_chat_label(&chat_id));
+        self.status_message = self.text().request_cancelled(&short_chat_label(&chat_id));
         Ok(())
     }
 
@@ -903,7 +910,7 @@ impl OperitTui {
             if self.enqueue_pending_message_from_input() {
                 return Ok(());
             }
-            self.status_message = "request already running".to_string();
+            self.status_message = self.text().request_already_running().to_string();
             return Ok(());
         }
 
@@ -919,7 +926,7 @@ impl OperitTui {
         let attachment_tokens = std::mem::take(&mut self.queued_attachment_tokens);
         let message = strip_attachment_tokens(input, &attachment_tokens);
         self.follow_transcript = true;
-        self.status_message = "connecting...".to_string();
+        self.status_message = self.text().connecting().to_string();
         self.input.clear();
         self.input_cursor = 0;
 
@@ -936,7 +943,7 @@ impl OperitTui {
         self.select_chat_by_id(&active_chat_id);
         self.last_current_chat_loading = true;
         self.awaiting_runtime_loading = true;
-        self.status_message = "streaming".to_string();
+        self.status_message = self.text().streaming().to_string();
         Ok(())
     }
 
@@ -1006,7 +1013,8 @@ impl OperitTui {
     }
 
     async fn handle_local_command(&mut self, input: &str) -> Result<(), String> {
-        let parts = split_command_line(input)?;
+        let parts =
+            split_command_line(input).map_err(|_| self.text().unterminated_quote().to_string())?;
         if parts.is_empty() {
             return Ok(());
         }
@@ -1031,6 +1039,9 @@ impl OperitTui {
             "max" => {
                 self.toggle_max_context_mode().await?;
             }
+            "language" => {
+                self.handle_language_command(&parts[1..])?;
+            }
             "model" => {
                 self.handle_model_command(&parts[1..]).await?;
             }
@@ -1040,50 +1051,95 @@ impl OperitTui {
             "attach" => {
                 let path = parts
                     .get(1)
-                    .ok_or_else(|| "usage: /attach <path>".to_string())?
+                    .ok_or_else(|| self.text().usage_attach().to_string())?
                     .clone();
                 self.queued_attachment_paths.push(path.clone());
-                self.status_message = format!(
-                    "queued attachment: {path} ({} total)",
-                    self.queued_attachment_paths.len()
-                );
+                self.status_message = self
+                    .text()
+                    .queued_attachment(&path, self.queued_attachment_paths.len());
             }
             "attachments" => {
                 let queued = self.queued_attachment_labels();
                 self.status_message = if queued.is_empty() {
-                    "attachments=none".to_string()
+                    self.text().attachments_none().to_string()
                 } else {
-                    format!("attachments={}", queued.join(", "))
+                    self.text().attachments_list(&queued.join(", "))
                 };
             }
             "clear-attachments" => {
                 self.clear_queued_attachments();
-                self.status_message = "attachments cleared".to_string();
+                self.status_message = self.text().attachments_cleared().to_string();
             }
             "queue" => {
                 self.handle_pending_queue_command(&parts[1..]).await?;
             }
+            "character" => {
+                self.handle_character_command(&parts[1..]).await?;
+            }
+            "group" => {
+                self.handle_group_command(&parts[1..]).await?;
+            }
+            "skill" => {
+                self.handle_skill_command(&parts[1..]).await?;
+            }
+            "package" => {
+                self.handle_package_command(&parts[1..]).await?;
+            }
+            "plugin" => {
+                self.handle_plugin_command(&parts[1..]).await?;
+            }
+            "mcp" => {
+                self.handle_mcp_command(&parts[1..]).await?;
+            }
+            "tag" => {
+                self.handle_tag_command(&parts[1..]).await?;
+            }
+            "update" => {
+                self.handle_update_command().await?;
+            }
             _ => {
-                self.status_message = format!("unknown command: /{command}");
+                self.status_message = self.text().unknown_command(command);
             }
         }
         Ok(())
+    }
+
+    fn handle_language_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None | Some("status") => {
+                self.status_message = self.text().language_status(self.language);
+                Ok(())
+            }
+            Some("help") => {
+                self.status_message = self.text().language_usage().to_string();
+                Ok(())
+            }
+            Some(value) => {
+                let language = TuiLanguage::from_language_code(value)
+                    .map_err(|_| self.text().unsupported_language(value))?;
+                language.save()?;
+                self.language = language;
+                self.transcript_render_cache.clear();
+                self.status_message = self.text().language_updated(language);
+                Ok(())
+            }
+        }
     }
 
     fn handle_approval_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
                 self.approval_bridge.respond(PermissionRequestResult::ALLOW);
-                self.status_message = "tool approved once".to_string();
+                self.status_message = self.text().tool_approved_once().to_string();
             }
             KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.approval_bridge.respond(PermissionRequestResult::DENY);
-                self.status_message = "tool denied".to_string();
+                self.status_message = self.text().tool_denied().to_string();
             }
             KeyCode::Char('3') | KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.approval_bridge
                     .respond(PermissionRequestResult::ALWAYS_ALLOW);
-                self.status_message = "tool approved and remembered".to_string();
+                self.status_message = self.text().tool_approved_remembered().to_string();
             }
             _ => {}
         }
@@ -1104,11 +1160,7 @@ impl OperitTui {
                     .getToolPermissionOverrides()
                     .await
                     .map_err(|error| error.to_string())?;
-                self.status_message = format!(
-                    "approval master={} overrides={}",
-                    master.name(),
-                    overrides.len()
-                );
+                self.status_message = self.text().approval_status(master.name(), overrides.len());
             }
             Some("allow") | Some("ask") | Some("forbid") => {
                 let level = parse_permission_level(args.first().map(String::as_str))?;
@@ -1117,12 +1169,12 @@ impl OperitTui {
                     .saveMasterSwitch(level.clone())
                     .await
                     .map_err(|error| error.to_string())?;
-                self.status_message = format!("approval master={}", level.name());
+                self.status_message = self.text().approval_master(level.name());
             }
             Some("tool") => {
-                let toolName = args.get(1).ok_or_else(|| {
-                    "usage: /approval tool <tool-name> <allow|ask|forbid|clear>".to_string()
-                })?;
+                let toolName = args
+                    .get(1)
+                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
                 match args.get(2).map(String::as_str) {
                     Some("clear") => {
                         self.core
@@ -1130,7 +1182,7 @@ impl OperitTui {
                             .clearToolPermission(toolName)
                             .await
                             .map_err(|error| error.to_string())?;
-                        self.status_message = format!("approval cleared: {toolName}");
+                        self.status_message = self.text().approval_cleared(toolName);
                     }
                     value @ (Some("allow") | Some("ask") | Some("forbid")) => {
                         let level = parse_permission_level(value)?;
@@ -1139,11 +1191,11 @@ impl OperitTui {
                             .saveToolPermission(toolName, level.clone())
                             .await
                             .map_err(|error| error.to_string())?;
-                        self.status_message = format!("approval {toolName}={}", level.name());
+                        self.status_message =
+                            self.text().approval_tool_level(toolName, level.name());
                     }
                     _ => {
-                        return Err("usage: /approval tool <tool-name> <allow|ask|forbid|clear>"
-                            .to_string());
+                        return Err(self.text().usage_approval_tool().to_string());
                     }
                 }
             }
@@ -1155,7 +1207,7 @@ impl OperitTui {
                     .await
                     .map_err(|error| error.to_string())?;
                 self.status_message = if overrides.is_empty() {
-                    "approval overrides=none".to_string()
+                    self.text().approval_overrides_none().to_string()
                 } else {
                     overrides
                         .iter()
@@ -1165,12 +1217,10 @@ impl OperitTui {
                 };
             }
             Some("help") => {
-                self.status_message =
-                    "usage: /approval | /approval list|allow|ask|forbid|tool <tool> <allow|ask|forbid|clear>"
-                        .to_string();
+                self.status_message = self.text().approval_help().to_string();
             }
             Some(other) => {
-                self.status_message = format!("unknown /approval command: {other}");
+                self.status_message = self.text().unknown_approval_command(other);
             }
         }
         Ok(())
@@ -1183,13 +1233,11 @@ impl OperitTui {
             Some("choose") => self.open_model_chooser().await,
             Some("use") => self.use_chat_model(&args[1..]).await,
             Some("help") => {
-                self.status_message =
-                    "usage: /model current | /model list | /model choose | /model use <provider-id> <model-id>"
-                        .to_string();
+                self.status_message = self.text().model_help().to_string();
                 Ok(())
             }
             Some(other) => {
-                self.status_message = format!("unknown /model command: {other}");
+                self.status_message = self.text().unknown_model_command(other);
                 Ok(())
             }
         }
@@ -1197,7 +1245,9 @@ impl OperitTui {
 
     async fn show_current_chat_model(&mut self) -> Result<(), String> {
         let (provider_id, model_id, provider_name) = self.current_chat_model_status_parts().await?;
-        self.status_message = format!("CHAT -> {} {} / {}", provider_id, provider_name, model_id);
+        self.status_message =
+            self.text()
+                .chat_model_status(&provider_id, &provider_name, &model_id);
         self.refresh_context_usage_label().await;
         Ok(())
     }
@@ -1306,14 +1356,14 @@ impl OperitTui {
                 )
             })
             .collect::<Vec<_>>();
-        self.status_message = format!("models: {}", entries.join(" | "));
+        self.status_message = self.text().models_status(&entries.join(" | "));
         Ok(())
     }
 
     async fn open_model_chooser(&mut self) -> Result<(), String> {
         self.model_choices = self.load_model_choices().await?;
         if self.model_choices.is_empty() {
-            self.status_message = "no model configs".to_string();
+            self.status_message = self.text().no_model_configs().to_string();
             return Ok(());
         }
         self.selected_model_choice_index = self
@@ -1323,14 +1373,14 @@ impl OperitTui {
             .expect("current chat model mapping must be present in model choices");
         self.show_model_chooser = true;
         self.focus = FocusArea::ModelChooser;
-        self.status_message = "choose model | Up/Down select | Enter apply | Esc close".to_string();
+        self.status_message = self.text().choose_model_status().to_string();
         Ok(())
     }
 
     fn close_model_chooser(&mut self) {
         self.show_model_chooser = false;
         self.focus = FocusArea::Input;
-        self.status_message = "model chooser closed".to_string();
+        self.status_message = self.text().model_chooser_closed().to_string();
     }
 
     async fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
@@ -1386,14 +1436,14 @@ impl OperitTui {
         let provider_id = match args.first() {
             Some(value) if !value.trim().is_empty() => value.trim().to_string(),
             _ => {
-                self.status_message = "usage: /model use <provider-id> <model-id>".to_string();
+                self.status_message = self.text().model_use_usage().to_string();
                 return Ok(());
             }
         };
         let model_id = match args.get(1) {
             Some(value) if !value.trim().is_empty() => value.trim().to_string(),
             _ => {
-                self.status_message = "usage: /model use <provider-id> <model-id>".to_string();
+                self.status_message = self.text().model_use_usage().to_string();
                 return Ok(());
             }
         };
@@ -1439,9 +1489,10 @@ impl OperitTui {
             )
             .await
             .map_err(|error| error.to_string())?;
-        self.status_message = format!(
-            "CHAT -> {} {} / {}",
-            choice.provider_id, choice.provider_name, choice.model_id
+        self.status_message = self.text().chat_model_status(
+            &choice.provider_id,
+            &choice.provider_name,
+            &choice.model_id,
         );
         self.refresh_context_usage_label().await;
         Ok(())
@@ -1476,10 +1527,9 @@ impl OperitTui {
         } else {
             updated_context.maxContextLength * 0.4
         };
-        self.status_message = format!(
-            "context model={} | context={}K",
-            model_ref.model_id,
-            format_context_length(effective_context_length)
+        self.status_message = self.text().context_model_status(
+            &model_ref.model_id,
+            &format_context_length(effective_context_length),
         );
         self.refresh_context_usage_label().await;
         Ok(())
@@ -1487,7 +1537,7 @@ impl OperitTui {
 
     async fn create_new_chat(&mut self, shell_args: ShellArgs) -> Result<(), String> {
         if self.current_chat_is_loading() {
-            self.status_message = "wait for current request to finish".to_string();
+            self.status_message = self.text().wait_for_current_request().to_string();
             return Ok(());
         }
 
@@ -1507,7 +1557,7 @@ impl OperitTui {
         self.follow_transcript = true;
         self.refresh_chats().await;
         self.select_chat_by_id(&chat_id);
-        self.status_message = "new chat".to_string();
+        self.status_message = self.text().new_chat().to_string();
         Ok(())
     }
 
@@ -1519,17 +1569,16 @@ impl OperitTui {
             if let Ok(chat_id) = self.current_chat_id() {
                 self.select_chat_by_id(&chat_id);
             }
-            self.status_message =
-                "chat list shown | Up/Down select | Enter switch | Esc close".to_string();
+            self.status_message = self.text().chat_list_shown().to_string();
         } else {
             self.focus = FocusArea::Input;
-            self.status_message = "chat list hidden".to_string();
+            self.status_message = self.text().chat_list_hidden().to_string();
         }
     }
 
     async fn resume_previous_chat(&mut self) -> Result<(), String> {
         if self.current_chat_is_loading() {
-            self.status_message = "wait for current request to finish".to_string();
+            self.status_message = self.text().wait_for_current_request().to_string();
             return Ok(());
         }
 
@@ -1546,7 +1595,7 @@ impl OperitTui {
             })
             .cloned();
         let Some(target) = target else {
-            self.status_message = "no previous chat to resume".to_string();
+            self.status_message = self.text().no_previous_chat().to_string();
             return Ok(());
         };
 
@@ -1558,13 +1607,13 @@ impl OperitTui {
         self.refresh_core_snapshot().await?;
         self.follow_transcript = true;
         self.select_chat_by_id(&target.id);
-        self.status_message = format!("resumed chat: {}", target.title);
+        self.status_message = self.text().resumed_chat(&target.title);
         Ok(())
     }
 
     async fn switch_to_chat(&mut self, chat_id: String) -> Result<(), String> {
         if self.current_chat_is_loading() {
-            self.status_message = "wait for current request to finish".to_string();
+            self.status_message = self.text().wait_for_current_request().to_string();
             return Ok(());
         }
 
@@ -1581,7 +1630,7 @@ impl OperitTui {
         self.refresh_core_snapshot().await?;
         self.follow_transcript = true;
         self.select_chat_by_id(&chat_id);
-        self.status_message = "switched chat".to_string();
+        self.status_message = self.text().switched_chat().to_string();
         Ok(())
     }
 
@@ -1702,6 +1751,7 @@ impl OperitTui {
     }
 
     fn apply_full_update_download_events(&mut self) {
+        let text = self.text();
         let Some(prompt) = self.startup_update_prompt.as_mut() else {
             return;
         };
@@ -1740,7 +1790,7 @@ impl OperitTui {
                             }
                             _ => (
                                 FullUpdateStage::DownloadingPackage,
-                                "Downloading full update package".to_string(),
+                                text.full_update_download_message().to_string(),
                             ),
                         };
                         prompt.download_state = FullUpdateDownloadState::Downloading {
@@ -1755,13 +1805,13 @@ impl OperitTui {
                 FullUpdateDownloadMessage::Complete(Ok(package_path)) => {
                     prompt.download_state = FullUpdateDownloadState::Complete { package_path };
                     prompt.progress_rx = None;
-                    self.status_message = "full update package ready".to_string();
+                    self.status_message = text.full_update_ready().to_string();
                     break;
                 }
                 FullUpdateDownloadMessage::Complete(Err(message)) => {
                     prompt.download_state = FullUpdateDownloadState::Error { message };
                     prompt.progress_rx = None;
-                    self.status_message = "full update failed".to_string();
+                    self.status_message = text.full_update_failed().to_string();
                     break;
                 }
             }
@@ -1835,7 +1885,7 @@ impl OperitTui {
                 _ => {
                     self.follow_transcript = true;
                     self.set_runtime_status_message(
-                        "正在连接AI服务...".to_string(),
+                        self.text().connecting_ai_service().to_string(),
                         &state,
                         is_loading,
                     );
@@ -1852,7 +1902,7 @@ impl OperitTui {
                     Err(error) => error,
                 },
                 InputProcessingState::Error { message } => message.clone(),
-                _ => input_processing_status_text(&state),
+                _ => self.input_processing_status_text(&state),
             };
             self.set_runtime_status_message(status, &state, is_loading);
         } else if self.last_current_chat_loading {
@@ -1920,53 +1970,300 @@ impl OperitTui {
         let max_tokens = (effective_context_length * 1024.0) as i32;
         let current_window_size = self.current_window_size_cache;
         if max_tokens <= 0 {
-            return Ok(format!(
-                "context {} / {}",
-                current_window_size.max(0),
-                max_tokens
-            ));
+            return Ok(self
+                .text()
+                .context_usage_raw(current_window_size, max_tokens));
         }
         let usage_percent =
             ((current_window_size.max(0) as f64 / max_tokens as f64) * 100.0).round() as i32;
-        Ok(format!(
-            "context {}% ({}/{})",
-            usage_percent, current_window_size, max_tokens
-        ))
+        Ok(self
+            .text()
+            .context_usage(usage_percent, current_window_size, max_tokens))
     }
-}
 
-fn input_processing_status_text(state: &InputProcessingState) -> String {
-    match state {
-        InputProcessingState::Processing { message } => resolve_processing_message(message),
-        InputProcessingState::Connecting { message } => resolve_processing_message(message),
-        InputProcessingState::Receiving { message } => resolve_processing_message(message),
-        InputProcessingState::ExecutingTool { toolName } => {
-            format!("正在执行工具: {}", toolName.trim())
+    async fn handle_character_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let cards = self
+                    .core
+                    .preferences_character_card_manager()
+                    .getAllCharacterCards()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if cards.is_empty() {
+                    self.status_message = self.text().character_none().to_string();
+                } else {
+                    let items = cards
+                        .into_iter()
+                        .map(|c| c.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().character_list(&items);
+                }
+            }
+            Some("choose") => {
+                let cards = self
+                    .core
+                    .preferences_character_card_manager()
+                    .getAllCharacterCards()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if cards.is_empty() {
+                    self.status_message = self.text().character_none().to_string();
+                } else {
+                    let items = cards
+                        .into_iter()
+                        .map(|c| c.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().character_list(&items);
+                }
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("character {other}"));
+            }
         }
-        InputProcessingState::ToolProgress { message, .. } => resolve_processing_message(message),
-        InputProcessingState::ProcessingToolResult { toolName } => {
-            format!("正在处理工具结果: {}", toolName.trim())
-        }
-        InputProcessingState::Summarizing { message } => resolve_processing_message(message),
-        InputProcessingState::ExecutingPlan { message } => resolve_processing_message(message),
-        InputProcessingState::Idle | InputProcessingState::Completed => String::new(),
-        InputProcessingState::Error { message } => message.clone(),
+        Ok(())
     }
-}
 
-fn resolve_processing_message(message: &str) -> String {
-    match message {
-        "enhanced_processing_input" => "正在处理输入...".to_string(),
-        "enhanced_processing_message" | "message_processing" => "正在处理消息...".to_string(),
-        "enhanced_connecting_service" => "正在连接AI服务...".to_string(),
-        "enhanced_receiving_response" => "正在接收AI响应...".to_string(),
-        "enhanced_receiving_tool_result" => "正在接收工具执行后的AI响应...".to_string(),
-        "chat_processing_attachment" => "正在处理附件...".to_string(),
-        "chat_processing_shared_files" => "正在处理分享文件...".to_string(),
-        "chat_summarizing_memory" => "正在总结记忆...".to_string(),
-        "chat_summarizing_generating" => "正在生成总结...".to_string(),
-        "compressing history" => "正在压缩历史...".to_string(),
-        _ => message.trim().to_string(),
+    async fn handle_group_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let groups = self
+                    .core
+                    .preferences_character_group_card_manager()
+                    .getAllCharacterGroupCards()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if groups.is_empty() {
+                    self.status_message = self.text().group_none().to_string();
+                } else {
+                    let items = groups
+                        .into_iter()
+                        .map(|g| g.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().group_list(&items);
+                }
+            }
+            Some("choose") => {
+                let groups = self
+                    .core
+                    .preferences_character_group_card_manager()
+                    .getAllCharacterGroupCards()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if groups.is_empty() {
+                    self.status_message = self.text().group_none().to_string();
+                } else {
+                    let items = groups
+                        .into_iter()
+                        .map(|g| g.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().group_list(&items);
+                }
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("group {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_skill_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let skills = self
+                    .core
+                    .permissions_skill_manager()
+                    .getAvailableSkills()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if skills.is_empty() {
+                    self.status_message = self.text().skill_none().to_string();
+                } else {
+                    let items = skills
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().skill_status(&items);
+                }
+            }
+            Some("toggle") => {
+                let name = args
+                    .get(1)
+                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                self.status_message = self.text().skill_toggled(name, "toggled");
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("skill {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_package_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let names = self
+                    .core
+                    .permissions_pack_tool_package_manager()
+                    .getActivePackageNames()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if names.is_empty() {
+                    self.status_message = self.text().package_none().to_string();
+                } else {
+                    let items = names.join(", ");
+                    self.status_message = self.text().package_status(&items);
+                }
+            }
+            Some("toggle") => {
+                let name = args
+                    .get(1)
+                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                self.status_message = self.text().package_toggled(name, "toggled");
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("package {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_plugin_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let plugins = self
+                    .core
+                    .mcp_local_server()
+                    .getAllPluginMetadata()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if plugins.is_empty() {
+                    self.status_message = self.text().plugin_none().to_string();
+                } else {
+                    let items = plugins
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().plugin_status(&items);
+                }
+            }
+            Some("toggle") => {
+                let name = args
+                    .get(1)
+                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                self.status_message = self.text().plugin_toggled(name, "toggled");
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("plugin {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_mcp_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let servers = self
+                    .core
+                    .mcp_local_server()
+                    .getAllMCPServers()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if servers.is_empty() {
+                    self.status_message = self.text().mcp_none().to_string();
+                } else {
+                    let items = servers
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().mcp_status(&items);
+                }
+            }
+            Some("toggle") => {
+                let name = args
+                    .get(1)
+                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                self.status_message = self.text().mcp_toggled(name, "toggled");
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("mcp {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_tag_command(&mut self, args: &[String]) -> Result<(), String> {
+        match args.first().map(String::as_str) {
+            None => {
+                let tags = self
+                    .core
+                    .preferences_prompt_tag_manager()
+                    .getAllTags()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if tags.is_empty() {
+                    self.status_message = self.text().tag_none().to_string();
+                } else {
+                    let items = tags
+                        .into_iter()
+                        .map(|t| t.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.status_message = self.text().tag_status(&items);
+                }
+            }
+            Some(other) => {
+                self.status_message =
+                    self.text().unknown_command(&format!("tag {other}"));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_update_command(&mut self) -> Result<(), String> {
+        let version = self
+            .core
+            .application()
+            .coreVersion()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.status_message = self.text().update_version(&version);
+        Ok(())
+    }
+
+    fn input_processing_status_text(&self, state: &InputProcessingState) -> String {
+        match state {
+            InputProcessingState::Processing { message } => self.text().processing_message(message),
+            InputProcessingState::Connecting { message } => self.text().processing_message(message),
+            InputProcessingState::Receiving { message } => self.text().processing_message(message),
+            InputProcessingState::ExecutingTool { toolName } => {
+                self.text().executing_tool(toolName.trim())
+            }
+            InputProcessingState::ToolProgress { message, .. } => {
+                self.text().processing_message(message)
+            }
+            InputProcessingState::ProcessingToolResult { toolName } => {
+                self.text().processing_tool_result(toolName.trim())
+            }
+            InputProcessingState::Summarizing { message } => {
+                self.text().processing_message(message)
+            }
+            InputProcessingState::ExecutingPlan { message } => {
+                self.text().processing_message(message)
+            }
+            InputProcessingState::Idle | InputProcessingState::Completed => String::new(),
+            InputProcessingState::Error { message } => message.clone(),
+        }
     }
 }
 

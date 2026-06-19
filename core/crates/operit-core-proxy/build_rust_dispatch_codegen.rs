@@ -645,6 +645,7 @@ fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
         WatchStreamProtocol::JsonState { fallible: false } => {
             format!("object.{}({}).value()", method.name, call_args)
         }
+        WatchStreamProtocol::JsonStream => return String::new(),
         WatchStreamProtocol::StringStream => return String::new(),
         WatchStreamProtocol::TextEvent { .. } => return String::new(),
     };
@@ -665,6 +666,7 @@ fn render_watch_stream_arm(method: &SourceMethod) -> String {
         WatchStreamProtocol::JsonState { fallible } => {
             render_json_state_watch_stream_arm(method, fallible)
         }
+        WatchStreamProtocol::JsonStream => render_json_watch_stream_arm(method),
         WatchStreamProtocol::StringStream => render_string_watch_stream_arm(method),
         WatchStreamProtocol::TextEvent { optional } => {
             render_text_event_watch_stream_arm(method, optional)
@@ -734,6 +736,15 @@ fn render_string_watch_stream_arm(method: &SourceMethod) -> String {
     let call_args = render_arg_call_list(method);
     format!(
         "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(core_string_event_stream(stream, request))\n        }}\n",
+        method.name, args, method.name, call_args
+    )
+}
+
+fn render_json_watch_stream_arm(method: &SourceMethod) -> String {
+    let args = render_arg_decoders(method);
+    let call_args = render_arg_call_list(method);
+    format!(
+        "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(core_json_event_stream(stream, request))\n        }}\n",
         method.name, args, method.name, call_args
     )
 }

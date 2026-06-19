@@ -308,6 +308,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   }
 
   Future<void> _showAttachmentPackageSelector() async {
+    _dismissAttachmentPopup();
     final packageName = await showDialog<String>(
       context: context,
       builder: (context) {
@@ -318,7 +319,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
       return;
     }
     widget.onAttachPackage?.call(packageName);
-    _dismissAttachmentPopup();
   }
 
   _PopupPlacement _popupPlacement(
@@ -458,10 +458,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                 width: double.infinity,
                 margin: const EdgeInsets.only(top: 4),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
                   child: _InputBody(
                     controller: widget.controller,
                     focusNode: widget.focusNode,
@@ -664,14 +661,12 @@ class _InputBody extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (attachments.isNotEmpty) ...<Widget>[
+        if (attachments.isNotEmpty)
           _AttachmentStrip(
             attachments: attachments,
             onRemoveAttachment: onRemoveAttachment,
             onInsertAttachment: onInsertAttachment,
           ),
-          const SizedBox(height: 6),
-        ],
         _DesktopEnterSendShortcuts(
           controller: controller,
           canSendMessage: canSendMessage,
@@ -1456,11 +1451,12 @@ class _AttachmentStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
-      height: 36,
+      height: 32,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
         itemCount: attachments.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
         itemBuilder: (context, index) {
           final attachment = attachments[index];
           return _AttachmentChip(
@@ -1493,26 +1489,32 @@ class _AttachmentChip extends StatelessWidget {
     return Tooltip(
       message: attachment.fileName,
       child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(8),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(13),
+          side: BorderSide(color: colorScheme.outline.withValues(alpha: 0.5)),
+        ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onInsertAttachment == null
               ? null
               : () => onInsertAttachment!(attachment),
-          child: Padding(
-            padding: const EdgeInsets.only(left: 8, right: 2),
+          child: SizedBox(
+            height: 26,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Icon(
-                  _attachmentIcon(attachment.mimeType),
-                  size: 16,
-                  color: colorScheme.onSurfaceVariant,
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Icon(
+                    _attachmentIcon(attachment.mimeType),
+                    size: 14,
+                    color: colorScheme.primary,
+                  ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 180),
+                  constraints: const BoxConstraints(maxWidth: 80),
                   child: Text(
                     attachment.fileName,
                     maxLines: 1,
@@ -1522,8 +1524,8 @@ class _AttachmentChip extends StatelessWidget {
                     ),
                   ),
                 ),
-                _QueueIconAction(
-                  icon: Icons.close,
+                const SizedBox(width: 2),
+                _AttachmentRemoveButton(
                   tooltip: AppLocalizations.of(context)!.close,
                   color: colorScheme.onSurfaceVariant,
                   onTap: onRemoveAttachment == null
@@ -1533,6 +1535,33 @@ class _AttachmentChip extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachmentRemoveButton extends StatelessWidget {
+  const _AttachmentRemoveButton({
+    required this.tooltip,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 10,
+        child: SizedBox.square(
+          dimension: 14,
+          child: Icon(Icons.close, size: 10, color: color),
         ),
       ),
     );
@@ -1571,18 +1600,9 @@ class _QueueIconAction extends StatelessWidget {
 
 IconData _attachmentIcon(String mimeType) {
   if (mimeType.startsWith('image/')) {
-    return Icons.image_outlined;
+    return Icons.image;
   }
-  if (mimeType.startsWith('audio/')) {
-    return Icons.audiotrack_outlined;
-  }
-  if (mimeType.startsWith('video/')) {
-    return Icons.movie_outlined;
-  }
-  if (mimeType == 'application/pdf') {
-    return Icons.picture_as_pdf_outlined;
-  }
-  return Icons.insert_drive_file_outlined;
+  return Icons.description;
 }
 
 class _DesktopEnterSendShortcuts extends StatelessWidget {

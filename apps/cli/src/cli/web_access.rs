@@ -3,7 +3,7 @@ use crate::create_local_core;
 
 use crate::access::{
     link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
-    AcceptedRemoteSessionStore, RemoteDeviceInfo, RemoteHostInteractionBroker, RemoteLinkServer,
+    AcceptedRemoteSessionStore, RemoteDeviceInfo, RemoteLinkServer,
     RemoteLinkServerConfig, RemotePairingCodeRecord, RemotePairingCodeSink, RemoteWebAccessConfig,
 };
 use std::collections::HashMap;
@@ -247,12 +247,12 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
             RemoteLinkServerConfig {
                 bindAddress: resolved_bind_address,
                 token: config.token.clone(),
+                localControlToken: Some(shutdown_token.clone()),
                 deviceId: device_id,
                 deviceInfo: device_info.clone(),
-                hostInteractionBroker: None,
                 webAccess: Some(RemoteWebAccessConfig {
                     token: config.token,
-                    shutdownToken: shutdown_token,
+                    shutdownToken: shutdown_token.clone(),
                     webRoot: web_root,
                 }),
                 printStartupInfo: false,
@@ -281,11 +281,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN);
     main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
-    let host_interaction_broker = RemoteHostInteractionBroker::new();
-    super::link::install_remote_host_permission_requester(
-        &mut core,
-        host_interaction_broker.clone(),
-    );
+    super::link::install_link_permission_requester(&mut core);
 
     println!("runtimeMode=local");
     let result = RemoteLinkServer::serveWithListener(
@@ -293,12 +289,12 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         RemoteLinkServerConfig {
             bindAddress: resolved_bind_address,
             token: config.token.clone(),
+            localControlToken: Some(shutdown_token.clone()),
             deviceId: device_id,
             deviceInfo: device_info,
-            hostInteractionBroker: Some(host_interaction_broker),
             webAccess: Some(RemoteWebAccessConfig {
                 token: config.token,
-                shutdownToken: shutdown_token,
+                shutdownToken: shutdown_token.clone(),
                 webRoot: web_root,
             }),
             printStartupInfo: false,
