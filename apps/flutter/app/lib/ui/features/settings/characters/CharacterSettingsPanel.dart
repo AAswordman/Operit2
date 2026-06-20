@@ -700,6 +700,9 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     return FutureBuilder<_CharacterSettingsData>(
       future: _future,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+        }
         final data = snapshot.data;
         if (data == null) {
           return const M3LoadingPane();

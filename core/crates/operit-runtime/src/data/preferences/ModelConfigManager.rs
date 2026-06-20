@@ -195,7 +195,8 @@ impl ModelConfigManager {
         modelId: String,
     ) -> Result<String, ModelConfigError> {
         self.updateProviderInternal(providerId, |mut provider| {
-            provider.models.push(ModelProfile::new(modelId.clone()));
+            let model = Self::newModelProfileWithResolvedSpecs(&provider, modelId.clone());
+            provider.models.push(model);
             provider
         })?;
         Ok(modelId)
@@ -224,6 +225,7 @@ impl ModelConfigManager {
         let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog)
             .map_err(ModelConfigError::ModelListFetch)?;
         for remoteModel in remoteModels {
+            let remoteModel = Self::completeAvailableProviderModel(remoteModel);
             if !models
                 .iter()
                 .any(|model| model.modelId.eq_ignore_ascii_case(&remoteModel.modelId))
@@ -251,6 +253,8 @@ impl ModelConfigManager {
                     });
                 }
                 AvailableProviderModelSource::Remote => {
+                    let availableModel =
+                        Self::completeAvailableProviderModel(availableModel.clone());
                     model.pricingOverride = availableModel.pricing.clone();
                     model.contextOverride = availableModel.context.clone();
                     model.capabilitiesOverride = availableModel.capabilities.clone();
@@ -406,17 +410,7 @@ impl ModelConfigManager {
         provider: &ProviderProfile,
         model: &ModelProfile,
     ) -> Result<ResolvedModelConfig, ModelConfigError> {
-        let catalogModel = match &model.catalogKey {
-            Some(key) => Some(
-                ModelCatalog::model(&key.providerTypeId, &key.modelId).map_err(|_| {
-                    ModelConfigError::CatalogModelNotFound {
-                        providerTypeId: key.providerTypeId.clone(),
-                        modelId: key.modelId.clone(),
-                    }
-                })?,
-            ),
-            None => None,
-        };
+        let catalogModel = Self::catalogModelForProfile(provider, model)?;
 
         let pricing = match &model.pricingOverride {
             Some(pricing) => Some(pricing.clone()),
@@ -428,21 +422,15 @@ impl ModelConfigManager {
         let context = match &model.contextOverride {
             Some(context) => context.clone(),
             None => match &catalogModel {
-                Some(entry) => entry
-                    .context
-                    .clone()
-                    .ok_or_else(|| ModelConfigError::MissingModelContext(model.id.clone()))?,
-                None => return Err(ModelConfigError::MissingModelContext(model.id.clone())),
+                Some(entry) => entry.context.clone().unwrap_or_default(),
+                None => ModelContextSpec::default(),
             },
         };
         let capabilities = match &model.capabilitiesOverride {
             Some(capabilities) => capabilities.clone(),
             None => match &catalogModel {
-                Some(entry) => entry
-                    .capabilities
-                    .clone()
-                    .ok_or_else(|| ModelConfigError::MissingModelCapabilities(model.id.clone()))?,
-                None => return Err(ModelConfigError::MissingModelCapabilities(model.id.clone())),
+                Some(entry) => entry.capabilities.clone().unwrap_or_default(),
+                None => ModelCapabilities::default(),
             },
         };
         let builtinTools = match &model.builtinToolsOverride {
@@ -455,11 +443,8 @@ impl ModelConfigManager {
         let request = match &model.requestOverride {
             Some(request) => request.clone(),
             None => match &catalogModel {
-                Some(entry) => entry
-                    .request
-                    .clone()
-                    .ok_or_else(|| ModelConfigError::MissingModelRequestSpec(model.id.clone()))?,
-                None => return Err(ModelConfigError::MissingModelRequestSpec(model.id.clone())),
+                Some(entry) => entry.request.clone().unwrap_or_default(),
+                None => ModelRequestSpec::default(),
             },
         };
 
@@ -569,10 +554,81 @@ impl ModelConfigManager {
             .map_err(ModelConfigError::ModelListFetch)?
             .into_iter()
             .find(|model| model.modelId.eq_ignore_ascii_case(modelId))
+            .map(Self::completeAvailableProviderModel)
             .ok_or_else(|| ModelConfigError::AvailableProviderModelNotFound {
                 providerId: provider.id.clone(),
                 modelId: modelId.to_string(),
             })
+    }
+
+    fn completeAvailableProviderModel(mut model: AvailableProviderModel) -> AvailableProviderModel {
+        if let Some(catalogModel) = ModelCatalog::modelByTerminalId(&model.modelId) {
+            if model.pricing.is_none() {
+                model.pricing = catalogModel.pricing;
+            }
+            if model.context.is_none() {
+                model.context = catalogModel.context;
+            }
+            if model.capabilities.is_none() {
+                model.capabilities = catalogModel.capabilities;
+            }
+            if model.builtinTools.is_empty() {
+                model.builtinTools = catalogModel.builtinTools;
+            }
+            if model.request.is_none() {
+                model.request = catalogModel.request;
+            }
+        }
+        if model.context.is_none() {
+            model.context = Some(ModelContextSpec::default());
+        }
+        if model.capabilities.is_none() {
+            model.capabilities = Some(ModelCapabilities::default());
+        }
+        if model.request.is_none() {
+            model.request = Some(ModelRequestSpec::default());
+        }
+        model
+    }
+
+    fn newModelProfileWithResolvedSpecs(
+        provider: &ProviderProfile,
+        modelId: String,
+    ) -> ModelProfile {
+        let mut model = ModelProfile::new(modelId.clone());
+        if let Ok(catalogModel) = ModelCatalog::model(&provider.providerTypeId, &modelId) {
+            model.pricingOverride = catalogModel.pricing;
+            model.contextOverride = catalogModel.context;
+            model.capabilitiesOverride = catalogModel.capabilities;
+            model.builtinToolsOverride = Some(catalogModel.builtinTools);
+            model.requestOverride = catalogModel.request;
+        }
+        if model.contextOverride.is_none() {
+            model.contextOverride = Some(ModelContextSpec::default());
+        }
+        if model.capabilitiesOverride.is_none() {
+            model.capabilitiesOverride = Some(ModelCapabilities::default());
+        }
+        if model.requestOverride.is_none() {
+            model.requestOverride = Some(ModelRequestSpec::default());
+        }
+        model
+    }
+
+    fn catalogModelForProfile(
+        provider: &ProviderProfile,
+        model: &ModelProfile,
+    ) -> Result<Option<crate::data::model::ModelConfigData::ModelCatalogEntry>, ModelConfigError>
+    {
+        match &model.catalogKey {
+            Some(key) => ModelCatalog::model(&key.providerTypeId, &key.modelId)
+                .map(Some)
+                .map_err(|_| ModelConfigError::CatalogModelNotFound {
+                    providerTypeId: key.providerTypeId.clone(),
+                    modelId: key.modelId.clone(),
+                }),
+            None => Ok(ModelCatalog::model(&provider.providerTypeId, &model.id).ok()),
+        }
     }
 
     fn assertProviderExists(&self, providerId: &str) -> Result<(), ModelConfigError> {

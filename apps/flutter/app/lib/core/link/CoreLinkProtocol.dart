@@ -108,21 +108,67 @@ class CoreEvent {
   }
 }
 
+class CoreLinkErrorLocation {
+  const CoreLinkErrorLocation({
+    required this.file,
+    required this.line,
+    required this.column,
+  });
+
+  factory CoreLinkErrorLocation.fromJson(Map<String, Object?> json) {
+    return CoreLinkErrorLocation(
+      file: json['file'] as String,
+      line: json['line'] as int,
+      column: json['column'] as int,
+    );
+  }
+
+  final String file;
+  final int line;
+  final int column;
+
+  @override
+  String toString() {
+    return '$file:$line:$column';
+  }
+}
+
 class CoreLinkError implements Exception {
-  const CoreLinkError({required this.code, required this.message});
+  const CoreLinkError({
+    required this.code,
+    required this.message,
+    this.location,
+    this.backtrace,
+  });
 
   factory CoreLinkError.fromJson(Map<String, Object?> json) {
+    final locationJson = json['location'] as Map<String, Object?>?;
     return CoreLinkError(
       code: json['code'] as String,
       message: json['message'] as String,
+      location: locationJson == null
+          ? null
+          : CoreLinkErrorLocation.fromJson(locationJson),
+      backtrace: json['backtrace'] as String?,
     );
   }
 
   final String code;
   final String message;
+  final CoreLinkErrorLocation? location;
+  final String? backtrace;
 
   @override
   String toString() {
-    return '$code: $message';
+    final buffer = StringBuffer('$code: $message');
+    final location = this.location;
+    if (location != null) {
+      buffer.write('\nRust error location: $location');
+    }
+    final backtrace = this.backtrace;
+    if (backtrace != null && backtrace.isNotEmpty) {
+      buffer.write('\nRust backtrace:\n$backtrace');
+    }
+    return buffer.toString();
   }
 }

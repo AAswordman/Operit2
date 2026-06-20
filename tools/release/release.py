@@ -8,6 +8,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import time
 import tomllib
 import urllib.error
 import urllib.parse
@@ -80,9 +82,32 @@ class GitHubRepo:
     name: str
 
 
-def run(command, cwd=REPO_ROOT):
+@dataclass(frozen=True)
+class CliBuildTarget:
+    platform: str
+    arch: str
+    rust_target: str
+
+
+CLI_RUST_TARGETS = {
+    ("windows", "x86_64"): "x86_64-pc-windows-msvc",
+    ("windows", "aarch64"): "aarch64-pc-windows-msvc",
+    ("linux", "x86_64"): "x86_64-unknown-linux-gnu",
+    ("linux", "aarch64"): "aarch64-unknown-linux-gnu",
+    ("macos", "x86_64"): "x86_64-apple-darwin",
+    ("macos", "aarch64"): "aarch64-apple-darwin",
+}
+CLI_RELEASE_ARCHES = ("x86_64", "aarch64")
+CLI_ALL_TARGETS = tuple(
+    CliBuildTarget(platform=plat, arch=arch, rust_target=CLI_RUST_TARGETS[(plat, arch)])
+    for plat in ("windows", "linux", "macos")
+    for arch in CLI_RELEASE_ARCHES
+)
+
+
+def run(command, cwd=REPO_ROOT, env=None):
     print(">> " + " ".join(str(part) for part in command), flush=True)
-    subprocess.run([str(part) for part in command], cwd=cwd, check=True)
+    subprocess.run([str(part) for part in command], cwd=cwd, env=env, check=True)
 
 
 def run_capture(command, cwd=REPO_ROOT):
@@ -99,6 +124,99 @@ def run_capture(command, cwd=REPO_ROOT):
 def require_command(name):
     if shutil.which(name) is None:
         raise RuntimeError(f"Required command not found: {name}")
+
+
+def path_contains(parent, child):
+    parent = parent.resolve()
+    child = child.resolve()
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def ensure_cwd_outside(path):
+    cwd = Path.cwd()
+    if path_contains(path, cwd):
+        os.chdir(SCRIPT_DIR)
+
+
+def close_release_processes(paths):
+    if platform.system().lower() != "windows":
+        return
+
+    roots = [str(path.resolve()) for path in paths]
+    roots_json = json.dumps(roots)
+    excluded_pids_json = json.dumps([os.getpid()])
+    script = f"""
+$ErrorActionPreference = "Stop"
+$Roots = ConvertFrom-Json @'
+{roots_json}
+'@
+$ExcludedPids = @(ConvertFrom-Json @'
+{excluded_pids_json}
+'@) + $PID
+function Normalize-OperitReleasePath([string]$Path) {{
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\\', '/')
+}}
+function Test-OperitReleasePathUnderRoot([string]$Path) {{
+    if ([string]::IsNullOrWhiteSpace($Path)) {{ return $false }}
+    $Candidate = Normalize-OperitReleasePath $Path
+    foreach ($Root in $Roots) {{
+        $NormalizedRoot = Normalize-OperitReleasePath ([string]$Root)
+        if ([string]::Equals($Candidate, $NormalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {{
+            return $true
+        }}
+        if ($Candidate.StartsWith($NormalizedRoot + '\\', [System.StringComparison]::OrdinalIgnoreCase)) {{
+            return $true
+        }}
+    }}
+    return $false
+}}
+function Test-OperitReleaseCommandLineReferencesRoot([string]$CommandLine) {{
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {{ return $false }}
+    foreach ($Root in $Roots) {{
+        $NormalizedRoot = Normalize-OperitReleasePath ([string]$Root)
+        if ($CommandLine.IndexOf($NormalizedRoot, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {{
+            return $true
+        }}
+    }}
+    return $false
+}}
+$Processes = Get-CimInstance Win32_Process | Where-Object {{
+    ($ExcludedPids -notcontains [int]$_.ProcessId) -and (
+        (Test-OperitReleasePathUnderRoot $_.ExecutablePath) -or
+        (Test-OperitReleaseCommandLineReferencesRoot $_.CommandLine)
+    )
+}}
+foreach ($Process in $Processes) {{
+    Write-Output ("closing release process pid={{0}} exe={{1}}" -f $Process.ProcessId, $Process.ExecutablePath)
+    Stop-Process -Id $Process.ProcessId -Force -ErrorAction Stop
+    Wait-Process -Id $Process.ProcessId -Timeout 5 -ErrorAction SilentlyContinue
+}}
+"""
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.stdout.strip():
+        print(result.stdout.strip(), flush=True)
+    if result.returncode != 0:
+        print(
+            f"warning: failed to close release processes: {result.stderr.strip()}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def load_env_file(path):
@@ -148,9 +266,38 @@ def flutter_command():
 
 
 def reset_dir(path):
-    if path.exists():
-        shutil.rmtree(path)
+    ensure_cwd_outside(path)
     path.mkdir(parents=True, exist_ok=True)
+    for child in list(path.iterdir()):
+        remove_release_path(child)
+
+
+def remove_release_path(path):
+    for attempt in range(3):
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == 0:
+                close_release_processes([path])
+            time.sleep(0.5)
+
+    if path.is_dir() and not path.is_symlink():
+        reset_dir(path)
+        try:
+            path.rmdir()
+            return
+        except PermissionError:
+            print(f"warning: keeping locked release directory: {path}", file=sys.stderr)
+            return
+
+    if path.exists():
+        raise PermissionError(f"Failed to remove locked release path: {path}")
 
 
 def read_properties(path):
@@ -344,6 +491,124 @@ def compress_zip(source_dir, destination):
         produced.replace(destination)
 
 
+def compress_tar_gz(source_dir, destination):
+    if not source_dir.exists():
+        raise RuntimeError(f"Expected build directory not found: {source_dir}")
+    if destination.exists():
+        destination.unlink()
+    with tarfile.open(destination, "w:gz") as archive:
+        for child in sorted(source_dir.iterdir(), key=lambda path: path.name):
+            archive.add(child, arcname=child.name)
+
+
+def write_text_file(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
+def write_windows_cli_installer_files(package_dir):
+    write_text_file(
+        package_dir / "install.bat",
+        r'''@echo off
+setlocal
+
+set "SOURCE=%~dp0operit2.exe"
+
+if not exist "%SOURCE%" (
+  echo operit2.exe not found next to install.bat 1>&2
+  exit /b 1
+)
+
+"%SOURCE%" cli install --source "%SOURCE%"
+exit /b %ERRORLEVEL%
+''',
+    )
+    write_text_file(
+        package_dir / "uninstall.bat",
+        r'''@echo off
+setlocal
+
+set "SOURCE=%~dp0operit2.exe"
+
+if not exist "%SOURCE%" (
+  echo operit2.exe not found next to uninstall.bat 1>&2
+  exit /b 1
+)
+
+"%SOURCE%" cli uninstall
+exit /b %ERRORLEVEL%
+''',
+    )
+    write_text_file(
+        package_dir / "README.txt",
+        """Operit2 CLI for Windows
+
+Install:
+  install.bat
+
+Uninstall:
+  uninstall.bat
+
+Command after install:
+  operit
+  operit2
+""",
+    )
+
+
+def write_unix_cli_installer_files(package_dir):
+    write_text_file(
+        package_dir / "install.sh",
+        """#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli install --source "$source_file"
+""",
+    )
+    write_text_file(
+        package_dir / "uninstall.sh",
+        """#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli uninstall
+""",
+    )
+    write_text_file(
+        package_dir / "README.txt",
+        """Operit2 CLI for Linux/macOS
+
+Install:
+  chmod +x install.sh
+  ./install.sh
+
+Uninstall:
+  chmod +x uninstall.sh
+  ./uninstall.sh
+
+Command after install:
+  operit
+  operit2
+""",
+    )
+
+
+def write_cli_installer_files(package_dir, target_platform):
+    if target_platform == "windows":
+        write_windows_cli_installer_files(package_dir)
+    else:
+        write_unix_cli_installer_files(package_dir)
+
+
 def host_platform():
     name = platform.system().lower()
     if name == "windows":
@@ -362,6 +627,45 @@ def host_arch():
     if machine in ("arm64", "aarch64"):
         return "aarch64"
     raise RuntimeError(f"Unsupported host architecture: {machine}")
+
+
+def cli_build_targets_for_platform(target_platform):
+    return tuple(
+        CliBuildTarget(
+            platform=target_platform,
+            arch=arch,
+            rust_target=CLI_RUST_TARGETS[(target_platform, arch)],
+        )
+        for arch in CLI_RELEASE_ARCHES
+    )
+
+
+def cli_binary_name(target_platform):
+    return "operit2.exe" if target_platform == "windows" else "operit2"
+
+
+def cli_archive_extension(target_platform):
+    return "zip" if target_platform == "windows" else "tar.gz"
+
+
+def cli_package_dir(target):
+    return WORK_DIR / f"cli-{target.platform}-{target.arch}"
+
+
+def cli_package_path(target):
+    return DIST_DIR / f"operit2-cli-{target.platform}-{target.arch}.{cli_archive_extension(target.platform)}"
+
+
+def cli_target_binary_path(target):
+    return (
+        REPO_ROOT
+        / "apps"
+        / "cli"
+        / "target"
+        / target.rust_target
+        / "release"
+        / cli_binary_name(target.platform)
+    )
 
 
 def parse_github_repo(repo):
@@ -429,26 +733,30 @@ def windows_path_to_wsl(path):
 
 def wsl_run(distro, script):
     script = "export PATH=\"$HOME/.cargo/bin:$HOME/.local/flutter/bin:$PATH\"\n" + script
+    script = script.replace("\r\n", "\n").replace("\r", "\n")
     command = ["wsl.exe"]
     if distro:
         command.extend(["-d", distro])
-    command.extend(["bash", "-lc", script])
+    command.extend(["bash", "-s"])
     print(">> " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=REPO_ROOT, check=True)
+    subprocess.run(command, cwd=REPO_ROOT, input=script.encode("utf-8"), check=True)
 
 
 def wsl_check_command(distro, name):
     command = ["wsl.exe"]
     if distro:
         command.extend(["-d", distro])
-    command.extend(
-        [
-            "bash",
-            "-lc",
-            f"export PATH=\"$HOME/.cargo/bin:$HOME/.local/flutter/bin:$PATH\"; command -v {shlex.quote(name)} >/dev/null",
-        ]
+    command.extend(["bash", "-s"])
+    script = (
+        "export PATH=\"$HOME/.cargo/bin:$HOME/.local/flutter/bin:$PATH\"\n"
+        f"command -v {shlex.quote(name)} >/dev/null\n"
     )
-    return subprocess.run(command, cwd=REPO_ROOT).returncode == 0
+    script = script.replace("\r\n", "\n").replace("\r", "\n")
+    return subprocess.run(command, cwd=REPO_ROOT, input=script.encode("utf-8")).returncode == 0
+
+
+def wsl_single_quote(value):
+    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def build_wsl_linux_app(distro, build_name, build_number):
@@ -488,13 +796,135 @@ cargo build --release --manifest-path apps/cli/Cargo.toml
 rm -rf {work}
 mkdir -p {work} {dist}
 cp apps/cli/target/release/operit2 {work}/operit2
+cat > {work}/install.sh <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli install --source "$source_file"
+EOF
+cat > {work}/uninstall.sh <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli uninstall
+EOF
+cat > {work}/README.txt <<'EOF'
+Operit2 CLI for Linux
+
+Install:
+  chmod +x install.sh
+  ./install.sh
+
+Uninstall:
+  chmod +x uninstall.sh
+  ./uninstall.sh
+
+Command after install:
+  operit
+  operit2
+EOF
+chmod +x {work}/operit2 {work}/install.sh {work}/uninstall.sh
 rm -f {dist}/operit2-cli-linux-x86_64.tar.gz
 tar -czf {dist}/operit2-cli-linux-x86_64.tar.gz -C {work} .
 """
     wsl_run(distro, script)
 
 
-def build_wsl_linux(products, distro, build_name, build_number):
+def wsl_build_cli_target(distro, target):
+    dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
+    work = shlex.quote(windows_path_to_wsl(cli_package_dir(target)))
+    package = shlex.quote(windows_path_to_wsl(cli_package_path(target)))
+    binary_name = cli_binary_name(target.platform)
+    repo = shlex.quote(windows_path_to_wsl(REPO_ROOT))
+    triple = target.rust_target
+    if target.arch == "aarch64":
+        dependency_check = """
+command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || {
+    echo "Missing WSL dependency: aarch64-linux-gnu-gcc" >&2
+    echo "Fedora: sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc" >&2
+    exit 1
+}
+aarch64_sysroot=/usr/aarch64-redhat-linux/sys-root/fc43
+test -f "$aarch64_sysroot/usr/include/stdint.h" || {
+    echo "Missing WSL dependency: $aarch64_sysroot/usr/include/stdint.h" >&2
+    echo "Fedora: sudo dnf install -y sysroot-aarch64-fc43-glibc" >&2
+    exit 1
+}
+test -f "$aarch64_sysroot/usr/lib64/libgcc_s.so" || {
+    echo "Missing WSL dependency: $aarch64_sysroot/usr/lib64/libgcc_s.so" >&2
+    echo "Fedora: dnf5 --forcearch=aarch64 download libgcc, then unpack lib64/libgcc_s*.so* into $aarch64_sysroot/usr/lib64" >&2
+    exit 1
+}
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=$aarch64_sysroot"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=--sysroot=$aarch64_sysroot"
+"""
+    else:
+        dependency_check = ""
+    script = f"""
+set -e
+cd {repo}
+{dependency_check}
+rustup target add {triple}
+cargo build --release --target {triple} --manifest-path apps/cli/Cargo.toml
+rm -rf {work}
+mkdir -p {work} {dist}
+cp apps/cli/target/{triple}/release/{binary_name} {work}/{binary_name}
+cat > {work}/install.sh <<'WEOF'
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli install --source "$source_file"
+WEOF
+cat > {work}/uninstall.sh <<'WEOF'
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_file="$script_dir/operit2"
+
+test -f "$source_file"
+chmod +x "$source_file"
+"$source_file" cli uninstall
+WEOF
+cat > {work}/README.txt <<'WEOF'
+Operit2 CLI for Linux
+
+Install:
+  chmod +x install.sh
+  ./install.sh
+
+Uninstall:
+  chmod +x uninstall.sh
+  ./uninstall.sh
+
+Command after install:
+  operit
+  operit2
+WEOF
+chmod +x {work}/{binary_name} {work}/install.sh {work}/uninstall.sh
+rm -f {package}
+tar -czf {package} -C {work} .
+"""
+    wsl_run(distro, script)
+
+
+def build_wsl_linux(products, distro, build_name, build_number, cli_arches="host"):
     if not is_windows_host():
         return
     if shutil.which("wsl.exe") is None:
@@ -502,7 +932,11 @@ def build_wsl_linux(products, distro, build_name, build_number):
     if "app" in products:
         build_wsl_linux_app(distro, build_name, build_number)
     if "cli" in products:
-        build_wsl_linux_cli(distro)
+        if cli_arches == "all":
+            wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", "x86_64-unknown-linux-gnu"))
+            wsl_build_cli_target(distro, CliBuildTarget("linux", "aarch64", "aarch64-unknown-linux-gnu"))
+        else:
+            build_wsl_linux_cli(distro)
 
 
 def build_android_app(build_name, build_number):
@@ -600,25 +1034,111 @@ def build_host_app(build_name, build_number):
         run(["tar", "-czf", package, "-C", app_parent, "operit2.app"])
 
 
-def build_host_cli():
+def vs_installation_path():
+    import subprocess
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    try:
+        result = subprocess.run([str(vswhere), "-latest", "-property", "installationPath"], capture_output=True, text=True, check=True)
+        path = result.stdout.strip()
+        return Path(path) if path else None
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def vs_dev_env(vcvars_path, arch):
+    import subprocess
+    import tempfile
+    import os
+
+    # Write a temp batch file to avoid cmd.exe quoting issues with paths containing spaces
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".bat", delete=False, dir=SCRIPT_DIR
+    )
+    try:
+        tmp.write(f'@call "{vcvars_path}" {arch}\n')
+        tmp.write('@set\n')
+        tmp.close()
+
+        result = subprocess.run(
+            ["cmd.exe", "/c", tmp.name],
+            capture_output=True, text=True,
+        )
+    finally:
+        os.unlink(tmp.name)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"vcvarsall.bat failed for {arch}: {result.stderr.strip()}")
+
+    env = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            env[key] = value
+    for key in ("INCLUDE", "LIB", "PATH"):
+        if key not in env:
+            raise RuntimeError(f"vcvarsall.bat did not produce {key} for {arch}")
+    return env
+
+
+def build_cli_target(target, use_default_target=False):
     require_command("cargo")
-    current_platform = host_platform()
-    current_arch = host_arch()
-    binary_name = "operit2.exe" if current_platform == "windows" else "operit2"
-    archive_ext = "zip" if current_platform == "windows" else "tar.gz"
-    package_dir = WORK_DIR / f"cli-{current_platform}-{current_arch}"
-    package_path = DIST_DIR / f"operit2-cli-{current_platform}-{current_arch}.{archive_ext}"
+    binary_name = cli_binary_name(target.platform)
+    package_dir = cli_package_dir(target)
+    package_path = cli_package_path(target)
 
-    run(["cargo", "build", "--release", "--manifest-path", CLI_MANIFEST])
+    if use_default_target:
+        run(["cargo", "build", "--release", "--manifest-path", CLI_MANIFEST])
+        binary_source = REPO_ROOT / "apps" / "cli" / "target" / "release" / binary_name
+    else:
+        build_env = {**os.environ}
+        if target.platform == "windows" and target.arch == "aarch64":
+            vs_path = vs_installation_path()
+            if not vs_path:
+                raise RuntimeError("Visual Studio installation not found for Windows aarch64 CLI build")
+            vcvars = vs_path / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
+            if not vcvars.exists():
+                raise RuntimeError(f"vcvarsall.bat not found: {vcvars}")
+            merged = vs_dev_env(vcvars, "x64_arm64")
+            build_env.update(merged)
+            llvm_bin = Path("C:/Program Files/LLVM/bin")
+            clang = llvm_bin / "clang.exe"
+            if not clang.exists():
+                raise RuntimeError(f"LLVM clang not found for Windows aarch64 CLI build: {clang}")
+            path = build_env.get("PATH", "")
+            build_env["PATH"] = f"{llvm_bin};{path}"
+        run(["cargo", "build", "--release", "--target", target.rust_target, "--manifest-path", CLI_MANIFEST], env=build_env)
+        binary_source = cli_target_binary_path(target)
+
     reset_dir(package_dir)
-    copy_required_file(REPO_ROOT / "apps" / "cli" / "target" / "release" / binary_name, package_dir / binary_name)
+    copy_required_file(binary_source, package_dir / binary_name)
+    write_cli_installer_files(package_dir, target.platform)
 
-    if current_platform == "windows":
+    if target.platform == "windows":
         compress_zip(package_dir, package_path)
     else:
-        if package_path.exists():
-            package_path.unlink()
-        run(["tar", "-czf", package_path, "-C", package_dir, "."])
+        os.chmod(package_dir / binary_name, 0o755)
+        os.chmod(package_dir / "install.sh", 0o755)
+        os.chmod(package_dir / "uninstall.sh", 0o755)
+        compress_tar_gz(package_dir, package_path)
+
+
+def build_host_cli(cli_arches="host"):
+    host_plat = host_platform()
+    host_arch_val = host_arch()
+
+    if cli_arches == "host":
+        host_target = CliBuildTarget(
+            platform=host_plat,
+            arch=host_arch_val,
+            rust_target=CLI_RUST_TARGETS[(host_plat, host_arch_val)],
+        )
+        build_cli_target(host_target, use_default_target=True)
+    else:
+        targets = cli_build_targets_for_platform(host_plat)
+        for target in targets:
+            build_cli_target(target, use_default_target=False)
 
 
 def publish_release(tag, repo_value, draft, prerelease, auth):
@@ -743,6 +1263,8 @@ def main():
     parser.add_argument("--products", nargs="+", choices=["app", "cli", "none"])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
+    parser.add_argument("--cli-arches", default="host", choices=["host", "all"],
+                        help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
 
     version = release_version()
@@ -770,7 +1292,7 @@ def main():
         build_host_app(platform_version.build_name, platform_version.build_number)
 
     if "cli" in products:
-        build_host_cli()
+        build_host_cli(args.cli_arches)
 
     if not args.no_wsl and "none" not in products:
         build_wsl_linux(
@@ -778,6 +1300,7 @@ def main():
             args.wsl_distro,
             platform_version.build_name,
             platform_version.build_number,
+            args.cli_arches,
         )
 
     next_platform_version = None

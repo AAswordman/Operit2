@@ -57,11 +57,22 @@ def build_command() -> list[str]:
         )
         command.extend(mode.args)
 
+    if target.key in ("cli", "full"):
+        arches = choose(
+            "CLI 构建架构？",
+            [
+                Choice("host", "当前主机架构 (x86_64/aarch64)", ("--cli-arches", "host")),
+                Choice("all", "全量桌面架构 (x86_64 + aarch64 for Windows/Linux/macOS)", ("--cli-arches", "all")),
+            ],
+        )
+        command.extend(arches.args)
+
+    if target.key != "check":
         linux = choose(
             "Linux WSL 构建？",
             [
-                Choice("no_wsl", "关闭 WSL Linux 构建", ("--no-wsl",)),
                 Choice("wsl", "启用 WSL Linux 构建", ()),
+                Choice("no_wsl", "关闭 WSL Linux 构建", ("--no-wsl",)),
             ],
         )
         command.extend(linux.args)

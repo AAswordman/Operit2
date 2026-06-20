@@ -238,6 +238,17 @@ pub enum CoreEventKind {
 pub struct CoreLinkError {
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<CoreLinkErrorLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backtrace: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreLinkErrorLocation {
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
 }
 
 impl CoreLinkError {
@@ -245,6 +256,8 @@ impl CoreLinkError {
         Self {
             code: code.into(),
             message: message.into(),
+            location: None,
+            backtrace: None,
         }
     }
 
@@ -259,14 +272,37 @@ impl CoreLinkError {
         )
     }
 
+    #[track_caller]
     pub fn internal(message: impl Into<String>) -> Self {
-        Self::new("INTERNAL_ERROR", message)
+        let caller = std::panic::Location::caller();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        Self {
+            code: "INTERNAL_ERROR".to_string(),
+            message: message.into(),
+            location: Some(CoreLinkErrorLocation {
+                file: caller.file().to_string(),
+                line: caller.line(),
+                column: caller.column(),
+            }),
+            backtrace: Some(backtrace.to_string()),
+        }
     }
 }
 
 impl std::fmt::Display for CoreLinkError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.code, self.message)
+        write!(formatter, "{}: {}", self.code, self.message)?;
+        if let Some(location) = &self.location {
+            write!(
+                formatter,
+                "\nRust error location: {}:{}:{}",
+                location.file, location.line, location.column
+            )?;
+        }
+        if let Some(backtrace) = &self.backtrace {
+            write!(formatter, "\nRust backtrace:\n{backtrace}")?;
+        }
+        Ok(())
     }
 }
 

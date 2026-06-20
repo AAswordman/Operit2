@@ -28,6 +28,7 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
     let currentVersion = args.get(1).ok_or_else(|| usage.to_string())?;
     let target = parseTarget(args.get(2), args.get(3), args.get(4), usage)?;
     let packageName = target.assetName()?;
+    let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     match GithubReleaseUtil::checkForFullUpdateBlocking(currentVersion, target)? {
         FullUpdateStatus::Available(info) => {
             let workDir = std::env::temp_dir().join("operit2").join("full_update");
@@ -39,6 +40,7 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
             )?;
             output.push_stdout_line("status=downloaded");
             output.push_stdout_line(format!("currentVersion={currentVersion}"));
+            output.push_stdout_line(format!("channel={channel}"));
             output.push_stdout_line(format!("latestVersion={}", info.version));
             output.push_stdout_line(format!("package={}", info.assetName));
             output.push_stdout_line(format!("packagePath={}", packagePath.display()));
@@ -47,6 +49,7 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
         FullUpdateStatus::UpToDate => {
             output.push_stdout_line("status=up-to-date");
             output.push_stdout_line(format!("currentVersion={currentVersion}"));
+            output.push_stdout_line(format!("channel={channel}"));
             output.push_stdout_line(format!("package={packageName}"));
         }
     }
@@ -61,10 +64,12 @@ fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(
     let currentVersion = args.get(1).ok_or_else(|| usage.to_string())?;
     let target = parseTarget(args.get(2), args.get(3), args.get(4), usage)?;
     let packageName = target.assetName()?;
+    let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     match GithubReleaseUtil::checkForFullUpdateBlocking(currentVersion, target)? {
         FullUpdateStatus::Available(info) => {
             output.push_stdout_line("status=available");
             output.push_stdout_line(format!("currentVersion={currentVersion}"));
+            output.push_stdout_line(format!("channel={channel}"));
             output.push_stdout_line(format!("latestVersion={}", info.version));
             output.push_stdout_line(format!("package={}", info.assetName));
             output.push_stdout_line(format!("downloadUrl={}", info.downloadUrl));
@@ -73,6 +78,7 @@ fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(
         FullUpdateStatus::UpToDate => {
             output.push_stdout_line("status=up-to-date");
             output.push_stdout_line(format!("currentVersion={currentVersion}"));
+            output.push_stdout_line(format!("channel={channel}"));
             output.push_stdout_line(format!("package={packageName}"));
         }
     }

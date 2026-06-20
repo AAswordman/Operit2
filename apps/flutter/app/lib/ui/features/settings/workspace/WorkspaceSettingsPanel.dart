@@ -50,13 +50,6 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     );
   }
 
-  void _reload() {
-    setState(() {
-      _selectedWorkspaceNames.clear();
-      _future = _load();
-    });
-  }
-
   Future<void> _confirmDeleteSelected() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -155,14 +148,11 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
     return FutureBuilder<_WorkspaceSettingsData>(
       future: _future,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+        }
         final data = snapshot.data;
         if (data == null) {
-          if (snapshot.hasError) {
-            return _WorkspaceLoadError(
-              message: l10n.settingsWorkspaceLoadFailed('${snapshot.error}'),
-              onRetry: _reload,
-            );
-          }
           return const M3LoadingPane();
         }
         return ListView(
@@ -218,38 +208,6 @@ class _UnboundWorkspaceInfo {
 
   final String name;
   final String fullPath;
-}
-
-class _WorkspaceLoadError extends StatelessWidget {
-  const _WorkspaceLoadError({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(Icons.error_outline, color: colorScheme.error, size: 36),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: Text(l10n.settingsWorkspaceRefresh),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _UnboundWorkspaceCard extends StatelessWidget {

@@ -1,10 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use flate2::read::GzDecoder;
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -41,15 +45,24 @@ use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::util::stream::Stream::Stream;
-use operit_runtime::util::GithubReleaseUtil::FullUpdateTarget;
+use operit_runtime::util::GithubReleaseUtil::{
+    FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
+};
 use sha2::{Digest, Sha256};
+use tar::Archive;
+use zip::ZipArchive;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+mod host_ops;
 pub(crate) mod link;
 mod transfer;
 mod web_access;
 
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
+use host_ops::{schedule_cli_uninstall, schedule_cli_update};
 use link::{load_link_session, run_link_command};
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web_access::run_web_access_command;
@@ -73,6 +86,14 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
 
     if args[0].as_str() == "web" {
         return run_web_access_command(&args[1..]).await;
+    }
+
+    if args[0].as_str() == "install" {
+        return run_install_cli_command(&args[1..]).await;
+    }
+
+    if args[0].as_str() == "uninstall" {
+        return run_uninstall_cli_command(&args[1..]).await;
     }
 
     let mut core = local_cli_core()?;
@@ -166,15 +187,12 @@ async fn run_update_cli_command(
 ) -> Result<(), String> {
     if args.is_empty() {
         let target = FullUpdateTarget::cliForCurrentHost()?;
-        let command = vec![
-            "update".to_string(),
-            "run".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-            target.product,
-            target.platform,
-            target.arch,
-        ];
-        return run_core_command_and_print(core, &command).await;
+        return run_update_with_progress(
+            env!("CARGO_PKG_VERSION"),
+            target,
+            UpdateApplyMode::InstallCurrentTarget,
+        )
+        .await;
     }
 
     match args[0].as_str() {
@@ -192,26 +210,34 @@ async fn run_update_cli_command(
         }
         "target" if args.len() == 1 => {
             let target = FullUpdateTarget::cliForCurrentHost()?;
-            let package_name = target.assetName()?;
-            println!("product={}", target.product);
-            println!("platform={}", target.platform);
-            println!("arch={}", target.arch);
-            println!("package={package_name}");
-            Ok(())
+            print_update_target(target)
         }
-        "run" if args.len() == 5 => {
-            let mut command = vec!["update".to_string()];
-            command.extend_from_slice(args);
-            run_core_command_and_print(core, &command).await
+        "run" if args.len() == 2 => {
+            let current_version = args.get(1).ok_or_else(|| cli_update_usage("run"))?;
+            let target = FullUpdateTarget::cliForCurrentHost()?;
+            run_update_with_progress(
+                current_version,
+                target,
+                UpdateApplyMode::InstallCurrentTarget,
+            )
+            .await
         }
-        "check" if args.len() == 5 => {
-            let mut command = vec!["update".to_string()];
-            command.extend_from_slice(args);
-            run_core_command_and_print(core, &command).await
+        "download" if args.len() == 2 => {
+            let current_version = args.get(1).ok_or_else(|| cli_update_usage("download"))?;
+            let target = FullUpdateTarget::cliForCurrentHost()?;
+            run_update_with_progress(current_version, target, UpdateApplyMode::DownloadOnly).await
         }
-        "target" if args.len() == 4 => {
-            let mut command = vec!["update".to_string()];
-            command.extend_from_slice(args);
+        "check" if args.len() == 2 => {
+            let current_version = args.get(1).ok_or_else(|| cli_update_usage("check"))?;
+            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let command = vec![
+                "update".to_string(),
+                "check".to_string(),
+                current_version.to_string(),
+                target.product,
+                target.platform,
+                target.arch,
+            ];
             run_core_command_and_print(core, &command).await
         }
         _ => {
@@ -221,11 +247,770 @@ async fn run_update_cli_command(
     }
 }
 
+fn cli_update_usage(command: &str) -> String {
+    format!("usage: operit2 cli update {command} <current-version>")
+}
+
+fn print_update_target(target: FullUpdateTarget) -> Result<(), String> {
+    let package_name = target.assetName()?;
+    println!("platform={}", target.platform);
+    println!("arch={}", target.arch);
+    println!("package={package_name}");
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateApplyMode {
+    InstallCurrentTarget,
+    DownloadOnly,
+}
+
+async fn run_update_with_progress(
+    current_version: &str,
+    target: FullUpdateTarget,
+    apply_mode: UpdateApplyMode,
+) -> Result<(), String> {
+    let package_name = target.assetName()?;
+    let target_for_install = target.clone();
+    let channel = GithubReleaseUtil::fullUpdateChannelForVersion(current_version)?;
+    let status = GithubReleaseUtil::checkForFullUpdateBlocking(current_version, target)?;
+    match status {
+        FullUpdateStatus::Available(info) => {
+            println!("status=available");
+            println!("currentVersion={current_version}");
+            println!("channel={channel}");
+            println!("latestVersion={}", info.version);
+            println!("package={}", info.assetName);
+            let work_dir = std::env::temp_dir().join("operit2").join("full_update");
+            let last_line_len = Arc::new(Mutex::new(0usize));
+            let progress_line_len = Arc::clone(&last_line_len);
+            let package_path = GithubReleaseUtil::downloadAndPrepareFullUpdateBlocking(
+                &info.downloadUrl,
+                &info.assetName,
+                &work_dir,
+                move |event| match event {
+                    FullUpdateProgressEvent::StageChanged { stage: _, message } => {
+                        let mut last_line_len = progress_line_len
+                            .lock()
+                            .expect("progress line length mutex poisoned");
+                        clear_progress_line(&mut *last_line_len);
+                        println!("{message}");
+                    }
+                    FullUpdateProgressEvent::DownloadProgress {
+                        readBytes,
+                        totalBytes,
+                        speedBytesPerSec,
+                    } => {
+                        let percent = readBytes as f64 * 100.0 / totalBytes as f64;
+                        let line = format!(
+                            "download={percent:.1}% bytes={}/{} speed={}/s",
+                            format_bytes(readBytes),
+                            format_bytes(totalBytes),
+                            format_bytes(speedBytesPerSec),
+                        );
+                        let mut last_line_len = progress_line_len
+                            .lock()
+                            .expect("progress line length mutex poisoned");
+                        print!("\r{line}");
+                        if *last_line_len > line.len() {
+                            print!("{}", " ".repeat(*last_line_len - line.len()));
+                            print!("\r{line}");
+                        }
+                        io::stdout().flush().expect("stdout flush failed");
+                        *last_line_len = line.len();
+                    }
+                },
+            )?;
+            let mut last_line_len = last_line_len
+                .lock()
+                .expect("progress line length mutex poisoned");
+            clear_progress_line(&mut *last_line_len);
+            println!("status=downloaded");
+            println!("currentVersion={current_version}");
+            println!("channel={channel}");
+            println!("latestVersion={}", info.version);
+            println!("package={}", info.assetName);
+            println!("packagePath={}", package_path.display());
+            println!("releasePageUrl={}", info.releasePageUrl);
+            if apply_mode == UpdateApplyMode::InstallCurrentTarget {
+                handle_downloaded_update_package(&target_for_install, &package_path)?;
+            } else {
+                println!("installStatus=download-only");
+            }
+        }
+        FullUpdateStatus::UpToDate => {
+            println!("status=up-to-date");
+            println!("currentVersion={current_version}");
+            println!("channel={channel}");
+            println!("package={package_name}");
+        }
+    }
+    Ok(())
+}
+
+fn clear_progress_line(last_line_len: &mut usize) {
+    if *last_line_len == 0 {
+        return;
+    }
+    print!("\r{}\r", " ".repeat(*last_line_len));
+    io::stdout().flush().expect("stdout flush failed");
+    *last_line_len = 0;
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+async fn run_install_cli_command(args: &[String]) -> Result<(), String> {
+    if matches!(args, [command] if command == "status") {
+        return print_cli_install_status();
+    }
+    let source = match args {
+        [] => env::current_exe().map_err(|error| error.to_string())?,
+        [flag, value] if flag == "--source" => PathBuf::from(value),
+        _ => {
+            print_install_usage();
+            return Ok(());
+        }
+    };
+    install_cli_from_source(&source, InstallMode::Direct, InstallOutput::Print, |_| {})
+}
+
+async fn run_uninstall_cli_command(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        print_uninstall_usage();
+        return Ok(());
+    }
+    uninstall_cli()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DownloadedUpdateInstallStatus {
+    Installed,
+    Scheduled,
+    NotInstalled,
+    TargetMismatch,
+}
+
+pub(crate) fn install_downloaded_cli_update(
+    target: &FullUpdateTarget,
+    package_path: &Path,
+    output: InstallOutput,
+) -> Result<DownloadedUpdateInstallStatus, String> {
+    if target.product != "cli" {
+        return Ok(DownloadedUpdateInstallStatus::TargetMismatch);
+    }
+    let current_target = FullUpdateTarget::cliForCurrentHost()?;
+    if target != &current_target {
+        return Ok(DownloadedUpdateInstallStatus::TargetMismatch);
+    }
+    let source = extract_cli_binary_from_package(target, package_path)?;
+    let install_state = current_cli_install_state()?;
+    match install_state {
+        CliInstallState::Installed => {
+            install_cli_from_source(&source, InstallMode::Update, output, |_| {})?;
+            Ok(DownloadedUpdateInstallStatus::Scheduled)
+        }
+        CliInstallState::NotInstalled => Ok(DownloadedUpdateInstallStatus::NotInstalled),
+    }
+}
+
+fn handle_downloaded_update_package(
+    target: &FullUpdateTarget,
+    package_path: &Path,
+) -> Result<(), String> {
+    match install_downloaded_cli_update(target, package_path, InstallOutput::Print)? {
+        DownloadedUpdateInstallStatus::Installed => {}
+        DownloadedUpdateInstallStatus::Scheduled => {}
+        DownloadedUpdateInstallStatus::NotInstalled => println!("installStatus=not-installed"),
+        DownloadedUpdateInstallStatus::TargetMismatch => println!("installStatus=target-mismatch"),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliInstallState {
+    Installed,
+    NotInstalled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallMode {
+    Direct,
+    Update,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstallOutput {
+    Print,
+    Silent,
+}
+
+pub(crate) fn install_current_cli(output: InstallOutput) -> Result<(), String> {
+    install_current_cli_with_progress(output, |_| {})
+}
+
+pub(crate) fn install_current_cli_with_progress<F>(
+    output: InstallOutput,
+    on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(CliInstallProgress),
+{
+    let source = env::current_exe().map_err(|error| error.to_string())?;
+    install_cli_from_source(&source, InstallMode::Direct, output, on_progress)
+}
+
+pub(crate) fn cli_is_installed() -> Result<bool, String> {
+    Ok(current_cli_install_state()? == CliInstallState::Installed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliInstallProgress {
+    CopyOperit,
+    CopyOperit2,
+    UpdatePath,
+    Complete,
+}
+
+fn install_cli_from_source(
+    source: &Path,
+    mode: InstallMode,
+    output: InstallOutput,
+    mut on_progress: impl FnMut(CliInstallProgress),
+) -> Result<(), String> {
+    if !source.is_file() {
+        return Err(format!(
+            "Operit2 CLI binary not found: {}",
+            source.display()
+        ));
+    }
+
+    let install_dir = cli_install_dir()?;
+    let operit = cli_command_path(&install_dir, "operit");
+    let operit2 = cli_command_path(&install_dir, "operit2");
+    fs::create_dir_all(&install_dir).map_err(|error| error.to_string())?;
+
+    if mode == InstallMode::Update {
+        schedule_cli_update(source, &operit, &operit2, &install_dir)?;
+        print_install_scheduled(&install_dir, output);
+        return Ok(());
+    }
+
+    on_progress(CliInstallProgress::CopyOperit);
+    copy_cli_binary(source, &operit)?;
+    on_progress(CliInstallProgress::CopyOperit2);
+    copy_cli_binary(source, &operit2)?;
+    on_progress(CliInstallProgress::UpdatePath);
+    add_cli_install_dir_to_path(&install_dir)?;
+    on_progress(CliInstallProgress::Complete);
+
+    print_install_installed(&install_dir, output);
+    Ok(())
+}
+
+fn print_install_installed(install_dir: &Path, output: InstallOutput) {
+    if output == InstallOutput::Silent {
+        return;
+    }
+    println!("installStatus=installed");
+    println!("installDir={}", install_dir.display());
+    println!("command=operit");
+    println!("command=operit2");
+}
+
+fn print_install_scheduled(install_dir: &Path, output: InstallOutput) {
+    if output == InstallOutput::Silent {
+        return;
+    }
+    println!("installStatus=scheduled");
+    println!("installDir={}", install_dir.display());
+    println!("message=restart-terminal-after-update");
+}
+
+fn uninstall_cli() -> Result<(), String> {
+    let install_dir = cli_install_dir()?;
+    let operit = cli_command_path(&install_dir, "operit");
+    let operit2 = cli_command_path(&install_dir, "operit2");
+
+    if current_exe_is_installed_cli()? {
+        schedule_cli_uninstall(&operit, &operit2, &install_dir)?;
+        println!("uninstallStatus=scheduled");
+        println!("installDir={}", install_dir.display());
+        println!("message=restart-terminal-after-uninstall");
+        return Ok(());
+    }
+
+    remove_file_if_exists(&operit)?;
+    remove_file_if_exists(&operit2)?;
+    remove_cli_install_dir_from_path(&install_dir)?;
+
+    println!("uninstallStatus=uninstalled");
+    println!("installDir={}", install_dir.display());
+    Ok(())
+}
+
+fn current_cli_install_state() -> Result<CliInstallState, String> {
+    let install_dir = cli_install_dir()?;
+    let operit = cli_command_path(&install_dir, "operit");
+    let operit2 = cli_command_path(&install_dir, "operit2");
+    if path_is_file(&operit)? || path_is_file(&operit2)? {
+        Ok(CliInstallState::Installed)
+    } else {
+        Ok(CliInstallState::NotInstalled)
+    }
+}
+
+fn current_exe_is_installed_cli() -> Result<bool, String> {
+    let current = normalize_existing_path(&env::current_exe().map_err(|error| error.to_string())?)?;
+    let install_dir = cli_install_dir()?;
+    let operit = cli_command_path(&install_dir, "operit");
+    let operit2 = cli_command_path(&install_dir, "operit2");
+    Ok(existing_paths_equal(&current, &operit)? || existing_paths_equal(&current, &operit2)?)
+}
+
+fn print_cli_install_status() -> Result<(), String> {
+    let install_dir = cli_install_dir()?;
+    let operit = cli_command_path(&install_dir, "operit");
+    let operit2 = cli_command_path(&install_dir, "operit2");
+    let operit_exists = path_is_file(&operit)?;
+    let operit2_exists = path_is_file(&operit2)?;
+    println!("installDir={}", install_dir.display());
+    println!("operitPath={}", operit.display());
+    println!("operitExists={operit_exists}");
+    println!("operit2Path={}", operit2.display());
+    println!("operit2Exists={operit2_exists}");
+    println!(
+        "installed={}",
+        current_cli_install_state()? == CliInstallState::Installed
+    );
+    println!(
+        "pathContainsInstallDir={}",
+        cli_install_dir_is_on_path(&install_dir)?
+    );
+    println!("currentExeIsInstalled={}", current_exe_is_installed_cli()?);
+    println!(
+        "currentExe={}",
+        env::current_exe()
+            .map_err(|error| error.to_string())?
+            .display()
+    );
+    Ok(())
+}
+
+fn cli_command_path(install_dir: &Path, name: &str) -> PathBuf {
+    install_dir.join(cli_command_file_name(name))
+}
+
+fn cli_command_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn cli_install_dir() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let local_app_data =
+            env::var_os("LOCALAPPDATA").ok_or_else(|| "LOCALAPPDATA is required".to_string())?;
+        return Ok(PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Operit2")
+            .join("bin"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let home = env::var_os("HOME").ok_or_else(|| "HOME is required".to_string())?;
+        return Ok(PathBuf::from(home).join(".local").join("bin"));
+    }
+}
+
+fn cli_profile_file() -> Result<PathBuf, String> {
+    let home = env::var_os("HOME").ok_or_else(|| "HOME is required".to_string())?;
+    Ok(PathBuf::from(home).join(".profile"))
+}
+
+fn copy_cli_binary(source: &Path, destination: &Path) -> Result<(), String> {
+    if existing_paths_equal(source, destination)? {
+        set_cli_binary_permissions(destination)?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        return copy_cli_binary_atomic(source, destination);
+    }
+
+    #[cfg(windows)]
+    {
+        fs::copy(source, destination).map_err(|error| {
+            format!(
+                "Failed to copy {} to {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        set_cli_binary_permissions(destination)?;
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn copy_cli_binary_atomic(source: &Path, destination: &Path) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("invalid destination: {}", destination.display()))?;
+    let file_name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("invalid destination file name: {}", destination.display()))?;
+    let temp = parent.join(format!(".{file_name}.tmp-{}", unique_suffix()));
+
+    fs::copy(source, &temp).map_err(|error| {
+        format!(
+            "Failed to copy {} to {}: {error}",
+            source.display(),
+            temp.display()
+        )
+    })?;
+    set_cli_binary_permissions(&temp)?;
+    match fs::rename(&temp, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(format!(
+                "Failed to replace {} with {}: {error}",
+                destination.display(),
+                source.display()
+            ))
+        }
+    }
+}
+
+fn set_cli_binary_permissions(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Failed to remove {}: {error}", path.display())),
+    }
+}
+
+fn normalize_existing_path(path: &Path) -> Result<PathBuf, String> {
+    fs::canonicalize(path).map_err(|error| format!("Failed to resolve {}: {error}", path.display()))
+}
+
+fn path_is_file(path: &Path) -> Result<bool, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Failed to inspect {}: {error}", path.display())),
+    }
+}
+
+fn existing_paths_equal(left: &Path, right: &Path) -> Result<bool, String> {
+    let left = normalize_existing_path(left)?;
+    let right = match fs::canonicalize(right) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Failed to resolve {}: {error}", right.display())),
+    };
+    if cfg!(windows) {
+        Ok(left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(right.to_string_lossy().as_ref()))
+    } else {
+        Ok(left == right)
+    }
+}
+
+fn add_cli_install_dir_to_path(install_dir: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let current_path = read_windows_user_path()?;
+        let mut parts = split_windows_path(&current_path);
+        if !windows_path_parts_contain(&parts, install_dir) {
+            parts.push(install_dir.display().to_string());
+            write_windows_user_path(&parts.join(";"))?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let profile_file = cli_profile_file()?;
+        let path_line = cli_unix_path_line();
+        let current = read_text_file_when_present(&profile_file)?;
+        let exists = current.lines().any(|line| line == path_line);
+        if !exists {
+            let mut next = current;
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next.push_str(path_line);
+            next.push('\n');
+            fs::write(&profile_file, next).map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+}
+
+fn cli_install_dir_is_on_path(install_dir: &Path) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let current_path = read_windows_user_path()?;
+        let parts = split_windows_path(&current_path);
+        return Ok(windows_path_parts_contain(&parts, install_dir));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let profile_file = cli_profile_file()?;
+        let current = read_text_file_when_present(&profile_file)?;
+        return Ok(current.lines().any(|line| line == cli_unix_path_line()));
+    }
+}
+
+fn remove_cli_install_dir_from_path(install_dir: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let current_path = read_windows_user_path()?;
+        let parts = split_windows_path(&current_path)
+            .into_iter()
+            .filter(|part| !windows_path_part_matches(part, install_dir))
+            .collect::<Vec<_>>();
+        write_windows_user_path(&parts.join(";"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let profile_file = cli_profile_file()?;
+        let current = match fs::read_to_string(&profile_file) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        };
+        let path_line = cli_unix_path_line();
+        let next = current
+            .lines()
+            .filter(|line| *line != path_line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let content = if next.is_empty() {
+            String::new()
+        } else {
+            format!("{next}\n")
+        };
+        fs::write(&profile_file, content).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+}
+
+fn read_text_file_when_present(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn cli_unix_path_line() -> &'static str {
+    r#"export PATH="$HOME/.local/bin:$PATH""#
+}
+
+#[cfg(windows)]
+fn read_windows_user_path() -> Result<String, String> {
+    read_windows_user_environment_value("Path")
+}
+
+#[cfg(windows)]
+fn write_windows_user_path(value: &str) -> Result<(), String> {
+    let escaped = value.replace('\'', "''");
+    let script = format!("[Environment]::SetEnvironmentVariable('Path', '{escaped}', 'User')");
+    run_powershell_script(&script)
+}
+
+#[cfg(windows)]
+fn read_windows_user_environment_value(name: &str) -> Result<String, String> {
+    let escaped = name.replace('\'', "''");
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &format!("[Environment]::GetEnvironmentVariable('{escaped}', 'User')"),
+        ])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
+}
+
+#[cfg(windows)]
+fn split_windows_path(value: &str) -> Vec<String> {
+    value
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+#[cfg(windows)]
+fn windows_path_parts_contain(parts: &[String], target: &Path) -> bool {
+    parts
+        .iter()
+        .any(|part| windows_path_part_matches(part, target))
+}
+
+#[cfg(windows)]
+fn windows_path_part_matches(part: &str, target: &Path) -> bool {
+    let part = part.trim_end_matches(['\\', '/']);
+    let target = target.display().to_string();
+    let target = target.trim_end_matches(['\\', '/']);
+    part.eq_ignore_ascii_case(target)
+}
+
+fn extract_cli_binary_from_package(
+    target: &FullUpdateTarget,
+    package_path: &Path,
+) -> Result<PathBuf, String> {
+    let extract_dir = std::env::temp_dir()
+        .join("operit2")
+        .join("cli_update_extract")
+        .join(unique_suffix());
+    fs::create_dir_all(&extract_dir).map_err(|error| error.to_string())?;
+    match target.platform.as_str() {
+        "windows" => extract_cli_binary_from_zip(package_path, &extract_dir),
+        "linux" | "macos" => extract_cli_binary_from_tar_gz(package_path, &extract_dir),
+        other => Err(format!("Unsupported CLI update package platform: {other}")),
+    }
+}
+
+fn extract_cli_binary_from_zip(package_path: &Path, extract_dir: &Path) -> Result<PathBuf, String> {
+    let file = fs::File::open(package_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut entry = archive.by_name("operit2.exe").map_err(|error| {
+        format!(
+            "operit2.exe not found in {}: {error}",
+            package_path.display()
+        )
+    })?;
+    let destination = extract_dir.join("operit2.exe");
+    let mut output = fs::File::create(&destination).map_err(|error| error.to_string())?;
+    io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
+    Ok(destination)
+}
+
+fn extract_cli_binary_from_tar_gz(
+    package_path: &Path,
+    extract_dir: &Path,
+) -> Result<PathBuf, String> {
+    let file = fs::File::open(package_path).map_err(|error| error.to_string())?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    for entry in archive.entries().map_err(|error| error.to_string())? {
+        let mut entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path().map_err(|error| error.to_string())?;
+        if archive_path_is_exact_file(&path, "operit2") {
+            let destination = extract_dir.join("operit2");
+            entry
+                .unpack(&destination)
+                .map_err(|error| error.to_string())?;
+            #[cfg(unix)]
+            {
+                let mut permissions = fs::metadata(&destination)
+                    .map_err(|error| error.to_string())?
+                    .permissions();
+                permissions.set_mode(0o755);
+                fs::set_permissions(&destination, permissions)
+                    .map_err(|error| error.to_string())?;
+            }
+            return Ok(destination);
+        }
+    }
+    Err(format!("operit2 not found in {}", package_path.display()))
+}
+
+fn archive_path_is_exact_file(path: &Path, file_name: &str) -> bool {
+    let mut components = path.components().filter_map(|component| match component {
+        Component::CurDir => None,
+        Component::Normal(value) => Some(value),
+        _ => Some(OsStr::new("")),
+    });
+    let first = components.next();
+    let second = components.next();
+    first == Some(OsStr::new(file_name)) && second.is_none()
+}
+
+fn unique_suffix() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before unix epoch")
+        .as_millis();
+    format!("{}-{millis}", std::process::id())
+}
+
+#[cfg(windows)]
+fn run_powershell_script(script: &str) -> Result<(), String> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 fn rewrite_cli_usage_message(message: String) -> String {
-    if message.contains("operit2 cli ") {
+    const ROOT_USAGE_PREFIX: &str = "usage: operit2 ";
+    const CLI_USAGE_PREFIX: &str = "usage: operit2 cli ";
+    if message.starts_with(CLI_USAGE_PREFIX) {
         return message;
     }
-    message.replace("operit2 ", "operit2 cli ")
+    match message.strip_prefix(ROOT_USAGE_PREFIX) {
+        Some(rest) => format!("{CLI_USAGE_PREFIX}{rest}"),
+        None => message,
+    }
 }
 
 async fn run_core_command_and_print(
@@ -235,7 +1020,7 @@ async fn run_core_command_and_print(
     let output = core
         .runCoreCommand(args)
         .await
-        .map_err(|error| rewrite_core_command_usage_message(error.message))?;
+        .map_err(|error| rewrite_core_command_usage_message(error.to_string()))?;
     if !output.stdout.is_empty() {
         print!("{}", rewrite_core_command_usage_message(output.stdout));
     }
@@ -266,9 +1051,11 @@ async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Resu
 
 pub(crate) fn print_root_usage() {
     println!("operit2");
-    println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|link|web|shell>");
+    println!("operit2 install [--source <path>]");
+    println!("operit2 uninstall");
+    println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
+    println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
+    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
     println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
@@ -295,6 +1082,8 @@ fn print_cli_usage() {
         "operit2 cli market <auth|stats|rank|search|show|install|comments|comment|reactions|react>"
     );
     println!("operit2 cli update [check|target]");
+    println!("operit2 cli install [--source <path>]");
+    println!("operit2 cli uninstall");
     println!("operit2 cli skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
@@ -495,13 +1284,20 @@ fn print_update_usage() {
     println!("operit2 cli update");
     println!("operit2 cli update check");
     println!("operit2 cli update target");
-    println!(
-        "operit2 cli update run <current-version> <app|cli> <windows|linux|macos|android> <arch>"
-    );
-    println!(
-        "operit2 cli update check <current-version> <app|cli> <windows|linux|macos|android> <arch>"
-    );
-    println!("operit2 cli update target <app|cli> <windows|linux|macos|android> <arch>");
+    println!("operit2 cli update run <current-version>");
+    println!("operit2 cli update download <current-version>");
+    println!("operit2 cli update check <current-version>");
+}
+
+fn print_install_usage() {
+    println!("operit2 install [--source <path>]");
+    println!("operit2 cli install [--source <path>]");
+    println!("operit2 cli install status");
+}
+
+fn print_uninstall_usage() {
+    println!("operit2 uninstall");
+    println!("operit2 cli uninstall");
 }
 
 fn print_skill_usage() {

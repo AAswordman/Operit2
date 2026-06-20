@@ -1,0 +1,231 @@
+# Building Operit2
+
+This file describes how to build, run, and package Operit2 from the repository root.
+
+Rust build warnings are currently expected. Treat command exit status as the signal for build success.
+
+## Repository Layout
+
+```text
+apps/cli                  Rust CLI/TUI entry
+apps/flutter/app          Flutter app entry
+core/crates               Shared Rust runtime crates
+hosts                     Native host implementations
+tools/release             Release build and publish scripts
+docs/release-versioning.md Version, tag, channel, and asset naming rules
+```
+
+## Requirements
+
+Common tools:
+
+```text
+Rust stable toolchain with rustup
+Python virtual environment at .venv
+Git
+```
+
+Windows desktop CLI builds:
+
+```text
+Visual Studio 2022 C++ build tools
+MSVC x64 and ARM64 components
+LLVM clang at C:\Program Files\LLVM\bin\clang.exe
+```
+
+Flutter app builds:
+
+```text
+Flutter SDK
+apps/flutter/app/android/local.properties with flutter.sdk
+tools/release/secrets/android-signing.properties for Android release signing
+```
+
+GitHub publishing:
+
+```text
+tools/release/secrets/github.env
+```
+
+Required keys:
+
+```text
+GITHUB_TOKEN
+GITHUB_API_URL
+```
+
+## Rust Targets
+
+Windows CLI release builds use:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+rustup target add aarch64-pc-windows-msvc
+```
+
+Fedora WSL Linux CLI release builds use:
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+rustup target add aarch64-unknown-linux-gnu
+sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc cpio
+dnf5 --forcearch=aarch64 download libgcc
+rpm2cpio libgcc-*.aarch64.rpm | cpio -idmv
+sudo mkdir -p /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
+sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/
+sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
+```
+
+## Local CLI Checks
+
+Run from the repository root.
+
+```powershell
+cargo check --manifest-path apps/cli/Cargo.toml
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli version
+```
+
+Run the TUI:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- tui
+```
+
+Run update checks:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli update target
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli update check 0.0.0-preview.0
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- tui --update-current-version 0.0.0-preview.0
+```
+
+## Release Script
+
+Interactive release helper:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release_interactive.py
+```
+
+Direct release script:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py
+```
+
+Scopes:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\release.py --scope app
+.\.venv\Scripts\python.exe tools\release\release.py --scope full
+.\.venv\Scripts\python.exe tools\release\release.py --scope none --build-only --no-wsl
+```
+
+Build only:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only
+```
+
+CLI architecture selection:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches host
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all
+```
+
+On Windows, `--cli-arches all` builds:
+
+```text
+operit2-cli-windows-x86_64.zip
+operit2-cli-windows-aarch64.zip
+operit2-cli-linux-x86_64.tar.gz
+operit2-cli-linux-aarch64.tar.gz
+```
+
+The output directory is:
+
+```text
+tools/release/dist
+```
+
+Each CLI archive contains:
+
+```text
+operit2 or operit2.exe
+install.sh or install.bat
+uninstall.sh or uninstall.bat
+README.txt
+```
+
+Skip WSL Linux packaging:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all --no-wsl
+```
+
+## Publishing
+
+Publish selected scope to GitHub Release:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+```
+
+Publish as draft:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --draft
+```
+
+The release script reads versions from:
+
+```text
+apps/cli/Cargo.toml
+core/crates/operit-runtime/Cargo.toml
+apps/flutter/app/pubspec.yaml
+```
+
+Version, tag, build number, and updater asset rules are defined in:
+
+```text
+docs/release-versioning.md
+```
+
+## Flutter App
+
+The release script builds app packages through Flutter. Local checks can be run from:
+
+```powershell
+cd apps\flutter\app
+flutter pub get --enforce-lockfile
+```
+
+Windows app release build:
+
+```powershell
+flutter build windows --release --build-name 2.0.0 --build-number 1
+```
+
+Android release build requires signing values in:
+
+```text
+tools/release/secrets/android-signing.properties
+```
+
+## Useful Cleanup
+
+Remove release output:
+
+```powershell
+Remove-Item -Recurse -Force tools\release\dist, tools\release\work
+```
+
+Remove Rust build output for the CLI:
+
+```powershell
+Remove-Item -Recurse -Force apps\cli\target
+```
+
+Use cleanup commands only for build artifacts.

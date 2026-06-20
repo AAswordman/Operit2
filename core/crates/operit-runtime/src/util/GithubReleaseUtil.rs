@@ -18,6 +18,8 @@ use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, RANGE, USER_AGENT};
 use serde::Deserialize;
 use std::cmp::Ordering as CmpOrdering;
+#[cfg(not(target_arch = "wasm32"))]
+use std::error::Error;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
@@ -244,6 +246,10 @@ impl GithubReleaseUtil {
             &parseVersion(v1)?,
             &parseVersion(v2)?,
         )))
+    }
+
+    pub fn fullUpdateChannelForVersion(version: &str) -> Result<FullUpdateChannel, String> {
+        Ok(channelForCurrentVersion(&parseVersion(version)?))
     }
 
     pub fn fetchLatestReleaseInfoBlocking(
@@ -727,7 +733,7 @@ fn fetchContentLength(url: &str) -> Result<u64, String> {
         .get(url)
         .header(USER_AGENT, "Operit")
         .send()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| downloadRequestError("fetch content length", url, &error))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!(
@@ -758,7 +764,7 @@ fn verifyRangeDownloadSupported(url: &str) -> Result<(), String> {
         .header(USER_AGENT, "Operit")
         .header(RANGE, "bytes=0-0")
         .send()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| downloadRequestError("verify range download", url, &error))?;
     if response.status().as_u16() != 206 {
         return Err(
             "Server does not support HTTP Range (required for 6-thread download)".to_string(),
@@ -901,7 +907,7 @@ fn downloadRangeToFile(
         .header(USER_AGENT, "Operit")
         .header(RANGE, format!("bytes={start}-{end}"))
         .send()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| downloadRequestError(&format!("download bytes={start}-{end}"), url, &error))?;
     if response.status().as_u16() != 206 {
         return Err(format!(
             "HTTP {}: Range request failed for bytes={start}-{end}",
@@ -937,6 +943,18 @@ fn blockingDownloadClient() -> Result<Client, String> {
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn downloadRequestError(stage: &str, url: &str, error: &reqwest::Error) -> String {
+    let mut message = format!("{stage} failed for {url}: {error}");
+    let mut source = error.source();
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    message
 }
 
 #[cfg(test)]

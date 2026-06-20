@@ -1031,6 +1031,9 @@ class _AttachmentPackageSelectorDialogState
         child: FutureBuilder<List<_AttachmentPackageOption>>(
           future: _future,
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+            }
             if (snapshot.connectionState != ConnectionState.done) {
               return const SizedBox(
                 height: 120,
