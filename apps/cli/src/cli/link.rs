@@ -175,10 +175,12 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
         parameters: tool
             .parameters
             .iter()
-            .map(|parameter| RuntimeHostInteractionToolPermissionToolParameter {
-                name: parameter.name.clone(),
-                value: parameter.value.clone(),
-            })
+            .map(
+                |parameter| RuntimeHostInteractionToolPermissionToolParameter {
+                    name: parameter.name.clone(),
+                    value: parameter.value.clone(),
+                },
+            )
             .collect(),
     }
 }

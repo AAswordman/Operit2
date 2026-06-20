@@ -909,7 +909,6 @@ impl PairedRemoteSession {
     async fn removeLocalWatchSubscription(&self, channelId: &str, subscriptionId: &str) {
         remove_paired_watch_subscription(&self.watchChannel, channelId, subscriptionId).await;
     }
-
 }
 
 async fn remove_paired_watch_subscription(
@@ -1269,7 +1268,7 @@ async fn client_runtime_event(
             "result": result,
         }))
         .into_response(),
-        Err(error) => bad_request(error.message),
+        Err(error) => bad_request(error.to_string()),
     }
 }
 

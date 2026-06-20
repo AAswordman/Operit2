@@ -56,10 +56,15 @@ impl ModelCatalog {
     }
 
     pub fn model(providerTypeId: &str, modelId: &str) -> Result<ModelCatalogEntry, String> {
-        Self::provider(providerTypeId)?
+        let provider = Self::provider(providerTypeId)?;
+        if let Some(model) = provider
             .models
             .into_iter()
             .find(|model| model.modelId.eq_ignore_ascii_case(modelId))
+        {
+            return Ok(model);
+        }
+        Self::modelByTerminalId(modelId)
             .ok_or_else(|| format!("catalog model not found: {providerTypeId}:{modelId}"))
     }
 
@@ -87,10 +92,24 @@ impl ModelCatalog {
         }
         Ok(providers)
     }
+
+    #[allow(non_snake_case)]
+    pub fn modelByTerminalId(modelId: &str) -> Option<ModelCatalogEntry> {
+        let terminalId = terminalModelId(modelId);
+        parseModelRows(ModelCatalogRows::MODEL_CATALOG_MODEL_ROWS)
+            .ok()?
+            .into_iter()
+            .find(|model| terminalModelId(&model.modelId).eq_ignore_ascii_case(terminalId))
+    }
 }
 
 fn dataLines(rows: &str) -> impl Iterator<Item = &str> {
     rows.lines().map(str::trim).filter(|line| !line.is_empty())
+}
+
+#[allow(non_snake_case)]
+fn terminalModelId(modelId: &str) -> &str {
+    modelId.rsplit('/').next().unwrap_or(modelId)
 }
 
 #[allow(non_snake_case)]
@@ -304,5 +323,21 @@ fn parseBool(value: &str, field: &str, line: &str) -> Result<bool, String> {
         "true" => Ok(true),
         "false" => Ok(false),
         other => Err(format!("invalid {field} bool `{other}` in row `{line}`")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModelCatalog;
+
+    #[test]
+    fn model_lookup_uses_terminal_model_id() {
+        let model = ModelCatalog::model("ZHIPU", "glm-5").expect("glm-5 catalog entry");
+
+        assert_eq!(model.providerTypeId, "OPENROUTER");
+        assert_eq!(model.modelId, "z-ai/glm-5");
+        assert!(model.context.is_some());
+        assert!(model.capabilities.is_some());
+        assert!(model.request.is_some());
     }
 }

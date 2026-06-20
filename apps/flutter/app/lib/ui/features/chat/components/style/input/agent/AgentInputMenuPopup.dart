@@ -170,6 +170,12 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
           child: FutureBuilder<_AgentInputMenuData>(
             future: _settingsFuture,
             builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                Error.throwWithStackTrace(
+                  snapshot.error!,
+                  snapshot.stackTrace!,
+                );
+              }
               final data = snapshot.data;
               if (data == null) {
                 return const SizedBox(

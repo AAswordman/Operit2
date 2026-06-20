@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
+import 'core/errors/UnhandledErrorReporter.dart';
 import 'core/logging/ClientLogger.dart';
 import 'core/host/RuntimeHostInteractionSubscriber.dart';
 import 'core/runtime/RuntimeConnectionManager.dart';
@@ -50,6 +51,11 @@ void main() async {
           stackTrace: stackTrace,
         );
       }
+      UnhandledErrorReporter.report(
+        source: 'Zone',
+        error: error,
+        stackTrace: stackTrace,
+      );
     },
   );
 }
@@ -69,6 +75,11 @@ void _installClientLogHooks() {
       error: details.exception,
       stackTrace: details.stack,
     );
+    UnhandledErrorReporter.report(
+      source: 'Flutter framework',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
     FlutterError.presentError(details);
   };
 
@@ -78,6 +89,11 @@ void _installClientLogHooks() {
       error: error,
       stackTrace: stackTrace,
     );
-    return false;
+    UnhandledErrorReporter.report(
+      source: 'Platform dispatcher',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    return true;
   };
 }

@@ -84,13 +84,17 @@ Release asset names are fixed by product, platform, and architecture. They do no
 
 ```text
 operit2-cli-windows-x86_64.zip
+operit2-cli-windows-aarch64.zip
 operit2-cli-linux-x86_64.tar.gz
+operit2-cli-linux-aarch64.tar.gz
 operit2-cli-macos-aarch64.tar.gz
 operit2-app-android-arm64-v8a.apk
 operit2-app-macos-x86_64.tar.gz
 ```
 
 The version lives in the Git tag and package metadata.
+
+CLI archives contain the executable, installer script, uninstaller script, and README. The archive asset name remains the updater target.
 
 A GitHub Release may contain only the selected scope's assets. The updater selects releases by exact target asset name, so an app client does not treat a CLI-only release as an app update.
 
@@ -156,6 +160,27 @@ Release scope:
 .\.venv\Scripts\python.exe tools\release\release.py --scope full
 ```
 
+CLI architecture selection:
+
+```powershell
+# Current host architecture only
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches host
+
+# x86_64 and aarch64 for the current desktop platforms available from this host
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all
+```
+
+On Windows, `--cli-arches all` builds Windows x86_64 and Windows aarch64 locally, and Linux x86_64 and Linux aarch64 through WSL. Windows aarch64 requires the Rust target, Visual Studio ARM64 build tools, and LLVM clang. Linux aarch64 in Fedora WSL requires:
+
+```bash
+rustup target add aarch64-unknown-linux-gnu
+sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc cpio
+dnf5 --forcearch=aarch64 download libgcc
+rpm2cpio libgcc-*.aarch64.rpm | cpio -idmv
+sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/
+sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
+```
+
 The script reads GitHub credentials from:
 
 ```text
@@ -215,3 +240,37 @@ The implementation must keep these rules:
 - Select releases by updater channel.
 - Match assets by fixed asset name.
 - Reject mismatched GitHub prerelease flags.
+
+## Update Testing
+
+Show the updater target for the current desktop CLI:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml -- cli update target
+```
+
+Check whether a release is available without downloading:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml -- cli update check 0.0.0-preview.0
+```
+
+Download the matching asset and show progress without installing it:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml -- cli update download 0.0.0-preview.0
+```
+
+Run the full CLI update path, including install overwrite when the current target matches:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml -- cli update run 0.0.0-preview.0
+```
+
+Force the TUI startup update prompt with a test current version:
+
+```powershell
+cargo run --manifest-path apps/cli/Cargo.toml -- tui --update-current-version 0.0.0-preview.0
+```
+
+Use a prerelease current version such as `0.0.0-preview.0` to test preview releases. A stable current version such as `0.0.0` selects the stable channel and ignores GitHub prereleases.

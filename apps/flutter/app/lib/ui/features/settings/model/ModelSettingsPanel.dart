@@ -489,6 +489,9 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     return FutureBuilder<_ModelSettingsData>(
       future: _future,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+        }
         final data = snapshot.data;
         if (data == null) {
           return const M3LoadingPane();
@@ -936,8 +939,8 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
       title: Text(l10n.settingsModelAddModel),
       content: SizedBox(
         width: 520,
+        height: 500,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             TextField(
               controller: _searchController,
@@ -948,38 +951,39 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 8),
-            ListView(
-              shrinkWrap: true,
-              children: <Widget>[
-                for (final model in filteredModels)
+            Expanded(
+              child: ListView(
+                children: <Widget>[
+                  for (final model in filteredModels)
+                    Material(
+                      type: MaterialType.transparency,
+                      child: ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(model.modelId),
+                        subtitle: Text(_availableModelSubtitle(l10n, model)),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_AvailableModelPicked(model)),
+                      ),
+                    ),
                   Material(
                     type: MaterialType.transparency,
                     child: ListTile(
                       dense: true,
                       visualDensity: VisualDensity.compact,
                       contentPadding: EdgeInsets.zero,
-                      title: Text(model.modelId),
-                      subtitle: Text(_availableModelSubtitle(l10n, model)),
+                      leading: const Icon(Icons.add),
+                      title: Text(l10n.settingsModelCustomModel),
+                      subtitle: Text(l10n.settingsModelModelId),
                       onTap: () => Navigator.of(
                         context,
-                      ).pop(_AvailableModelPicked(model)),
+                      ).pop(const _AvailableModelCustom()),
                     ),
                   ),
-                Material(
-                  type: MaterialType.transparency,
-                  child: ListTile(
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.add),
-                    title: Text(l10n.settingsModelCustomModel),
-                    subtitle: Text(l10n.settingsModelModelId),
-                    onTap: () => Navigator.of(
-                      context,
-                    ).pop(const _AvailableModelCustom()),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),

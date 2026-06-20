@@ -5,7 +5,9 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::app::{FocusArea, FullUpdateDownloadState, OperitTui};
+use operit_runtime::util::GithubReleaseUtil::FullUpdateStage;
+
+use super::app::{FocusArea, FullUpdateDownloadState, OperitTui, StartupInstallState};
 use super::helpers::{
     centered_rect, display_width, short_chat_label, transcript_max_scroll, wrap_approx_lines,
 };
@@ -61,11 +63,18 @@ impl OperitTui {
             self.render_help_modal(frame);
         }
 
-        if self.startup_update_prompt.is_some() {
+        if self.startup_install_prompt.is_some() {
+            self.render_startup_install_prompt(frame);
+        }
+
+        if self.startup_update_prompt.is_some() && self.startup_install_prompt.is_none() {
             self.render_startup_update_prompt(frame);
         }
 
-        if self.startup_workspace_prompt.is_some() && self.startup_update_prompt.is_none() {
+        if self.startup_workspace_prompt.is_some()
+            && self.startup_update_prompt.is_none()
+            && self.startup_install_prompt.is_none()
+        {
             self.render_startup_workspace_prompt(frame);
         }
 
@@ -483,12 +492,100 @@ impl OperitTui {
         frame.render_widget(help, popup);
     }
 
+    fn render_startup_install_prompt(&self, frame: &mut Frame) {
+        let Some(prompt) = self.startup_install_prompt.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let popup = centered_rect(82, 52, frame.area());
+        frame.render_widget(Clear, popup);
+        let lines = match &prompt.state {
+            StartupInstallState::Ready => {
+                let yes_style = if prompt.install_selected {
+                    Style::default()
+                        .fg(theme::TEXT_INVERTED)
+                        .bg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme::ACCENT_STRONG)
+                };
+                let no_style = if prompt.install_selected {
+                    Style::default().fg(theme::TEXT_SUBTLE)
+                } else {
+                    Style::default()
+                        .fg(theme::TEXT_INVERTED)
+                        .bg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD)
+                };
+                vec![
+                    Line::from(Span::styled(
+                        text.install_command_question(),
+                        Style::default()
+                            .fg(theme::ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(text.install_command_description()),
+                    Line::from(""),
+                    Line::from(text.install_command_decline_hint()),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(text.yes_button(), yes_style),
+                        Span::raw("  "),
+                        Span::styled(text.no_button(), no_style),
+                    ]),
+                ]
+            }
+            StartupInstallState::Installing { message } => vec![
+                Line::from(Span::styled(
+                    text.install_command_installing(),
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(message.clone()),
+            ],
+            StartupInstallState::Complete => vec![
+                Line::from(Span::styled(
+                    text.install_command_installed(),
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(text.enter_closes()),
+            ],
+            StartupInstallState::Error { message } => vec![
+                Line::from(Span::styled(
+                    text.install_command_failed(),
+                    Style::default()
+                        .fg(theme::ERROR)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(message.clone()),
+                Line::from(""),
+                Line::from(text.enter_closes()),
+            ],
+        };
+        let modal = Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .title(text.install_command_title())
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(modal, popup);
+    }
+
     fn render_startup_workspace_prompt(&self, frame: &mut Frame) {
         let Some(prompt) = self.startup_workspace_prompt.as_ref() else {
             return;
         };
         let text = self.text();
-        let popup = centered_rect(70, 22, frame.area());
+        let popup = centered_rect(74, 40, frame.area());
         frame.render_widget(Clear, popup);
         let yes_style = if prompt.accept_selected {
             Style::default()
@@ -506,29 +603,32 @@ impl OperitTui {
                 .bg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         };
-        let lines = vec![
+        let modal_block = Block::default()
+            .title(text.workspace_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        let body_lines = vec![
             Line::from(text.workspace_question()),
             Line::from(""),
             Line::from(Span::styled(
                 prompt.path.clone(),
                 Style::default().fg(theme::TEXT_MUTED),
             )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(text.yes_button(), yes_style),
-                Span::raw("  "),
-                Span::styled(text.no_button(), no_style),
-            ]),
         ];
-        let modal = Paragraph::new(Text::from(lines))
-            .block(
-                Block::default()
-                    .title(text.workspace_title())
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(modal, popup);
+        let body = Paragraph::new(Text::from(body_lines)).wrap(Wrap { trim: false });
+        frame.render_widget(body, chunks[0]);
+        let actions = Paragraph::new(Line::from(vec![
+            Span::styled(text.yes_button(), yes_style),
+            Span::raw("  "),
+            Span::styled(text.no_button(), no_style),
+        ]));
+        frame.render_widget(actions, chunks[1]);
     }
 
     fn render_startup_update_prompt(&self, frame: &mut Frame) {
@@ -612,46 +712,58 @@ impl OperitTui {
                 total_bytes,
                 speed_bytes_per_sec,
             } => {
-                let percent = if *total_bytes > 0 {
-                    ((*read_bytes as f64 / *total_bytes as f64) * 100.0).round() as u64
-                } else {
-                    0
-                };
-                let bar = progress_bar(percent, 34);
                 lines.push(Line::from(vec![
                     Span::styled(text.stage_label(), Style::default().fg(theme::TEXT_SUBTLE)),
-                    Span::raw(format!("{stage:?}")),
+                    Span::raw(full_update_stage_label(text, *stage)),
                 ]));
                 lines.push(Line::from(message.clone()));
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled(bar, Style::default().fg(theme::ACCENT_STRONG)),
-                    Span::raw(format!(" {percent}%")),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled(text.bytes_label(), Style::default().fg(theme::TEXT_SUBTLE)),
-                    Span::raw(format!(
-                        "{} / {}",
-                        format_bytes(*read_bytes),
-                        format_bytes(*total_bytes)
-                    )),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled(text.speed_label(), Style::default().fg(theme::TEXT_SUBTLE)),
-                    Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
-                ]));
+                if *total_bytes > 0 {
+                    let percent =
+                        ((*read_bytes as f64 / *total_bytes as f64) * 100.0).round() as u64;
+                    let bar = progress_bar(percent, 34);
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![
+                        Span::styled(bar, Style::default().fg(theme::ACCENT_STRONG)),
+                        Span::raw(format!(" {percent}%")),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled(text.bytes_label(), Style::default().fg(theme::TEXT_SUBTLE)),
+                        Span::raw(format!(
+                            "{} / {}",
+                            format_bytes(*read_bytes),
+                            format_bytes(*total_bytes)
+                        )),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled(text.speed_label(), Style::default().fg(theme::TEXT_SUBTLE)),
+                        Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
+                    ]));
+                }
             }
-            FullUpdateDownloadState::Complete { package_path } => {
+            FullUpdateDownloadState::Complete {
+                package_path: _,
+                install_status,
+            } => {
+                let status_text = match install_status {
+                    Some(crate::cli::DownloadedUpdateInstallStatus::Installed) => {
+                        text.update_installed()
+                    }
+                    Some(crate::cli::DownloadedUpdateInstallStatus::Scheduled) => {
+                        text.update_scheduled()
+                    }
+                    Some(crate::cli::DownloadedUpdateInstallStatus::NotInstalled) => {
+                        text.update_not_installed()
+                    }
+                    Some(crate::cli::DownloadedUpdateInstallStatus::TargetMismatch) => {
+                        text.update_target_mismatch()
+                    }
+                    None => text.package_ready(),
+                };
                 lines.push(Line::from(Span::styled(
-                    text.package_ready(),
+                    status_text,
                     Style::default()
                         .fg(theme::ACCENT_STRONG)
                         .add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    package_path.to_string_lossy().to_string(),
-                    Style::default().fg(theme::TEXT_MUTED),
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
@@ -713,7 +825,7 @@ impl OperitTui {
             return;
         };
         let text = self.text();
-        let popup = centered_rect(76, 44, frame.area());
+        let popup = centered_rect(82, 78, frame.area());
         frame.render_widget(Clear, popup);
         let elapsed = request.requested_at.elapsed().as_secs();
         let params = if request.tool.parameters.is_empty() {
@@ -727,7 +839,17 @@ impl OperitTui {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let lines = vec![
+        let modal_block = Block::default()
+            .title(text.approval_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(5)])
+            .split(inner);
+        let body_lines = vec![
             Line::from(Span::styled(
                 text.tool_approval_required(),
                 Style::default()
@@ -763,7 +885,10 @@ impl OperitTui {
                 ),
                 Span::raw(format!("{}s / 60s", elapsed.min(60))),
             ]),
-            Line::from(""),
+        ];
+        let body = Paragraph::new(Text::from(body_lines)).wrap(Wrap { trim: false });
+        frame.render_widget(body, chunks[0]);
+        let action_lines = vec![
             Line::from(vec![
                 Span::styled(
                     "1 ",
@@ -797,21 +922,21 @@ impl OperitTui {
                 Style::default().fg(theme::TEXT_SUBTLE),
             )),
         ];
-        let modal = Paragraph::new(Text::from(lines))
-            .block(
-                Block::default()
-                    .title(text.approval_title())
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(modal, popup);
+        let actions = Paragraph::new(Text::from(action_lines)).wrap(Wrap { trim: false });
+        frame.render_widget(actions, chunks[1]);
     }
 }
 
 fn progress_bar(percent: u64, width: usize) -> String {
     let filled = ((percent.min(100) as usize) * width) / 100;
     format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
+}
+
+fn full_update_stage_label(text: super::i18n::TuiText, stage: FullUpdateStage) -> &'static str {
+    match stage {
+        FullUpdateStage::DownloadingPackage => text.downloading_full_update_package(),
+        FullUpdateStage::Ready => text.package_ready(),
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {

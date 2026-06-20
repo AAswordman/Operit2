@@ -415,6 +415,7 @@ pub(crate) struct ShellArgs {
     pub(crate) characterCardName: Option<String>,
     pub(crate) characterGroupId: Option<String>,
     pub(crate) group: Option<String>,
+    pub(crate) updateCurrentVersion: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -473,13 +474,14 @@ fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
 }
 
 pub(crate) fn parse_shell_args(args: &[String]) -> Result<ShellArgs, String> {
-    let usage = "usage: operit2 [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]";
+    let usage = "usage: operit2 [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]";
     let mut shellArgs = ShellArgs {
         chatId: None,
         resume: false,
         characterCardName: None,
         characterGroupId: None,
         group: None,
+        updateCurrentVersion: None,
     };
     let mut index = 0;
     while index < args.len() {
@@ -502,6 +504,10 @@ pub(crate) fn parse_shell_args(args: &[String]) -> Result<ShellArgs, String> {
             "--group" => {
                 index += 1;
                 shellArgs.group = args.get(index).cloned().and_then(nonBlankString);
+            }
+            "--update-current-version" => {
+                index += 1;
+                shellArgs.updateCurrentVersion = args.get(index).cloned().and_then(nonBlankString);
             }
             _ => return Err(usage.to_string()),
         }

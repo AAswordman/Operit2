@@ -443,6 +443,9 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     return FutureBuilder<_DataSettingsData>(
       future: _future,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+        }
         final data = snapshot.data;
         if (data == null) {
           return const M3LoadingPane();

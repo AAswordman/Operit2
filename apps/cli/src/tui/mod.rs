@@ -39,7 +39,10 @@ use crate::access::{
     PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
     RemoteLinkServerConfig,
 };
-use app::{FullUpdateDownloadState, OperitTui, StartupUpdatePrompt};
+use app::{
+    FullUpdateDownloadState, OperitTui, StartupInstallPrompt, StartupInstallState,
+    StartupUpdatePrompt,
+};
 use approval::TuiApprovalBridge;
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
@@ -53,9 +56,8 @@ use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    RuntimeHostInteractionKind, RuntimeHostInteractionRequest,
-    RuntimeHostInteractionResponse, RuntimeHostInteractionToolPermissionResponse,
-    RuntimeHostInteractionToolPermissionTool,
+    RuntimeHostInteractionKind, RuntimeHostInteractionRequest, RuntimeHostInteractionResponse,
+    RuntimeHostInteractionToolPermissionResponse, RuntimeHostInteractionToolPermissionTool,
 };
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
@@ -82,7 +84,9 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
     install_local_permission_requester(&mut core, approval_bridge.clone());
-    let startup_update_prompt = build_startup_update_prompt().await?;
+    let startup_install_prompt = build_startup_install_prompt()?;
+    let startup_update_prompt =
+        build_startup_update_prompt(shell_args.updateCurrentVersion.as_deref()).await?;
     let startup_workspace_prompt_path = if shell_args.chatId.is_none() && !shell_args.resume {
         Some(
             std::env::current_dir()
@@ -99,6 +103,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         initial_chat_id,
         approval_bridge,
         language,
+        startup_install_prompt,
         startup_update_prompt,
         startup_workspace_prompt_path,
     )
@@ -130,18 +135,56 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
         language,
         None,
         None,
+        None,
     )
     .await?;
     tui.run().await
 }
 
-async fn build_startup_update_prompt() -> Result<Option<StartupUpdatePrompt>, String> {
+fn build_startup_install_prompt() -> Result<Option<StartupInstallPrompt>, String> {
+    if crate::cli::cli_is_installed()? {
+        return Ok(None);
+    }
+    if startup_install_prompt_declined()? {
+        return Ok(None);
+    }
+    Ok(Some(StartupInstallPrompt {
+        install_selected: true,
+        state: StartupInstallState::Ready,
+        progress_rx: None,
+    }))
+}
+
+fn startup_install_prompt_declined_path() -> PathBuf {
+    crate::client_paths::client_root_dir().join("startup_install_prompt_declined")
+}
+
+fn startup_install_prompt_declined() -> Result<bool, String> {
+    match fs::metadata(startup_install_prompt_declined_path()) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(crate) fn mark_startup_install_prompt_declined() -> Result<(), String> {
+    let path = startup_install_prompt_declined_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    fs::write(path, b"declined\n").map_err(|error| error.to_string())
+}
+
+async fn build_startup_update_prompt(
+    current_version_override: Option<&str>,
+) -> Result<Option<StartupUpdatePrompt>, String> {
     let target = FullUpdateTarget::cliForCurrentHost()?;
-    let status =
-        match GithubReleaseUtil::checkForFullUpdate(env!("CARGO_PKG_VERSION"), target).await {
-            Ok(status) => status,
-            Err(_) => return Ok(None),
-        };
+    let current_version = current_version_override.unwrap_or(env!("CARGO_PKG_VERSION"));
+    let status = match GithubReleaseUtil::checkForFullUpdate(current_version, target).await {
+        Ok(status) => status,
+        Err(_) => return Ok(None),
+    };
     match status {
         FullUpdateStatus::Available(release_info) => Ok(Some(StartupUpdatePrompt {
             release_info: Some(release_info),
@@ -171,7 +214,8 @@ fn start_remote_host_interaction_loop(
     approval_bridge: TuiApprovalBridge,
 ) {
     tokio::spawn(async move {
-        let mut proxy = GeneratedCoreProxy::new(Box::new(session) as Box<dyn CoreLinkClient + Send>);
+        let mut proxy =
+            GeneratedCoreProxy::new(Box::new(session) as Box<dyn CoreLinkClient + Send>);
         let mut stream = proxy
             .services_runtime_host_interaction_service()
             .ownerHostInteractionEvents(vec![RuntimeHostInteractionKind::ToolPermission])
@@ -180,12 +224,8 @@ fn start_remote_host_interaction_loop(
         while let Some(event) = stream.recv().await {
             let request: RuntimeHostInteractionRequest =
                 serde_json::from_value(event.value).expect("host interaction event must be typed");
-            handle_remote_tool_permission_interaction(
-                &mut proxy,
-                approval_bridge.clone(),
-                request,
-            )
-            .await;
+            handle_remote_tool_permission_interaction(&mut proxy, approval_bridge.clone(), request)
+                .await;
         }
     });
 }

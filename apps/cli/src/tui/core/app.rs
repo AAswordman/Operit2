@@ -30,7 +30,7 @@ use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_runtime::util::AppLogger::AppLogger;
 use operit_runtime::util::GithubReleaseUtil::{
-    FullUpdateProgressEvent, FullUpdateStage, ReleaseInfo,
+    FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, ReleaseInfo,
 };
 
 use super::approval::TuiApprovalBridge;
@@ -45,6 +45,7 @@ use super::selection::{
 use super::stream_markdown::TuiMarkdownStreamState;
 use super::transcript::TranscriptRenderCache;
 use super::typewriter::TypewriterState;
+use crate::cli::CliInstallProgress;
 use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -105,6 +106,7 @@ pub(super) struct OperitTui {
     pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) language: TuiLanguage,
     pub(super) show_help: bool,
+    pub(super) startup_install_prompt: Option<StartupInstallPrompt>,
     pub(super) startup_update_prompt: Option<StartupUpdatePrompt>,
     pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
     pub(super) should_quit: bool,
@@ -141,6 +143,27 @@ pub(super) struct StartupWorkspacePrompt {
 }
 
 #[derive(Debug)]
+pub(super) struct StartupInstallPrompt {
+    pub(super) install_selected: bool,
+    pub(super) state: StartupInstallState,
+    pub(super) progress_rx: Option<mpsc::Receiver<StartupInstallMessage>>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum StartupInstallState {
+    Ready,
+    Installing { message: String },
+    Complete,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum StartupInstallMessage {
+    Progress(CliInstallProgress),
+    Complete(Result<(), String>),
+}
+
+#[derive(Debug)]
 pub(super) struct StartupUpdatePrompt {
     pub(super) release_info: Option<ReleaseInfo>,
     pub(super) download_selected: bool,
@@ -160,6 +183,7 @@ pub(super) enum FullUpdateDownloadState {
     },
     Complete {
         package_path: PathBuf,
+        install_status: Option<crate::cli::DownloadedUpdateInstallStatus>,
     },
     Error {
         message: String,
@@ -172,7 +196,7 @@ pub(super) enum FullUpdateDownloadState {
 #[derive(Debug, Clone)]
 pub(super) enum FullUpdateDownloadMessage {
     Progress(FullUpdateProgressEvent),
-    Complete(Result<PathBuf, String>),
+    Complete(Result<(PathBuf, Option<crate::cli::DownloadedUpdateInstallStatus>), String>),
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +226,7 @@ impl OperitTui {
         initial_chat_id: String,
         approval_bridge: TuiApprovalBridge,
         language: TuiLanguage,
+        startup_install_prompt: Option<StartupInstallPrompt>,
         startup_update_prompt: Option<StartupUpdatePrompt>,
         startup_workspace_prompt_path: Option<String>,
     ) -> Result<Self, String> {
@@ -305,6 +330,7 @@ impl OperitTui {
             approval_bridge,
             language,
             show_help: false,
+            startup_install_prompt,
             startup_update_prompt,
             startup_workspace_prompt: startup_workspace_prompt_path.map(|path| {
                 StartupWorkspacePrompt {
@@ -455,7 +481,6 @@ impl OperitTui {
                     &self.transcript_copy_lines,
                 ) {
                     self.transcript_selection.end(position);
-                    self.copy_transcript_selection();
                 }
             }
             MouseEventKind::Down(MouseButton::Right) => self.transcript_selection.clear(),
@@ -515,6 +540,11 @@ impl OperitTui {
         }
 
         self.ctrl_c_pending = false;
+
+        if self.startup_install_prompt.is_some() {
+            self.handle_startup_install_prompt_key(key).await?;
+            return Ok(());
+        }
 
         if self.startup_update_prompt.is_some() {
             self.handle_startup_update_prompt_key(key).await?;
@@ -730,6 +760,62 @@ impl OperitTui {
         Ok(())
     }
 
+    async fn handle_startup_install_prompt_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let state = self
+            .startup_install_prompt
+            .as_ref()
+            .map(|prompt| prompt.state.clone());
+        match state {
+            Some(StartupInstallState::Installing { .. }) => return Ok(()),
+            Some(StartupInstallState::Complete) | Some(StartupInstallState::Error { .. }) => {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc | KeyCode::Char('1') => {
+                        self.startup_install_prompt = None;
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+            Some(StartupInstallState::Ready) => {}
+            None => return Ok(()),
+        }
+
+        match key.code {
+            KeyCode::Left | KeyCode::Up => {
+                if let Some(prompt) = self.startup_install_prompt.as_mut() {
+                    prompt.install_selected = true;
+                }
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                if let Some(prompt) = self.startup_install_prompt.as_mut() {
+                    prompt.install_selected = false;
+                }
+            }
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.accept_startup_install_prompt().await?;
+            }
+            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.decline_startup_install_prompt().await?;
+            }
+            KeyCode::Enter => {
+                let Some(install_selected) = self
+                    .startup_install_prompt
+                    .as_ref()
+                    .map(|prompt| prompt.install_selected)
+                else {
+                    return Ok(());
+                };
+                if install_selected {
+                    self.accept_startup_install_prompt().await?;
+                } else {
+                    self.decline_startup_install_prompt().await?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     async fn handle_startup_workspace_prompt_key(&mut self, key: KeyEvent) -> Result<(), String> {
         match key.code {
             KeyCode::Left | KeyCode::Up => {
@@ -840,11 +926,12 @@ impl OperitTui {
         let (tx, rx) = mpsc::channel::<FullUpdateDownloadMessage>();
         let package_url = release_info.downloadUrl.clone();
         let package_file_name = release_info.assetName.clone();
+        let update_target = FullUpdateTarget::cliForCurrentHost()?;
         let work_dir = std::env::temp_dir().join("operit2").join("full_update");
         prompt.progress_rx = Some(rx);
         prompt.download_state = FullUpdateDownloadState::Downloading {
             stage: FullUpdateStage::DownloadingPackage,
-            message: text.full_update_download_message().to_string(),
+            message: text.preparing_download().to_string(),
             read_bytes: 0,
             total_bytes: 0,
             speed_bytes_per_sec: 0,
@@ -860,9 +947,49 @@ impl OperitTui {
                     let _ = progress_tx.send(FullUpdateDownloadMessage::Progress(event));
                 },
             )
-            .await;
+            .await
+            .and_then(|package_path| {
+                crate::cli::install_downloaded_cli_update(
+                    &update_target,
+                    &package_path,
+                    crate::cli::InstallOutput::Silent,
+                )
+                .map(|status| (package_path, Some(status)))
+            });
             let _ = tx.send(FullUpdateDownloadMessage::Complete(result));
         });
+        Ok(())
+    }
+
+    async fn accept_startup_install_prompt(&mut self) -> Result<(), String> {
+        let copying_message = self.text().install_command_copying_operit().to_string();
+        let installing_message = self.text().install_command_installing().to_string();
+        let Some(prompt) = self.startup_install_prompt.as_mut() else {
+            return Ok(());
+        };
+        let (tx, rx) = mpsc::channel::<StartupInstallMessage>();
+        prompt.progress_rx = Some(rx);
+        prompt.state = StartupInstallState::Installing {
+            message: copying_message,
+        };
+        self.status_message = installing_message;
+        std::thread::spawn(move || {
+            let progress_tx = tx.clone();
+            let result = crate::cli::install_current_cli_with_progress(
+                crate::cli::InstallOutput::Silent,
+                move |progress| {
+                    let _ = progress_tx.send(StartupInstallMessage::Progress(progress));
+                },
+            );
+            let _ = tx.send(StartupInstallMessage::Complete(result));
+        });
+        Ok(())
+    }
+
+    async fn decline_startup_install_prompt(&mut self) -> Result<(), String> {
+        self.startup_install_prompt = None;
+        crate::tui::mark_startup_install_prompt_declined()?;
+        self.status_message = self.text().install_command_skipped().to_string();
         Ok(())
     }
 
@@ -1698,6 +1825,7 @@ impl OperitTui {
     }
 
     fn apply_pushed_events(&mut self) {
+        self.apply_startup_install_events();
         self.apply_full_update_download_events();
         for event in self.core.drainEvents() {
             match event.propertyName.as_str() {
@@ -1750,6 +1878,45 @@ impl OperitTui {
         }
     }
 
+    fn apply_startup_install_events(&mut self) {
+        let text = self.text();
+        let Some(prompt) = self.startup_install_prompt.as_mut() else {
+            return;
+        };
+        let Some(rx) = prompt.progress_rx.as_ref() else {
+            return;
+        };
+        while let Ok(message) = rx.try_recv() {
+            match message {
+                StartupInstallMessage::Progress(progress) => {
+                    let message = match progress {
+                        CliInstallProgress::CopyOperit => text.install_command_copying_operit(),
+                        CliInstallProgress::CopyOperit2 => text.install_command_copying_operit2(),
+                        CliInstallProgress::UpdatePath => text.install_command_updating_path(),
+                        CliInstallProgress::Complete => text.install_command_installed(),
+                    }
+                    .to_string();
+                    prompt.state = StartupInstallState::Installing {
+                        message: message.clone(),
+                    };
+                    self.status_message = message;
+                }
+                StartupInstallMessage::Complete(Ok(())) => {
+                    prompt.state = StartupInstallState::Complete;
+                    prompt.progress_rx = None;
+                    self.status_message = text.install_command_installed().to_string();
+                    break;
+                }
+                StartupInstallMessage::Complete(Err(message)) => {
+                    prompt.state = StartupInstallState::Error { message };
+                    prompt.progress_rx = None;
+                    self.status_message = text.install_command_failed().to_string();
+                    break;
+                }
+            }
+        }
+    }
+
     fn apply_full_update_download_events(&mut self) {
         let text = self.text();
         let Some(prompt) = self.startup_update_prompt.as_mut() else {
@@ -1762,6 +1929,9 @@ impl OperitTui {
             match message {
                 FullUpdateDownloadMessage::Progress(event) => match event {
                     FullUpdateProgressEvent::StageChanged { stage, message } => {
+                        if stage == FullUpdateStage::Ready {
+                            continue;
+                        }
                         let current = match prompt.download_state.clone() {
                             FullUpdateDownloadState::Downloading {
                                 read_bytes,
@@ -1770,6 +1940,11 @@ impl OperitTui {
                                 ..
                             } => (read_bytes, total_bytes, speed_bytes_per_sec),
                             _ => (0, 0, 0),
+                        };
+                        let message = if current.1 == 0 {
+                            text.preparing_download().to_string()
+                        } else {
+                            message
                         };
                         prompt.download_state = FullUpdateDownloadState::Downloading {
                             stage,
@@ -1802,10 +1977,17 @@ impl OperitTui {
                         };
                     }
                 },
-                FullUpdateDownloadMessage::Complete(Ok(package_path)) => {
-                    prompt.download_state = FullUpdateDownloadState::Complete { package_path };
+                FullUpdateDownloadMessage::Complete(Ok((package_path, install_status))) => {
+                    prompt.download_state = FullUpdateDownloadState::Complete {
+                        package_path,
+                        install_status,
+                    };
                     prompt.progress_rx = None;
                     self.status_message = text.full_update_ready().to_string();
+                    if install_status == Some(crate::cli::DownloadedUpdateInstallStatus::Scheduled)
+                    {
+                        self.should_quit = true;
+                    }
                     break;
                 }
                 FullUpdateDownloadMessage::Complete(Err(message)) => {
@@ -2020,8 +2202,7 @@ impl OperitTui {
                 }
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("character {other}"));
+                self.status_message = self.text().unknown_command(&format!("character {other}"));
             }
         }
         Ok(())
@@ -2066,8 +2247,7 @@ impl OperitTui {
                 }
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("group {other}"));
+                self.status_message = self.text().unknown_command(&format!("group {other}"));
             }
         }
         Ok(())
@@ -2085,10 +2265,7 @@ impl OperitTui {
                 if skills.is_empty() {
                     self.status_message = self.text().skill_none().to_string();
                 } else {
-                    let items = skills
-                        .into_keys()
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let items = skills.into_keys().collect::<Vec<_>>().join(", ");
                     self.status_message = self.text().skill_status(&items);
                 }
             }
@@ -2099,8 +2276,7 @@ impl OperitTui {
                 self.status_message = self.text().skill_toggled(name, "toggled");
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("skill {other}"));
+                self.status_message = self.text().unknown_command(&format!("skill {other}"));
             }
         }
         Ok(())
@@ -2129,8 +2305,7 @@ impl OperitTui {
                 self.status_message = self.text().package_toggled(name, "toggled");
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("package {other}"));
+                self.status_message = self.text().unknown_command(&format!("package {other}"));
             }
         }
         Ok(())
@@ -2148,10 +2323,7 @@ impl OperitTui {
                 if plugins.is_empty() {
                     self.status_message = self.text().plugin_none().to_string();
                 } else {
-                    let items = plugins
-                        .into_keys()
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let items = plugins.into_keys().collect::<Vec<_>>().join(", ");
                     self.status_message = self.text().plugin_status(&items);
                 }
             }
@@ -2162,8 +2334,7 @@ impl OperitTui {
                 self.status_message = self.text().plugin_toggled(name, "toggled");
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("plugin {other}"));
+                self.status_message = self.text().unknown_command(&format!("plugin {other}"));
             }
         }
         Ok(())
@@ -2181,10 +2352,7 @@ impl OperitTui {
                 if servers.is_empty() {
                     self.status_message = self.text().mcp_none().to_string();
                 } else {
-                    let items = servers
-                        .into_keys()
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let items = servers.into_keys().collect::<Vec<_>>().join(", ");
                     self.status_message = self.text().mcp_status(&items);
                 }
             }
@@ -2195,8 +2363,7 @@ impl OperitTui {
                 self.status_message = self.text().mcp_toggled(name, "toggled");
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("mcp {other}"));
+                self.status_message = self.text().unknown_command(&format!("mcp {other}"));
             }
         }
         Ok(())
@@ -2223,8 +2390,7 @@ impl OperitTui {
                 }
             }
             Some(other) => {
-                self.status_message =
-                    self.text().unknown_command(&format!("tag {other}"));
+                self.status_message = self.text().unknown_command(&format!("tag {other}"));
             }
         }
         Ok(())

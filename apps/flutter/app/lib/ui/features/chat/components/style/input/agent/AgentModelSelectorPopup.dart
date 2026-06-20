@@ -138,6 +138,12 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
               child: FutureBuilder<_AgentModelSelectorData>(
                 future: _settingsFuture,
                 builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    Error.throwWithStackTrace(
+                      snapshot.error!,
+                      snapshot.stackTrace!,
+                    );
+                  }
                   final data = snapshot.data;
                   if (data == null) {
                     return const SizedBox(

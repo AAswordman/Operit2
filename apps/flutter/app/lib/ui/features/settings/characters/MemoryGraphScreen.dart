@@ -109,9 +109,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     final world = (details.localPosition - _offset) / _scale;
     final hitNode = graph.nodes.reversed
         .where(
-          (node) => _nodeWorldRect(node, layout.positions[node.id]!, textTheme)
-              .inflate(12 / _scale)
-              .contains(world),
+          (node) => _nodeWorldRect(
+            node,
+            layout.positions[node.id]!,
+            textTheme,
+          ).inflate(12 / _scale).contains(world),
         )
         .firstOrNull;
     if (hitNode != null) {
@@ -121,16 +123,14 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       });
       return;
     }
-    final hitEdge = graph.edges
-        .where((edge) {
-          final start = layout.positions[edge.sourceId];
-          final end = layout.positions[edge.targetId];
-          if (start == null || end == null) {
-            return false;
-          }
-          return _distanceToSegment(world, start, end) < 18 / _scale;
-        })
-        .firstOrNull;
+    final hitEdge = graph.edges.where((edge) {
+      final start = layout.positions[edge.sourceId];
+      final end = layout.positions[edge.targetId];
+      if (start == null || end == null) {
+        return false;
+      }
+      return _distanceToSegment(world, start, end) < 18 / _scale;
+    }).firstOrNull;
     setState(() {
       _selectedNodeId = null;
       _selectedEdgeId = hitEdge?.id;
@@ -144,133 +144,134 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
-          title: Text(l10n.settingsCharactersMemoryGraphTitle(widget.ownerName)),
-          leading: IconButton(
-            tooltip: l10n.close,
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close),
+        title: Text(l10n.settingsCharactersMemoryGraphTitle(widget.ownerName)),
+        leading: IconButton(
+          tooltip: l10n.close,
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close),
+        ),
+        actions: <Widget>[
+          IconButton(
+            tooltip: l10n.refresh,
+            onPressed: () {
+              setState(() {
+                _future = _repository.getMemoryGraph();
+                _layout = null;
+                _layoutSize = null;
+              });
+            },
+            icon: const Icon(Icons.refresh),
           ),
-          actions: <Widget>[
-            IconButton(
-              tooltip: l10n.refresh,
-              onPressed: () {
-                setState(() {
-                  _future = _repository.getMemoryGraph();
-                  _layout = null;
-                  _layoutSize = null;
-                });
-              },
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
+        ],
       ),
       body: FutureBuilder<core_proxy.MemoryGraph>(
-          future: _future,
-          builder: (context, snapshot) {
-            final graph = snapshot.data;
-            if (graph == null) {
-              return const M3LoadingPane();
-            }
-            if (graph.nodes.isEmpty) {
-              return Center(
-                child: Text(
-                  l10n.settingsCharactersMemoryGraphEmpty,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+          }
+          final graph = snapshot.data;
+          if (graph == null) {
+            return const M3LoadingPane();
+          }
+          if (graph.nodes.isEmpty) {
+            return Center(
+              child: Text(
+                l10n.settingsCharactersMemoryGraphEmpty,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                 ),
-              );
-            }
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                final size = Size(
-                  constraints.maxWidth,
-                  constraints.maxHeight,
-                );
-                _ensureLayout(graph, size);
-                final layout = _layout;
-                if (layout == null) {
-                  return const M3LoadingPane();
-                }
-                final selectedNode = _selectedNodeId == null
-                    ? null
-                    : graph.nodes
+              ),
+            );
+          }
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final size = Size(constraints.maxWidth, constraints.maxHeight);
+              _ensureLayout(graph, size);
+              final layout = _layout;
+              if (layout == null) {
+                return const M3LoadingPane();
+              }
+              final selectedNode = _selectedNodeId == null
+                  ? null
+                  : graph.nodes
                         .where((node) => node.id == _selectedNodeId)
                         .firstOrNull;
-                final selectedEdge = _selectedEdgeId == null
-                    ? null
-                    : graph.edges
+              final selectedEdge = _selectedEdgeId == null
+                  ? null
+                  : graph.edges
                         .where((edge) => edge.id == _selectedEdgeId)
                         .firstOrNull;
-                return Stack(
-                  children: <Widget>[
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onScaleStart: (details) {
-                        _startScale = _scale;
-                        _startOffset = _offset;
-                      },
-                      onScaleUpdate: (details) {
-                        setState(() {
-                          final nextScale =
-                              (_startScale * details.scale).clamp(0.2, 5.0);
-                          final focal = details.localFocalPoint;
-                          _offset =
-                              (_startOffset - focal) *
-                                  (nextScale / _startScale) +
-                              focal +
-                              details.focalPointDelta;
-                          _scale = nextScale;
-                        });
-                      },
-                      onTapUp: (details) =>
-                          _handleTap(details, graph, layout, textTheme),
-                      child: CustomPaint(
-                        painter: _MemoryGraphPainter(
-                          graph: graph,
-                          layout: layout,
-                          scale: _scale,
-                          offset: _offset,
-                          colorScheme: colorScheme,
-                          textTheme: textTheme,
-                          selectedNodeId: _selectedNodeId,
-                          selectedEdgeId: _selectedEdgeId,
-                        ),
-                        size: Size.infinite,
+              return Stack(
+                children: <Widget>[
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onScaleStart: (details) {
+                      _startScale = _scale;
+                      _startOffset = _offset;
+                    },
+                    onScaleUpdate: (details) {
+                      setState(() {
+                        final nextScale = (_startScale * details.scale).clamp(
+                          0.2,
+                          5.0,
+                        );
+                        final focal = details.localFocalPoint;
+                        _offset =
+                            (_startOffset - focal) * (nextScale / _startScale) +
+                            focal +
+                            details.focalPointDelta;
+                        _scale = nextScale;
+                      });
+                    },
+                    onTapUp: (details) =>
+                        _handleTap(details, graph, layout, textTheme),
+                    child: CustomPaint(
+                      painter: _MemoryGraphPainter(
+                        graph: graph,
+                        layout: layout,
+                        scale: _scale,
+                        offset: _offset,
+                        colorScheme: colorScheme,
+                        textTheme: textTheme,
+                        selectedNodeId: _selectedNodeId,
+                        selectedEdgeId: _selectedEdgeId,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    top: 12,
+                    child: _MemoryGraphCounter(
+                      text: l10n.settingsCharactersMemoryGraphStats(
+                        graph.nodes.length,
+                        graph.edges.length,
                       ),
                     ),
+                  ),
+                  if (selectedNode != null || selectedEdge != null)
                     Positioned(
                       left: 16,
-                      top: 12,
-                      child: _MemoryGraphCounter(
-                        text: l10n.settingsCharactersMemoryGraphStats(
-                          graph.nodes.length,
-                          graph.edges.length,
-                        ),
+                      right: 16,
+                      bottom: 16,
+                      child: _MemoryGraphSelectionCard(
+                        node: selectedNode,
+                        edge: selectedEdge,
+                        graph: graph,
+                        onClose: () {
+                          setState(() {
+                            _selectedNodeId = null;
+                            _selectedEdgeId = null;
+                          });
+                        },
                       ),
                     ),
-                    if (selectedNode != null || selectedEdge != null)
-                      Positioned(
-                        left: 16,
-                        right: 16,
-                        bottom: 16,
-                        child: _MemoryGraphSelectionCard(
-                          node: selectedNode,
-                          edge: selectedEdge,
-                          graph: graph,
-                          onClose: () {
-                            setState(() {
-                              _selectedNodeId = null;
-                              _selectedEdgeId = null;
-                            });
-                          },
-                        ),
-                      ),
-                  ],
-                );
-              },
-            );
-          },
+                ],
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -332,7 +333,9 @@ class _MemoryGraphLayout {
     const minNodeSeparation = 380.0;
     final nodeIdsByCluster = <int, List<String>>{};
     for (final entry in clusterInfo.clusterByNodeId.entries) {
-      nodeIdsByCluster.putIfAbsent(entry.value, () => <String>[]).add(entry.key);
+      nodeIdsByCluster
+          .putIfAbsent(entry.value, () => <String>[])
+          .add(entry.key);
     }
 
     for (var step = 0; step < iterations; step += 1) {
@@ -373,13 +376,17 @@ class _MemoryGraphLayout {
           continue;
         }
         final delta = targetPos - sourcePos;
-        final distanceSq = math.max(delta.dx * delta.dx + delta.dy * delta.dy, 1);
+        final distanceSq = math.max(
+          delta.dx * delta.dx + delta.dy * delta.dy,
+          1,
+        );
         final distance = math.sqrt(distanceSq);
         final direction = delta / distance;
         final edgeTypeAttraction = edge.isCrossFolderLink ? 0.45 : 1.95;
         final edgeCompression = edge.isCrossFolderLink ? 0.8 : 2.15;
-        final edgeIdealLength =
-            edge.isCrossFolderLink ? idealEdgeLength * 1.35 : idealEdgeLength * 0.72;
+        final edgeIdealLength = edge.isCrossFolderLink
+            ? idealEdgeLength * 1.35
+            : idealEdgeLength * 0.72;
         final adjustedAttraction =
             attractionStrength * (1 + edge.weight * 0.35) * edgeTypeAttraction;
         final normalizedDelta = (distance - edgeIdealLength) / edgeIdealLength;
@@ -416,7 +423,8 @@ class _MemoryGraphLayout {
       }
       final centroids = <int, Offset>{};
       for (final entry in clusterSums.entries) {
-        centroids[entry.key] = entry.value / clusterCounts[entry.key]!.toDouble();
+        centroids[entry.key] =
+            entry.value / clusterCounts[entry.key]!.toDouble();
       }
       for (final node in graph.nodes) {
         final clusterId = clusterInfo.clusterByNodeId[node.id]!;
@@ -464,7 +472,8 @@ class _MemoryGraphLayout {
         }
       }
       for (final node in graph.nodes) {
-        forces[node.id] = forces[node.id]! + (center - positions[node.id]!) * gravityStrength;
+        forces[node.id] =
+            forces[node.id]! + (center - positions[node.id]!) * gravityStrength;
       }
       final coolingProgress = step / math.max(iterations - 1, 1);
       final temperature = math.max(
@@ -580,10 +589,22 @@ class _MemoryGraphPainter extends CustomPainter {
       final end = endWorld * scale + offset;
       final sourceNode = nodeById[edge.sourceId];
       final targetNode = nodeById[edge.targetId];
-      final sourceVisible = sourceNode != null &&
-          _nodeScreenRect(sourceNode, start, textTheme, scale).overlaps(visibleRect);
-      final targetVisible = targetNode != null &&
-          _nodeScreenRect(targetNode, end, textTheme, scale).overlaps(visibleRect);
+      final sourceVisible =
+          sourceNode != null &&
+          _nodeScreenRect(
+            sourceNode,
+            start,
+            textTheme,
+            scale,
+          ).overlaps(visibleRect);
+      final targetVisible =
+          targetNode != null &&
+          _nodeScreenRect(
+            targetNode,
+            end,
+            textTheme,
+            scale,
+          ).overlaps(visibleRect);
       if (!sourceVisible && !targetVisible) {
         continue;
       }
@@ -649,7 +670,9 @@ class _MemoryGraphPainter extends CustomPainter {
       width: width * visualScale,
       height: height * visualScale,
     );
-    final radius = Radius.circular(math.min(rect.height * 0.48, 20 * visualScale));
+    final radius = Radius.circular(
+      math.min(rect.height * 0.48, 20 * visualScale),
+    );
     final underlayRect = rect.translate(0, 1.2 * visualScale);
     canvas.drawRRect(
       RRect.fromRectAndRadius(underlayRect, radius),
@@ -744,7 +767,8 @@ class _MemoryGraphSelectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
-    final title = node?.label ?? edge?.label ?? l10n.settingsCharactersMemoryGraphLink;
+    final title =
+        node?.label ?? edge?.label ?? l10n.settingsCharactersMemoryGraphLink;
     final subtitle = edge == null
         ? node?.id
         : '${_nodeLabel(edge!.sourceId)}  ->  ${_nodeLabel(edge!.targetId)}';
@@ -806,7 +830,11 @@ class _MemoryGraphSelectionCard extends StatelessWidget {
   }
 }
 
-TextPainter _textPainter(String text, TextStyle? style, {required double maxWidth}) {
+TextPainter _textPainter(
+  String text,
+  TextStyle? style, {
+  required double maxWidth,
+}) {
   return TextPainter(
     text: TextSpan(text: text, style: style),
     maxLines: 3,
@@ -821,7 +849,11 @@ Rect _nodeWorldRect(
   Offset center,
   TextTheme textTheme,
 ) {
-  final painter = _textPainter(node.label, textTheme.labelMedium, maxWidth: 280);
+  final painter = _textPainter(
+    node.label,
+    textTheme.labelMedium,
+    maxWidth: 280,
+  );
   return Rect.fromCenter(
     center: center,
     width: painter.width + 28,
@@ -849,10 +881,11 @@ double _distanceToSegment(Offset point, Offset start, Offset end) {
   if (lengthSq == 0) {
     return (point - start).distance;
   }
-  final t = (((point.dx - start.dx) * (end.dx - start.dx) +
-              (point.dy - start.dy) * (end.dy - start.dy)) /
-          lengthSq)
-      .clamp(0.0, 1.0);
+  final t =
+      (((point.dx - start.dx) * (end.dx - start.dx) +
+                  (point.dy - start.dy) * (end.dy - start.dy)) /
+              lengthSq)
+          .clamp(0.0, 1.0);
   final projection = start + (end - start) * t;
   return (point - projection).distance;
 }
