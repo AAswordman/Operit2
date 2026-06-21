@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
@@ -17,19 +18,58 @@ typedef WorkspaceFileChange = core_proxy.WorkspaceFileChange;
 typedef ChatResponseStreamEvent = core_proxy.MarkdownStreamEvent;
 typedef AttachmentInfo = core_proxy.AttachmentInfo;
 
+sealed class ChatRuntimeSurface {
+  const ChatRuntimeSurface();
+
+  static const ChatRuntimeSurface main = MainChatRuntimeSurface();
+  static const ChatRuntimeSurface floating = FloatingChatRuntimeSurface();
+}
+
+class MainChatRuntimeSurface extends ChatRuntimeSurface {
+  const MainChatRuntimeSurface();
+}
+
+class FloatingChatRuntimeSurface extends ChatRuntimeSurface {
+  const FloatingChatRuntimeSurface();
+}
+
+class DetachedChatRuntimeSurface extends ChatRuntimeSurface {
+  const DetachedChatRuntimeSurface(this.slotId);
+
+  final String slotId;
+}
+
 class ChatViewModel {
-  ChatViewModel({this.bridge = const ProxyCoreRuntimeBridge()})
-    : clients = GeneratedCoreProxyClients(bridge);
+  ChatViewModel({
+    this.bridge = const ProxyCoreRuntimeBridge(),
+    this.runtimeSurface = ChatRuntimeSurface.main,
+  }) : clients = GeneratedCoreProxyClients(bridge),
+       _chat = _chatProxyFor(bridge, runtimeSurface);
 
   final OperitRuntimeBridge bridge;
+  final ChatRuntimeSurface runtimeSurface;
   final GeneratedCoreProxyClients clients;
+  final GeneratedChatRuntimeHolderMainCoreProxy _chat;
   late final UserPreferencesManager _preferencesManager =
       UserPreferencesManager(clients: clients);
   final StreamController<void> _stateRefreshRequests =
       StreamController<void>.broadcast();
 
-  GeneratedChatRuntimeHolderMainCoreProxy get _chat =>
-      clients.chatRuntimeHolderMain;
+  static GeneratedChatRuntimeHolderMainCoreProxy _chatProxyFor(
+    OperitRuntimeBridge bridge,
+    ChatRuntimeSurface runtimeSurface,
+  ) {
+    final clients = GeneratedCoreProxyClients(bridge);
+    return switch (runtimeSurface) {
+      MainChatRuntimeSurface() => clients.chatRuntimeHolderMain,
+      FloatingChatRuntimeSurface() => clients.chatRuntimeHolderFloating,
+      DetachedChatRuntimeSurface(:final slotId) =>
+        GeneratedChatRuntimeHolderMainCoreProxy(
+          bridge,
+          CoreObjectPath.parse('chatRuntimeHolder.detached.$slotId'),
+        ),
+    };
+  }
 
   Stream<ChatViewModelSnapshot> watchMainState() {
     final controller = StreamController<ChatViewModelSnapshot>();
@@ -214,8 +254,6 @@ class ChatViewModel {
     String text, {
     ChatUiMessage? replyToMessage,
   }) async {
-    await _chat.updateUserMessage(message: text);
-
     final binding = await clients.preferencesFunctionalConfigManager
         .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     final providerId = binding.providerId.trim();
@@ -231,7 +269,7 @@ class ChatViewModel {
       promptFunctionType: core_proxy.PromptFunctionType.chat,
       roleCardIdOverride: null,
       chatIdOverride: null,
-      messageTextOverride: null,
+      messageText: text,
       proxySenderNameOverride: null,
       chatProviderIdOverride: providerId,
       chatModelIdOverride: modelId,
@@ -337,7 +375,7 @@ class ChatViewModel {
     );
   }
 
-  Future<bool> rollbackToMessage(int index) {
+  Future<String?> rollbackToMessage(int index) {
     return _chat.rollbackToMessage(index: index);
   }
 
@@ -450,7 +488,7 @@ class ChatViewModel {
   }
 
   Stream<List<ChatUiMessage>> _rawChatHistoryFlowChanges() {
-    return bridge.watchChanges('chatRuntimeHolder.main', 'chatHistoryFlow').map(
+    return bridge.watchChanges(_chat.targetPath.key, 'chatHistoryFlow').map(
       (event) {
         return (event.value as List<Object?>)
             .map((item) => ChatUiMessage.fromJson(item as Map<String, Object?>))

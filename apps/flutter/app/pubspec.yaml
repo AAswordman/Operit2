@@ -56,6 +56,8 @@ dependencies:
     path: ../thirdparty/xterm
   liquid_glass_widgets:
     path: ../thirdparty/liquid_glass_widgets
+  desktop_drop: ^0.7.1
+  desktop_multi_window: ^0.3.0
 
 dev_dependencies:
   flutter_test:

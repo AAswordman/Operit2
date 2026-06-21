@@ -23,12 +23,28 @@ import '../viewmodel/ChatViewModel.dart';
 bool _chatWorkspaceOpen = false;
 
 class AIChatScreen extends StatefulWidget {
-  const AIChatScreen({super.key, this.viewModel});
+  const AIChatScreen({
+    super.key,
+    this.viewModel,
+    this.runtimeSurface = ChatRuntimeSurface.main,
+  });
 
   final ChatViewModel? viewModel;
+  final ChatRuntimeSurface runtimeSurface;
 
   @override
   State<AIChatScreen> createState() => _AIChatScreenState();
+}
+
+final Map<String, Map<String?, TextEditingValue>> _chatInputDraftStores =
+    <String, Map<String?, TextEditingValue>>{};
+
+String _chatInputDraftStoreKey(ChatRuntimeSurface surface) {
+  return switch (surface) {
+    MainChatRuntimeSurface() => 'main',
+    FloatingChatRuntimeSurface() => 'floating',
+    DetachedChatRuntimeSurface(:final slotId) => 'detached:$slotId',
+  };
 }
 
 class _ChatContentData {
@@ -69,10 +85,12 @@ class _ChatContentData {
 
 class _AIChatScreenState extends State<AIChatScreen>
     with WidgetsBindingObserver {
-  late final ChatViewModel _viewModel = widget.viewModel ?? ChatViewModel();
+  late final ChatViewModel _viewModel =
+      widget.viewModel ?? ChatViewModel(runtimeSurface: widget.runtimeSurface);
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  late final Map<String?, TextEditingValue> _inputDraftsByChatId;
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
   final List<PendingQueueMessageItem> _pendingQueueMessages =
       <PendingQueueMessageItem>[];
@@ -126,10 +144,15 @@ class _AIChatScreenState extends State<AIChatScreen>
   int _nextPendingQueueId = 1;
   bool _wasQueueBlocked = false;
   bool _suppressNextAutoDequeue = false;
+  bool _isApplyingChatDraft = false;
 
   @override
   void initState() {
     super.initState();
+    _inputDraftsByChatId = _chatInputDraftStores.putIfAbsent(
+      _chatInputDraftStoreKey(_viewModel.runtimeSurface),
+      () => <String?, TextEditingValue>{},
+    );
     _chatContentDataNotifier = ValueNotifier<_ChatContentData>(
       _currentChatContentData(),
     );
@@ -146,6 +169,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
     _onChatSwitchRenderRequest();
     _inputFocusNode.addListener(_onInputFocusChanged);
+    _messageController.addListener(_onMessageControllerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _consumePendingChatDraft();
       _refreshAttachments();
@@ -169,12 +193,14 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   @override
   void dispose() {
+    _saveCurrentInputDraft();
     WidgetsBinding.instance.removeObserver(this);
     ChatSwitchRenderCoordinator.requests.removeListener(
       _onChatSwitchRenderRequest,
     );
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
     _inputFocusNode.removeListener(_onInputFocusChanged);
+    _messageController.removeListener(_onMessageControllerChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
     _scrollController.dispose();
@@ -203,6 +229,24 @@ class _AIChatScreenState extends State<AIChatScreen>
       offset: draft.length,
     );
     _inputFocusNode.requestFocus();
+  }
+
+  void _onMessageControllerChanged() {
+    if (_isApplyingChatDraft) {
+      return;
+    }
+    _saveCurrentInputDraft();
+  }
+
+  void _saveCurrentInputDraft() {
+    _inputDraftsByChatId[_currentChatId] = _messageController.value;
+  }
+
+  void _restoreInputDraftForChat(String? chatId) {
+    final value = _inputDraftsByChatId[chatId] ?? TextEditingValue.empty;
+    _isApplyingChatDraft = true;
+    _messageController.value = value;
+    _isApplyingChatDraft = false;
   }
 
   bool get _isQueueBlocked {
@@ -368,9 +412,13 @@ class _AIChatScreenState extends State<AIChatScreen>
     await _handleSelectedAttachmentFiles(files);
   }
 
-  Future<void> _handleSelectedAttachmentFiles(List<XFile> files) async {
-    for (final file in files) {
-      await _viewModel.handleAttachment(file.path);
+  Future<void> _handleSelectedAttachmentFiles(List<XFile> files) {
+    return _handleAttachmentPaths(files.map((file) => file.path).toList());
+  }
+
+  Future<void> _handleAttachmentPaths(List<String> paths) async {
+    for (final path in paths) {
+      await _viewModel.handleAttachment(path);
     }
     await _refreshAttachments();
   }
@@ -586,6 +634,9 @@ class _AIChatScreenState extends State<AIChatScreen>
     final workspaceChanged =
         _currentChatId != snapshot.currentChatId ||
         _currentWorkspacePath != snapshot.currentWorkspacePath;
+    if (pendingQueueChatChanged) {
+      _saveCurrentInputDraft();
+    }
     _mutateChatContentData(() {
       final chatChanged =
           _currentChatId != null &&
@@ -624,6 +675,9 @@ class _AIChatScreenState extends State<AIChatScreen>
         }).toSet();
       }
     });
+    if (pendingQueueChatChanged) {
+      _restoreInputDraftForChat(snapshot.currentChatId);
+    }
     if (workspaceChanged && mounted) {
       setState(() {});
       _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
@@ -819,11 +873,21 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _requestRollbackToMessage(int index) {
+    if (index < 0 || index >= _messages.length) {
+      return;
+    }
     _showWorkspaceChangeConfirm(
       mode: WorkspaceChangeConfirmMode.rollback,
       index: index,
       onConfirm: () async {
-        await _viewModel.rollbackToMessage(index);
+        final draftText = await _viewModel.rollbackToMessage(index);
+        if (draftText != null && mounted) {
+          _messageController.value = TextEditingValue(
+            text: draftText,
+            selection: TextSelection.collapsed(offset: draftText.length),
+          );
+          _inputFocusNode.requestFocus();
+        }
         _viewModel.requestMainStateRefresh();
       },
     );
@@ -1175,6 +1239,15 @@ class _AIChatScreenState extends State<AIChatScreen>
               StackTrace stackTrace,
             ) {
               debugPrint('Failed to attach file: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onAttachFiles: (paths) {
+            _handleAttachmentPaths(paths).catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach dropped files: $error\n$stackTrace');
               return null;
             });
           },

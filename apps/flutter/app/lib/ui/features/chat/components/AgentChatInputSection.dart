@@ -2,6 +2,7 @@
 
 import 'dart:ui' as ui;
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -51,6 +52,7 @@ class AgentChatInputSection extends StatefulWidget {
     this.onTakePhoto,
     this.onAttachMemory,
     this.onAttachFile,
+    this.onAttachFiles,
     this.onAttachScreenContent,
     this.onAttachNotifications,
     this.onAttachLocation,
@@ -83,6 +85,7 @@ class AgentChatInputSection extends StatefulWidget {
   final VoidCallback? onTakePhoto;
   final VoidCallback? onAttachMemory;
   final VoidCallback? onAttachFile;
+  final ValueChanged<List<String>>? onAttachFiles;
   final VoidCallback? onAttachScreenContent;
   final VoidCallback? onAttachNotifications;
   final VoidCallback? onAttachLocation;
@@ -103,6 +106,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
+  bool _draggingFiles = false;
 
   @override
   void initState() {
@@ -297,6 +301,15 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     overlay.insert(_attachmentPopupEntry!);
   }
 
+  void _setDraggingFiles(bool dragging) {
+    if (_draggingFiles == dragging) {
+      return;
+    }
+    setState(() {
+      _draggingFiles = dragging;
+    });
+  }
+
   VoidCallback? _runAttachmentAction(VoidCallback? action) {
     if (action == null) {
       return null;
@@ -480,6 +493,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     attachments: widget.attachments,
                     onRemoveAttachment: widget.onRemoveAttachment,
                     onInsertAttachment: widget.onInsertAttachment,
+                    onAttachFiles: widget.onAttachFiles,
+                    draggingFiles: _draggingFiles,
+                    onDraggingFilesChanged: _setDraggingFiles,
                     onAttach: _openAttachmentPopup,
                     onSettings: _openInputMenuPopup,
                     onModelSelector: _toggleSettingsPopup,
@@ -624,6 +640,9 @@ class _InputBody extends StatelessWidget {
     required this.attachments,
     required this.onRemoveAttachment,
     required this.onInsertAttachment,
+    required this.onAttachFiles,
+    required this.draggingFiles,
+    required this.onDraggingFilesChanged,
     required this.onAttach,
     required this.onSettings,
     required this.onModelSelector,
@@ -649,6 +668,9 @@ class _InputBody extends StatelessWidget {
   final List<AttachmentInfo> attachments;
   final ValueChanged<String>? onRemoveAttachment;
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
+  final ValueChanged<List<String>>? onAttachFiles;
+  final bool draggingFiles;
+  final ValueChanged<bool> onDraggingFilesChanged;
   final VoidCallback? onAttach;
   final VoidCallback? onSettings;
   final VoidCallback? onModelSelector;
@@ -658,7 +680,7 @@ class _InputBody extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    return Column(
+    final inputContent = Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         if (attachments.isNotEmpty)
@@ -816,6 +838,45 @@ class _InputBody extends StatelessWidget {
           ],
         ),
       ],
+    );
+    return DropTarget(
+      enable: onAttachFiles != null,
+      onDragEntered: (_) => onDraggingFilesChanged(true),
+      onDragExited: (_) => onDraggingFilesChanged(false),
+      onDragDone: (details) {
+        onDraggingFilesChanged(false);
+        final paths = details.files.map((file) => file.path).toList();
+        onAttachFiles?.call(paths);
+      },
+      child: Stack(
+        children: <Widget>[
+          inputContent,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: draggingFiles ? 1 : 0,
+                duration: const Duration(milliseconds: 120),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: colorScheme.primary.withValues(alpha: 0.55),
+                      width: 1.4,
+                    ),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.attach_file,
+                      color: colorScheme.primary.withValues(alpha: 0.9),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1527,7 +1588,6 @@ class _AttachmentChip extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 2),
                 _AttachmentRemoveButton(
                   tooltip: AppLocalizations.of(context)!.close,
                   color: colorScheme.onSurfaceVariant,
@@ -1561,9 +1621,10 @@ class _AttachmentRemoveButton extends StatelessWidget {
       message: tooltip,
       child: InkResponse(
         onTap: onTap,
-        radius: 10,
-        child: SizedBox.square(
-          dimension: 14,
+        radius: 8,
+        containedInkWell: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(3, 2, 5, 2),
           child: Icon(Icons.close, size: 10, color: color),
         ),
       ),

@@ -365,6 +365,7 @@ class ConversationDrawerItem extends StatelessWidget {
     required this.onDelete,
     required this.onLongPress,
     required this.onMoveTo,
+    required this.onDetach,
     this.nested = false,
   });
 
@@ -377,6 +378,7 @@ class ConversationDrawerItem extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onLongPress;
   final ValueChanged<core_proxy.ChatHistory> onMoveTo;
+  final VoidCallback onDetach;
   final bool nested;
 
   static const double _endPadding = 12;
@@ -384,6 +386,7 @@ class ConversationDrawerItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemShape = BorderRadius.circular(12);
+    final windowSize = MediaQuery.sizeOf(context);
     return DragTarget<core_proxy.ChatHistory>(
       onWillAcceptWithDetails: (details) => details.data.id != history.id,
       onAcceptWithDetails: (details) => onMoveTo(details.data),
@@ -451,6 +454,19 @@ class ConversationDrawerItem extends StatelessWidget {
                               Draggable<core_proxy.ChatHistory>(
                                 data: history,
                                 dragAnchorStrategy: pointerDragAnchorStrategy,
+                                onDragEnd: (details) {
+                                  if (details.wasAccepted) {
+                                    return;
+                                  }
+                                  final offset = details.offset;
+                                  final outsideWindow = offset.dx < 0 ||
+                                      offset.dy < 0 ||
+                                      offset.dx > windowSize.width ||
+                                      offset.dy > windowSize.height;
+                                  if (outsideWindow) {
+                                    onDetach();
+                                  }
+                                },
                                 feedback: Material(
                                   color: Colors.transparent,
                                   child: ConstrainedBox(

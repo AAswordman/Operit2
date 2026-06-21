@@ -1,21 +1,71 @@
 use std::collections::HashMap;
 
 use crate::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use crate::api::chat::enhance::ConversationService::ConversationService;
+use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::ChatServiceCore;
+
+pub struct ChatRuntimeCoreFactory {
+    applicationContext: Option<OperitApplicationContext>,
+}
+
+impl ChatRuntimeCoreFactory {
+    pub fn bootstrap() -> Self {
+        Self {
+            applicationContext: None,
+        }
+    }
+
+    pub fn new(applicationContext: OperitApplicationContext) -> Self {
+        Self {
+            applicationContext: Some(applicationContext),
+        }
+    }
+
+    pub fn createCore(&self, slot: ChatRuntimeSlot) -> ChatServiceCore {
+        let mut core = ChatServiceCore::new(match slot {
+            ChatRuntimeSlot::MAIN => ChatSelectionMode::FOLLOW_GLOBAL,
+            ChatRuntimeSlot::FLOATING | ChatRuntimeSlot::DETACHED(_) => {
+                ChatSelectionMode::LOCAL_ONLY
+            }
+        });
+        if let Some(applicationContext) = &self.applicationContext {
+            core.enhancedAiService = Some(EnhancedAIService::newWithToolHandler(
+                ConversationService,
+                AIToolHandler::getInstance(applicationContext.clone()),
+            ));
+        }
+        core
+    }
+}
 
 pub struct ChatRuntimeHolder {
     pub cores: HashMap<ChatRuntimeSlot, ChatServiceCore>,
     pub activeConversationCount: i32,
     pub currentSessionToolCount: i32,
+    coreFactory: ChatRuntimeCoreFactory,
 }
 
 impl ChatRuntimeHolder {
     pub fn new() -> Self {
+        Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newWithApplicationContext(applicationContext: OperitApplicationContext) -> Self {
+        Self::newWithFactory(ChatRuntimeCoreFactory::new(applicationContext))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newWithFactory(coreFactory: ChatRuntimeCoreFactory) -> Self {
         let mut holder = Self {
             cores: HashMap::new(),
             activeConversationCount: 0,
             currentSessionToolCount: 0,
+            coreFactory,
         };
         for slot in [ChatRuntimeSlot::MAIN, ChatRuntimeSlot::FLOATING] {
             holder.getCore(slot);
@@ -27,12 +77,13 @@ impl ChatRuntimeHolder {
 
     #[allow(non_snake_case)]
     pub fn getCore(&mut self, slot: ChatRuntimeSlot) -> &mut ChatServiceCore {
-        self.cores.entry(slot.clone()).or_insert_with(|| {
-            ChatServiceCore::new(match slot {
-                ChatRuntimeSlot::MAIN => ChatSelectionMode::FOLLOW_GLOBAL,
-                ChatRuntimeSlot::FLOATING => ChatSelectionMode::LOCAL_ONLY,
-            })
-        })
+        if !self.cores.contains_key(&slot) {
+            let core = self.coreFactory.createCore(slot.clone());
+            self.cores.insert(slot.clone(), core);
+        }
+        self.cores
+            .get_mut(&slot)
+            .expect("ChatRuntimeHolder core must exist after insertion")
     }
 
     #[allow(non_snake_case)]

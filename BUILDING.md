@@ -63,18 +63,15 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 ```
 
-Fedora WSL Linux CLI release builds use:
+Fedora WSL Linux CLI release builds use static musl targets:
 
 ```bash
-rustup target add x86_64-unknown-linux-gnu
-rustup target add aarch64-unknown-linux-gnu
-sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc cpio
-dnf5 --forcearch=aarch64 download libgcc
-rpm2cpio libgcc-*.aarch64.rpm | cpio -idmv
-sudo mkdir -p /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
-sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/
-sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
+rustup target add x86_64-unknown-linux-musl
+rustup target add aarch64-unknown-linux-musl
+sudo dnf install -y musl-gcc musl-devel musl-libc-static
 ```
+
+The aarch64 Linux CLI release also requires an `aarch64-linux-musl-gcc` cross C compiler on PATH.
 
 ## Local CLI Checks
 

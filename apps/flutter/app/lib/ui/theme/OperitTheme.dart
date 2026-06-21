@@ -19,9 +19,14 @@ import '../features/chat/components/workspace/browser/automation/WorkspaceWebVis
 import '../permissions/ToolApprovalHost.dart';
 
 class OperitTheme extends StatefulWidget {
-  const OperitTheme({super.key, required this.child});
+  const OperitTheme({
+    super.key,
+    required this.child,
+    this.hostInteractionHostsEnabled = true,
+  });
 
   final Widget child;
+  final bool hostInteractionHostsEnabled;
 
   static OperitThemeController of(BuildContext context) {
     final scope = context
@@ -60,6 +65,7 @@ class _OperitThemeState extends State<OperitTheme> {
       child: _OperitMaterialApp(
         themeMode: _controller.themeMode,
         themePreferenceSnapshot: _controller.themePreferenceSnapshot,
+        hostInteractionHostsEnabled: widget.hostInteractionHostsEnabled,
         child: widget.child,
       ),
     );
@@ -70,11 +76,13 @@ class _OperitMaterialApp extends StatelessWidget {
   const _OperitMaterialApp({
     required this.themeMode,
     required this.themePreferenceSnapshot,
+    required this.hostInteractionHostsEnabled,
     required this.child,
   });
 
   final ThemeMode themeMode;
   final ThemePreferenceSnapshot themePreferenceSnapshot;
+  final bool hostInteractionHostsEnabled;
   final Widget child;
 
   @override
@@ -105,9 +113,13 @@ class _OperitMaterialApp extends StatelessWidget {
           ),
         );
       },
-      home: WorkspaceBrowserAutomationHost(
-        child: WorkspaceWebVisitHost(child: ToolApprovalHost(child: child)),
-      ),
+      home: hostInteractionHostsEnabled
+          ? WorkspaceBrowserAutomationHost(
+              child: WorkspaceWebVisitHost(
+                child: ToolApprovalHost(child: child),
+              ),
+            )
+          : child,
     );
   }
 }

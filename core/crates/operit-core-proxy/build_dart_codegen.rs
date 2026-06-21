@@ -85,6 +85,11 @@ fn render_dart_clients(
             "  {class_name} get {getter_name} => {class_name}(bridge, CoreObjectPath.parse('{}'));\n",
             object.schema_key
         ));
+        if object.access == ObjectAccess::ChatRuntimeMain {
+            output.push_str(&format!(
+                "  {class_name} get chatRuntimeHolderFloating => {class_name}(bridge, CoreObjectPath.parse('chatRuntimeHolder.floating'));\n"
+            ));
+        }
     }
     output.push_str("}\n\n");
 

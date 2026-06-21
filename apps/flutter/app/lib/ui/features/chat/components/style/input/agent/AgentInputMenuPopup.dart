@@ -201,7 +201,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       },
                       children: <Widget>[
                         _SwitchRow(
-                          icon: Icons.account_circle_outlined,
+                          icon: Icons.assignment_ind_outlined,
                           title: '提供用户资料',
                           value: data.disableUserPreferenceDescription
                               ? '关'

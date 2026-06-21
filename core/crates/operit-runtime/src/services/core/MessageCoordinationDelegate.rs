@@ -229,7 +229,7 @@ impl MessageCoordinationDelegate {
         promptFunctionType: PromptFunctionType,
         roleCardIdOverride: Option<String>,
         chatIdOverride: Option<String>,
-        messageTextOverride: Option<String>,
+        messageText: String,
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
@@ -253,7 +253,6 @@ impl MessageCoordinationDelegate {
             false,
             roleCardIdOverride.clone(),
             proxySenderNameOverride.clone(),
-            messageTextOverride.clone(),
             chatIdOverride.clone(),
         ) {
             let chatId = self
@@ -273,6 +272,7 @@ impl MessageCoordinationDelegate {
                     enhancedAiService,
                     chatId,
                     promptFunctionType.clone(),
+                    messageText.clone(),
                     attachments.clone(),
                     replyToMessage.clone(),
                     turnOptions.clone(),
@@ -289,7 +289,7 @@ impl MessageCoordinationDelegate {
             false,
             roleCardIdOverride,
             chatIdOverride,
-            messageTextOverride,
+            messageText,
             proxySenderNameOverride,
             chatProviderIdOverride,
             chatModelIdOverride,
@@ -408,7 +408,7 @@ impl MessageCoordinationDelegate {
         isAutoContinuation: bool,
         roleCardIdOverride: Option<String>,
         chatIdOverride: Option<String>,
-        messageTextOverride: Option<String>,
+        messageText: String,
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
@@ -471,8 +471,6 @@ impl MessageCoordinationDelegate {
             .setActiveChatId(Some(chatId.clone()));
         self.tokenStatisticsDelegate
             .bindChatService(Some(chatId.clone()), enhancedAiService);
-        let messageText = messageTextOverride
-            .unwrap_or_else(|| self.messageProcessingDelegate.userMessage.text.clone());
         let currentChat = self
             .chatHistoryDelegate
             .chatHistories
@@ -645,7 +643,6 @@ impl MessageCoordinationDelegate {
         skipSummaryCheck: bool,
         roleCardIdOverride: Option<String>,
         proxySenderNameOverride: Option<String>,
-        messageTextOverride: Option<String>,
         chatIdOverride: Option<String>,
     ) -> bool {
         if promptFunctionType != PromptFunctionType::CHAT {
@@ -662,13 +659,6 @@ impl MessageCoordinationDelegate {
             return false;
         }
         if proxySenderNameOverride
-            .as_ref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        if messageTextOverride
             .as_ref()
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
@@ -694,6 +684,7 @@ impl MessageCoordinationDelegate {
         enhancedAiService: &mut EnhancedAIService,
         chatId: String,
         promptFunctionType: PromptFunctionType,
+        messageText: String,
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
@@ -721,18 +712,9 @@ impl MessageCoordinationDelegate {
             );
         }
 
-        let originalUserText = self
-            .messageProcessingDelegate
-            .userMessage
-            .text
-            .trim()
-            .to_string();
+        let originalUserText = messageText.trim().to_string();
         if originalUserText.is_empty() && attachments.is_empty() {
             return false;
-        }
-        if !originalUserText.is_empty() {
-            self.messageProcessingDelegate
-                .updateUserMessage(String::new());
         }
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(
@@ -896,7 +878,7 @@ impl MessageCoordinationDelegate {
                     false,
                     Some(member.characterCardId),
                     Some(chatId.clone()),
-                    Some(memberMessage),
+                    memberMessage,
                     None,
                     None,
                     None,
@@ -1514,7 +1496,7 @@ impl MessageCoordinationDelegate {
                         true,
                         roleCardIdOverride,
                         Some(currentChatId),
-                        None,
+                        String::new(),
                         None,
                         effectiveChatProviderIdOverride,
                         effectiveChatModelIdOverride,

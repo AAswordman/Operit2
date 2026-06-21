@@ -34,17 +34,6 @@ use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, Sta
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextFieldValue {
-    pub text: String,
-}
-
-impl TextFieldValue {
-    pub fn new(text: String) -> Self {
-        Self { text }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub sendJob: Option<String>,
@@ -161,8 +150,6 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
 pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
-    pub userMessage: TextFieldValue,
-    pub userMessageFlow: MutableStateFlow<TextFieldValue>,
     pub isLoading: bool,
     pub isLoadingFlow: MutableStateFlow<bool>,
     pub activeStreamingChatIds: HashSet<String>,
@@ -203,8 +190,6 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager,
             modelConfigManager,
-            userMessage: TextFieldValue::new(String::new()),
-            userMessageFlow: mutableStateFlow(TextFieldValue::new(String::new())),
             isLoading: false,
             isLoadingFlow: mutableStateFlow(false),
             activeStreamingChatIds: HashSet::new(),
@@ -233,8 +218,6 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
-            userMessage: self.userMessageFlow.value(),
-            userMessageFlow: self.userMessageFlow.clone(),
             isLoading: self.isLoadingFlow.value(),
             isLoadingFlow: self.isLoadingFlow.clone(),
             activeStreamingChatIds: self.activeStreamingChatIdsFlow.value(),
@@ -682,23 +665,6 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) {
         self.cancelMessageInternal(chatId, false).await;
-    }
-
-    #[allow(non_snake_case)]
-    pub fn updateUserMessage(&mut self, message: String) {
-        let value = TextFieldValue::new(message);
-        self.userMessage = value.clone();
-        self.userMessageFlow.set_value(value);
-    }
-
-    #[allow(non_snake_case)]
-    pub fn updateUserMessageValue(&mut self, value: TextFieldValue) {
-        self.userMessage = value.clone();
-        self.userMessageFlow.set_value(value);
-    }
-
-    pub fn userMessageFlow(&self) -> StateFlow<TextFieldValue> {
-        self.userMessageFlow.asStateFlow()
     }
 
     pub fn isLoadingFlow(&self) -> StateFlow<bool> {

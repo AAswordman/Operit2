@@ -15,7 +15,7 @@ use crate::data::repository::ChatHistoryManager::ChatImportResult;
 use crate::data::skill::SkillRepository::SkillRepository;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::core::MessageProcessingDelegate::{MessageProcessingDelegate, TextFieldValue};
+use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
@@ -115,7 +115,7 @@ impl ChatServiceCore {
         promptFunctionType: PromptFunctionType,
         roleCardIdOverride: Option<String>,
         chatIdOverride: Option<String>,
-        messageTextOverride: Option<String>,
+        messageText: String,
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
@@ -135,7 +135,7 @@ impl ChatServiceCore {
                     promptFunctionType,
                     roleCardIdOverride,
                     chatIdOverride,
-                    messageTextOverride,
+                    messageText,
                     proxySenderNameOverride,
                     chatProviderIdOverride,
                     chatModelIdOverride,
@@ -157,10 +157,6 @@ impl ChatServiceCore {
 
     pub async fn cancelMessage(&mut self, chatId: String) {
         self.messageProcessingDelegate.cancelMessage(chatId).await;
-    }
-
-    pub fn updateUserMessage(&mut self, message: String) {
-        self.messageProcessingDelegate.updateUserMessage(message);
     }
 
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
@@ -542,19 +538,17 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn rollbackToMessage(&mut self, index: usize) -> bool {
+    pub fn rollbackToMessage(&mut self, index: usize) -> Option<String> {
         let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
-            return false;
+            return None;
         };
         if targetMessage.sender != "user" {
-            return false;
+            return None;
         }
         self.rewindWorkspaceForMessage(index);
         self.chatHistoryDelegate
             .truncateChatHistory(Some(targetMessage.timestamp));
-        self.messageProcessingDelegate
-            .updateUserMessage(stripXmlLikeTags(&targetMessage.content));
-        true
+        Some(stripXmlLikeTags(&targetMessage.content))
     }
 
     #[allow(non_snake_case)]
@@ -568,13 +562,11 @@ impl ChatServiceCore {
         self.rewindWorkspaceForMessage(index);
         self.chatHistoryDelegate
             .truncateChatHistory(Some(targetMessage.timestamp));
-        self.messageProcessingDelegate
-            .updateUserMessage(editedContent);
         self.sendUserMessage(
             PromptFunctionType::CHAT,
             None,
             None,
-            None,
+            editedContent,
             None,
             None,
             None,
@@ -897,14 +889,6 @@ impl ChatServiceCore {
 
     pub fn clearAttachments(&mut self) {
         self.attachments.clear();
-    }
-
-    pub fn userMessage(&self) -> &TextFieldValue {
-        &self.messageProcessingDelegate.userMessage
-    }
-
-    pub fn userMessageFlow(&self) -> StateFlow<TextFieldValue> {
-        self.messageProcessingDelegate.userMessageFlow()
     }
 
     pub fn isLoading(&self) -> bool {

@@ -59,8 +59,8 @@ constexpr GUID kGuidDevinterfaceBluetooth = {
     {0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0},
 };
 
-std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
-    g_operit_runtime_channel;
+std::vector<std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>>
+    g_operit_runtime_channels;
 HWND g_operit_runtime_window = nullptr;
 DWORD g_operit_runtime_platform_thread_id = 0;
 
@@ -384,6 +384,7 @@ class WindowsEventMonitor {
   void Start(std::shared_ptr<class OperitRuntimeLibrary> library) {
     Stop();
     library_ = std::move(library);
+    stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     power_requested_ = true;
     session_requested_ = true;
     network_requested_ = true;
@@ -394,7 +395,14 @@ class WindowsEventMonitor {
   void Stop() {
     UnregisterNotifications();
     running_ = false;
+    if (stop_event_) {
+      SetEvent(stop_event_);
+    }
     if (network_thread_.joinable()) network_thread_.join();
+    if (stop_event_) {
+      CloseHandle(stop_event_);
+      stop_event_ = nullptr;
+    }
     library_.reset();
   }
 
@@ -425,6 +433,7 @@ class WindowsEventMonitor {
   bool bluetooth_requested_ = false;
   std::atomic<bool> running_{false};
   std::thread network_thread_;
+  HANDLE stop_event_ = nullptr;
 
   void RegisterNotifications() {
     if (!g_operit_runtime_window) return;
@@ -527,14 +536,20 @@ class WindowsEventMonitor {
 
       DWORD ret = NotifyAddrChange(&notify_handle, &overlapped);
       if (ret == NO_ERROR) {
-        DispatchTopic("system.network.changed");
+        if (running_) {
+          DispatchTopic("system.network.changed");
+        }
         CloseHandle(event_handle);
         break;
       } else if (ret == ERROR_IO_PENDING) {
-        HANDLE wait_handles[2] = {event_handle};
-        DWORD wait_result = WaitForMultipleObjects(1, wait_handles, FALSE, INFINITE);
+        HANDLE wait_handles[2] = {event_handle, stop_event_};
+        DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
         if (wait_result == WAIT_OBJECT_0) {
-          DispatchTopic("system.network.changed");
+          if (running_) {
+            DispatchTopic("system.network.changed");
+          }
+          CancelIo(notify_handle);
+        } else if (wait_result == WAIT_OBJECT_0 + 1) {
           CancelIo(notify_handle);
         }
         CloseHandle(notify_handle);
@@ -543,7 +558,7 @@ class WindowsEventMonitor {
       } else {
         CloseHandle(event_handle);
         if (!running_) break;
-        Sleep(10000);
+        WaitForSingleObject(stop_event_, 10000);
       }
     }
   }
@@ -649,18 +664,25 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
 }
 
 void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
-  g_operit_runtime_window = window;
-  g_operit_runtime_platform_thread_id = ::GetCurrentThreadId();
-  g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
-  g_windows_event_monitor = std::make_shared<WindowsEventMonitor>();
-  g_windows_event_monitor->Start(g_operit_runtime_library);
-  g_operit_runtime_channel =
+  if (g_operit_runtime_window == nullptr) {
+    g_operit_runtime_window = window;
+    g_operit_runtime_platform_thread_id = ::GetCurrentThreadId();
+  }
+  if (!g_operit_runtime_library) {
+    g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
+  }
+  if (!g_windows_event_monitor) {
+    g_windows_event_monitor = std::make_shared<WindowsEventMonitor>();
+    g_windows_event_monitor->Start(g_operit_runtime_library);
+  }
+  auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           engine->messenger(), "operit/runtime",
           &flutter::StandardMethodCodec::GetInstance());
+  auto runtime_library = g_operit_runtime_library;
 
-  g_operit_runtime_channel->SetMethodCallHandler(
-      [](const flutter::MethodCall<flutter::EncodableValue>& method_call,
+  channel->SetMethodCallHandler(
+      [runtime_library](const flutter::MethodCall<flutter::EncodableValue>& method_call,
          std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
              result) {
         std::string response;
@@ -680,7 +702,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_ARGS", "watchSnapshot expects a JSON string");
             return;
           }
-          if (g_operit_runtime_library->WatchSnapshot(*request, &response,
+          if (runtime_library->WatchSnapshot(*request, &response,
                                                       &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -694,7 +716,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_ARGS", "watchStream expects a JSON string");
             return;
           }
-          if (g_operit_runtime_library->WatchStream(*request, &response,
+          if (runtime_library->WatchStream(*request, &response,
                                                     &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -709,7 +731,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "pollWatchStream expects a subscription id");
             return;
           }
-          if (g_operit_runtime_library->PollWatchStream(
+          if (runtime_library->PollWatchStream(
                   *subscription, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -724,7 +746,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "pollWatchStreams expects a JSON string array");
             return;
           }
-          if (g_operit_runtime_library->PollWatchStreams(
+          if (runtime_library->PollWatchStreams(
                   *subscriptions, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -739,7 +761,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "closeWatchStream expects a subscription id");
             return;
           }
-          if (g_operit_runtime_library->CloseWatchStream(
+          if (runtime_library->CloseWatchStream(
                   *subscription, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -779,7 +801,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                            "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery");
               return;
             }
-            if (g_operit_runtime_library->StartWebAccessServer(
+            if (runtime_library->StartWebAccessServer(
                     *bind_address, *token, *shutdown_token, *web_root,
                     *device_id, *accepted_sessions, *accepted_session_store_path,
                     *pairing_code_path, *device_info, *enable_web_access,
@@ -799,7 +821,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             return;
           }
           std::string timeout = *timeout_ms;
-          auto library = g_operit_runtime_library;
+          auto library = runtime_library;
           std::thread([library, timeout = std::move(timeout),
                        result = std::move(result)]() mutable {
             std::string response;
@@ -818,7 +840,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("stopWebAccessServer") == 0) {
-          if (g_operit_runtime_library->StopWebAccessServer(&response, &error)) {
+          if (runtime_library->StopWebAccessServer(&response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
@@ -833,7 +855,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "dispatchHostEvent expects source and payload");
             return;
           }
-          if (g_operit_runtime_library->DispatchHostEvent(
+          if (runtime_library->DispatchHostEvent(
                   *source, *payload, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -853,7 +875,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "remotePairStart expects baseUrl, tokenHash and clientDeviceInfo");
             return;
           }
-          if (g_operit_runtime_library->RemotePairStart(
+          if (runtime_library->RemotePairStart(
                   *base_url, *token_hash, *client_device_info, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -871,7 +893,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "remotePairFinish expects pairingId and pairingCode");
             return;
           }
-          if (g_operit_runtime_library->RemotePairFinish(
+          if (runtime_library->RemotePairFinish(
                   *pairing_id, *pairing_code, &response, &error)) {
             result->Success(flutter::EncodableValue(response));
           } else {
@@ -881,4 +903,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
         }
         result->NotImplemented();
       });
+  g_operit_runtime_channels.push_back(std::move(channel));
+}
+
+void ShutdownOperitRuntimeChannel() {
+  g_operit_runtime_channels.clear();
+  g_windows_event_monitor.reset();
+  g_operit_runtime_library.reset();
+  g_operit_runtime_window = nullptr;
+  g_operit_runtime_platform_thread_id = 0;
 }

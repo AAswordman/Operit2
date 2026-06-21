@@ -597,7 +597,7 @@ impl StructuredToolCallBridge {
                 .ok()
                 .and_then(|value| value.as_object().cloned());
             let toolTagName = ChatMarkupRegex::generate_random_tool_tag_name();
-            xml.push_str(&format!(r#"<{toolTagName} name="{name}">"#));
+            xml.push_str(&format!("\n<{toolTagName} name=\"{name}\">"));
             if let Some(paramsObj) = paramsObj {
                 for (key, value) in paramsObj {
                     xml.push_str(&format!(
@@ -614,7 +614,7 @@ impl StructuredToolCallBridge {
             }
             xml.push_str(&format!("\n</{toolTagName}>\n"));
         }
-        xml.trim().to_string()
+        xml.trim_end().to_string()
     }
 
     fn parsePossibleToolCallsFromText(content: &str) -> Option<Vec<Value>> {

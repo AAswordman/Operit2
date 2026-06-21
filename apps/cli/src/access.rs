@@ -1030,7 +1030,8 @@ async fn pair_finish(
     State(state): State<RemoteLinkState>,
     Json(request): Json<PairFinishRequest>,
 ) -> Response {
-    let Some(pairing) = state.pairings.lock().await.remove(&request.pairingId) else {
+    let mut pairings = state.pairings.lock().await;
+    let Some(pairing) = pairings.get(&request.pairingId) else {
         return bad_request("pairing not found");
     };
     if pairing.pairingCode != request.pairingCode.trim() {
@@ -1051,13 +1052,24 @@ async fn pair_finish(
         &pairing.clientNonce,
         &pairing.serverNonce,
     );
+    let pairingServiceVersion = pairing.pairingServiceVersion;
+    let clientDeviceId = pairing.clientDeviceId.clone();
+    let clientDeviceInfo = pairing.clientDeviceInfo.clone();
+    let coreProof = proof(
+        &pairing.sharedSecret,
+        &pairing.clientNonce,
+        &pairing.serverNonce,
+        "core",
+    );
+    pairings.remove(&request.pairingId);
+    drop(pairings);
     if let Some(store) = state.acceptedSessionStore.as_ref() {
         if let Err(error) = store(
             sessionId.clone(),
             AcceptedRemoteSessionRecord {
-                deviceId: pairing.clientDeviceId.clone(),
-                deviceInfo: pairing.clientDeviceInfo.clone(),
-                pairingServiceVersion: pairing.pairingServiceVersion,
+                deviceId: clientDeviceId.clone(),
+                deviceInfo: clientDeviceInfo.clone(),
+                pairingServiceVersion,
                 sessionSecret: BASE64.encode(sessionSecret.as_slice()),
             },
         ) {
@@ -1072,21 +1084,16 @@ async fn pair_finish(
     state.sessions.lock().await.insert(
         sessionId.clone(),
         RemoteSession {
-            deviceId: pairing.clientDeviceId,
-            deviceInfo: pairing.clientDeviceInfo,
-            pairingServiceVersion: pairing.pairingServiceVersion,
+            deviceId: clientDeviceId,
+            deviceInfo: clientDeviceInfo,
+            pairingServiceVersion,
             sessionSecret,
         },
     );
     Json(PairFinishResponse {
         sessionId,
-        pairingServiceVersion: pairing.pairingServiceVersion,
-        coreProof: proof(
-            &pairing.sharedSecret,
-            &pairing.clientNonce,
-            &pairing.serverNonce,
-            "core",
-        ),
+        pairingServiceVersion,
+        coreProof,
     })
     .into_response()
 }

@@ -28,10 +28,7 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
     CoreRequestId, CoreWatchRequest,
 };
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
@@ -444,11 +441,6 @@ impl OperitFlutterBridge {
         )?;
         core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core);
-        let mainCore = core
-            .localApplicationMut()
-            .chatRuntimeHolder
-            .getCore(ChatRuntimeSlot::MAIN);
-        mainCore.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
         #[cfg(not(target_arch = "wasm32"))]
         let externalRuntimeEventRegistration =
             operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(

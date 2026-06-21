@@ -272,6 +272,14 @@ impl CoreLinkError {
         )
     }
 
+    pub fn command(message: impl Into<String>) -> Self {
+        Self::new("COMMAND_ERROR", message)
+    }
+
+    pub fn isCommandError(&self) -> bool {
+        self.code == "COMMAND_ERROR"
+    }
+
     #[track_caller]
     pub fn internal(message: impl Into<String>) -> Self {
         let caller = std::panic::Location::caller();

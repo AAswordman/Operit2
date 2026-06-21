@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include <desktop_multi_window/desktop_multi_window_plugin.h>
+
 #include "flutter/generated_plugin_registrant.h"
 #include "operit_runtime_channel.h"
 
@@ -27,6 +29,14 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
+  DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
+    auto* flutter_view_controller =
+        reinterpret_cast<flutter::FlutterViewController*>(controller);
+    RegisterPlugins(flutter_view_controller->engine());
+    RegisterOperitRuntimeChannel(
+        flutter_view_controller->engine(),
+        flutter_view_controller->view()->GetNativeWindow());
+  });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

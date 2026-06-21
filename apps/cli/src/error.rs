@@ -4,17 +4,25 @@ use std::io::Write;
 #[derive(Clone, Debug)]
 pub(crate) struct CliError {
     message: String,
-    location: &'static std::panic::Location<'static>,
-    backtrace: String,
+    location: Option<&'static std::panic::Location<'static>>,
+    backtrace: Option<String>,
 }
 
 impl CliError {
     #[track_caller]
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            location: std::panic::Location::caller(),
-            backtrace: std::backtrace::Backtrace::force_capture().to_string(),
+            location: Some(std::panic::Location::caller()),
+            backtrace: Some(std::backtrace::Backtrace::force_capture().to_string()),
+        }
+    }
+
+    pub(crate) fn user(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            location: None,
+            backtrace: None,
         }
     }
 }
@@ -22,14 +30,19 @@ impl CliError {
 impl Display for CliError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}", self.message)?;
-        write!(
-            formatter,
-            "\nRust error location: {}:{}:{}",
-            self.location.file(),
-            self.location.line(),
-            self.location.column()
-        )?;
-        write!(formatter, "\nRust backtrace:\n{}", self.backtrace)
+        if let Some(location) = self.location {
+            write!(
+                formatter,
+                "\nRust error location: {}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )?;
+        }
+        if let Some(backtrace) = &self.backtrace {
+            write!(formatter, "\nRust backtrace:\n{backtrace}")?;
+        }
+        Ok(())
     }
 }
 
