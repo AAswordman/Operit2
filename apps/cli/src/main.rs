@@ -37,7 +37,7 @@ async fn run() -> Result<(), CliError> {
     AppLogger::set_enable_console_logging(false);
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
-        return tui::run_tui_command(&[]).await.map_err(CliError::new);
+        return tui::run_tui_command(&[]).await.map_err(CliError::internal);
     }
 
     match args[0].as_str() {
@@ -45,12 +45,12 @@ async fn run() -> Result<(), CliError> {
             cli::print_root_usage();
             Ok(())
         }
-        "cli" => cli::run_cli_root(&args[1..]).await.map_err(CliError::new),
+        "cli" => cli::run_cli_root(&args[1..]).await.map_err(CliError::user),
         "tui" => tui::run_tui_command(&args[1..])
             .await
-            .map_err(CliError::new),
-        "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::new),
-        value if value.starts_with('-') => tui::run_tui_command(&args).await.map_err(CliError::new),
+            .map_err(CliError::internal),
+        "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::user),
+        value if value.starts_with('-') => tui::run_tui_command(&args).await.map_err(CliError::internal),
         _ => {
             cli::print_root_usage();
             Ok(())

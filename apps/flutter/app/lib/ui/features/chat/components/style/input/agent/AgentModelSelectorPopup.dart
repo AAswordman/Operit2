@@ -2,6 +2,11 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
+import 'package:operit2/ui/main/screens/OperitScreens.dart';
+import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
+import 'package:operit2/ui/features/settings/models/SettingsModels.dart';
+
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
@@ -103,6 +108,18 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     _reloadSettings();
   }
 
+  void _openModelSettings() {
+    widget.onDismiss();
+    final entry = ScreenRouteRegistry.toEntry(
+      screen: const SettingsScreenRoute(category: SettingsCategory.model),
+    );
+    AppRouterGateway.navigate(
+      routeId: entry.routeId,
+      args: entry.args,
+      source: entry.source,
+    );
+  }
+
   Future<void> _toggleMaxContext(_AgentModelSelectorData data) async {
     final config = data.currentConfig;
     await _clients.preferencesModelConfigManager.updateContextForModel(
@@ -192,7 +209,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                             });
                           },
                           onSelectModel: _selectModel,
-                          onManageClick: widget.onDismiss,
+                          onManageClick: _openModelSettings,
                           onInfoClick: () => _showInfo(
                             '模型配置',
                             '在这里选择一个已经配置好的模型，或者点击下方的管理配置去新建或修改模型',
@@ -465,13 +482,28 @@ class _ModelSelectorItem extends StatelessWidget {
                   ),
                   if (i < providers.length - 1) const SizedBox(height: 4),
                 ],
-                InkWell(
-                  borderRadius: BorderRadius.circular(4),
-                  onTap: onManageClick,
-                  child: SizedBox(
-                    height: 30,
-                    child: Center(
-                      child: Text('管理配置', style: textTheme.bodySmall),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.center,
+                  child: InkWell(
+                    mouseCursor: SystemMouseCursors.click,
+                    borderRadius: BorderRadius.circular(4),
+                    hoverColor: colorScheme.primary.withValues(alpha: 0.08),
+                    splashColor: colorScheme.primary.withValues(alpha: 0.12),
+                    highlightColor: colorScheme.primary.withValues(alpha: 0.06),
+                    onTap: onManageClick,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        '管理配置',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
                 ),

@@ -26,9 +26,7 @@ impl TuiLanguage {
         match resolved.as_str() {
             LanguageCodes::ENGLISH => Ok(Self::English),
             LanguageCodes::CHINESE => Ok(Self::Chinese),
-            other => Err(format!(
-                "unsupported TUI language: {other}; supported languages: en, zh-CN"
-            )),
+            _ => Ok(Self::English),
         }
     }
 

@@ -38,6 +38,8 @@ use super::helpers::{short_chat_label, split_command_line};
 use super::i18n::{TuiLanguage, TuiText};
 use super::link_proxy_rs::TuiCore;
 use super::pending_queue::PendingQueueMessage;
+use super::config;
+use super::config::ConfigUi;
 use super::selection::{
     mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
     TranscriptSelectionState,
@@ -50,6 +52,7 @@ use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
 const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
 pub(super) struct OperitTui {
@@ -66,6 +69,15 @@ pub(super) struct OperitTui {
     pub(super) model_choices: Vec<ModelChoiceItem>,
     pub(super) selected_model_choice_index: usize,
     pub(super) show_model_chooser: bool,
+    pub(super) model_chooser_search: String,
+    pub(super) model_chooser_filtered_indices: Vec<usize>,
+    pub(super) model_list_mode: bool,
+    pub(super) show_list_popup: bool,
+    pub(super) list_popup_title: String,
+    pub(super) list_popup_items: Vec<String>,
+    pub(super) list_popup_search: String,
+    pub(super) list_popup_filtered_indices: Vec<usize>,
+    pub(super) list_popup_selected_index: usize,
     pub(super) focus: FocusArea,
     pub(super) input: String,
     pub(super) input_cursor: usize,
@@ -83,6 +95,8 @@ pub(super) struct OperitTui {
     pub(super) pending_queue_manual_send: Option<PendingQueueMessage>,
     pub(super) paste_attachment_counter: usize,
     pub(super) status_message: String,
+    pub(super) status_message_expires_at: Option<Instant>,
+    pub(super) transient_status_message: Option<String>,
     pub(super) context_usage_label: String,
     pub(super) transcript_scroll: u16,
     pub(super) transcript_viewport_height: u16,
@@ -109,6 +123,8 @@ pub(super) struct OperitTui {
     pub(super) startup_install_prompt: Option<StartupInstallPrompt>,
     pub(super) startup_update_prompt: Option<StartupUpdatePrompt>,
     pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
+    pub(super) show_config_popup: bool,
+    pub(super) config_ui: ConfigUi,
     pub(super) should_quit: bool,
 }
 
@@ -291,6 +307,15 @@ impl OperitTui {
             model_choices: Vec::new(),
             selected_model_choice_index: 0,
             show_model_chooser: false,
+            model_chooser_search: String::new(),
+            model_chooser_filtered_indices: Vec::new(),
+            model_list_mode: false,
+            show_list_popup: false,
+            list_popup_title: String::new(),
+            list_popup_items: Vec::new(),
+            list_popup_search: String::new(),
+            list_popup_filtered_indices: Vec::new(),
+            list_popup_selected_index: 0,
             focus: FocusArea::Input,
             input: String::new(),
             input_cursor: 0,
@@ -308,6 +333,8 @@ impl OperitTui {
             pending_queue_manual_send: None,
             paste_attachment_counter: 0,
             status_message,
+            status_message_expires_at: None,
+            transient_status_message: None,
             context_usage_label: String::new(),
             transcript_scroll: 0,
             transcript_viewport_height: 1,
@@ -338,6 +365,8 @@ impl OperitTui {
                     accept_selected: true,
                 }
             }),
+            show_config_popup: false,
+            config_ui: ConfigUi::new(),
             should_quit: false,
         })
     }
@@ -413,6 +442,7 @@ impl OperitTui {
             self.sync_response_stream_subscriptions().await;
             self.refresh_runtime_status_if_due().await;
             self.advance_pending_message_queue().await?;
+            self.clear_expired_status_message();
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
@@ -420,6 +450,29 @@ impl OperitTui {
             self.handle_terminal_events(EVENT_POLL_INTERVAL).await?;
         }
         Ok(())
+    }
+
+    fn set_transient_status_message(&mut self, message: String) {
+        self.status_message = message.clone();
+        self.transient_status_message = Some(message);
+        self.status_message_expires_at = Some(Instant::now() + TRANSIENT_STATUS_DURATION);
+    }
+
+    fn clear_expired_status_message(&mut self) {
+        if self
+            .status_message_expires_at
+            .is_some_and(|expires_at| Instant::now() >= expires_at)
+        {
+            if self
+                .transient_status_message
+                .as_ref()
+                .is_some_and(|message| message == &self.status_message)
+            {
+                self.status_message.clear();
+            }
+            self.status_message_expires_at = None;
+            self.transient_status_message = None;
+        }
     }
 
     async fn handle_terminal_events(&mut self, initial_poll: Duration) -> Result<(), String> {
@@ -522,6 +575,12 @@ impl OperitTui {
             return Ok(());
         }
 
+        // Config popup has its own key handling — intercept early
+        if self.show_config_popup {
+            self.handle_config_key(key).await?;
+            return Ok(());
+        }
+
         if matches!(key.code, KeyCode::Char('c'))
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && self.copy_transcript_selection()
@@ -559,6 +618,10 @@ impl OperitTui {
         if self.approval_bridge.current().is_some() {
             self.handle_approval_key(key);
             return Ok(());
+        }
+
+        if self.show_list_popup {
+            return self.handle_list_popup_key(key);
         }
 
         if self.show_help {
@@ -628,7 +691,12 @@ impl OperitTui {
                     return Ok(());
                 }
                 if self.show_model_chooser {
-                    self.close_model_chooser();
+                    if !self.model_chooser_search.is_empty() {
+                        self.model_chooser_search.clear();
+                        self.update_model_chooser_filter();
+                    } else {
+                        self.close_model_chooser();
+                    }
                     return Ok(());
                 }
                 if self.show_chat_list && self.focus == FocusArea::Chats {
@@ -743,17 +811,41 @@ impl OperitTui {
     async fn handle_model_chooser_key(&mut self, key: KeyEvent) -> Result<(), String> {
         match key.code {
             KeyCode::Up => {
+                self.status_message.clear();
+                self.status_message_expires_at = None;
+                self.transient_status_message = None;
                 if self.selected_model_choice_index > 0 {
                     self.selected_model_choice_index -= 1;
                 }
             }
             KeyCode::Down => {
-                if self.selected_model_choice_index + 1 < self.model_choices.len() {
+                self.status_message.clear();
+                self.status_message_expires_at = None;
+                self.transient_status_message = None;
+                if self.selected_model_choice_index + 1 < self.model_chooser_filtered_indices.len() {
                     self.selected_model_choice_index += 1;
                 }
             }
             KeyCode::Enter => {
-                self.apply_selected_model_choice().await?;
+                if self.model_list_mode {
+                    self.close_model_chooser();
+                } else {
+                    self.apply_selected_model_choice().await?;
+                }
+            }
+            KeyCode::Char(c) => {
+                self.status_message.clear();
+                self.status_message_expires_at = None;
+                self.transient_status_message = None;
+                self.model_chooser_search.push(c);
+                self.update_model_chooser_filter();
+            }
+            KeyCode::Backspace => {
+                self.status_message.clear();
+                self.status_message_expires_at = None;
+                self.transient_status_message = None;
+                self.model_chooser_search.pop();
+                self.update_model_chooser_filter();
             }
             _ => {}
         }
@@ -1358,6 +1450,7 @@ impl OperitTui {
             None | Some("current") => self.show_current_chat_model().await,
             Some("list") => self.list_chat_models().await,
             Some("choose") => self.open_model_chooser().await,
+            Some("config") => self.open_config_popup().await,
             Some("use") => self.use_chat_model(&args[1..]).await,
             Some("help") => {
                 self.status_message = self.text().model_help().to_string();
@@ -1464,27 +1557,8 @@ impl OperitTui {
     }
 
     async fn list_chat_models(&mut self) -> Result<(), String> {
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        let entries = self
-            .core
-            .preferences_model_config_manager()
-            .getAllModelSummaries()
-            .await
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|summary| {
-                format!(
-                    "{}:{}={}/{}",
-                    summary.providerId, summary.modelId, summary.providerName, summary.modelId
-                )
-            })
-            .collect::<Vec<_>>();
-        self.status_message = self.text().models_status(&entries.join(" | "));
-        Ok(())
+        self.model_list_mode = true;
+        self.open_model_chooser().await
     }
 
     async fn open_model_chooser(&mut self) -> Result<(), String> {
@@ -1500,14 +1574,114 @@ impl OperitTui {
             .expect("current chat model mapping must be present in model choices");
         self.show_model_chooser = true;
         self.focus = FocusArea::ModelChooser;
-        self.status_message = self.text().choose_model_status().to_string();
+        self.model_chooser_search.clear();
+        self.update_model_chooser_filter();
+        if !self.model_list_mode {
+            self.status_message = self.text().choose_model_status().to_string();
+        }
         Ok(())
     }
 
     fn close_model_chooser(&mut self) {
         self.show_model_chooser = false;
         self.focus = FocusArea::Input;
+        self.model_list_mode = false;
+        self.model_chooser_search.clear();
+        self.model_chooser_filtered_indices.clear();
         self.status_message = self.text().model_chooser_closed().to_string();
+    }
+
+    fn open_list_popup(&mut self, title: String, items: Vec<String>) {
+        self.list_popup_title = title;
+        self.list_popup_items = items;
+        self.list_popup_search.clear();
+        self.list_popup_selected_index = 0;
+        self.update_list_popup_filter();
+        self.show_list_popup = true;
+        self.focus = FocusArea::Input;
+    }
+
+    fn close_list_popup(&mut self) {
+        self.show_list_popup = false;
+        self.list_popup_title.clear();
+        self.list_popup_items.clear();
+        self.list_popup_search.clear();
+        self.list_popup_filtered_indices.clear();
+        self.list_popup_selected_index = 0;
+    }
+
+    fn update_list_popup_filter(&mut self) {
+        let search = self.list_popup_search.to_ascii_lowercase();
+        if search.is_empty() {
+            self.list_popup_filtered_indices = (0..self.list_popup_items.len()).collect();
+        } else {
+            self.list_popup_filtered_indices = self
+                .list_popup_items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.to_ascii_lowercase().contains(&search))
+                .map(|(index, _)| index)
+                .collect();
+        }
+        if self.list_popup_selected_index >= self.list_popup_filtered_indices.len() {
+            self.list_popup_selected_index =
+                self.list_popup_filtered_indices.len().saturating_sub(1);
+        }
+    }
+
+    fn handle_list_popup_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        match key.code {
+            KeyCode::Up => {
+                if self.list_popup_selected_index > 0 {
+                    self.list_popup_selected_index -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.list_popup_selected_index + 1 < self.list_popup_filtered_indices.len() {
+                    self.list_popup_selected_index += 1;
+                }
+            }
+            KeyCode::Esc => {
+                self.close_list_popup();
+            }
+            KeyCode::Enter => {
+                self.close_list_popup();
+            }
+            KeyCode::Char(c) => {
+                self.list_popup_search.push(c);
+                self.update_list_popup_filter();
+            }
+            KeyCode::Backspace => {
+                self.list_popup_search.pop();
+                self.update_list_popup_filter();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn update_model_chooser_filter(&mut self) {
+        let search = self.model_chooser_search.to_ascii_lowercase();
+        if search.is_empty() {
+            self.model_chooser_filtered_indices = (0..self.model_choices.len()).collect();
+        } else {
+            self.model_chooser_filtered_indices = self
+                .model_choices
+                .iter()
+                .enumerate()
+                .filter(|(_, choice)| {
+                    choice.model_id.to_ascii_lowercase().contains(&search)
+                        || choice.provider_name.to_ascii_lowercase().contains(&search)
+                        || choice.provider_id.to_ascii_lowercase().contains(&search)
+                        || choice.provider_type_id.to_ascii_lowercase().contains(&search)
+                })
+                .map(|(index, _)| index)
+                .collect();
+        }
+        if self.selected_model_choice_index >= self.model_chooser_filtered_indices.len() {
+            self.selected_model_choice_index =
+                self.model_chooser_filtered_indices.len().saturating_sub(1);
+        }
     }
 
     async fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
@@ -1548,13 +1722,20 @@ impl OperitTui {
     }
 
     async fn apply_selected_model_choice(&mut self) -> Result<(), String> {
+        if self.model_chooser_filtered_indices.is_empty() {
+            return Ok(());
+        }
+        let original_index = self.model_chooser_filtered_indices[self.selected_model_choice_index];
         let choice = self
             .model_choices
-            .get(self.selected_model_choice_index)
+            .get(original_index)
             .cloned()
             .ok_or_else(|| "no selected model".to_string())?;
         self.apply_chat_model_choice(&choice).await?;
         self.show_model_chooser = false;
+        self.model_list_mode = false;
+        self.model_chooser_search.clear();
+        self.model_chooser_filtered_indices.clear();
         self.focus = FocusArea::Input;
         Ok(())
     }
@@ -1616,11 +1797,11 @@ impl OperitTui {
             )
             .await
             .map_err(|error| error.to_string())?;
-        self.status_message = self.text().chat_model_status(
+        self.set_transient_status_message(self.text().chat_model_status(
             &choice.provider_id,
             &choice.provider_name,
             &choice.model_id,
-        );
+        ));
         self.refresh_context_usage_label().await;
         Ok(())
     }
@@ -2165,7 +2346,7 @@ impl OperitTui {
 
     async fn handle_character_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
-            None => {
+            None | Some("choose") => {
                 let cards = self
                     .core
                     .preferences_character_card_manager()
@@ -2175,30 +2356,8 @@ impl OperitTui {
                 if cards.is_empty() {
                     self.status_message = self.text().character_none().to_string();
                 } else {
-                    let items = cards
-                        .into_iter()
-                        .map(|c| c.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.status_message = self.text().character_list(&items);
-                }
-            }
-            Some("choose") => {
-                let cards = self
-                    .core
-                    .preferences_character_card_manager()
-                    .getAllCharacterCards()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if cards.is_empty() {
-                    self.status_message = self.text().character_none().to_string();
-                } else {
-                    let items = cards
-                        .into_iter()
-                        .map(|c| c.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.status_message = self.text().character_list(&items);
+                    let items = cards.into_iter().map(|c| c.name).collect::<Vec<_>>();
+                    self.open_list_popup(self.text().character_title().to_string(), items);
                 }
             }
             Some(other) => {
@@ -2210,7 +2369,7 @@ impl OperitTui {
 
     async fn handle_group_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
-            None => {
+            None | Some("choose") => {
                 let groups = self
                     .core
                     .preferences_character_group_card_manager()
@@ -2220,30 +2379,8 @@ impl OperitTui {
                 if groups.is_empty() {
                     self.status_message = self.text().group_none().to_string();
                 } else {
-                    let items = groups
-                        .into_iter()
-                        .map(|g| g.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.status_message = self.text().group_list(&items);
-                }
-            }
-            Some("choose") => {
-                let groups = self
-                    .core
-                    .preferences_character_group_card_manager()
-                    .getAllCharacterGroupCards()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if groups.is_empty() {
-                    self.status_message = self.text().group_none().to_string();
-                } else {
-                    let items = groups
-                        .into_iter()
-                        .map(|g| g.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.status_message = self.text().group_list(&items);
+                    let items = groups.into_iter().map(|g| g.name).collect::<Vec<_>>();
+                    self.open_list_popup(self.text().group_title().to_string(), items);
                 }
             }
             Some(other) => {
@@ -2254,144 +2391,128 @@ impl OperitTui {
     }
 
     async fn handle_skill_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None => {
-                let skills = self
-                    .core
-                    .permissions_skill_manager()
-                    .getAvailableSkills()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if skills.is_empty() {
-                    self.status_message = self.text().skill_none().to_string();
-                } else {
-                    let items = skills.into_keys().collect::<Vec<_>>().join(", ");
-                    self.status_message = self.text().skill_status(&items);
-                }
-            }
-            Some("toggle") => {
-                let name = args
-                    .get(1)
-                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
-                self.status_message = self.text().skill_toggled(name, "toggled");
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("skill {other}"));
-            }
+        if args.first().map(String::as_str) == Some("toggle") {
+            let name = args
+                .get(1)
+                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+            self.status_message = self.text().skill_toggled(name, "toggled");
+            return Ok(());
+        }
+        if args.first().is_some() {
+            self.status_message = self.text().unknown_command(&format!("skill {}", args[0]));
+            return Ok(());
+        }
+        let skills = self
+            .core
+            .permissions_skill_manager()
+            .getAvailableSkills()
+            .await
+            .map_err(|error| error.to_string())?;
+        if skills.is_empty() {
+            self.status_message = self.text().skill_none().to_string();
+        } else {
+            let items = skills.into_keys().collect::<Vec<_>>();
+            self.open_list_popup(self.text().skill_title().to_string(), items);
         }
         Ok(())
     }
 
     async fn handle_package_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None => {
-                let names = self
-                    .core
-                    .permissions_pack_tool_package_manager()
-                    .getActivePackageNames()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if names.is_empty() {
-                    self.status_message = self.text().package_none().to_string();
-                } else {
-                    let items = names.join(", ");
-                    self.status_message = self.text().package_status(&items);
-                }
-            }
-            Some("toggle") => {
-                let name = args
-                    .get(1)
-                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
-                self.status_message = self.text().package_toggled(name, "toggled");
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("package {other}"));
-            }
+        if args.first().map(String::as_str) == Some("toggle") {
+            let name = args
+                .get(1)
+                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+            self.status_message = self.text().package_toggled(name, "toggled");
+            return Ok(());
+        }
+        if args.first().is_some() {
+            self.status_message = self.text().unknown_command(&format!("package {}", args[0]));
+            return Ok(());
+        }
+        let names = self
+            .core
+            .permissions_pack_tool_package_manager()
+            .getActivePackageNames()
+            .await
+            .map_err(|error| error.to_string())?;
+        if names.is_empty() {
+            self.status_message = self.text().package_none().to_string();
+        } else {
+            self.open_list_popup(self.text().package_title().to_string(), names);
         }
         Ok(())
     }
 
     async fn handle_plugin_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None => {
-                let plugins = self
-                    .core
-                    .mcp_local_server()
-                    .getAllPluginMetadata()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if plugins.is_empty() {
-                    self.status_message = self.text().plugin_none().to_string();
-                } else {
-                    let items = plugins.into_keys().collect::<Vec<_>>().join(", ");
-                    self.status_message = self.text().plugin_status(&items);
-                }
-            }
-            Some("toggle") => {
-                let name = args
-                    .get(1)
-                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
-                self.status_message = self.text().plugin_toggled(name, "toggled");
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("plugin {other}"));
-            }
+        if args.first().map(String::as_str) == Some("toggle") {
+            let name = args
+                .get(1)
+                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+            self.status_message = self.text().plugin_toggled(name, "toggled");
+            return Ok(());
+        }
+        if args.first().is_some() {
+            self.status_message = self.text().unknown_command(&format!("plugin {}", args[0]));
+            return Ok(());
+        }
+        let plugins = self
+            .core
+            .mcp_local_server()
+            .getAllPluginMetadata()
+            .await
+            .map_err(|error| error.to_string())?;
+        if plugins.is_empty() {
+            self.status_message = self.text().plugin_none().to_string();
+        } else {
+            let items = plugins.into_keys().collect::<Vec<_>>();
+            self.open_list_popup(self.text().plugin_title().to_string(), items);
         }
         Ok(())
     }
 
     async fn handle_mcp_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None => {
-                let servers = self
-                    .core
-                    .mcp_local_server()
-                    .getAllMCPServers()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if servers.is_empty() {
-                    self.status_message = self.text().mcp_none().to_string();
-                } else {
-                    let items = servers.into_keys().collect::<Vec<_>>().join(", ");
-                    self.status_message = self.text().mcp_status(&items);
-                }
-            }
-            Some("toggle") => {
-                let name = args
-                    .get(1)
-                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
-                self.status_message = self.text().mcp_toggled(name, "toggled");
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("mcp {other}"));
-            }
+        if args.first().map(String::as_str) == Some("toggle") {
+            let name = args
+                .get(1)
+                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+            self.status_message = self.text().mcp_toggled(name, "toggled");
+            return Ok(());
+        }
+        if args.first().is_some() {
+            self.status_message = self.text().unknown_command(&format!("mcp {}", args[0]));
+            return Ok(());
+        }
+        let servers = self
+            .core
+            .mcp_local_server()
+            .getAllMCPServers()
+            .await
+            .map_err(|error| error.to_string())?;
+        if servers.is_empty() {
+            self.status_message = self.text().mcp_none().to_string();
+        } else {
+            let items = servers.into_keys().collect::<Vec<_>>();
+            self.open_list_popup(self.text().mcp_title().to_string(), items);
         }
         Ok(())
     }
 
     async fn handle_tag_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None => {
-                let tags = self
-                    .core
-                    .preferences_prompt_tag_manager()
-                    .getAllTags()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if tags.is_empty() {
-                    self.status_message = self.text().tag_none().to_string();
-                } else {
-                    let items = tags
-                        .into_iter()
-                        .map(|t| t.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.status_message = self.text().tag_status(&items);
-                }
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("tag {other}"));
-            }
+        if args.first().is_some() {
+            self.status_message = self.text().unknown_command(&format!("tag {}", args[0]));
+            return Ok(());
+        }
+        let tags = self
+            .core
+            .preferences_prompt_tag_manager()
+            .getAllTags()
+            .await
+            .map_err(|error| error.to_string())?;
+        if tags.is_empty() {
+            self.status_message = self.text().tag_none().to_string();
+        } else {
+            let items = tags.into_iter().map(|t| t.name).collect::<Vec<_>>();
+            self.open_list_popup(self.text().tag_title().to_string(), items);
         }
         Ok(())
     }
@@ -2404,6 +2525,35 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
         self.status_message = self.text().update_version(&version);
+        Ok(())
+    }
+
+    async fn open_config_popup(&mut self) -> Result<(), String> {
+        self.show_config_popup = true;
+        self.config_ui.state = config::ConfigState::ProviderList;
+        self.config_ui.refresh_providers(&mut self.core).await;
+        self.config_ui.search.clear();
+        self.config_ui.selected_index = 0;
+        self.config_ui.update_filter();
+
+        // Fetch current chat binding
+        if let Ok(binding) = self.core.preferences_functional_config_manager()
+            .getModelBindingForFunction(FunctionType::CHAT)
+            .await
+        {
+            self.config_ui.chat_provider_id = binding.providerId;
+            self.config_ui.chat_model_id = binding.modelId;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_config_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let text = self.text();
+        let closed = self.config_ui.handle_key(key, &mut self.core, text).await?;
+        if closed {
+            self.show_config_popup = false;
+        }
         Ok(())
     }
 

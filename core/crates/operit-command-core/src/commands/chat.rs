@@ -168,7 +168,7 @@ fn rollback_chat(
         .chatRuntimeHolder
         .getCore(ChatRuntimeSlot::MAIN)
         .rollbackToMessage(index);
-    if rolledBack {
+    if rolledBack.is_some() {
         output.push_stdout_line(format!("rolled back to message: {index}"));
     } else {
         output.push_stdout_line("rollback skipped: message must exist and be a user message");
@@ -614,7 +614,6 @@ async fn dispatch_chat_message_with_application(
     } else {
         Some(replyToMessage)
     };
-    core.updateUserMessage(sendArgs.message);
     let beforeLastAiTimestamp = core
         .chatHistoryFlow()
         .value()
@@ -627,7 +626,7 @@ async fn dispatch_chat_message_with_application(
         PromptFunctionType::CHAT,
         None,
         None,
-        None,
+        sendArgs.message,
         None,
         Some(chatBinding.providerId),
         Some(chatBinding.modelId),

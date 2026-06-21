@@ -7,6 +7,7 @@ import '../../../l10n/generated/app_localizations.dart';
 import '../../common/components/OperitDialog.dart';
 
 enum ConversationAction {
+  openInWindow,
   rename,
   moveUp,
   moveDown,
@@ -170,6 +171,12 @@ class ConversationActionDialog extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
+          ),
+          _ConversationActionTile(
+            icon: Icons.open_in_new,
+            label: '在新窗口打开',
+            onTap: () =>
+                Navigator.of(context).pop(ConversationAction.openInWindow),
           ),
           _ConversationActionTile(
             icon: Icons.edit,

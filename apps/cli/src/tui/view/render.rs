@@ -59,6 +59,14 @@ impl OperitTui {
             self.render_model_chooser(frame);
         }
 
+        if self.show_list_popup {
+            self.render_list_popup(frame);
+        }
+
+        if self.show_config_popup {
+            self.config_ui.render(frame, self.text());
+        }
+
         if self.show_help {
             self.render_help_modal(frame);
         }
@@ -404,10 +412,59 @@ impl OperitTui {
     fn render_model_chooser(&self, frame: &mut Frame) {
         let popup = centered_rect(84, 70, frame.area());
         frame.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .title(if self.model_list_mode {
+                self.text().model_list_title()
+            } else {
+                self.text().choose_chat_model_title()
+            })
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT));
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+
+        let search_display = if self.model_chooser_search.is_empty() {
+            Span::styled(
+                self.text().model_chooser_search_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )
+        } else {
+            Span::styled(
+                &self.model_chooser_search,
+                Style::default(),
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("> ", Style::default().fg(theme::ACCENT)),
+                search_display,
+            ])),
+            areas[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "─".repeat(areas[1].width as usize),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))),
+            areas[1],
+        );
+
         let items = self
-            .model_choices
+            .model_chooser_filtered_indices
             .iter()
-            .map(|choice| {
+            .map(|&original_index| {
+                let choice = &self.model_choices[original_index];
                 let marker = if choice.selected {
                     self.text().current_marker()
                 } else {
@@ -440,12 +497,6 @@ impl OperitTui {
             })
             .collect::<Vec<_>>();
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .title(self.text().choose_chat_model_title())
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT)),
-            )
             .highlight_style(
                 Style::default()
                     .bg(theme::ACCENT_BG)
@@ -454,13 +505,87 @@ impl OperitTui {
             )
             .highlight_symbol(">> ");
         let mut state = ListState::default();
-        if !self.model_choices.is_empty() {
+        if !self.model_chooser_filtered_indices.is_empty() {
             state.select(Some(
                 self.selected_model_choice_index
-                    .min(self.model_choices.len().saturating_sub(1)),
+                    .min(self.model_chooser_filtered_indices.len().saturating_sub(1)),
             ));
         }
-        frame.render_stateful_widget(list, popup, &mut state);
+        frame.render_stateful_widget(list, areas[2], &mut state);
+    }
+
+    fn render_list_popup(&self, frame: &mut Frame) {
+        let popup = centered_rect(60, 70, frame.area());
+        frame.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .title(self.list_popup_title.as_str())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT));
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+
+        let search_display = if self.list_popup_search.is_empty() {
+            Span::styled(
+                self.text().model_chooser_search_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )
+        } else {
+            Span::styled(
+                &self.list_popup_search,
+                Style::default(),
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("> ", Style::default().fg(theme::ACCENT)),
+                search_display,
+            ])),
+            areas[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "─".repeat(areas[1].width as usize),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))),
+            areas[1],
+        );
+
+        let items = self
+            .list_popup_filtered_indices
+            .iter()
+            .map(|&original_index| {
+                ListItem::new(vec![Line::from(
+                    self.list_popup_items[original_index].as_str(),
+                )])
+            })
+            .collect::<Vec<_>>();
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::TEXT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+        let mut state = ListState::default();
+        if !self.list_popup_filtered_indices.is_empty() {
+            state.select(Some(
+                self.list_popup_selected_index
+                    .min(self.list_popup_filtered_indices.len().saturating_sub(1)),
+            ));
+        }
+        frame.render_stateful_widget(list, areas[2], &mut state);
     }
 
     fn render_help_modal(&self, frame: &mut Frame) {

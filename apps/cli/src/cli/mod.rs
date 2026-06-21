@@ -48,6 +48,7 @@ use operit_runtime::util::stream::Stream::Stream;
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
+use operit_link::CoreLinkError;
 use sha2::{Digest, Sha256};
 use tar::Archive;
 use zip::ZipArchive;
@@ -1020,7 +1021,7 @@ async fn run_core_command_and_print(
     let output = core
         .runCoreCommand(args)
         .await
-        .map_err(|error| rewrite_core_command_usage_message(error.to_string()))?;
+        .map_err(core_command_error_message)?;
     if !output.stdout.is_empty() {
         print!("{}", rewrite_core_command_usage_message(output.stdout));
     }
@@ -1031,7 +1032,36 @@ async fn run_core_command_and_print(
 }
 
 fn rewrite_core_command_usage_message(message: String) -> String {
-    rewrite_cli_usage_message(message)
+    let ends_with_newline = message.ends_with('\n');
+    let lines = message
+        .lines()
+        .map(rewrite_core_command_usage_line)
+        .collect::<Vec<_>>();
+    let mut rewritten = lines.join("\n");
+    if ends_with_newline {
+        rewritten.push('\n');
+    }
+    rewritten
+}
+
+fn rewrite_core_command_usage_line(line: &str) -> String {
+    const ROOT_COMMAND_PREFIX: &str = "operit2 ";
+    const CLI_COMMAND_PREFIX: &str = "operit2 cli ";
+    if line.starts_with(CLI_COMMAND_PREFIX) {
+        return line.to_string();
+    }
+    match line.strip_prefix(ROOT_COMMAND_PREFIX) {
+        Some(rest) => format!("{CLI_COMMAND_PREFIX}{rest}"),
+        None => rewrite_cli_usage_message(line.to_string()),
+    }
+}
+
+fn core_command_error_message(error: CoreLinkError) -> String {
+    if error.isCommandError() {
+        rewrite_core_command_usage_message(error.message)
+    } else {
+        rewrite_core_command_usage_message(error.to_string())
+    }
 }
 
 async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
@@ -1147,16 +1177,16 @@ fn print_model_usage() {
     println!("operit2 cli model provider-model-create <provider-id> <provider-model-id>");
     println!("operit2 cli model list");
     println!("operit2 cli model show [model-id]");
-    println!("operit2 cli model use <model-id>");
+    println!("operit2 cli model use <provider-id> <model-id>");
     println!("operit2 cli model params [model-id]");
-    println!("operit2 cli model parameters <model-id> <parameters-json>");
+    println!("operit2 cli model parameters <provider-id> <model-id> <parameters-json>");
     println!("operit2 cli model context-show [model-id]");
-    println!("operit2 cli model context-set <model-id> <context-length> <max-context-length> <enable-max-context-mode>");
+    println!("operit2 cli model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>");
     println!("operit2 cli model summary-show [model-id]");
-    println!("operit2 cli model summary-set <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
+    println!("operit2 cli model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
     println!("operit2 cli model function-list");
     println!("operit2 cli model function-show <function-type>");
-    println!("operit2 cli model function-set <function-type> <model-id>");
+    println!("operit2 cli model function-set <function-type> <provider-id> <model-id>");
     println!("operit2 cli model function-reset [function-type]");
 }
 

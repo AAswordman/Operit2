@@ -69,6 +69,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onTakePhoto,
     required this.onAttachMemory,
     required this.onAttachFile,
+    required this.onAttachFiles,
     required this.onAttachScreenContent,
     required this.onAttachNotifications,
     required this.onAttachLocation,
@@ -134,6 +135,7 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onTakePhoto;
   final VoidCallback onAttachMemory;
   final VoidCallback onAttachFile;
+  final ValueChanged<List<String>> onAttachFiles;
   final VoidCallback onAttachScreenContent;
   final VoidCallback onAttachNotifications;
   final VoidCallback onAttachLocation;
@@ -221,6 +223,7 @@ class ChatScreenContent extends StatelessWidget {
                       onTakePhoto: onTakePhoto,
                       onAttachMemory: onAttachMemory,
                       onAttachFile: onAttachFile,
+                      onAttachFiles: onAttachFiles,
                       onAttachScreenContent: onAttachScreenContent,
                       onAttachNotifications: onAttachNotifications,
                       onAttachLocation: onAttachLocation,

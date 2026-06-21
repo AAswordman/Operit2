@@ -14,6 +14,7 @@ import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
+import '../../window/DetachedChatWindowLauncher.dart';
 import 'CollapsedDrawerContent.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
@@ -439,6 +440,11 @@ class _DrawerContentState extends State<DrawerContent> {
       return;
     }
     switch (action) {
+      case ConversationAction.openInWindow:
+        await DetachedChatWindowLauncher.openChat(
+          chatId: history.id,
+          title: history.title,
+        );
       case ConversationAction.rename:
         await _showRenameConversationDialog(history);
       case ConversationAction.moveUp:
@@ -1039,6 +1045,17 @@ class _DrawerContentState extends State<DrawerContent> {
                             },
                             onLongPress: () {
                               _showConversationActionDialog(history);
+                            },
+                            onDetach: () {
+                              DetachedChatWindowLauncher.openChat(
+                                chatId: history.id,
+                                title: history.title,
+                              ).catchError((Object error, StackTrace stackTrace) {
+                                debugPrint(
+                                  'Failed to open detached chat window: $error\n$stackTrace',
+                                );
+                                return null;
+                              });
                             },
                             onMoveTo: (moved) =>
                                 _moveConversationTo(moved, history),

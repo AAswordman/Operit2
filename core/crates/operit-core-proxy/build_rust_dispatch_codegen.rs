@@ -108,7 +108,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str(
         "        let args: Vec<String> = decode_core_arg(&mut __core_args, \"args\")?;\n",
     );
-    output.push_str("        let output = tokio::task::block_in_place(|| operit_command_core::run_core_command(&mut proxy.application, &args)).map_err(|error| operit_link::CoreLinkError::internal(error))?;\n");
+    output.push_str("        let output = tokio::task::block_in_place(|| operit_command_core::run_core_command(&mut proxy.application, &args)).map_err(operit_link::CoreLinkError::command)?;\n");
     output.push_str("        return to_core_value(output);\n");
     output.push_str("    }\n");
     if let Some(application) = objects

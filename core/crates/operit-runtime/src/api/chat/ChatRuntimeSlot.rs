@@ -2,4 +2,5 @@
 pub enum ChatRuntimeSlot {
     MAIN,
     FLOATING,
+    DETACHED(String),
 }

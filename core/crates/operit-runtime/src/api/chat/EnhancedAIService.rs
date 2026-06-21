@@ -469,13 +469,21 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
 
 impl EnhancedAIService {
     pub fn new(conversation_service: ConversationService) -> Self {
+        Self::newWithToolHandler(conversation_service, AIToolHandler::default())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newWithToolHandler(
+        conversation_service: ConversationService,
+        tool_handler: AIToolHandler,
+    ) -> Self {
         Self {
             multi_service_manager: MultiServiceManager::default(),
             init_scope: InitScopeMirror,
             init_mutex: InitMutexMirror,
             conversation_service,
             file_binding_service: FileBindingServiceMirror,
-            tool_handler: AIToolHandler::default(),
+            tool_handler,
             input_processing_state: mutableStateFlow(InputProcessingState::Idle),
             request_window_estimate_flow: mutableStateFlow(None),
             api_preferences: ApiPreferencesMirror,

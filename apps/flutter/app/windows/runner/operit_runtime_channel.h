@@ -6,6 +6,8 @@
 
 void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window);
 
+void ShutdownOperitRuntimeChannel();
+
 bool HandleOperitRuntimeChannelWindowMessage(UINT message,
                                              WPARAM wparam,
                                              LPARAM lparam,

@@ -80,37 +80,44 @@ class _ChatToastHostState extends State<ChatToastHost> {
                 side: BorderSide(color: colorScheme.outlineVariant),
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: <Widget>[
-                    const OperitLogoMark(size: 36),
-                    const SizedBox(width: 8),
+                    const OperitLogoMark(size: 28),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: 28,
-                          maxHeight: compact
-                              ? double.infinity
-                              : widget.maxHeight,
-                        ),
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          physics: compact
-                              ? const NeverScrollableScrollPhysics()
-                              : const BouncingScrollPhysics(),
-                          child: Align(
-                            alignment: compact
-                                ? Alignment.centerLeft
-                                : Alignment.topLeft,
-                            child: Text(
-                              message ?? '',
-                              style: Theme.of(context).textTheme.bodyMedium,
-                              overflow: TextOverflow.clip,
+                      child: compact
+                          ? SizedBox(
+                              height: 28,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  message ?? '',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                  overflow: TextOverflow.clip,
+                                ),
+                              ),
+                            )
+                          : ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxHeight: widget.maxHeight,
+                              ),
+                              child: SingleChildScrollView(
+                                controller: _scrollController,
+                                physics: const BouncingScrollPhysics(),
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Text(
+                                    message ?? '',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium,
+                                    overflow: TextOverflow.clip,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                      ),
                     ),
                     IconButton(
                       onPressed: widget.onDismiss,

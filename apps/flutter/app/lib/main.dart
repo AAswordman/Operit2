@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/errors/UnhandledErrorReporter.dart';
@@ -10,38 +11,27 @@ import 'core/host/RuntimeHostInteractionSubscriber.dart';
 import 'core/runtime/RuntimeConnectionManager.dart';
 import 'core/link_host/LinkHostServer.dart';
 import 'ui/main/OperitApp.dart';
+import 'ui/window/DetachedChatWindowApp.dart';
+import 'ui/window/OperitWindowArguments.dart';
 
-void main() async {
+void main(List<String> _) async {
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       await ClientLogger.initialize();
       _installClientLogHooks();
-      RuntimeHostInteractionSubscriber.install();
       await RuntimeConnectionManager.instance.initialize();
-      String? startupWebAccessError;
-      try {
-        await LinkHostServer.instance.initializeFromConfig();
-      } catch (error, stackTrace) {
-        startupWebAccessError = error.toString();
-        ClientLogger.e(
-          'Web access server failed during startup',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
       await LiquidGlassWidgets.initialize();
-      runApp(
-        LiquidGlassWidgets.wrap(
-          respectSystemAccessibility: false,
-          theme: GlassThemeData.simple(
-            blur: 2.5,
-            thickness: 36,
-            quality: GlassQuality.standard,
-          ),
-          child: OperitApp(startupWebAccessError: startupWebAccessError),
-        ),
+      final windowController = await WindowController.fromCurrentEngine();
+      final windowArguments = OperitWindowArguments.parse(
+        windowController.arguments,
       );
+      switch (windowArguments) {
+        case MainWindowArguments():
+          await _runMainWindow();
+        case final DetachedChatWindowArguments detachedArguments:
+          _runDetachedChatWindow(detachedArguments);
+      }
     },
     (error, stackTrace) {
       if (ClientLogger.isInitialized) {
@@ -57,6 +47,46 @@ void main() async {
         stackTrace: stackTrace,
       );
     },
+  );
+}
+
+Future<void> _runMainWindow() async {
+  RuntimeHostInteractionSubscriber.install();
+  String? startupWebAccessError;
+  try {
+    await LinkHostServer.instance.initializeFromConfig();
+  } catch (error, stackTrace) {
+    startupWebAccessError = error.toString();
+    ClientLogger.e(
+      'Web access server failed during startup',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+  runApp(
+    LiquidGlassWidgets.wrap(
+      respectSystemAccessibility: false,
+      theme: GlassThemeData.simple(
+        blur: 2.5,
+        thickness: 36,
+        quality: GlassQuality.standard,
+      ),
+      child: OperitApp(startupWebAccessError: startupWebAccessError),
+    ),
+  );
+}
+
+void _runDetachedChatWindow(DetachedChatWindowArguments arguments) {
+  runApp(
+    LiquidGlassWidgets.wrap(
+      respectSystemAccessibility: false,
+      theme: GlassThemeData.simple(
+        blur: 2.5,
+        thickness: 36,
+        quality: GlassQuality.standard,
+      ),
+      child: DetachedChatWindowApp(arguments: arguments),
+    ),
   );
 }
 

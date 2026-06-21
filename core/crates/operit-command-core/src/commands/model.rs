@@ -663,16 +663,16 @@ fn print_model_usage() {
     println!("operit2 model provider-model-add <provider-id> <provider-model-id>");
     println!("operit2 model provider-model-create <provider-id> <provider-model-id>");
     println!("operit2 model list");
-    println!("operit2 model show [model-id]");
-    println!("operit2 model use <model-id>");
-    println!("operit2 model params [model-id]");
-    println!("operit2 model parameters <model-id> <parameters-json>");
-    println!("operit2 model context-show [model-id]");
+    println!("operit2 model show [provider-id] [model-id]");
+    println!("operit2 model use <provider-id> <model-id>");
+    println!("operit2 model params [provider-id] [model-id]");
+    println!("operit2 model parameters <provider-id> <model-id> <parameters-json>");
+    println!("operit2 model context-show [provider-id] [model-id]");
     println!("operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>");
-    println!("operit2 model summary-show [model-id]");
-    println!("operit2 model summary-set <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
+    println!("operit2 model summary-show [provider-id] [model-id]");
+    println!("operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
     println!("operit2 model function-list");
     println!("operit2 model function-show <function-type>");
-    println!("operit2 model function-set <function-type> <model-id>");
+    println!("operit2 model function-set <function-type> <provider-id> <model-id>");
     println!("operit2 model function-reset [function-type]");
 }

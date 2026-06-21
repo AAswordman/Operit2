@@ -412,7 +412,7 @@ impl StandardChatManagerTool {
                         PromptFunctionType::CHAT,
                         roleCardId,
                         chatId.clone(),
-                        Some(message.clone()),
+                        message.clone(),
                         proxySenderName,
                         None,
                         None,

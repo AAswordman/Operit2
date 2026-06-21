@@ -898,7 +898,10 @@ class _CharacterCardTile extends StatelessWidget {
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
         imagePath: avatarUri,
-        placeholderIcon: Icons.face_outlined,
+        placeholder: Image.asset(
+          _SettingsListAvatar.operitAvatarAsset,
+          fit: BoxFit.cover,
+        ),
         active: active,
       ),
       title: Text(card.name),
@@ -919,7 +922,7 @@ class _CharacterCardTile extends StatelessWidget {
         ),
         SettingsEntityIconButton(
           tooltip: l10n.settingsCharactersEditUserMarkdown,
-          icon: Icons.description_outlined,
+          icon: Icons.assignment_ind_outlined,
           onPressed: onEditUserMarkdown,
         ),
         active
@@ -960,7 +963,7 @@ class _CharacterGroupTile extends StatelessWidget {
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
         imagePath: avatarUri,
-        placeholderIcon: Icons.groups_outlined,
+        placeholder: const Center(child: Icon(Icons.groups_outlined, size: 18)),
         active: active,
       ),
       title: Text(group.name),
@@ -986,12 +989,14 @@ class _CharacterGroupTile extends StatelessWidget {
 class _SettingsListAvatar extends StatelessWidget {
   const _SettingsListAvatar({
     required this.imagePath,
-    required this.placeholderIcon,
+    required this.placeholder,
     required this.active,
   });
 
+  static const String operitAvatarAsset = 'assets/images/operit_avatar.png';
+
   final String? imagePath;
-  final IconData placeholderIcon;
+  final Widget placeholder;
   final bool active;
 
   @override
@@ -1013,12 +1018,11 @@ class _SettingsListAvatar extends StatelessWidget {
               child: ClipOval(
                 child: path != null && path.isNotEmpty
                     ? Image.file(File(path), fit: BoxFit.cover)
-                    : Center(
-                        child: Icon(
-                          placeholderIcon,
-                          size: 18,
+                    : IconTheme(
+                        data: IconThemeData(
                           color: colorScheme.onSurfaceVariant,
                         ),
+                        child: placeholder,
                       ),
               ),
             ),
@@ -1075,7 +1079,7 @@ class _SharedMemoryStoreTile extends StatelessWidget {
         ),
         SettingsEntityIconButton(
           tooltip: l10n.settingsCharactersEditUserMarkdown,
-          icon: Icons.description_outlined,
+          icon: Icons.assignment_ind_outlined,
           onPressed: onEditUserMarkdown,
         ),
         SettingsEntityIconButton(
@@ -2030,14 +2034,6 @@ class _CharacterCardEditorDialogState
                 controller: _descriptionController,
                 label: l10n.settingsCharactersDescription,
               ),
-              _CharacterTagPicker(
-                tags: _tags,
-                selectedTagIds: _attachedTagIds,
-                onManageTags: _openTagManager,
-                onChanged: (tagId, selected) {
-                  _setTagSelected(tagId, selected);
-                },
-              ),
               _DialogExpandableTextField(
                 controller: _characterSettingController,
                 label: l10n.settingsCharactersCharacterSetting,
@@ -2047,6 +2043,14 @@ class _CharacterCardEditorDialogState
                 controller: _openingStatementController,
                 label: l10n.settingsCharactersOpeningStatement,
                 maxLines: 3,
+              ),
+              _CharacterTagPicker(
+                tags: _tags,
+                selectedTagIds: _attachedTagIds,
+                onManageTags: _openTagManager,
+                onChanged: (tagId, selected) {
+                  _setTagSelected(tagId, selected);
+                },
               ),
               Theme(
                 data: Theme.of(context).copyWith(

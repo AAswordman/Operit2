@@ -1,5 +1,7 @@
 #[path = "core/app.rs"]
 mod app;
+#[path = "config/mod.rs"]
+mod config;
 #[path = "core/approval.rs"]
 mod approval;
 #[path = "input/commands.rs"]

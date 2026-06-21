@@ -61,10 +61,6 @@
   }
 
   async function pairWebAccessSession(baseUrl) {
-    const token = globalThis.prompt("Operit Web Access token");
-    if (token === null || token.trim().length === 0) {
-      throw new Error("web access token is required");
-    }
     const keyPair = await crypto.subtle.generateKey(
       { name: "X25519" },
       true,
@@ -75,14 +71,26 @@
     );
     const clientDeviceId = `web-client-${crypto.randomUUID()}`;
     const clientNonce = crypto.randomUUID();
-    const start = await postJson(`${baseUrl}/link/pair/start`, {
-      pairingServiceVersion,
-      tokenHash: await linkTokenHash(token.trim()),
-      clientDeviceId,
-      clientDeviceInfo: webDeviceInfo(),
-      clientPublicKey,
-      clientNonce,
-    });
+    let start;
+    while (true) {
+      const token = globalThis.prompt("Operit Web Access token");
+      if (token === null || token.trim().length === 0) {
+        throw new Error("web access token is required");
+      }
+      try {
+        start = await postJson(`${baseUrl}/link/pair/start`, {
+          pairingServiceVersion,
+          tokenHash: await linkTokenHash(token.trim()),
+          clientDeviceId,
+          clientDeviceInfo: webDeviceInfo(),
+          clientPublicKey,
+          clientNonce,
+        });
+        break;
+      } catch (error) {
+        globalThis.alert(`Operit Web Access token rejected: ${error.message}`);
+      }
+    }
     const corePublicKey = await crypto.subtle.importKey(
       "raw",
       base64ToBytes(start.corePublicKey),
@@ -97,15 +105,23 @@
         256,
       ),
     );
-    const pairingCode = globalThis.prompt("Operit Web Access pairing code");
-    if (pairingCode === null || pairingCode.trim().length === 0) {
-      throw new Error("web access pairing code is required");
+    let finish;
+    while (true) {
+      const pairingCode = globalThis.prompt("Operit Web Access pairing code");
+      if (pairingCode === null || pairingCode.trim().length === 0) {
+        throw new Error("web access pairing code is required");
+      }
+      try {
+        finish = await postJson(`${baseUrl}/link/pair/finish`, {
+          pairingId: start.pairingId,
+          pairingCode: pairingCode.trim(),
+          clientProof: await proof(sharedSecret, clientNonce, start.serverNonce, "client"),
+        });
+        break;
+      } catch (error) {
+        globalThis.alert(`Operit Web Access pairing code rejected: ${error.message}`);
+      }
     }
-    const finish = await postJson(`${baseUrl}/link/pair/finish`, {
-      pairingId: start.pairingId,
-      pairingCode: pairingCode.trim(),
-      clientProof: await proof(sharedSecret, clientNonce, start.serverNonce, "client"),
-    });
     const expectedCoreProof = await proof(sharedSecret, clientNonce, start.serverNonce, "core");
     if (finish.coreProof !== expectedCoreProof) {
       throw new Error("web access core proof mismatch");

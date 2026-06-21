@@ -92,8 +92,8 @@ class CliBuildTarget:
 CLI_RUST_TARGETS = {
     ("windows", "x86_64"): "x86_64-pc-windows-msvc",
     ("windows", "aarch64"): "aarch64-pc-windows-msvc",
-    ("linux", "x86_64"): "x86_64-unknown-linux-gnu",
-    ("linux", "aarch64"): "aarch64-unknown-linux-gnu",
+    ("linux", "x86_64"): "x86_64-unknown-linux-musl",
+    ("linux", "aarch64"): "aarch64-unknown-linux-musl",
     ("macos", "x86_64"): "x86_64-apple-darwin",
     ("macos", "aarch64"): "aarch64-apple-darwin",
 }
@@ -786,58 +786,7 @@ tar -czf {dist}/operit2-app-linux-x86_64.tar.gz -C apps/flutter/app/build/linux/
 def build_wsl_linux_cli(distro):
     if not wsl_check_command(distro, "cargo"):
         raise RuntimeError("WSL Linux CLI build requires cargo inside WSL.")
-    repo = shlex.quote(windows_path_to_wsl(REPO_ROOT))
-    dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
-    work = shlex.quote(windows_path_to_wsl(WORK_DIR / "cli-linux-x86_64"))
-    script = f"""
-set -e
-cd {repo}
-cargo build --release --manifest-path apps/cli/Cargo.toml
-rm -rf {work}
-mkdir -p {work} {dist}
-cp apps/cli/target/release/operit2 {work}/operit2
-cat > {work}/install.sh <<'EOF'
-#!/usr/bin/env sh
-set -eu
-
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-source_file="$script_dir/operit2"
-
-test -f "$source_file"
-chmod +x "$source_file"
-"$source_file" cli install --source "$source_file"
-EOF
-cat > {work}/uninstall.sh <<'EOF'
-#!/usr/bin/env sh
-set -eu
-
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-source_file="$script_dir/operit2"
-
-test -f "$source_file"
-chmod +x "$source_file"
-"$source_file" cli uninstall
-EOF
-cat > {work}/README.txt <<'EOF'
-Operit2 CLI for Linux
-
-Install:
-  chmod +x install.sh
-  ./install.sh
-
-Uninstall:
-  chmod +x uninstall.sh
-  ./uninstall.sh
-
-Command after install:
-  operit
-  operit2
-EOF
-chmod +x {work}/operit2 {work}/install.sh {work}/uninstall.sh
-rm -f {dist}/operit2-cli-linux-x86_64.tar.gz
-tar -czf {dist}/operit2-cli-linux-x86_64.tar.gz -C {work} .
-"""
-    wsl_run(distro, script)
+    wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", CLI_RUST_TARGETS[("linux", "x86_64")]))
 
 
 def wsl_build_cli_target(distro, target):
@@ -847,27 +796,25 @@ def wsl_build_cli_target(distro, target):
     binary_name = cli_binary_name(target.platform)
     repo = shlex.quote(windows_path_to_wsl(REPO_ROOT))
     triple = target.rust_target
-    if target.arch == "aarch64":
+    if target.rust_target == "x86_64-unknown-linux-musl":
         dependency_check = """
-command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || {
-    echo "Missing WSL dependency: aarch64-linux-gnu-gcc" >&2
-    echo "Fedora: sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc" >&2
+command -v musl-gcc >/dev/null 2>&1 || {
+    echo "Missing WSL dependency: musl-gcc" >&2
+    echo "Fedora: sudo dnf install -y musl-gcc musl-devel musl-libc-static" >&2
     exit 1
 }
-aarch64_sysroot=/usr/aarch64-redhat-linux/sys-root/fc43
-test -f "$aarch64_sysroot/usr/include/stdint.h" || {
-    echo "Missing WSL dependency: $aarch64_sysroot/usr/include/stdint.h" >&2
-    echo "Fedora: sudo dnf install -y sysroot-aarch64-fc43-glibc" >&2
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+export CC_x86_64_unknown_linux_musl=musl-gcc
+"""
+    elif target.rust_target == "aarch64-unknown-linux-musl":
+        dependency_check = """
+command -v aarch64-linux-musl-gcc >/dev/null 2>&1 || {
+    echo "Missing WSL dependency: aarch64-linux-musl-gcc" >&2
+    echo "Install an aarch64 musl cross C compiler and put aarch64-linux-musl-gcc on PATH." >&2
     exit 1
 }
-test -f "$aarch64_sysroot/usr/lib64/libgcc_s.so" || {
-    echo "Missing WSL dependency: $aarch64_sysroot/usr/lib64/libgcc_s.so" >&2
-    echo "Fedora: dnf5 --forcearch=aarch64 download libgcc, then unpack lib64/libgcc_s*.so* into $aarch64_sysroot/usr/lib64" >&2
-    exit 1
-}
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=$aarch64_sysroot"
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=--sysroot=$aarch64_sysroot"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
+export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
 """
     else:
         dependency_check = ""
@@ -933,8 +880,8 @@ def build_wsl_linux(products, distro, build_name, build_number, cli_arches="host
         build_wsl_linux_app(distro, build_name, build_number)
     if "cli" in products:
         if cli_arches == "all":
-            wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", "x86_64-unknown-linux-gnu"))
-            wsl_build_cli_target(distro, CliBuildTarget("linux", "aarch64", "aarch64-unknown-linux-gnu"))
+            wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", CLI_RUST_TARGETS[("linux", "x86_64")]))
+            wsl_build_cli_target(distro, CliBuildTarget("linux", "aarch64", CLI_RUST_TARGETS[("linux", "aarch64")]))
         else:
             build_wsl_linux_cli(distro)
 
@@ -1076,10 +1023,16 @@ def vs_dev_env(vcvars_path, arch):
         if "=" in line:
             key, _, value = line.partition("=")
             env[key] = value
+    canonical_env = {}
     for key in ("INCLUDE", "LIB", "PATH"):
-        if key not in env:
+        actual_key = next(
+            (name for name in env.keys() if name.upper() == key),
+            None,
+        )
+        if actual_key is None:
             raise RuntimeError(f"vcvarsall.bat did not produce {key} for {arch}")
-    return env
+        canonical_env[key] = env[actual_key]
+    return canonical_env
 
 
 def build_cli_target(target, use_default_target=False):

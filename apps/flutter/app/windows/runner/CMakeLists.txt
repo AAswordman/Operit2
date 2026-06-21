@@ -47,11 +47,16 @@ add_custom_target(sync_operit_plugins ALL
 )
 
 set(OPERIT_FLUTTER_BRIDGE_CRATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/operit-flutter-bridge")
+find_program(OPERIT_CARGO_EXECUTABLE
+  NAMES cargo cargo.exe
+  HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{CARGO_HOME}/bin"
+  REQUIRED
+)
 add_custom_target(operit_flutter_bridge ALL
   COMMAND ${CMAKE_COMMAND} -E env
     "RUSTFLAGS=-Awarnings"
     "CARGO_TERM_COLOR=never"
-    cargo build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
+    "${OPERIT_CARGO_EXECUTABLE}" build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
   WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
 )
 add_dependencies(operit_flutter_bridge sync_operit_plugins)

@@ -83,11 +83,12 @@ impl OperitApplication {
         self.initAndroidPermissionPreferences();
         self.initializeFunctionalPromptManager()?;
         self.preloadDatabase();
-        self.chatRuntimeHolder = ChatRuntimeHolder::new();
         let mut toolHandler = AIToolHandler::getInstance(self.applicationContext.clone());
         toolHandler.registerDefaultTools();
         PluginRegistry::initializeBuiltins();
         self.initMcpPlugins();
+        self.chatRuntimeHolder =
+            ChatRuntimeHolder::newWithApplicationContext(self.applicationContext.clone());
         self.initialized = true;
         Ok(())
     }

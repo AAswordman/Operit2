@@ -97,17 +97,27 @@ impl LocalCoreProxy {
 }
 
 fn chat_runtime_slot(path: &CoreObjectPath) -> Option<ChatRuntimeSlot> {
-    match path.key().as_str() {
-        "chatRuntimeHolder.MAIN" | "chatRuntimeHolder.main" => Some(ChatRuntimeSlot::MAIN),
-        "chatRuntimeHolder.FLOATING" | "chatRuntimeHolder.floating" => {
-            Some(ChatRuntimeSlot::FLOATING)
+    let segments = path.segments.as_slice();
+    match segments {
+        [root, slot] if root == "chatRuntimeHolder" => chat_runtime_slot_from_segments(slot, None),
+        [root, holder, slot] if root == "application" && holder == "chatRuntimeHolder" => {
+            chat_runtime_slot_from_segments(slot, None)
         }
-        "application.chatRuntimeHolder.MAIN" | "application.chatRuntimeHolder.main" => {
-            Some(ChatRuntimeSlot::MAIN)
+        [root, slot, id] if root == "chatRuntimeHolder" => {
+            chat_runtime_slot_from_segments(slot, Some(id))
         }
-        "application.chatRuntimeHolder.FLOATING" | "application.chatRuntimeHolder.floating" => {
-            Some(ChatRuntimeSlot::FLOATING)
+        [root, holder, slot, id] if root == "application" && holder == "chatRuntimeHolder" => {
+            chat_runtime_slot_from_segments(slot, Some(id))
         }
+        _ => None,
+    }
+}
+
+fn chat_runtime_slot_from_segments(slot: &str, id: Option<&String>) -> Option<ChatRuntimeSlot> {
+    match (slot, id) {
+        ("MAIN" | "main", None) => Some(ChatRuntimeSlot::MAIN),
+        ("FLOATING" | "floating", None) => Some(ChatRuntimeSlot::FLOATING),
+        ("DETACHED" | "detached", Some(id)) => Some(ChatRuntimeSlot::DETACHED(id.clone())),
         _ => None,
     }
 }
