@@ -61,6 +61,11 @@ pub struct CharacterCard {
     pub marks: String,
     pub chatModelBindingMode: String,
     pub chatModelId: Option<String>,
+    pub ttsConfigId: Option<String>,
+    #[serde(default = "default_character_memory_binding_mode")]
+    pub memoryBindingMode: String,
+    #[serde(default)]
+    pub sharedMemoryId: Option<String>,
     pub sharedMemoryMounts: Vec<CharacterSharedMemoryMount>,
     pub toolAccessConfig: CharacterCardToolAccessConfig,
     pub isDefault: bool,
@@ -79,6 +84,21 @@ impl CharacterCardChatModelBindingMode {
             Self::FIXED_MODEL.to_string()
         } else {
             Self::FOLLOW_GLOBAL.to_string()
+        }
+    }
+}
+
+pub struct CharacterCardMemoryBindingMode;
+
+impl CharacterCardMemoryBindingMode {
+    pub const CHARACTER: &'static str = "CHARACTER";
+    pub const SHARED: &'static str = "SHARED";
+
+    pub fn normalize(mode: Option<&str>) -> String {
+        if mode == Some(Self::SHARED) {
+            Self::SHARED.to_string()
+        } else {
+            Self::CHARACTER.to_string()
         }
     }
 }
@@ -178,6 +198,12 @@ pub struct OperitCharacterCardPayload {
     #[serde(default)]
     pub chatModelId: Option<String>,
     #[serde(default)]
+    pub ttsConfigId: Option<String>,
+    #[serde(default = "default_character_memory_binding_mode")]
+    pub memoryBindingMode: String,
+    #[serde(default)]
+    pub sharedMemoryId: Option<String>,
+    #[serde(default)]
     pub sharedMemoryMounts: Vec<CharacterSharedMemoryMount>,
     #[serde(default)]
     pub toolAccessConfig: Option<CharacterCardToolAccessConfig>,
@@ -185,6 +211,10 @@ pub struct OperitCharacterCardPayload {
 
 fn default_character_chat_model_binding_mode() -> String {
     CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string()
+}
+
+fn default_character_memory_binding_mode() -> String {
+    CharacterCardMemoryBindingMode::CHARACTER.to_string()
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

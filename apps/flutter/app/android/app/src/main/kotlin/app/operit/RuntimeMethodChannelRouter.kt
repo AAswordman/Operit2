@@ -10,7 +10,6 @@ class RuntimeMethodChannelRouter(
 ) {
     private val coreLinkChannel = RuntimeCoreLinkChannel(runtimeHost)
     private val linkHostChannel = RuntimeLinkHostChannel(runtimeHost)
-    private val hostEventChannel = HostEventChannel(runtimeHost)
     private val ownerSystemChannel = ownerSystem
     private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
     private var runtimeChannel: MethodChannel? = null
@@ -21,7 +20,6 @@ class RuntimeMethodChannelRouter(
                 when {
                     coreLinkChannel.handle(call, result) -> Unit
                     linkHostChannel.handle(call, result) -> Unit
-                    hostEventChannel.handle(call, result) -> Unit
                     ownerSystemChannel.handle(call, result) -> Unit
                     androidPlatformChannel.handle(call, result) -> Unit
                     else -> result.notImplemented()

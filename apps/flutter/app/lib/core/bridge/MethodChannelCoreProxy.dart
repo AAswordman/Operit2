@@ -84,21 +84,6 @@ class MethodChannelCoreProxy extends CoreProxy {
     final subscriptionId = subscriptionJson['subscriptionId'] as String;
     yield* _methodChannelWatchPump(_channel).attach(subscriptionId);
   }
-
-  @override
-  Future<String> dispatchHostEvent(String source, String payloadJson) async {
-    final responseText = await _channel.invokeMethod<String>(
-      'dispatchHostEvent',
-      <String, String>{'source': source, 'payload': payloadJson},
-    );
-    if (responseText == null) {
-      throw const CoreLinkError(
-        code: 'EMPTY_RESPONSE',
-        message: 'runtime bridge returned empty host event response',
-      );
-    }
-    return responseText;
-  }
 }
 
 final Map<MethodChannel, _MethodChannelWatchPump> _methodChannelWatchPumps =

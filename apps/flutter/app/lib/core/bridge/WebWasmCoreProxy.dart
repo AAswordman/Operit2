@@ -83,11 +83,6 @@ class WebWasmCoreProxy extends CoreProxy {
       await _invokeString('closeWatchStream', <Object?>[subscriptionId]);
     }
   }
-
-  @override
-  Future<String> dispatchHostEvent(String source, String payloadJson) {
-    return _invokeString('dispatchHostEvent', <Object?>[source, payloadJson]);
-  }
 }
 
 Future<String> _invokeString(String method, List<Object?> args) async {

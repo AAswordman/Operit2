@@ -35,6 +35,7 @@ use operit_runtime::data::model::ModelConfigData::ApiProviderType;
 use operit_runtime::data::model::ModelParameter::ModelParameter;
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::model::PromptTag::TagType;
+use operit_runtime::data::model::TtsConfig::{TtsConfig, TtsProviderType};
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -42,8 +43,10 @@ use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroup
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
+use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
 use operit_runtime::util::stream::Stream::Stream;
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
@@ -106,6 +109,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "host" => run_core_command_and_print(&mut core, &args).await,
         "log" => run_core_command_and_print(&mut core, &args).await,
         "memory" => run_core_command_and_print(&mut core, &args).await,
+        "tts" => run_tts_cli_command(&args[1..]).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
@@ -180,6 +184,128 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         }
     };
     result.map_err(rewrite_cli_usage_message)
+}
+
+async fn run_tts_cli_command(args: &[String]) -> Result<(), String> {
+    match args.get(0).map(String::as_str) {
+        Some("config") => run_tts_config_cli_command(&args[1..]),
+        Some("synthesize") => run_tts_synthesize_cli_command(&args[1..]),
+        _ => {
+            print_tts_usage();
+            Ok(())
+        }
+    }
+}
+
+fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
+    let manager = TtsConfigManager::getInstance();
+    match args.get(0).map(String::as_str) {
+        Some("list") if args.len() == 1 => {
+            for config in manager.getAllTtsConfigs()? {
+                println!(
+                    "id={} name={} providerType={} model={} voice={} enabled={}",
+                    config.id, config.name, config.providerType, config.model, config.voice, config.enabled
+                );
+            }
+            Ok(())
+        }
+        Some("show") if args.len() == 2 => {
+            let config = manager.getTtsConfig(&args[1])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).expect("tts config must serialize")
+            );
+            Ok(())
+        }
+        Some("create") if args.len() == 8 => {
+            let responseFormat = args[6].clone();
+            let speed = args[7].parse::<f64>().map_err(|error| error.to_string())?;
+            let config = manager.createTtsConfig(TtsConfig {
+                id: String::new(),
+                name: args[1].clone(),
+                providerType: TtsProviderType::OPENAI_COMPATIBLE.to_string(),
+                endpoint: args[2].clone(),
+                apiKey: args[3].clone(),
+                model: args[4].clone(),
+                voice: args[5].clone(),
+                responseFormat,
+                speed,
+                enabled: true,
+                createdAt: 0,
+                updatedAt: 0,
+            })?;
+            println!("id={}", config.id);
+            Ok(())
+        }
+        Some("update") if args.len() == 4 => {
+            let mut config = manager.getTtsConfig(&args[1])?;
+            match args[2].as_str() {
+                "name" => config.name = args[3].clone(),
+                "endpoint" => config.endpoint = args[3].clone(),
+                "api-key" => config.apiKey = args[3].clone(),
+                "model" => config.model = args[3].clone(),
+                "voice" => config.voice = args[3].clone(),
+                "response-format" => config.responseFormat = args[3].clone(),
+                "speed" => config.speed = args[3].parse::<f64>().map_err(|error| error.to_string())?,
+                "enabled" => config.enabled = parse_bool_arg(&args[3])?,
+                field => return Err(format!("unknown tts config field: {field}")),
+            }
+            let updated = manager.updateTtsConfig(config)?;
+            println!("id={}", updated.id);
+            Ok(())
+        }
+        Some("delete") if args.len() == 2 => {
+            let deleted = manager.deleteTtsConfig(&args[1])?;
+            println!("deleted={deleted}");
+            Ok(())
+        }
+        _ => {
+            print_tts_usage();
+            Ok(())
+        }
+    }
+}
+
+fn run_tts_synthesize_cli_command(args: &[String]) -> Result<(), String> {
+    let mut characterId: Option<String> = None;
+    let mut text: Option<String> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--character" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--character requires a value".to_string())?;
+                characterId = Some(value.clone());
+            }
+            "--text" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--text requires a value".to_string())?;
+                text = Some(value.clone());
+            }
+            value => return Err(format!("unknown tts synthesize argument: {value}")),
+        }
+        index += 1;
+    }
+    let characterId = characterId.ok_or_else(|| "--character is required".to_string())?;
+    let text = text.ok_or_else(|| "--text is required".to_string())?;
+    let result = TtsSynthesisService::getInstance().synthesizeForCharacter(&characterId, &text)?;
+    for path in result.audioPaths {
+        println!("audioPath={path}");
+    }
+    Ok(())
+}
+
+fn print_tts_usage() {
+    println!("operit2 cli tts config list");
+    println!("operit2 cli tts config show <id>");
+    println!("operit2 cli tts config create <name> <endpoint> <api-key> <model> <voice> <response-format> <speed>");
+    println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|enabled> <value>");
+    println!("operit2 cli tts config delete <id>");
+    println!("operit2 cli tts synthesize --character <id> --text <text>");
 }
 
 async fn run_update_cli_command(
@@ -1085,7 +1211,7 @@ pub(crate) fn print_root_usage() {
     println!("operit2 uninstall");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 cli <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
+    println!("operit2 cli <version|prefs|host|log|memory|tts|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
     println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
@@ -1098,6 +1224,8 @@ fn print_cli_usage() {
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli memory <character|shared|mount|unmount>");
+    println!("operit2 cli tts config <list|show|create|update|delete>");
+    println!("operit2 cli tts synthesize --character <id> --text <text>");
     println!("operit2 cli export <memory|chat|snapshot>");
     println!("operit2 cli import <memory|chat|snapshot>");
     println!("operit2 cli backup <create|restore|inspect>");
@@ -1463,6 +1591,10 @@ fn print_character_card(card: &CharacterCard) {
     println!(
         "chatModelId={}",
         card.chatModelId.clone().unwrap_or_default()
+    );
+    println!(
+        "ttsConfigId={}",
+        card.ttsConfigId.clone().unwrap_or_default()
     );
     println!(
         "sharedMemoryMounts={}",

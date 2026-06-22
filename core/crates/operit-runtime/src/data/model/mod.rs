@@ -90,6 +90,8 @@ pub mod SerializableTypography;
 pub mod StandardModelParameters;
 #[path = "ToolPrompt.rs"]
 pub mod ToolPrompt;
+#[path = "TtsConfig.rs"]
+pub mod TtsConfig;
 #[path = "Workflow.rs"]
 pub mod Workflow;
 #[path = "WorkflowExecutionLog.rs"]
@@ -142,6 +144,7 @@ pub use SerializableColorScheme::*;
 pub use SerializableTypography::*;
 pub use StandardModelParameters::*;
 pub use ToolPrompt::*;
+pub use TtsConfig::*;
 pub use Workflow::*;
 pub use WorkflowExecutionLog::*;
 pub use WorkspaceRenameResult::*;

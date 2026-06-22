@@ -4,16 +4,6 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
-#include <wtsapi32.h>
-#include <dbt.h>
-#include <initguid.h>
-#include <devguid.h>
-#include <iphlpapi.h>
-#include <setupapi.h>
-
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,18 +36,10 @@ using BridgeStartWebAccessServer =
 using BridgeDiscoverDevices =
     char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
-using BridgeDispatchHostEvent = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeRemotePairStart =
     char* (*)(BridgeHandle, const char*, const char*, const char*);
 using BridgeRemotePairFinish = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeFreeString = void (*)(char*);
-
-constexpr GUID kGuidDevinterfaceBluetooth = {
-    0x0850302a,
-    0xb344,
-    0x4fda,
-    {0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0},
-};
 
 std::vector<std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>>
     g_operit_runtime_channels;
@@ -149,8 +131,6 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_start_web_access_server"));
       stop_web_access_server_ = reinterpret_cast<BridgeStopWebAccessServer>(
           GetProcAddress(library_, "operit_flutter_bridge_stop_web_access_server"));
-      dispatch_host_event_ = reinterpret_cast<BridgeDispatchHostEvent>(
-          GetProcAddress(library_, "operit_flutter_bridge_dispatch_host_event"));
       remote_pair_start_ = reinterpret_cast<BridgeRemotePairStart>(
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_start"));
       remote_pair_finish_ = reinterpret_cast<BridgeRemotePairFinish>(
@@ -163,7 +143,6 @@ class OperitRuntimeLibrary {
           poll_watch_stream_ == nullptr || poll_watch_streams_ == nullptr ||
           close_watch_stream_ == nullptr ||
           start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
-          dispatch_host_event_ == nullptr ||
           remote_pair_start_ == nullptr || remote_pair_finish_ == nullptr ||
           free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
@@ -279,18 +258,6 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  bool DispatchHostEvent(const std::string& source,
-                         const std::string& payload,
-                         std::string* response,
-                         std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response =
-        dispatch_host_event_(handle_, source.c_str(), payload.c_str());
-    return TakeBridgeString(raw_response, response, error);
-  }
-
   bool RemotePairStart(const std::string& base_url, const std::string& token_hash,
                        const std::string& client_device_info,
                        std::string* response, std::string* error) {
@@ -366,223 +333,12 @@ class OperitRuntimeLibrary {
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
   BridgeDiscoverDevices discover_devices_ = nullptr;
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
-  BridgeDispatchHostEvent dispatch_host_event_ = nullptr;
   BridgeRemotePairStart remote_pair_start_ = nullptr;
   BridgeRemotePairFinish remote_pair_finish_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
 std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
-
-// ── Windows native event monitor for ToolPkg host event hooks ────────────
-
-class WindowsEventMonitor {
- public:
-  WindowsEventMonitor() = default;
-  ~WindowsEventMonitor() { Stop(); }
-
-  void Start(std::shared_ptr<class OperitRuntimeLibrary> library) {
-    Stop();
-    library_ = std::move(library);
-    stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    power_requested_ = true;
-    session_requested_ = true;
-    network_requested_ = true;
-    bluetooth_requested_ = true;
-    RegisterNotifications();
-  }
-
-  void Stop() {
-    UnregisterNotifications();
-    running_ = false;
-    if (stop_event_) {
-      SetEvent(stop_event_);
-    }
-    if (network_thread_.joinable()) network_thread_.join();
-    if (stop_event_) {
-      CloseHandle(stop_event_);
-      stop_event_ = nullptr;
-    }
-    library_.reset();
-  }
-
-  bool HandleWindowMessage(UINT message, WPARAM wparam, LPARAM lparam) {
-    if (!library_) return false;
-    if (message == WM_POWERBROADCAST) {
-      OnPowerBroadcast(wparam, lparam);
-      return true;
-    }
-    if (message == WM_WTSSESSION_CHANGE) {
-      OnSessionChange(wparam, lparam);
-      return true;
-    }
-    if (message == WM_DEVICECHANGE) {
-      OnDeviceChange(wparam, lparam);
-      return true;
-    }
-    return false;
-  }
-
- private:
-  std::shared_ptr<class OperitRuntimeLibrary> library_;
-  HDEVNOTIFY power_notification_ = nullptr;
-  HDEVNOTIFY bluetooth_notification_ = nullptr;
-  bool power_requested_ = false;
-  bool session_requested_ = false;
-  bool network_requested_ = false;
-  bool bluetooth_requested_ = false;
-  std::atomic<bool> running_{false};
-  std::thread network_thread_;
-  HANDLE stop_event_ = nullptr;
-
-  void RegisterNotifications() {
-    if (!g_operit_runtime_window) return;
-    if (power_requested_ || session_requested_) {
-      WTSRegisterSessionNotification(g_operit_runtime_window, NOTIFY_FOR_THIS_SESSION);
-      DEV_BROADCAST_DEVICEINTERFACE_W filter = {};
-      filter.dbcc_size = sizeof(filter);
-      filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-      power_notification_ = RegisterDeviceNotificationW(
-          g_operit_runtime_window, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
-    }
-    if (bluetooth_requested_) {
-      DEV_BROADCAST_DEVICEINTERFACE_W bt_filter = {};
-      bt_filter.dbcc_size = sizeof(bt_filter);
-      bt_filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-      bt_filter.dbcc_classguid = kGuidDevinterfaceBluetooth;
-      bluetooth_notification_ = RegisterDeviceNotificationW(
-          g_operit_runtime_window, &bt_filter, DEVICE_NOTIFY_WINDOW_HANDLE);
-    }
-    if (network_requested_) {
-      running_ = true;
-      network_thread_ = std::thread(&WindowsEventMonitor::NetworkThreadLoop, this);
-    }
-  }
-
-  void UnregisterNotifications() {
-    if (g_operit_runtime_window) {
-      if (power_notification_) {
-        UnregisterDeviceNotification(power_notification_);
-        power_notification_ = nullptr;
-      }
-      if (bluetooth_notification_) {
-        UnregisterDeviceNotification(bluetooth_notification_);
-        bluetooth_notification_ = nullptr;
-      }
-    }
-  }
-
-  void OnPowerBroadcast(WPARAM wparam, LPARAM lparam) {
-    if (!power_requested_) return;
-    std::string event_name;
-    switch (wparam) {
-      case PBT_APMPOWERSTATUSCHANGE:
-      {
-        SYSTEM_POWER_STATUS status;
-        if (GetSystemPowerStatus(&status)) {
-          event_name = (status.ACLineStatus == 1)
-              ? "system.power.connected"
-              : "system.power.disconnected";
-        }
-        break;
-      }
-      case PBT_APMRESUMESUSPEND:
-        event_name = "system.power.wake";
-        break;
-      case PBT_APMSUSPEND:
-        event_name = "system.power.sleep";
-        break;
-    }
-    if (!event_name.empty()) {
-      DispatchTopic(event_name);
-    }
-  }
-
-  void OnSessionChange(WPARAM wparam, LPARAM lparam) {
-    if (!session_requested_) return;
-    std::string event_name;
-    switch (wparam) {
-      case WTS_SESSION_LOCK: event_name = "system.session.lock"; break;
-      case WTS_SESSION_UNLOCK: event_name = "system.session.unlock"; break;
-    }
-    if (!event_name.empty()) {
-      DispatchTopic(event_name);
-    }
-  }
-
-  void OnDeviceChange(WPARAM wparam, LPARAM lparam) {
-    if (!bluetooth_requested_) return;
-    std::string topic;
-    switch (wparam) {
-      case DBT_DEVICEARRIVAL:
-        topic = "bluetooth.device.connected";
-        break;
-      case DBT_DEVICEREMOVECOMPLETE:
-        topic = "bluetooth.device.disconnected";
-        break;
-    }
-    if (!topic.empty()) {
-      DispatchTopic(topic);
-    }
-  }
-
-  void NetworkThreadLoop() {
-    while (running_) {
-      HANDLE notify_handle = nullptr;
-      OVERLAPPED overlapped = {};
-      HANDLE event_handle = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-      if (event_handle == nullptr) break;
-      overlapped.hEvent = event_handle;
-
-      DWORD ret = NotifyAddrChange(&notify_handle, &overlapped);
-      if (ret == NO_ERROR) {
-        if (running_) {
-          DispatchTopic("system.network.changed");
-        }
-        CloseHandle(event_handle);
-        break;
-      } else if (ret == ERROR_IO_PENDING) {
-        HANDLE wait_handles[2] = {event_handle, stop_event_};
-        DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
-        if (wait_result == WAIT_OBJECT_0) {
-          if (running_) {
-            DispatchTopic("system.network.changed");
-          }
-          CancelIo(notify_handle);
-        } else if (wait_result == WAIT_OBJECT_0 + 1) {
-          CancelIo(notify_handle);
-        }
-        CloseHandle(notify_handle);
-        CloseHandle(event_handle);
-        break;
-      } else {
-        CloseHandle(event_handle);
-        if (!running_) break;
-        WaitForSingleObject(stop_event_, 10000);
-      }
-    }
-  }
-
-  void DispatchEvent(const std::string& source, const std::string& payload) {
-    if (!library_) return;
-    std::string response, error;
-    library_->DispatchHostEvent(source, payload, &response, &error);
-  }
-
-  void DispatchTopic(const std::string& topic) {
-    DispatchEvent("broadcast", R"({"topic":")" + topic +
-        R"(","platform":"windows","receivedAtMillis":)" +
-        std::to_string(CurrentTimeMillis()) + "}");
-  }
-
-  static int64_t CurrentTimeMillis() {
-    return static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-  }
-};
-
-std::shared_ptr<WindowsEventMonitor> g_windows_event_monitor;
 
 const std::string* StringArgument(
     const flutter::MethodCall<flutter::EncodableValue>& method_call) {
@@ -639,16 +395,6 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
                                              WPARAM wparam,
                                              LPARAM lparam,
                                              LRESULT* result) {
-  if (message == WM_POWERBROADCAST || message == WM_WTSSESSION_CHANGE ||
-      message == WM_DEVICECHANGE) {
-    if (g_windows_event_monitor &&
-        g_windows_event_monitor->HandleWindowMessage(message, wparam, lparam)) {
-      if (result != nullptr) {
-        *result = 0;
-      }
-      return true;
-    }
-  }
   if (message != kOperitRuntimePlatformTaskMessage) {
     return false;
   }
@@ -670,10 +416,6 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
   }
   if (!g_operit_runtime_library) {
     g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
-  }
-  if (!g_windows_event_monitor) {
-    g_windows_event_monitor = std::make_shared<WindowsEventMonitor>();
-    g_windows_event_monitor->Start(g_operit_runtime_library);
   }
   auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -847,22 +589,6 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           }
           return;
         }
-        if (method_call.method_name().compare("dispatchHostEvent") == 0) {
-          const std::string* source = StringMapValue(method_call, "source");
-          const std::string* payload = StringMapValue(method_call, "payload");
-          if (source == nullptr || payload == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "dispatchHostEvent expects source and payload");
-            return;
-          }
-          if (runtime_library->DispatchHostEvent(
-                  *source, *payload, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
         if (method_call.method_name().compare("remotePairStart") == 0) {
           const std::string* base_url = StringMapValue(method_call, "baseUrl");
           const std::string* token_hash =
@@ -908,7 +634,6 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
 
 void ShutdownOperitRuntimeChannel() {
   g_operit_runtime_channels.clear();
-  g_windows_event_monitor.reset();
   g_operit_runtime_library.reset();
   g_operit_runtime_window = nullptr;
   g_operit_runtime_platform_thread_id = 0;

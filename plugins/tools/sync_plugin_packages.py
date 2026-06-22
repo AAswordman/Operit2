@@ -9,19 +9,10 @@ import subprocess
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from urllib import error as urllib_error
-from urllib import request as urllib_request
 
 MANIFEST_FILENAMES = ("manifest.hjson", "manifest.json")
 SYNCABLE_SUFFIXES = {".js", ".toolpkg"}
-TOOLPKG_PACKAGES_CHANGED_EVENT = "toolpkg.packages.changed"
-TOOLPKG_HOST_EVENT = "toolpkg.host_event"
 HOT_RELOAD_STATE_FILE = ".sync_hot_reload_state.json"
-LINK_HOST_STATE_FILE_ENV = "OPERIT_LINK_HOST_STATE_FILE"
-LINK_HOST_BASE_URL_ENV = "OPERIT_LINK_HOST_BASE_URL"
-LINK_HOST_CONTROL_TOKEN_ENV = "OPERIT_LINK_HOST_CONTROL_TOKEN"
-
-
 @dataclass(frozen=True)
 class SyncPlanItem:
     mode: str
@@ -180,76 +171,6 @@ def _save_state(path: Path, state: dict[str, str]) -> None:
     path.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-@dataclass(frozen=True)
-class LinkHostClientEndpoint:
-    base_url: str
-    control_token: str
-
-
-def _platform_link_host_state_path() -> Path | None:
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA")
-        if appdata is None:
-            return None
-        return Path(appdata) / "app.operit" / "Operit2" / "client" / "link" / "host_state.json"
-    home = os.environ.get("HOME")
-    if home is None:
-        return None
-    if sys_platform() == "darwin":
-        return (
-            Path(home)
-            / "Library"
-            / "Application Support"
-            / "app.operit"
-            / "Operit2"
-            / "client"
-            / "link"
-            / "host_state.json"
-        )
-    return (
-        Path(home)
-        / ".local"
-        / "share"
-        / "app.operit"
-        / "Operit2"
-        / "client"
-        / "link"
-        / "host_state.json"
-    )
-
-
-def sys_platform() -> str:
-    import sys
-
-    return sys.platform
-
-
-def _link_host_state_path() -> Path | None:
-    configured = os.environ.get(LINK_HOST_STATE_FILE_ENV)
-    if configured:
-        return Path(configured)
-    return _platform_link_host_state_path()
-
-
-def _process_is_running(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        completed = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return str(pid) in completed.stdout
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
 
 def _collect_hot_reload_outputs(output_dir: Path) -> list[Path]:
     if not output_dir.is_dir():
@@ -274,122 +195,6 @@ def _compute_hot_reload_signature(output_dir: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_link_host_client_endpoint() -> LinkHostClientEndpoint | None:
-    env_base_url = os.environ.get(LINK_HOST_BASE_URL_ENV)
-    env_control_token = os.environ.get(LINK_HOST_CONTROL_TOKEN_ENV)
-    if env_base_url and env_control_token:
-        return LinkHostClientEndpoint(
-            base_url=env_base_url.rstrip("/"),
-            control_token=env_control_token,
-        )
-
-    state_path = _link_host_state_path()
-    if state_path is None or not state_path.is_file():
-        return None
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise ValueError(f"Link host state must contain a JSON object: {state_path}")
-    process_id = state.get("processId")
-    if not isinstance(process_id, int) or not _process_is_running(process_id):
-        return None
-    base_url = state.get("baseUrl")
-    control_token = state.get("shutdownToken")
-    if not isinstance(base_url, str) or not isinstance(control_token, str):
-        raise ValueError(f"Link host state is missing baseUrl or shutdownToken: {state_path}")
-    return LinkHostClientEndpoint(
-        base_url=base_url.rstrip("/"),
-        control_token=control_token,
-    )
-
-
-def _post_link_host_client_event(
-    path: str,
-    payload: dict[str, object],
-    *,
-    timeout_seconds: float,
-    event_name: str,
-) -> tuple[int, int]:
-    endpoint = _load_link_host_client_endpoint()
-    if endpoint is None:
-        print(f"HOT-RELOAD: link host is not running for {event_name}")
-        return (0, 0)
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib_request.Request(
-        f"{endpoint.base_url}{path}",
-        data=body,
-        headers={
-            "content-type": "application/json",
-            "x-operit-client-control-token": endpoint.control_token,
-        },
-        method="POST",
-    )
-    try:
-        with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
-            response_body = response.read().decode("utf-8")
-    except urllib_error.HTTPError as error:
-        response_body = error.read().decode("utf-8", errors="replace")
-        print(f"HOT-RELOAD-ERROR: event={event_name}, status={error.code}, body={response_body}")
-        return (1, 0)
-    except urllib_error.URLError as error:
-        print(f"HOT-RELOAD-ERROR: event={event_name}, error={error}")
-        return (1, 0)
-    data = json.loads(response_body)
-    if not isinstance(data, dict) or data.get("ok") is not True:
-        print(f"HOT-RELOAD-ERROR: event={event_name}, body={response_body}")
-        return (1, 0)
-    print(f"HOT-RELOAD-OK: event={event_name}, endpoint={endpoint.base_url}")
-    return (1, 1)
-
-
-def _send_client_runtime_event(
-    event_name: str,
-    payload: dict[str, object],
-    *,
-    timeout_seconds: float,
-) -> tuple[int, int]:
-    return _post_link_host_client_event(
-        "/client/runtime-event",
-        {
-            "name": event_name,
-            "source": "plugins.tools.sync_plugin_packages",
-            "payload": payload,
-        },
-        timeout_seconds=timeout_seconds,
-        event_name=event_name,
-    )
-
-
-def send_host_event(
-    source: str,
-    payload: dict[str, object],
-    *,
-    timeout_seconds: float = 5.0,
-) -> tuple[int, int]:
-    """Send a ToolPkg host event to the running link host.
-
-    The event is delivered to the running link host's local client endpoint and
-    dispatched to matching ToolPkg host event hooks via
-    ToolPkgHostEventHookBridge::dispatchHostEvent.
-
-    Args:
-        source: Hook matching source (e.g. "timer", "android_broadcast",
-            "bluetooth", "scheduler").
-        payload: Arbitrary JSON payload delivered to the hook handler.
-        timeout_seconds: Max seconds to wait for each runtime response.
-
-    Returns:
-        (delivered_count, accepted_count) tuple.
-    """
-    return _post_link_host_client_event(
-        "/client/host/event",
-        {
-            "source": source,
-            "payload": payload,
-        },
-        timeout_seconds=timeout_seconds,
-        event_name=TOOLPKG_HOST_EVENT,
-    )
-
 
 def _maybe_hot_reload_buildin(
     source_dir: Path,
@@ -408,21 +213,9 @@ def _maybe_hot_reload_buildin(
     if state.get(key) == signature:
         print("HOT-RELOAD-SKIP: buildin output signature unchanged")
         return
-    delivered, accepted = _send_client_runtime_event(
-        TOOLPKG_PACKAGES_CHANGED_EVENT,
-        {
-            "source": "buildin",
-            "outputDir": str(output_dir),
-            "signature": signature,
-        },
-        timeout_seconds=timeout_seconds,
-    )
-    if accepted <= 0:
-        print(f"HOT-RELOAD-NOT-RECORDED: delivered={delivered}, accepted={accepted}")
-        return
     state[key] = signature
     _save_state(state_file, state)
-    print(f"HOT-RELOAD-DONE: delivered={delivered}, accepted={accepted}")
+    print("HOT-RELOAD-DONE: buildin output signature recorded")
 
 
 def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem], *, dry_run: bool) -> None:

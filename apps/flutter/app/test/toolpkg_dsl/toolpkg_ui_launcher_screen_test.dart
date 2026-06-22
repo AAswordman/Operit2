@@ -922,11 +922,6 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   }
 
   @override
-  Future<String> dispatchHostEvent(String source, String payloadJson) async {
-    return jsonEncode(<String, Object?>{'ok': true});
-  }
-
-  @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     return CoreEvent(
       requestId: request.requestId,

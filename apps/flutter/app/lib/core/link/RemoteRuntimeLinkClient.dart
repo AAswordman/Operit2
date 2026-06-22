@@ -101,17 +101,6 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     }
   }
 
-  @override
-  Future<String> dispatchHostEvent(String source, String payloadJson) async {
-    final body = jsonEncode(<String, Object?>{
-      'source': source,
-      'payload': jsonDecode(payloadJson),
-    });
-    final response = await _postRequest('/host/event', body);
-    _throwIfRemoteError(response);
-    return response.body;
-  }
-
   Future<RemoteSessionInfo> sessionInfo() async {
     final nonce = 'flutter-${DateTime.now().microsecondsSinceEpoch}';
     final body = jsonEncode(<String, Object?>{'nonce': nonce});

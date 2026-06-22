@@ -51,5 +51,5 @@ object OperitRuntimeNative {
         pairingCode: String,
     ): String
 
-    @JvmStatic external fun dispatchHostEvent(handle: Long, source: String, payload: String): String
+    @JvmStatic external fun emitRuntimeEvent(handle: Long, eventJson: String): String
 }

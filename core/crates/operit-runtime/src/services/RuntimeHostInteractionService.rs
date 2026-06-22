@@ -27,6 +27,10 @@ pub enum RuntimeHostInteractionKind {
     SystemCaptureScreenshot,
     #[serde(rename = "system_recognize_text")]
     SystemRecognizeText,
+    #[serde(rename = "audio_play")]
+    AudioPlay,
+    #[serde(rename = "tts_synthesis")]
+    TtsSynthesis,
     #[serde(rename = "tool_permission")]
     ToolPermission,
 }
@@ -40,6 +44,8 @@ pub struct RuntimeHostInteractionRequest {
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
+    pub audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
+    pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
 }
 
@@ -71,6 +77,8 @@ impl RuntimeHostInteractionRequest {
             None,
             None,
             None,
+            None,
+            None,
         )
     }
 
@@ -79,6 +87,8 @@ impl RuntimeHostInteractionRequest {
             RuntimeHostInteractionKind::WebVisit,
             None,
             Some(payload),
+            None,
+            None,
             None,
             None,
             None,
@@ -97,6 +107,8 @@ impl RuntimeHostInteractionRequest {
             None,
             None,
             None,
+            None,
+            None,
         )
     }
 
@@ -109,12 +121,44 @@ impl RuntimeHostInteractionRequest {
             Some(RuntimeHostInteractionSystemCaptureScreenshotPayload {}),
             None,
             None,
+            None,
+            None,
         )
     }
 
     fn systemRecognizeText(payload: RuntimeHostInteractionSystemRecognizeTextPayload) -> Self {
         Self::withPayload(
             RuntimeHostInteractionKind::SystemRecognizeText,
+            None,
+            None,
+            None,
+            None,
+            Some(payload),
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn audioPlay(payload: RuntimeHostInteractionAudioPlayPayload) -> Self {
+        Self::withPayload(
+            RuntimeHostInteractionKind::AudioPlay,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(payload),
+            None,
+            None,
+        )
+    }
+
+    fn ttsSynthesis(payload: RuntimeHostInteractionTtsSynthesisPayload) -> Self {
+        Self::withPayload(
+            RuntimeHostInteractionKind::TtsSynthesis,
+            None,
+            None,
             None,
             None,
             None,
@@ -132,6 +176,8 @@ impl RuntimeHostInteractionRequest {
             None,
             None,
             None,
+            None,
+            None,
             Some(payload),
         )
     }
@@ -143,6 +189,8 @@ impl RuntimeHostInteractionRequest {
         composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
         systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
         systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
+        audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
+        ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
         toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
     ) -> Self {
         Self {
@@ -153,6 +201,8 @@ impl RuntimeHostInteractionRequest {
             composeWebViewController,
             systemCaptureScreenshot,
             systemRecognizeText,
+            audioPlay,
+            ttsSynthesis,
             toolPermission,
         }
     }
@@ -198,6 +248,21 @@ pub struct RuntimeHostInteractionSystemRecognizeTextPayload {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionAudioPlayPayload {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionTtsSynthesisPayload {
+    pub text: String,
+    pub voice: String,
+    pub locale: String,
+    pub speed: f64,
+    pub pitch: f64,
+    pub outputFormat: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeHostInteractionToolPermissionToolParameter {
     pub name: String,
     pub value: String,
@@ -222,36 +287,46 @@ pub struct RuntimeHostInteractionResponse {
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
+    pub audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
+    pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
 }
 
 impl RuntimeHostInteractionResponse {
     pub fn browserAutomation(response: RuntimeHostInteractionBrowserAutomationResponse) -> Self {
-        Self::withResponse(Some(response), None, None, None, None, None)
+        Self::withResponse(Some(response), None, None, None, None, None, None, None)
     }
 
     pub fn webVisit(response: RuntimeHostInteractionWebVisitResponse) -> Self {
-        Self::withResponse(None, Some(response), None, None, None, None)
+        Self::withResponse(None, Some(response), None, None, None, None, None, None)
     }
 
     pub fn composeWebViewController(
         response: RuntimeHostInteractionComposeWebViewControllerResponse,
     ) -> Self {
-        Self::withResponse(None, None, Some(response), None, None, None)
+        Self::withResponse(None, None, Some(response), None, None, None, None, None)
     }
 
     pub fn systemCaptureScreenshot(
         response: RuntimeHostInteractionSystemCaptureScreenshotResponse,
     ) -> Self {
-        Self::withResponse(None, None, None, Some(response), None, None)
+        Self::withResponse(None, None, None, Some(response), None, None, None, None)
     }
 
     pub fn systemRecognizeText(response: RuntimeHostInteractionSystemRecognizeTextResponse) -> Self {
-        Self::withResponse(None, None, None, None, Some(response), None)
+        Self::withResponse(None, None, None, None, Some(response), None, None, None)
+    }
+
+    pub fn audioPlay(response: RuntimeHostInteractionAudioPlayResponse) -> Self {
+        Self::withResponse(None, None, None, None, None, Some(response), None, None)
+    }
+
+    pub fn ttsSynthesis(response: RuntimeHostInteractionTtsSynthesisResponse) -> Self {
+        Self::withResponse(None, None, None, None, None, None, Some(response), None)
     }
 
     pub fn toolPermission(response: RuntimeHostInteractionToolPermissionResponse) -> Self {
-        Self::withResponse(None, None, None, None, None, Some(response))
+        Self::withResponse(None, None, None, None, None, None, None, Some(response))
     }
 
     fn withResponse(
@@ -260,6 +335,8 @@ impl RuntimeHostInteractionResponse {
         composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
         systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
         systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
+        audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
+        ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
         toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
     ) -> Self {
         Self {
@@ -268,6 +345,8 @@ impl RuntimeHostInteractionResponse {
             composeWebViewController,
             systemCaptureScreenshot,
             systemRecognizeText,
+            audioPlay,
+            ttsSynthesis,
             toolPermission,
         }
     }
@@ -324,6 +403,19 @@ pub struct RuntimeHostInteractionSystemCaptureScreenshotResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeHostInteractionSystemRecognizeTextResponse {
     pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionAudioPlayResponse {
+    pub path: String,
+    pub started: bool,
+    pub details: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionTtsSynthesisResponse {
+    pub audioPath: String,
+    pub details: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -490,6 +582,34 @@ pub fn requestOwnerSystemRecognizeText(
     response
         .systemRecognizeText
         .ok_or_else(|| "system recognize text response payload is missing".to_string())
+}
+
+pub fn requestOwnerAudioPlay(
+    payload: RuntimeHostInteractionAudioPlayPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionAudioPlayResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::audioPlay(payload),
+        timeout,
+    )?;
+    response
+        .audioPlay
+        .ok_or_else(|| "audio play response payload is missing".to_string())
+}
+
+pub fn requestOwnerTtsSynthesis(
+    payload: RuntimeHostInteractionTtsSynthesisPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionTtsSynthesisResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::ttsSynthesis(payload),
+        timeout,
+    )?;
+    response
+        .ttsSynthesis
+        .ok_or_else(|| "tts synthesis response payload is missing".to_string())
 }
 
 pub fn requestOwnerToolPermission(

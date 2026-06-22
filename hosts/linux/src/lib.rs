@@ -3,12 +3,16 @@
 pub mod bridge;
 pub mod registry;
 pub mod tools;
-#[path = "../../common/external_event.rs"]
-pub mod external_event;
 #[path = "../../common/chromium_browser.rs"]
 pub mod chromium_browser;
+#[cfg(target_os = "linux")]
+#[path = "host_runtime_event.rs"]
+pub mod host_runtime_event;
 
-pub use external_event::LocalExternalRuntimeEventHost as LinuxExternalRuntimeEventHost;
+#[cfg(target_os = "linux")]
+pub use host_runtime_event::LinuxHostRuntimeEventHost;
+pub use tools::audio::LinuxAudioPlaybackHost;
+pub use tools::tts::LinuxTtsSynthesisHost;
 pub use tools::browser::{LinuxBrowserAutomationHost, LinuxWebVisitHost};
 pub use tools::fs::LinuxFileSystemHost;
 pub use tools::http::LinuxHttpHost;

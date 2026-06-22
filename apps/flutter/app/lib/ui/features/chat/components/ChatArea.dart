@@ -47,6 +47,7 @@ class ChatArea extends StatefulWidget {
     required this.onInsertSummary,
     required this.onCreateBranch,
     required this.onReplyToMessage,
+    required this.onPlayVoice,
     required this.onToggleMultiSelectMode,
     required this.onToggleMessageSelection,
     required this.onRefreshRequested,
@@ -79,6 +80,7 @@ class ChatArea extends StatefulWidget {
   final ValueChanged<ChatUiMessage> onInsertSummary;
   final MessageTimestampAction onCreateBranch;
   final ValueChanged<ChatUiMessage> onReplyToMessage;
+  final MessageVoiceAction onPlayVoice;
   final ValueChanged<int> onToggleMultiSelectMode;
   final ValueChanged<int> onToggleMessageSelection;
   final Future<void> Function() onRefreshRequested;
@@ -544,6 +546,7 @@ class _ChatAreaState extends State<ChatArea> {
             onInsertSummary: widget.onInsertSummary,
             onCreateBranch: widget.onCreateBranch,
             onReplyToMessage: widget.onReplyToMessage,
+            onPlayVoice: widget.onPlayVoice,
             onToggleMultiSelectMode: widget.onToggleMultiSelectMode,
             onRefresh: widget.onRefreshRequested,
             child: messageContent,

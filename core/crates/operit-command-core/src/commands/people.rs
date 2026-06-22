@@ -6,7 +6,8 @@ use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
+    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
+    CharacterCardToolAccessConfig,
 };
 use operit_runtime::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
@@ -128,6 +129,9 @@ pub fn run_character_command(
                     chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL
                         .to_string(),
                     chatModelId: None,
+                    ttsConfigId: None,
+                    memoryBindingMode: CharacterCardMemoryBindingMode::CHARACTER.to_string(),
+                    sharedMemoryId: None,
                     sharedMemoryMounts: Vec::new(),
                     toolAccessConfig: CharacterCardToolAccessConfig::default(),
                     isDefault: false,

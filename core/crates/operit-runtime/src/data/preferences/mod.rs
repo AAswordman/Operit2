@@ -50,6 +50,8 @@ pub mod SharedMemoryStoreManager;
 pub mod SkillVisibilityPreferences;
 #[path = "ToolCollapseMode.rs"]
 pub mod ToolCollapseMode;
+#[path = "TtsConfigManager.rs"]
+pub mod TtsConfigManager;
 #[path = "UserPreferencesManager.rs"]
 pub mod UserPreferencesManager;
 #[path = "WaifuPreferences.rs"]
@@ -82,6 +84,7 @@ pub use RemoteAnnouncementPreferences::*;
 pub use SharedMemoryStoreManager::*;
 pub use SkillVisibilityPreferences::*;
 pub use ToolCollapseMode::*;
+pub use TtsConfigManager::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;
 pub use WakeWordPreferences::*;

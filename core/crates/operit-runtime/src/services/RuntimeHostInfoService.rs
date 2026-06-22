@@ -18,13 +18,15 @@ pub struct RuntimeHostDescriptor {
     pub fileSystemHost: bool,
     pub webVisitHost: bool,
     pub systemOperationHost: bool,
+    pub audioPlaybackHost: bool,
+    pub ttsSynthesisHost: bool,
     pub managedRuntimeHost: bool,
     pub runtimeStorageHost: bool,
     pub runtimeSqliteHost: bool,
     pub browserAutomationHost: bool,
     pub composeDslWebViewHost: bool,
     pub terminalHost: bool,
-    pub externalRuntimeEventHost: bool,
+    pub hostRuntimeEventHost: bool,
 }
 
 pub struct RuntimeHostInfoService {
@@ -48,13 +50,15 @@ impl RuntimeHostInfoService {
                 fileSystemHost: context.fileSystemHost.is_some(),
                 webVisitHost: context.webVisitHost.is_some(),
                 systemOperationHost: context.systemOperationHost.is_some(),
+                audioPlaybackHost: context.audioPlaybackHost.is_some(),
+                ttsSynthesisHost: context.ttsSynthesisHost.is_some(),
                 managedRuntimeHost: context.managedRuntimeHost.is_some(),
                 runtimeStorageHost: context.runtimeStorageHost.is_some(),
                 runtimeSqliteHost: context.runtimeSqliteHost.is_some(),
                 browserAutomationHost: context.browserAutomationHost.is_some(),
                 composeDslWebViewHost: context.composeDslWebViewHost.is_some(),
                 terminalHost: context.terminalHost.is_some(),
-                externalRuntimeEventHost: context.externalRuntimeEventHost.is_some(),
+                hostRuntimeEventHost: context.hostRuntimeEventHost.is_some(),
             },
         }
     }

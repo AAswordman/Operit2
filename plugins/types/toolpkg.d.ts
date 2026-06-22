@@ -4,7 +4,7 @@ import type { ComposeDslScreen } from './compose-dsl';
 export namespace ToolPkg {
     export type LocalizedText = string | { [lang: string]: string };
 
-    export type JsonPrimitive = string | number | boolean | null;
+    export type JsonPrimitive = string | number | boolean | null | undefined;
 
     export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -720,8 +720,6 @@ export namespace ToolPkg {
     export type BroadcastPlatform = `${"android" | "windows" | "linux"}`;
 
     export type BroadcastTopic =
-        | `${"toolpkg.packages.changed"}`
-        | `${"toolpkg.host_event"}`
         | `${"system.boot.completed"}`
         | `${"system.power.connected"}`
         | `${"system.power.disconnected"}`
@@ -778,19 +776,11 @@ export namespace ToolPkg {
         extras?: JsonObject;
     }
 
-    export interface ToolPkgPackagesChangedData extends JsonObject {
-        source: string;
-        outputDir: string;
-        signature: string;
-    }
-
     export interface RawBroadcastData extends JsonObject {
         [key: string]: JsonValue;
     }
 
     export type BroadcastDataForTopic<TTopic extends BroadcastTopic> =
-        TTopic extends "toolpkg.packages.changed" ? ToolPkgPackagesChangedData :
-        TTopic extends "toolpkg.host_event" ? RawBroadcastData :
         TTopic extends "system.power.sleep" | "system.power.wake" ? BroadcastPowerSleepData :
         TTopic extends "system.network.changed" ? BroadcastNetworkChangedData :
         TTopic extends

@@ -13,6 +13,7 @@ use crate::core::tools::ToolResultDataClasses::{
 };
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
+use crate::data::model::CharacterCard::CharacterCardMemoryBindingMode;
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::util::OperitPaths::{
@@ -669,13 +670,13 @@ fn resolveReadableOwnerKeys(tool: &AITool) -> Result<Vec<String>, String> {
     let characterCard = CharacterCardManager::getInstance()
         .getCharacterCard(&callerCardId)
         .map_err(|error| error.to_string())?;
-    let mut ownerKeys = vec![characterMemoryOwnerKey(&characterCard.id)?];
-    for mount in characterCard.sharedMemoryMounts {
-        if mount.readable {
-            ownerKeys.push(sharedMemoryOwnerKey(&mount.sharedMemoryId)?);
-        }
+    if characterCard.memoryBindingMode == CharacterCardMemoryBindingMode::SHARED {
+        let sharedMemoryId = characterCard
+            .sharedMemoryId
+            .ok_or_else(|| "shared memory binding requires sharedMemoryId".to_string())?;
+        return Ok(vec![sharedMemoryOwnerKey(&sharedMemoryId)?]);
     }
-    Ok(ownerKeys)
+    Ok(vec![characterMemoryOwnerKey(&characterCard.id)?])
 }
 
 fn parseTimeBoundary(value: Option<&str>, isEnd: bool) -> Result<Option<i64>, String> {

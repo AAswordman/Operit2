@@ -9,7 +9,3 @@ pub mod OperitApplicationContext;
 
 #[path = "OperitApplication.rs"]
 pub mod OperitApplication;
-
-#[cfg(not(target_arch = "wasm32"))]
-#[path = "ExternalRuntimeEventSupport.rs"]
-pub mod ExternalRuntimeEventSupport;

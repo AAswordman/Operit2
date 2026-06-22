@@ -15,6 +15,7 @@ pub const RUNTIME_SYNC_DIR_PATH: &str = "runtime/sync";
 pub const RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH: &str =
     "runtime/cache/model_connection_test";
 pub const RUNTIME_TOOLPKG_CACHE_DIR_PATH: &str = "runtime/cache/toolpkg";
+pub const RUNTIME_TTS_AUDIO_DIR_PATH: &str = "runtime/cache/tts_audio";
 pub const RUNTIME_TOOLPKG_RESOURCE_EXPORTS_DIR_PATH: &str =
     "runtime/cache/toolpkg_resource_exports";
 pub const RUNTIME_TOOLPKG_RESOURCE_EXPORTS_INTERNAL_DIR_PATH: &str =
@@ -48,6 +49,8 @@ pub const PROMPT_TAGS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/prompt_tags.preferences.json";
 pub const SHARED_MEMORY_STORES_PREFERENCES_PATH: &str =
     "runtime/config/preferences/shared_memory_stores.preferences.json";
+pub const TTS_CONFIGS_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/tts_configs.preferences.json";
 pub const TOOL_PERMISSIONS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/tool_permissions.preferences.json";
 pub const SKILL_VISIBILITY_PREFERENCES_PATH: &str =

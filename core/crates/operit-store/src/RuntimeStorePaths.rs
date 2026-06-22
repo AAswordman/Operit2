@@ -67,6 +67,10 @@ impl RuntimeStorePaths {
         self.root_dir.join(SHARED_MEMORY_STORES_PREFERENCES_PATH)
     }
 
+    pub fn tts_configs_preferences_path(&self) -> PathBuf {
+        self.root_dir.join(TTS_CONFIGS_PREFERENCES_PATH)
+    }
+
     pub fn tool_permissions_preferences_path(&self) -> PathBuf {
         self.root_dir.join(TOOL_PERMISSIONS_PREFERENCES_PATH)
     }
@@ -109,6 +113,10 @@ impl RuntimeStorePaths {
 
     pub fn toolpkg_cache_dir(&self) -> PathBuf {
         self.root_dir.join(RUNTIME_TOOLPKG_CACHE_DIR_PATH)
+    }
+
+    pub fn tts_audio_dir(&self) -> PathBuf {
+        self.root_dir.join(RUNTIME_TTS_AUDIO_DIR_PATH)
     }
 
     pub fn ensure_packages_dir(&self) -> std::io::Result<()> {

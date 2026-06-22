@@ -31,9 +31,4 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
       yield event;
     }
   }
-
-  @override
-  Future<String> dispatchHostEvent(String source, String payloadJson) {
-    return _coreProxy.dispatchHostEvent(source, payloadJson);
-  }
 }
