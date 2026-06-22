@@ -34,13 +34,14 @@ use operit_runtime::core::application::OperitApplicationContext::OperitApplicati
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
-    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
+    requestOwnerAudioPlay, requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
+    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText, requestOwnerTtsSynthesis,
     requestOwnerToolPermission, requestOwnerWebVisit,
-    RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionAudioPlayPayload, RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload,
     RuntimeHostInteractionSystemRecognizeTextPayload,
     RuntimeHostInteractionToolPermissionPayload,
+    RuntimeHostInteractionTtsSynthesisPayload,
     RuntimeHostInteractionToolPermissionTool,
     RuntimeHostInteractionToolPermissionToolParameter,
     RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
@@ -50,19 +51,25 @@ use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEve
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
-    AndroidExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
+    AndroidAudioPlaybackHost as NativeAudioPlaybackHost,
     AndroidFileSystemHost as NativeFileSystemHost, AndroidHttpHost as NativeHttpHost,
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
     AndroidTerminalHost as NativeTerminalHost,
+    AndroidTtsSynthesisHost as NativeTtsSynthesisHost,
 };
+#[cfg(target_os = "linux")]
+use operit_host_linux_native::LinuxTtsSynthesisHost as NativeTtsSynthesisHost;
+#[cfg(windows)]
+use operit_host_windows_native::WindowsTtsSynthesisHost as NativeTtsSynthesisHost;
 #[cfg(target_os = "android")]
 use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
-    LinuxFileSystemHost as NativeFileSystemHost, LinuxHttpHost as NativeHttpHost,
+    LinuxAudioPlaybackHost as NativeAudioPlaybackHost,
+    LinuxFileSystemHost as NativeFileSystemHost, LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
@@ -76,8 +83,9 @@ use operit_host_web::{
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
-    WindowsExternalRuntimeEventHost as NativeExternalRuntimeEventHost,
-    WindowsFileSystemHost as NativeFileSystemHost, WindowsHttpHost as NativeHttpHost,
+    WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
+    WindowsFileSystemHost as NativeFileSystemHost,
+    WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -89,8 +97,6 @@ use wasm_bindgen::prelude::*;
 pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
-    #[cfg(not(target_arch = "wasm32"))]
-    externalRuntimeEventRegistration: Box<dyn operit_host_api::ExternalRuntimeEventRegistration>,
     proxyCore: Arc<ConcurrentLocalCoreProxy>,
     watchStreams: Mutex<HashMap<String, CoreEventStream>>,
     nextWatchStreamId: Mutex<u64>,
@@ -441,17 +447,9 @@ impl OperitFlutterBridge {
         )?;
         core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core);
-        #[cfg(not(target_arch = "wasm32"))]
-        let externalRuntimeEventRegistration =
-            operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
-                core.localApplicationMut().applicationContext.clone(),
-                "flutter",
-            )?;
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
-            #[cfg(not(target_arch = "wasm32"))]
-            externalRuntimeEventRegistration,
             proxyCore: Arc::new(ConcurrentLocalCoreProxy::new(core)),
             watchStreams: Mutex::new(HashMap::new()),
             nextWatchStreamId: Mutex::new(1),
@@ -573,19 +571,30 @@ impl OperitFlutterBridge {
         }
     }
 
-    fn dispatchHostEvent(&self, source: &str, payloadJson: &str) -> String {
-        let payloadValue: serde_json::Value = match serde_json::from_str(payloadJson) {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn emitRuntimeEvent(&self, eventJson: &str) -> String {
+        let eventValue: serde_json::Value = match serde_json::from_str(eventJson) {
             Ok(value) => value,
             Err(error) => {
                 return serde_json::json!({
                     "ok": false,
-                    "error": format!("host event payload is invalid JSON: {error}"),
+                    "error": format!("runtime event is invalid JSON: {error}"),
                 })
                 .to_string();
             }
         };
-        ToolPkgHostEventHookBridge::dispatchHostEvent(source, payloadValue);
-        serde_json::json!({"ok": true}).to_string()
+        let response = self.call(CoreCallRequest::new(
+            format!("runtime-event-{}", current_time_millis_u64()),
+            "services.runtimeEventIngressService",
+            "ingestEvent",
+            serde_json::json!({
+                "event": eventValue,
+            }),
+        ));
+        match response.result {
+            Ok(value) => serde_json::json!({"ok": true, "result": value}).to_string(),
+            Err(error) => serde_json::json!({"ok": false, "error": error.message}).to_string(),
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -920,7 +929,57 @@ fn create_local_core(
         context = context.withComposeDslWebViewHost(host);
     }
     context = context.withTerminalHost(terminalHost);
-    context = context.withExternalRuntimeEventHost(Arc::new(NativeExternalRuntimeEventHost::new()));
+    #[cfg(target_os = "android")]
+    {
+        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::fromPlayer(
+            Arc::new(|path| {
+                let response = requestOwnerAudioPlay(
+                    RuntimeHostInteractionAudioPlayPayload {
+                        path: path.to_string(),
+                    },
+                    Duration::from_secs(60),
+                )
+                .map_err(operit_host_api::HostError::new)?;
+                Ok(operit_host_api::AudioPlaybackStatus {
+                    path: response.path,
+                    started: response.started,
+                    details: response.details,
+                })
+            }),
+        )));
+        context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::fromSynthesizer(
+            Arc::new(|request| {
+                let response = requestOwnerTtsSynthesis(
+                    RuntimeHostInteractionTtsSynthesisPayload {
+                        text: request.text,
+                        voice: request.voice,
+                        locale: request.locale,
+                        speed: request.speed,
+                        pitch: request.pitch,
+                        outputFormat: request.outputFormat,
+                    },
+                    Duration::from_secs(120),
+                )
+                .map_err(operit_host_api::HostError::new)?;
+                Ok(operit_host_api::TtsSynthesisResponse {
+                    audioPath: response.audioPath,
+                    details: response.details,
+                })
+            }),
+        )));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+        context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
+        context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
+    }
+    #[cfg(windows)]
+    {
+        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+        context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
+        context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
+    }
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -1452,46 +1511,6 @@ fn bridge_watch_snapshot_json(handle: &OperitFlutterBridge, request_bytes: &[u8]
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_dispatch_host_event(
-    handle: *mut OperitFlutterBridge,
-    source_ptr: *const c_char,
-    payload_ptr: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(
-            serde_json::json!({"ok": false, "error": "bridge handle is null"}).to_string(),
-        );
-    }
-    if source_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::json!({"ok": false, "error": "source is null"}).to_string(),
-        );
-    }
-    if payload_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::json!({"ok": false, "error": "payload is null"}).to_string(),
-        );
-    }
-    let source = match CStr::from_ptr(source_ptr).to_str() {
-        Ok(value) => value,
-        Err(_) => {
-            return string_to_ptr(
-                serde_json::json!({"ok": false, "error": "source is not UTF-8"}).to_string(),
-            )
-        }
-    };
-    let payload = match CStr::from_ptr(payload_ptr).to_str() {
-        Ok(value) => value,
-        Err(_) => {
-            return string_to_ptr(
-                serde_json::json!({"ok": false, "error": "payload is not UTF-8"}).to_string(),
-            )
-        }
-    };
-    string_to_ptr((*handle).dispatchHostEvent(source, payload))
-}
-
-#[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_start(
     handle: *mut OperitFlutterBridge,
@@ -1698,11 +1717,6 @@ impl OperitFlutterBridgeWasm {
     pub fn closeWatchStream(&self, subscriptionId: &str) -> String {
         self.inner.closeWatchStream(subscriptionId);
         "{\"ok\":true}".to_string()
-    }
-
-    #[allow(non_snake_case)]
-    pub fn dispatchHostEvent(&self, source: &str, payloadJson: &str) -> String {
-        self.inner.dispatchHostEvent(source, payloadJson)
     }
 }
 
@@ -2355,25 +2369,20 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_dispatchHostEvent(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_emitRuntimeEvent(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
-        source: JString,
-        payload: JString,
+        eventJson: JString,
     ) -> jstring {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_string(env, &serde_json::json!({"ok": false}).to_string());
         };
-        let source = match env.get_string(&source) {
+        let eventJson = match env.get_string(&eventJson) {
             Ok(value) => String::from(value),
             Err(_) => return new_java_string(env, &serde_json::json!({"ok": false}).to_string()),
         };
-        let payload = match env.get_string(&payload) {
-            Ok(value) => String::from(value),
-            Err(_) => return new_java_string(env, &serde_json::json!({"ok": false}).to_string()),
-        };
-        new_java_string(env, &bridge.dispatchHostEvent(&source, &payload))
+        new_java_string(env, &bridge.emitRuntimeEvent(&eventJson))
     }
 
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {

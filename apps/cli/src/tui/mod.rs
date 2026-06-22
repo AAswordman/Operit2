@@ -78,11 +78,6 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
     let language = TuiLanguage::from_context(&core.localApplicationMut().applicationContext)?;
-    let _externalRuntimeEventRegistration =
-        operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
-            core.localApplicationMut().applicationContext.clone(),
-            "cli-tui",
-        )?;
     let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
     install_local_permission_requester(&mut core, approval_bridge.clone());
@@ -264,6 +259,7 @@ async fn handle_remote_tool_permission_interaction(
                 composeWebViewController: None,
                 systemCaptureScreenshot: None,
                 systemRecognizeText: None,
+                audioPlay: None,
                 toolPermission: Some(RuntimeHostInteractionToolPermissionResponse {
                     result: result.to_string(),
                 }),

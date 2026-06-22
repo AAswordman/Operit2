@@ -29,6 +29,8 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionKind.composeWebViewController,
     RuntimeHostInteractionKind.systemCaptureScreenshot,
     RuntimeHostInteractionKind.systemRecognizeText,
+    RuntimeHostInteractionKind.audioPlay,
+    RuntimeHostInteractionKind.ttsSynthesis,
   ];
 
   static StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
@@ -94,6 +96,12 @@ class RuntimeHostInteractionSubscriber {
         _handleSystemCaptureScreenshot(),
       RuntimeHostInteractionKind.systemRecognizeText => _handleSystemRecognizeText(
           _requirePayload(request.systemRecognizeText, request.kind),
+        ),
+      RuntimeHostInteractionKind.audioPlay => _handleAudioPlay(
+          _requirePayload(request.audioPlay, request.kind),
+        ),
+      RuntimeHostInteractionKind.ttsSynthesis => _handleTtsSynthesis(
+          _requirePayload(request.ttsSynthesis, request.kind),
         ),
       RuntimeHostInteractionKind.toolPermission => throw StateError(
           'tool permission is handled by the approval bridge',
@@ -183,6 +191,32 @@ class RuntimeHostInteractionSubscriber {
     return _response(systemRecognizeText: response);
   }
 
+  static Future<RuntimeHostInteractionResponse> _handleAudioPlay(
+    RuntimeHostInteractionAudioPlayPayload payload,
+  ) async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerAudioPlay',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionAudioPlayResponse.fromJson(
+      rawResponse as Map<String, Object?>,
+    );
+    return _response(audioPlay: response);
+  }
+
+  static Future<RuntimeHostInteractionResponse> _handleTtsSynthesis(
+    RuntimeHostInteractionTtsSynthesisPayload payload,
+  ) async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerTtsSynthesize',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionTtsSynthesisResponse.fromJson(
+      rawResponse as Map<String, Object?>,
+    );
+    return _response(ttsSynthesis: response);
+  }
+
   static T _requirePayload<T>(T? payload, RuntimeHostInteractionKind kind) {
     if (payload == null) {
       throw StateError('$kind payload is missing');
@@ -236,6 +270,8 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionSystemCaptureScreenshotResponse?
         systemCaptureScreenshot,
     RuntimeHostInteractionSystemRecognizeTextResponse? systemRecognizeText,
+    RuntimeHostInteractionAudioPlayResponse? audioPlay,
+    RuntimeHostInteractionTtsSynthesisResponse? ttsSynthesis,
     RuntimeHostInteractionToolPermissionResponse? toolPermission,
   }) {
     return RuntimeHostInteractionResponse(
@@ -244,6 +280,8 @@ class RuntimeHostInteractionSubscriber {
       composeWebViewController: composeWebViewController,
       systemCaptureScreenshot: systemCaptureScreenshot,
       systemRecognizeText: systemRecognizeText,
+      audioPlay: audioPlay,
+      ttsSynthesis: ttsSynthesis,
       toolPermission: toolPermission,
     );
   }

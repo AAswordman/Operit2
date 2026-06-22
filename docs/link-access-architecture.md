@@ -142,11 +142,35 @@ Flutter Web
 
 普通 Flutter Web 不经过 Web Access remote client。
 
+Host runtime event ingress：
+
+```text
+platform host source
+  -> operit-host-api HostRuntimeEventHost
+  -> RuntimeEventIngressService
+  -> ToolPkg host event hook dispatch
+```
+
+Android app-hosted runtime event ingress：
+
+```text
+Android BroadcastReceiver
+  -> app RuntimeEvents topic mapping
+  -> JNI emitRuntimeEvent
+  -> RuntimeEventIngressService
+  -> ToolPkg host event hook dispatch
+```
+
+Host 反向触发 runtime 只走 host runtime ingress。它不是 CoreProxy 调用，不进入 `operit-link` 协议，也不通过 Flutter UI bridge 增加事件入口。桌面平台由 host crate 实现 `HostRuntimeEventHost`；Android 因系统广播只能由 app 进程注册，所以由 Android app 侧收集广播后送入同一个 `RuntimeEventIngressService`。
+
 ## 5. Prohibited Placement
 
 以下内容不得放进 `operit-link`：
 
 ```text
+host runtime event ingress
+host event topic mapping
+HostRuntimeEventHost implementation
 PairStart / PairFinish
 PairedRemoteSession
 RemoteLinkServer
@@ -164,6 +188,9 @@ static web access assets
 以下内容不得放进 runtime/core：
 
 ```text
+platform event collection
+Android BroadcastReceiver registration
+DBus / Windows message-loop details
 app-to-app pairing
 device trust
 access session storage

@@ -271,11 +271,6 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
 
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let _external_runtime_event_registration =
-        operit_runtime::core::application::ExternalRuntimeEventSupport::startExternalRuntimeEventSupport(
-            core.localApplicationMut().applicationContext.clone(),
-            "cli-web-access",
-        )?;
     let main_core = core
         .localApplicationMut()
         .chatRuntimeHolder

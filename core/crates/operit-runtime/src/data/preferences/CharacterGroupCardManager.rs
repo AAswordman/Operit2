@@ -148,13 +148,6 @@ impl CharacterGroupCardManager {
                 &Self::groupDataKey(&id),
                 serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
             );
-            if preferences
-                .get(&Self::ACTIVE_CHARACTER_GROUP_ID())
-                .map(|value| value.trim().is_empty())
-                .unwrap_or(true)
-            {
-                preferences.set(&Self::ACTIVE_CHARACTER_GROUP_ID(), id.clone());
-            }
         })?;
         Ok(id)
     }
@@ -385,13 +378,6 @@ impl CharacterGroupCardManager {
                 &Self::groupDataKey(&id),
                 serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
             );
-            if preferences
-                .get(&Self::ACTIVE_CHARACTER_GROUP_ID())
-                .map(|value| value.trim().is_empty())
-                .unwrap_or(true)
-            {
-                preferences.set(&Self::ACTIVE_CHARACTER_GROUP_ID(), id.clone());
-            }
         })
     }
 

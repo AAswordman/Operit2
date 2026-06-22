@@ -19,6 +19,7 @@ typedef MessageVariantAction =
     Future<void> Function(int timestamp, int variantIndex);
 typedef MessageFavoriteAction =
     Future<void> Function(int timestamp, bool isFavorite);
+typedef MessageVoiceAction = Future<void> Function(ChatUiMessage message);
 
 class MessageContextMenu extends StatefulWidget {
   const MessageContextMenu({
@@ -36,6 +37,7 @@ class MessageContextMenu extends StatefulWidget {
     this.onInsertSummary,
     this.onCreateBranch,
     this.onReplyToMessage,
+    this.onPlayVoice,
     this.onToggleMultiSelectMode,
     this.onRefresh,
   });
@@ -52,6 +54,7 @@ class MessageContextMenu extends StatefulWidget {
   final ValueChanged<ChatUiMessage>? onInsertSummary;
   final MessageTimestampAction? onCreateBranch;
   final ValueChanged<ChatUiMessage>? onReplyToMessage;
+  final MessageVoiceAction? onPlayVoice;
   final ValueChanged<int>? onToggleMultiSelectMode;
   final Future<void> Function()? onRefresh;
   final Widget child;
@@ -230,6 +233,11 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           icon: Icons.auto_fix_high,
           label: '修改记忆',
         ),
+        _menuItem(
+          value: _MessageMenuAction.playVoice,
+          icon: Icons.volume_up,
+          label: '生成/播放语音',
+        ),
       ]);
       if (message.variantCount > 1) {
         items.add(
@@ -328,6 +336,9 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         break;
       case _MessageMenuAction.reply:
         widget.onReplyToMessage?.call(widget.message);
+        break;
+      case _MessageMenuAction.playVoice:
+        await widget.onPlayVoice?.call(widget.message);
         break;
       case _MessageMenuAction.insertSummary:
         widget.onInsertSummary?.call(widget.message);
@@ -458,6 +469,7 @@ enum _MessageMenuAction {
   deleteVariant,
   delete,
   reply,
+  playVoice,
   insertSummary,
   createBranch,
   info,

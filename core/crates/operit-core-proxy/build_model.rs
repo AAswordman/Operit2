@@ -22,6 +22,8 @@ pub(crate) enum ObjectAccess {
     StringNewConstruct,
     ContextGetInstanceConstruct,
     ContextRefGetInstanceConstruct,
+    ResultContextGetInstanceConstruct,
+    ResultContextRefGetInstanceConstruct,
     ContextGetInstanceArcMutexConstruct,
     ContextRefGetInstanceArcMutexConstruct,
     StorePathsConstruct,
@@ -46,6 +48,8 @@ impl ObjectAccess {
                 | ObjectAccess::StringNewConstruct
                 | ObjectAccess::ContextGetInstanceConstruct
                 | ObjectAccess::ContextRefGetInstanceConstruct
+                | ObjectAccess::ResultContextGetInstanceConstruct
+                | ObjectAccess::ResultContextRefGetInstanceConstruct
                 | ObjectAccess::ContextGetInstanceArcMutexConstruct
                 | ObjectAccess::ContextRefGetInstanceArcMutexConstruct
                 | ObjectAccess::StorePathsConstruct

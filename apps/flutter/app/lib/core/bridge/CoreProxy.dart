@@ -10,6 +10,4 @@ abstract class CoreProxy {
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request);
 
   Stream<CoreEvent> watchStream(CoreWatchRequest request);
-
-  Future<String> dispatchHostEvent(String source, String payloadJson);
 }

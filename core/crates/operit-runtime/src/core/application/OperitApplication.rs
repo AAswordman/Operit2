@@ -18,6 +18,7 @@ use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use crate::data::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use crate::plugins::PluginRegistry::PluginRegistry;
 use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_host_api::HostRuntimeEventRegistration;
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::RuntimeStorageHost::{
@@ -39,6 +40,7 @@ pub struct OperitApplication {
     pub applicationContext: OperitApplicationContext,
     pub chatRuntimeHolder: ChatRuntimeHolder,
     pub initialized: bool,
+    hostRuntimeEventRegistration: Option<Box<dyn HostRuntimeEventRegistration>>,
 }
 
 impl OperitApplication {
@@ -66,6 +68,7 @@ impl OperitApplication {
             applicationContext,
             chatRuntimeHolder: ChatRuntimeHolder::new(),
             initialized: false,
+            hostRuntimeEventRegistration: None,
         }
     }
 
@@ -89,6 +92,9 @@ impl OperitApplication {
         self.initMcpPlugins();
         self.chatRuntimeHolder =
             ChatRuntimeHolder::newWithApplicationContext(self.applicationContext.clone());
+        self.hostRuntimeEventRegistration = crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
+            self.applicationContext.clone(),
+        )?;
         self.initialized = true;
         Ok(())
     }

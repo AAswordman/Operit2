@@ -49,6 +49,8 @@ class ToolApprovalBridge {
             composeWebViewController: null,
             systemCaptureScreenshot: null,
             systemRecognizeText: null,
+            audioPlay: null,
+            ttsSynthesis: null,
             toolPermission: RuntimeHostInteractionToolPermissionResponse(
               result: _resultName(result),
             ),

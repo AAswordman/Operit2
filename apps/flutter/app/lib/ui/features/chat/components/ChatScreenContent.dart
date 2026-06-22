@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
@@ -164,7 +165,7 @@ class ChatScreenContent extends StatelessWidget {
                     ignoring: isPreparingChatSwitch,
                     child: Opacity(
                       opacity: isPreparingChatSwitch ? 0 : 1,
-                      child: _buildChatArea(),
+                      child: _buildChatArea(context),
                     ),
                   ),
                   if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
@@ -256,7 +257,7 @@ class ChatScreenContent extends StatelessWidget {
     );
   }
 
-  Widget _buildChatArea() {
+  Widget _buildChatArea(BuildContext context) {
     return ChatArea(
       messages: messages,
       isLoading: loading,
@@ -283,11 +284,78 @@ class ChatScreenContent extends StatelessWidget {
       onInsertSummary: onInsertSummary,
       onCreateBranch: onCreateBranch,
       onReplyToMessage: onReplyToMessage,
+      onPlayVoice: (message) => _playVoice(context, message),
       onToggleMultiSelectMode: onToggleMultiSelectMode,
       onToggleMessageSelection: onToggleMessageSelection,
       onRefreshRequested: onRefreshRequested,
       isMultiSelectMode: isMultiSelectMode,
       selectedMessageIndices: selectedMessageIndices,
+    );
+  }
+
+  Future<void> _playVoice(BuildContext context, ChatUiMessage message) async {
+    try {
+      final targetCharacterName = _voiceCharacterName(message);
+      if (targetCharacterName == null) {
+        _showTtsSnack(context, '当前消息没有可匹配的角色');
+        return;
+      }
+      final cards = await viewModel.clients.preferencesCharacterCardManager
+          .getAllCharacterCards();
+      final matchingCards = cards.where((card) {
+        return card.name.trim() == targetCharacterName;
+      }).toList(growable: false);
+      if (matchingCards.length != 1) {
+        _showTtsSnack(context, '角色卡匹配数量不是 1：$targetCharacterName');
+        return;
+      }
+      final text = cleanMessageContent(message.content);
+      if (text.isEmpty) {
+        _showTtsSnack(context, '消息内容为空，无法生成语音');
+        return;
+      }
+      final result = await viewModel.bridge.call(
+        CoreCallRequest(
+          requestId: _requestId(),
+          targetPath: CoreObjectPath.parse('services.ttsSynthesisService'),
+          methodName: 'synthesizeForCharacter',
+          args: <String, Object?>{
+            'characterCardId': matchingCards.first.id,
+            'text': text,
+          },
+        ),
+      );
+      final audioPaths = ((result as Map<String, Object?>)['audioPaths']
+              as List<Object?>)
+          .map((path) => path as String)
+          .toList(growable: false);
+      for (final path in audioPaths) {
+        await viewModel.bridge.call(
+          CoreCallRequest(
+            requestId: _requestId(),
+            targetPath: CoreObjectPath.parse('services.ttsPlaybackService'),
+            methodName: 'playAudio',
+            args: <String, Object?>{'path': path},
+          ),
+        );
+      }
+      _showTtsSnack(context, '语音已开始播放');
+    } catch (error) {
+      _showTtsSnack(context, '生成/播放语音失败：$error');
+    }
+  }
+
+  String? _voiceCharacterName(ChatUiMessage message) {
+    final roleName = message.roleName.trim();
+    return roleName.isEmpty ? null : roleName;
+  }
+
+  void _showTtsSnack(BuildContext context, String message) {
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -386,3 +454,5 @@ class ChatScreenContent extends StatelessWidget {
     }
   }
 }
+
+String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';

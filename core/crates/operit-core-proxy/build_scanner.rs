@@ -347,6 +347,8 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let mut has_string_new = false;
         let mut has_context_get_instance = false;
         let mut has_context_ref_get_instance = false;
+        let mut has_result_context_get_instance = false;
+        let mut has_result_context_ref_get_instance = false;
         let mut has_context_get_instance_arc_mutex = false;
         let mut has_context_ref_get_instance_arc_mutex = false;
         let mut has_store_paths_new = false;
@@ -394,15 +396,21 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     };
                     if name == "getInstance" && arg_type.contains("OperitApplicationContext") {
                         let return_type = function_return_type(function);
+                        let returns_result_self = return_type.starts_with("Result < Self")
+                            || return_type.starts_with("Result<Self");
                         if arg_type.trim_start().starts_with('&') {
                             if returns_arc_mutex_self(&return_type) {
                                 has_context_ref_get_instance_arc_mutex = true;
+                            } else if returns_result_self {
+                                has_result_context_ref_get_instance = true;
                             } else {
                                 has_context_ref_get_instance = true;
                             }
                         } else {
                             if returns_arc_mutex_self(&return_type) {
                                 has_context_get_instance_arc_mutex = true;
+                            } else if returns_result_self {
+                                has_result_context_get_instance = true;
                             } else {
                                 has_context_get_instance = true;
                             }
@@ -434,6 +442,15 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
             return Some((
                 type_name,
                 ObjectAccess::ContextRefGetInstanceArcMutexConstruct,
+            ));
+        }
+        if has_result_context_get_instance {
+            return Some((type_name, ObjectAccess::ResultContextGetInstanceConstruct));
+        }
+        if has_result_context_ref_get_instance {
+            return Some((
+                type_name,
+                ObjectAccess::ResultContextRefGetInstanceConstruct,
             ));
         }
         if has_context_get_instance {

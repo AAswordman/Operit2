@@ -7,12 +7,13 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub type HostResult<T> = Result<T, HostError>;
+
+pub type HostRuntimeEventSink = Arc<dyn Fn(Value) + Send + Sync + 'static>;
 
 type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
 static HOST_LOG_SINK: OnceLock<RwLock<Option<HostLogSink>>> = OnceLock::new();
@@ -66,6 +67,8 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "audio.playback".to_string(),
+                "tts.synthesis".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -103,6 +106,8 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "audio.playback".to_string(),
+                "tts.synthesis".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -132,6 +137,8 @@ impl HostEnvironmentDescriptor {
                 "fs.archive".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
+                "audio.playback".to_string(),
+                "tts.synthesis".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -633,59 +640,13 @@ pub trait RuntimeSqliteHost: Send + Sync {
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>>;
 }
 
-pub type ExternalRuntimeEventHandler =
-    dyn Fn(ExternalRuntimeEvent) -> HostResult<Value> + Send + Sync + 'static;
+pub trait HostRuntimeEventRegistration: Send {}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExternalRuntimeEvent {
-    pub id: String,
-    pub name: String,
-    pub source: String,
-    pub payload: Value,
-    pub createdAtMillis: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExternalRuntimeEventResponse {
-    pub eventId: String,
-    pub runtimeId: String,
-    pub accepted: bool,
-    pub result: Option<Value>,
-    pub error: Option<String>,
-    pub handledAtMillis: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExternalRuntimeRegistrationDescriptor {
-    pub protocolVersion: i32,
-    pub runtimeId: String,
-    pub processId: u32,
-    pub processKind: String,
-    pub inboxDir: String,
-    pub eventsDir: String,
-    pub responsesDir: String,
-    pub capabilities: Vec<String>,
-    pub createdAtMillis: u64,
-}
-
-#[derive(Clone)]
-pub struct ExternalRuntimeEventBusConfig {
-    pub processKind: String,
-    pub capabilities: Vec<String>,
-    pub pollInterval: Duration,
-}
-
-pub trait ExternalRuntimeEventRegistration: Send {
-    fn runtimeId(&self) -> &str;
-}
-
-pub trait ExternalRuntimeEventHost: Send + Sync {
-    fn externalRuntimeEventRegistryDir(&self) -> HostResult<PathBuf>;
-    fn startExternalRuntimeEventBus(
+pub trait HostRuntimeEventHost: Send + Sync {
+    fn startHostRuntimeEventStream(
         &self,
-        config: ExternalRuntimeEventBusConfig,
-        handler: Arc<ExternalRuntimeEventHandler>,
-    ) -> HostResult<Box<dyn ExternalRuntimeEventRegistration>>;
+        sink: HostRuntimeEventSink,
+    ) -> HostResult<Box<dyn HostRuntimeEventRegistration>>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -808,6 +769,39 @@ impl OCRQuality {
             OCRQuality::High => "HIGH",
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioPlaybackStatus {
+    pub path: String,
+    pub started: bool,
+    pub details: String,
+}
+
+pub trait AudioPlaybackHost: Send + Sync {
+    fn playAudio(&self, path: &str) -> HostResult<AudioPlaybackStatus>;
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TtsSynthesisRequest {
+    pub text: String,
+    pub voice: String,
+    pub locale: String,
+    pub speed: f64,
+    pub pitch: f64,
+    pub outputFormat: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TtsSynthesisResponse {
+    pub audioPath: String,
+    pub details: String,
+}
+
+pub trait TtsSynthesisHost: Send + Sync {
+    fn synthesizeSpeech(&self, request: TtsSynthesisRequest) -> HostResult<TtsSynthesisResponse>;
 }
 
 pub trait SystemOperationHost: Send + Sync {

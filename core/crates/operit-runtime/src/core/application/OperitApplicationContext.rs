@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    BrowserAutomationHost, ComposeDslWebViewHost, ExternalRuntimeEventHost, FileSystemHost,
-    HostEnvironmentDescriptor, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
-    SystemOperationHost, TerminalHost, WebVisitHost,
+    AudioPlaybackHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
+    HostEnvironmentDescriptor, HostRuntimeEventHost, HttpHost, ManagedRuntimeHost,
+    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsSynthesisHost,
+    WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -32,11 +33,13 @@ pub struct OperitApplicationContext {
     pub composeDslWebViewHost: Option<Arc<dyn ComposeDslWebViewHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+    pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
+    pub ttsSynthesisHost: Option<Arc<dyn TtsSynthesisHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
-    pub externalRuntimeEventHost: Option<Arc<dyn ExternalRuntimeEventHost>>,
+    pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
     pub appFilesRoot: Option<PathBuf>,
@@ -51,11 +54,13 @@ impl OperitApplicationContext {
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
+            audioPlaybackHost: None,
+            ttsSynthesisHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
-            externalRuntimeEventHost: None,
+            hostRuntimeEventHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
             appFilesRoot: None,
@@ -72,11 +77,13 @@ impl OperitApplicationContext {
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
+            audioPlaybackHost: None,
+            ttsSynthesisHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
-            externalRuntimeEventHost: None,
+            hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
             appFilesRoot: None,
@@ -96,11 +103,13 @@ impl OperitApplicationContext {
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
+            audioPlaybackHost: None,
+            ttsSynthesisHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
-            externalRuntimeEventHost: None,
+            hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
             appFilesRoot: None,
@@ -121,11 +130,13 @@ impl OperitApplicationContext {
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
+            audioPlaybackHost: None,
+            ttsSynthesisHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
-            externalRuntimeEventHost: None,
+            hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
             appFilesRoot: None,
@@ -150,11 +161,13 @@ impl OperitApplicationContext {
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
+            audioPlaybackHost: None,
+            ttsSynthesisHost: None,
             managedRuntimeHost: Some(managedRuntimeHost),
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
             runtimeSqliteHost: Some(runtimeSqliteHost),
-            externalRuntimeEventHost: None,
+            hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
             appFilesRoot: None,
@@ -180,6 +193,18 @@ impl OperitApplicationContext {
     }
 
     #[allow(non_snake_case)]
+    pub fn withAudioPlaybackHost(mut self, audioPlaybackHost: Arc<dyn AudioPlaybackHost>) -> Self {
+        self.audioPlaybackHost = Some(audioPlaybackHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withTtsSynthesisHost(mut self, ttsSynthesisHost: Arc<dyn TtsSynthesisHost>) -> Self {
+        self.ttsSynthesisHost = Some(ttsSynthesisHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
     pub fn withBrowserAutomationHost(
         mut self,
         browserAutomationHost: Arc<dyn BrowserAutomationHost>,
@@ -198,11 +223,11 @@ impl OperitApplicationContext {
     }
 
     #[allow(non_snake_case)]
-    pub fn withExternalRuntimeEventHost(
+    pub fn withHostRuntimeEventHost(
         mut self,
-        externalRuntimeEventHost: Arc<dyn ExternalRuntimeEventHost>,
+        hostRuntimeEventHost: Arc<dyn HostRuntimeEventHost>,
     ) -> Self {
-        self.externalRuntimeEventHost = Some(externalRuntimeEventHost);
+        self.hostRuntimeEventHost = Some(hostRuntimeEventHost);
         self
     }
 }

@@ -54,6 +54,4 @@ abstract class OperitRuntimeBridge {
       ),
     );
   }
-
-  Future<String> dispatchHostEvent(String source, String payloadJson);
 }

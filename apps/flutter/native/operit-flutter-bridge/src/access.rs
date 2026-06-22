@@ -284,19 +284,6 @@ pub struct RemoteWatchChannelEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RemoteHostEventEnvelope {
-    pub source: String,
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RemoteRuntimeEventEnvelope {
-    pub name: String,
-    pub source: String,
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteSessionInfoEnvelope {
     pub nonce: String,
 }
@@ -446,9 +433,6 @@ impl RemoteLinkServer {
             .route("/link/watch/channel/events", post(watch_channel_events))
             .route("/link/watch/channel/open", post(watch_channel_open))
             .route("/link/watch/channel/close", post(watch_channel_close))
-            .route("/host/event", post(host_event))
-            .route("/client/host/event", post(client_host_event))
-            .route("/client/runtime-event", post(client_runtime_event))
             .route("/link/ws", get(ws));
         if webAccessConfig.is_some() {
             app = app
@@ -1146,85 +1130,6 @@ async fn watch_channel_close(
         return response;
     }
     state.linkDispatcher.watchChannelClose(body).await
-}
-
-async fn host_event(
-    State(state): State<RemoteLinkState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if let Err(response) = verify_session(&state, &headers, &body).await {
-        return response;
-    }
-    let envelope = match serde_json::from_slice::<RemoteHostEventEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge::dispatchHostEvent(
-        &envelope.source,
-        envelope.payload,
-    );
-    Json(serde_json::json!({
-        "ok": true,
-        "source": envelope.source,
-    }))
-    .into_response()
-}
-
-async fn client_host_event(
-    State(state): State<RemoteLinkState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if let Err(response) = verify_client_control(&state, &headers) {
-        return response;
-    }
-    let envelope = match serde_json::from_slice::<RemoteHostEventEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge::dispatchHostEvent(
-        &envelope.source,
-        envelope.payload,
-    );
-    Json(serde_json::json!({
-        "ok": true,
-        "source": envelope.source,
-    }))
-    .into_response()
-}
-
-async fn client_runtime_event(
-    State(state): State<RemoteLinkState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if let Err(response) = verify_client_control(&state, &headers) {
-        return response;
-    }
-    let envelope = match serde_json::from_slice::<RemoteRuntimeEventEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
-    };
-    let event = operit_host_api::ExternalRuntimeEvent {
-        id: Uuid::new_v4().to_string(),
-        name: envelope.name,
-        source: envelope.source,
-        payload: envelope.payload,
-        createdAtMillis: unix_millis() as u64,
-    };
-    match operit_runtime::core::application::ExternalRuntimeEventSupport::handleExternalRuntimeEvent(
-        operit_runtime::core::application::OperitApplication::OperitApplication::applicationContext(
-        ),
-        event,
-    ) {
-        Ok(result) => Json(serde_json::json!({
-            "ok": true,
-            "result": result,
-        }))
-        .into_response(),
-        Err(error) => bad_request(error.to_string()),
-    }
 }
 
 async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
