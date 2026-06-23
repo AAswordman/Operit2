@@ -69,6 +69,7 @@ impl HostEnvironmentDescriptor {
                 "os.share".to_string(),
                 "audio.playback".to_string(),
                 "tts.synthesis".to_string(),
+                "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -108,6 +109,7 @@ impl HostEnvironmentDescriptor {
                 "os.share".to_string(),
                 "audio.playback".to_string(),
                 "tts.synthesis".to_string(),
+                "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -139,6 +141,7 @@ impl HostEnvironmentDescriptor {
                 "os.share".to_string(),
                 "audio.playback".to_string(),
                 "tts.synthesis".to_string(),
+                "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
                 "system.app_usage".to_string(),
@@ -172,6 +175,7 @@ impl HostEnvironmentDescriptor {
                 "runtime.process".to_string(),
                 "runtime.storage".to_string(),
                 "runtime.sqlite".to_string(),
+                "tts.playback".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
                 "system.location".to_string(),
@@ -802,6 +806,34 @@ pub struct TtsSynthesisResponse {
 
 pub trait TtsSynthesisHost: Send + Sync {
     fn synthesizeSpeech(&self, request: TtsSynthesisRequest) -> HostResult<TtsSynthesisResponse>;
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TtsPlaybackRequest {
+    pub text: String,
+    pub voice: String,
+    pub locale: String,
+    pub speed: f64,
+    pub pitch: f64,
+    pub interrupt: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TtsPlaybackStatus {
+    pub path: String,
+    pub active: bool,
+    pub paused: bool,
+    pub details: String,
+}
+
+pub trait TtsPlaybackHost: Send + Sync {
+    fn speakText(&self, request: TtsPlaybackRequest) -> HostResult<TtsPlaybackStatus>;
+    fn pauseSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+    fn resumeSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+    fn stopSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+    fn speechState(&self) -> HostResult<TtsPlaybackStatus>;
 }
 
 pub trait SystemOperationHost: Send + Sync {

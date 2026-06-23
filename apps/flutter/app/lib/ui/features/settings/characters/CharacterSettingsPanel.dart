@@ -17,7 +17,6 @@ import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
-import '../tts/TtsSettingsPanel.dart';
 import 'MemoryGraphScreen.dart';
 part 'CharacterSettingsPanelWidgets.dart';
 part 'CharacterCardEditorDialog.dart';
@@ -36,8 +35,6 @@ class CharacterSettingsPanel extends StatefulWidget {
 
 class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   Future<_CharacterSettingsData>? _future;
-  final TtsConfigManagementController _ttsConfigController =
-      TtsConfigManagementController();
 
   GeneratedRepositoryUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
     String ownerKey,
@@ -152,18 +149,8 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     );
   }
 
-  Future<List<_TtsConfigSummary>> _loadTtsConfigs() async {
-    final value = await widget.clients.bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse('preferences.ttsConfigManager'),
-        methodName: 'getAllTtsConfigs',
-        args: const <String, Object?>{},
-      ),
-    );
-    return (value as List<Object?>)
-        .map((item) => _TtsConfigSummary.fromJson(item as Map<String, Object?>))
-        .toList(growable: false);
+  Future<List<core_proxy.TtsConfig>> _loadTtsConfigs() {
+    return widget.clients.preferencesTtsConfigManager.getAllTtsConfigs();
   }
 
   Future<Map<String, String>> _loadCharacterCardAvatarUris(
@@ -851,23 +838,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                           titleName: store.name,
                         ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _AdvancedSettingsGroup(
-                  title: '共享 TTS 配置',
-                  description: '配置可被角色卡显式绑定的语音合成服务。',
-                  action: FilledButton.icon(
-                    onPressed: _ttsConfigController.create,
-                    style: SettingsControlStyles.sectionFilledButton(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(l10n.create),
-                  ),
-                  children: <Widget>[
-                    TtsConfigManagementSection(
-                      clients: widget.clients,
-                      controller: _ttsConfigController,
-                    ),
                   ],
                 ),
               ],

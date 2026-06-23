@@ -4,7 +4,10 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use crate::data::model::TtsConfig::{TtsConfig, TtsProviderType};
+use crate::data::model::TtsCatalog::TtsCatalog;
+use crate::data::model::TtsConfig::{
+    AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
+};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 
 const DEFAULT_SYSTEM_TTS_CONFIG_ID: &str = "system_tts_default";
@@ -34,6 +37,11 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    fn CURRENT_TTS_CONFIG_ID() -> operit_store::PreferencesDataStore::PreferencesKey {
+        stringPreferencesKey("current_tts_config_id")
+    }
+
+    #[allow(non_snake_case)]
     pub fn ttsConfigListFlow(&self) -> Flow<Vec<String>> {
         self.dataStore
             .dataFlow()
@@ -41,8 +49,45 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    pub fn currentTtsConfigIdFlow(&self) -> Flow<String> {
+        self.dataStore
+            .dataFlow()
+            .mapResult(|preferences| readCurrentTtsConfigId(&preferences))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getCurrentTtsConfigId(&self) -> Result<String, String> {
+        self.bootstrapDefaultSystemTtsConfig()?;
+        self.currentTtsConfigIdFlow()
+            .first()
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getCurrentTtsConfig(&self) -> Result<TtsConfig, String> {
+        let id = self.getCurrentTtsConfigId()?;
+        self.getTtsConfig(&id)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn setCurrentTtsConfigId(&self, id: &str) -> Result<String, String> {
+        self.bootstrapDefaultSystemTtsConfig()?;
+        let id = id.trim().to_string();
+        if id.is_empty() {
+            return Err("current tts config id is empty".to_string());
+        }
+        self.getTtsConfig(&id)?;
+        self.dataStore
+            .edit(|preferences| {
+                preferences.set(&TtsConfigManager::CURRENT_TTS_CONFIG_ID(), id.clone());
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(id)
+    }
+
+    #[allow(non_snake_case)]
     pub fn getAllTtsConfigs(&self) -> Result<Vec<TtsConfig>, String> {
-        self.ensureDefaultSystemTtsConfig()?;
+        self.bootstrapDefaultSystemTtsConfig()?;
         let ids = self
             .ttsConfigListFlow()
             .first()
@@ -56,7 +101,7 @@ impl TtsConfigManager {
 
     #[allow(non_snake_case)]
     pub fn getTtsConfig(&self, id: &str) -> Result<TtsConfig, String> {
-        self.ensureDefaultSystemTtsConfig()?;
+        self.bootstrapDefaultSystemTtsConfig()?;
         self.getTtsConfigFlow(id)
             .first()
             .map_err(|error| error.to_string())
@@ -65,14 +110,14 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     pub fn getTtsConfigFlow(&self, id: &str) -> Flow<TtsConfig> {
         let id = id.trim().to_string();
-        self.dataStore.dataFlow().mapResult(move |preferences| {
-            readExistingTtsConfig(&preferences, &id)
-        })
+        self.dataStore
+            .dataFlow()
+            .mapResult(move |preferences| readExistingTtsConfig(&preferences, &id))
     }
 
     #[allow(non_snake_case)]
     pub fn createTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
-        self.ensureDefaultSystemTtsConfig()?;
+        self.bootstrapDefaultSystemTtsConfig()?;
         let now = currentTimeMillis();
         let id = Uuid::new_v4().to_string();
         let config = normalizeConfig(TtsConfig {
@@ -98,8 +143,86 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    pub fn getAvailableTtsVoices(
+        &self,
+        providerConfigId: &str,
+    ) -> Result<Vec<AvailableTtsVoice>, String> {
+        let providerConfig = self.getTtsConfig(providerConfigId)?;
+        availableTtsVoicesForProvider(&providerConfig)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn addTtsVoiceFromAvailable(
+        &self,
+        providerConfigId: &str,
+        model: String,
+        voice: String,
+    ) -> Result<TtsConfig, String> {
+        let providerConfig = self.getTtsConfig(providerConfigId)?;
+        let voiceConfig = findAvailableTtsVoice(&providerConfig, &model, &voice)?;
+        self.createTtsVoiceFromProvider(
+            providerConfig,
+            voiceConfig.model,
+            voiceConfig.voice,
+            voiceConfig.responseFormat,
+            voiceConfig.speed,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn createCustomTtsVoice(
+        &self,
+        providerConfigId: &str,
+        model: String,
+        voice: String,
+    ) -> Result<TtsConfig, String> {
+        let providerConfig = self.getTtsConfig(providerConfigId)?;
+        let model = model.trim().to_string();
+        let voice = voice.trim().to_string();
+        if model.is_empty() && voice.is_empty() {
+            return Err("tts custom voice model and voice are empty".to_string());
+        }
+        self.createTtsVoiceFromProvider(
+            providerConfig.clone(),
+            model,
+            voice,
+            providerConfig.responseFormat.clone(),
+            providerConfig.speed,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    fn createTtsVoiceFromProvider(
+        &self,
+        providerConfig: TtsConfig,
+        model: String,
+        voice: String,
+        responseFormat: String,
+        speed: f64,
+    ) -> Result<TtsConfig, String> {
+        self.createTtsConfig(TtsConfig {
+            id: String::new(),
+            name: providerConfig.name,
+            providerType: providerConfig.providerType,
+            endpoint: providerConfig.endpoint,
+            apiKey: providerConfig.apiKey,
+            model,
+            voice,
+            responseFormat,
+            speed,
+            httpMethod: providerConfig.httpMethod,
+            requestBody: providerConfig.requestBody,
+            contentType: providerConfig.contentType,
+            headers: providerConfig.headers,
+            responsePipeline: providerConfig.responsePipeline,
+            createdAt: 0,
+            updatedAt: 0,
+        })
+    }
+
+    #[allow(non_snake_case)]
     pub fn updateTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
-        self.ensureDefaultSystemTtsConfig()?;
+        self.bootstrapDefaultSystemTtsConfig()?;
         let id = config.id.trim().to_string();
         if id.is_empty() {
             return Err("tts config id is empty".to_string());
@@ -127,13 +250,20 @@ impl TtsConfigManager {
 
     #[allow(non_snake_case)]
     pub fn deleteTtsConfig(&self, id: &str) -> Result<bool, String> {
-        self.ensureDefaultSystemTtsConfig()?;
         let id = id.trim().to_string();
         if id.is_empty() {
             return Err("tts config id is empty".to_string());
         }
-        if id == DEFAULT_SYSTEM_TTS_CONFIG_ID {
-            return Err("default system tts config cannot be deleted".to_string());
+        let currentConfigId = self
+            .dataStore
+            .dataFlow()
+            .first()
+            .map_err(|error| error.to_string())?
+            .get(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if currentConfigId.as_deref() == Some(id.as_str()) {
+            return Err("current tts config cannot be deleted".to_string());
         }
         let cardManager = CharacterCardManager::new(self.paths.clone());
         let cards = cardManager
@@ -163,22 +293,34 @@ impl TtsConfigManager {
 
     #[allow(non_snake_case)]
     fn ensureDefaultSystemTtsConfig(&self) -> Result<(), String> {
-        let mut list = self
-            .ttsConfigListFlow()
+        let preferences = self
+            .dataStore
+            .dataFlow()
             .first()
             .map_err(|error| error.to_string())?;
-        if list.iter().any(|entry| entry == DEFAULT_SYSTEM_TTS_CONFIG_ID) {
+        let currentConfigId = preferences
+            .get(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())
+            .map(|value| value.trim().to_string());
+        if currentConfigId
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(());
+        }
+        let list = readConfigList(&preferences).map_err(|error| error.to_string())?;
+        if !list.is_empty() {
             return Ok(());
         }
         let now = currentTimeMillis();
         let config = defaultSystemTtsConfig(now);
-        list.push(DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string());
-        list.sort();
-        list.dedup();
         self.dataStore
             .edit(|preferences| {
-                writeConfigList(preferences, &list);
+                writeConfigList(preferences, &[DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string()]);
                 writeTtsConfig(preferences, &config);
+                preferences.set(
+                    &TtsConfigManager::CURRENT_TTS_CONFIG_ID(),
+                    DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string(),
+                );
             })
             .map_err(|error| error.to_string())
     }
@@ -198,6 +340,27 @@ fn writeConfigList(preferences: &mut Preferences, list: &[String]) {
     );
 }
 
+fn readCurrentTtsConfigId(preferences: &Preferences) -> Result<String, PreferencesDataStoreError> {
+    let raw = preferences
+        .get(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())
+        .ok_or_else(|| {
+            PreferencesDataStoreError::Message("current tts config id missing".to_string())
+        })?;
+    let id = raw.trim().to_string();
+    if id.is_empty() {
+        return Err(PreferencesDataStoreError::Message(
+            "current tts config id is empty".to_string(),
+        ));
+    }
+    let list = readConfigList(preferences)?;
+    if !list.iter().any(|entry| entry == &id) {
+        return Err(PreferencesDataStoreError::Message(format!(
+            "current tts config not found: {id}"
+        )));
+    }
+    Ok(id)
+}
+
 fn readExistingTtsConfig(
     preferences: &Preferences,
     id: &str,
@@ -214,9 +377,9 @@ fn readExistingTtsConfig(
             "tts config not found: {id}"
         )));
     }
-    let raw = preferences
-        .get(&configJsonKey(id))
-        .ok_or_else(|| PreferencesDataStoreError::Message(format!("tts config payload missing: {id}")))?;
+    let raw = preferences.get(&configJsonKey(id)).ok_or_else(|| {
+        PreferencesDataStoreError::Message(format!("tts config payload missing: {id}"))
+    })?;
     serde_json::from_str::<TtsConfig>(raw).map_err(PreferencesDataStoreError::from)
 }
 
@@ -225,6 +388,32 @@ fn writeTtsConfig(preferences: &mut Preferences, config: &TtsConfig) {
         &configJsonKey(&config.id),
         serde_json::to_string(config).expect("tts config must serialize"),
     );
+}
+
+#[allow(non_snake_case)]
+fn availableTtsVoicesForProvider(
+    providerConfig: &TtsConfig,
+) -> Result<Vec<AvailableTtsVoice>, String> {
+    TtsCatalog::voicesForProvider(
+        &providerConfig.providerType,
+        &providerConfig.model,
+        &providerConfig.responseFormat,
+        providerConfig.speed,
+    )
+}
+
+#[allow(non_snake_case)]
+fn findAvailableTtsVoice(
+    providerConfig: &TtsConfig,
+    model: &str,
+    voice: &str,
+) -> Result<AvailableTtsVoice, String> {
+    let model = model.trim();
+    let voice = voice.trim();
+    availableTtsVoicesForProvider(providerConfig)?
+        .into_iter()
+        .find(|entry| entry.model == model && entry.voice == voice)
+        .ok_or_else(|| format!("available tts voice not found: {model}/{voice}"))
 }
 
 #[allow(non_snake_case)]
@@ -239,7 +428,11 @@ fn defaultSystemTtsConfig(now: i64) -> TtsConfig {
         voice: String::new(),
         responseFormat: "wav".to_string(),
         speed: 1.0,
-        enabled: true,
+        httpMethod: "POST".to_string(),
+        requestBody: String::new(),
+        contentType: "application/json".to_string(),
+        headers: Vec::new(),
+        responsePipeline: Vec::new(),
         createdAt: now,
         updatedAt: now,
     }
@@ -257,16 +450,21 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     }
     let providerType = TtsProviderType::normalize(&config.providerType);
     if providerType != TtsProviderType::SYSTEM_TTS
+        && providerType != TtsProviderType::HTTP_TTS
         && providerType != TtsProviderType::OPENAI_COMPATIBLE
     {
         return Err(format!("unsupported tts provider type: {providerType}"));
     }
     let endpoint = config.endpoint.trim().to_string();
     let model = config.model.trim().to_string();
-    if providerType == TtsProviderType::OPENAI_COMPATIBLE {
+    if providerType == TtsProviderType::OPENAI_COMPATIBLE
+        || providerType == TtsProviderType::HTTP_TTS
+    {
         if endpoint.is_empty() {
             return Err("tts config endpoint is empty".to_string());
         }
+    }
+    if providerType == TtsProviderType::OPENAI_COMPATIBLE {
         if model.is_empty() {
             return Err("tts config model is empty".to_string());
         }
@@ -282,6 +480,25 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     if config.speed <= 0.0 {
         return Err("tts config speed must be positive".to_string());
     }
+    let httpMethod = normalizeHttpMethod(&config.httpMethod)?;
+    let contentType = config.contentType.trim().to_string();
+    let requestBody = config.requestBody.trim().to_string();
+    if providerType == TtsProviderType::HTTP_TTS {
+        validateHttpUrl(&endpoint)?;
+        if httpMethod == "POST" && requestBody.is_empty() {
+            return Err("http tts request body is empty".to_string());
+        }
+        let template = if httpMethod == "GET" {
+            endpoint.as_str()
+        } else {
+            requestBody.as_str()
+        };
+        if !templateHasPlaceholder(template, "text") {
+            return Err("http tts text placeholder is missing".to_string());
+        }
+    }
+    let headers = normalizeHeaders(config.headers)?;
+    let responsePipeline = normalizePipeline(config.responsePipeline)?;
     Ok(TtsConfig {
         id: config.id.trim().to_string(),
         name,
@@ -292,10 +509,90 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
         voice,
         responseFormat,
         speed: config.speed,
-        enabled: config.enabled,
+        httpMethod,
+        requestBody,
+        contentType,
+        headers,
+        responsePipeline,
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     })
+}
+
+#[allow(non_snake_case)]
+fn normalizeHttpMethod(method: &str) -> Result<String, String> {
+    let trimmed = method.trim();
+    if trimmed.eq_ignore_ascii_case("GET") {
+        Ok("GET".to_string())
+    } else if trimmed.eq_ignore_ascii_case("POST") {
+        Ok("POST".to_string())
+    } else {
+        Err(format!("unsupported http tts method: {trimmed}"))
+    }
+}
+
+#[allow(non_snake_case)]
+fn validateHttpUrl(endpoint: &str) -> Result<(), String> {
+    let url =
+        url::Url::parse(endpoint).map_err(|error| format!("invalid http tts url: {error}"))?;
+    match url.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(format!("unsupported http tts url scheme: {scheme}")),
+    }
+}
+
+#[allow(non_snake_case)]
+fn normalizeHeaders(headers: Vec<TtsHttpHeader>) -> Result<Vec<TtsHttpHeader>, String> {
+    let mut result = Vec::new();
+    for header in headers {
+        let name = header.name.trim().to_string();
+        let value = header.value.trim().to_string();
+        if name.is_empty() {
+            return Err("http tts header name is empty".to_string());
+        }
+        result.push(TtsHttpHeader { name, value });
+    }
+    Ok(result)
+}
+
+#[allow(non_snake_case)]
+fn normalizePipeline(
+    steps: Vec<TtsHttpResponsePipelineStep>,
+) -> Result<Vec<TtsHttpResponsePipelineStep>, String> {
+    let mut result = Vec::new();
+    for step in steps {
+        let stepType = normalizePipelineStepType(&step.stepType)?;
+        let headers = normalizeHeaders(step.headers)?;
+        result.push(TtsHttpResponsePipelineStep {
+            stepType,
+            path: step.path.trim().to_string(),
+            headers,
+        });
+    }
+    Ok(result)
+}
+
+#[allow(non_snake_case)]
+fn normalizePipelineStepType(stepType: &str) -> Result<String, String> {
+    let trimmed = stepType.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    match normalized.as_str() {
+        "parse_json"
+        | "pick"
+        | "parse_json_string"
+        | "http_get"
+        | "http_request_from_object"
+        | "base64_decode" => Ok(normalized),
+        _ => Err(format!(
+            "unsupported http tts response pipeline step: {trimmed}"
+        )),
+    }
+}
+
+#[allow(non_snake_case)]
+fn templateHasPlaceholder(template: &str, name: &str) -> bool {
+    let needle = format!("{{{name}}}");
+    template.match_indices(&needle).next().is_some()
 }
 
 #[allow(non_snake_case)]

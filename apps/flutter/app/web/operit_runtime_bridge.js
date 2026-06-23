@@ -670,6 +670,137 @@
     throw new Error(`${name} is not available in the browser host`);
   }
 
+  const ttsPlayback = (() => {
+    let activeUtterance = null;
+    let activePath = "";
+    let utteranceIndex = 0;
+    let lastDetails = "browser speech synthesis idle";
+
+    function synthesis() {
+      const value = globalThis.speechSynthesis;
+      if (value === undefined || value === null) {
+        throw new Error("browser speechSynthesis is not available");
+      }
+      return value;
+    }
+
+    function requireText(value, name) {
+      if (typeof value !== "string") {
+        throw new Error(`${name} must be a string`);
+      }
+      return value.trim();
+    }
+
+    function requireNumber(value, name) {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`${name} must be a finite number`);
+      }
+      return value;
+    }
+
+    function requireBoolean(value, name) {
+      if (typeof value !== "boolean") {
+        throw new Error(`${name} must be a boolean`);
+      }
+      return value;
+    }
+
+    function selectedVoice(voiceName) {
+      if (voiceName.length === 0) {
+        return null;
+      }
+      const voice = synthesis().getVoices().find((candidate) =>
+        candidate.voiceURI === voiceName || candidate.name === voiceName
+      );
+      if (voice === undefined) {
+        throw new Error(`tts voice not found: ${voiceName}`);
+      }
+      return voice;
+    }
+
+    function currentStatus(details) {
+      const engine = synthesis();
+      const active = activeUtterance !== null || engine.speaking || engine.pending;
+      return {
+        path: activePath,
+        active,
+        paused: engine.paused,
+        details,
+      };
+    }
+
+    return {
+      speakText(request) {
+        const text = requireText(request.text, "tts text");
+        if (text.length === 0) {
+          throw new Error("tts text is empty");
+        }
+        const voiceName = requireText(request.voice, "tts voice");
+        const locale = requireText(request.locale, "tts locale");
+        const speed = requireNumber(request.speed, "tts speed");
+        const pitch = requireNumber(request.pitch, "tts pitch");
+        const interrupt = requireBoolean(request.interrupt, "tts interrupt");
+        const engine = synthesis();
+        if (interrupt) {
+          engine.cancel();
+          activeUtterance = null;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voice = selectedVoice(voiceName);
+        if (voice !== null) {
+          utterance.voice = voice;
+        }
+        if (locale.length > 0) {
+          utterance.lang = locale;
+        }
+        utterance.rate = speed;
+        utterance.pitch = pitch;
+        const path = `web-tts://${++utteranceIndex}`;
+        activePath = path;
+        activeUtterance = utterance;
+        lastDetails = "browser speech synthesis started";
+        utterance.onend = () => {
+          if (activeUtterance === utterance) {
+            activeUtterance = null;
+            lastDetails = "browser speech synthesis completed";
+          }
+        };
+        utterance.onerror = (event) => {
+          if (activeUtterance === utterance) {
+            activeUtterance = null;
+            lastDetails = `browser speech synthesis error: ${event.error}`;
+          }
+        };
+        engine.speak(utterance);
+        return currentStatus(lastDetails);
+      },
+      pauseSpeech() {
+        synthesis().pause();
+        lastDetails = "browser speech synthesis paused";
+        return currentStatus(lastDetails);
+      },
+      resumeSpeech() {
+        synthesis().resume();
+        lastDetails = "browser speech synthesis resumed";
+        return currentStatus(lastDetails);
+      },
+      stopSpeech() {
+        synthesis().cancel();
+        activeUtterance = null;
+        lastDetails = "browser speech synthesis stopped";
+        return {
+          path: activePath,
+          active: false,
+          paused: false,
+          details: lastDetails,
+        };
+      },
+      speechState() {
+        return currentStatus(lastDetails);
+      },
+    };
+  })();
+
   globalThis.__operitHost = {
     runtimeStorage: {
       readBytes(path) {
@@ -901,6 +1032,7 @@
       },
       kill() {},
     },
+    ttsPlayback,
     systemOperation: {
       toast(message) {
         console.info("[Operit toast]", message);

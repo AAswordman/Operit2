@@ -12,7 +12,7 @@ pub mod host_runtime_event;
 #[cfg(target_os = "linux")]
 pub use host_runtime_event::LinuxHostRuntimeEventHost;
 pub use tools::audio::LinuxAudioPlaybackHost;
-pub use tools::tts::LinuxTtsSynthesisHost;
+pub use tools::tts::{LinuxTtsPlaybackHost, LinuxTtsSynthesisHost};
 pub use tools::browser::{LinuxBrowserAutomationHost, LinuxWebVisitHost};
 pub use tools::fs::LinuxFileSystemHost;
 pub use tools::http::LinuxHttpHost;

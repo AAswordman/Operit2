@@ -178,6 +178,7 @@ struct RemoteSession {
 #[derive(Clone, Debug)]
 struct VerifiedRemoteSession {
     sessionId: String,
+    deviceId: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1066,9 +1067,7 @@ async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: By
         Err(response) => return response,
     };
     withRuntimeHostInteractionOrigin(
-        RuntimeHostInteractionRequestOrigin::RemoteSession {
-            sessionId: verified.sessionId,
-        },
+        verified.origin(),
         state.linkDispatcher.call(body),
     )
     .await
@@ -1084,9 +1083,7 @@ async fn watch_snapshot(
         Err(response) => return response,
     };
     withRuntimeHostInteractionOrigin(
-        RuntimeHostInteractionRequestOrigin::RemoteSession {
-            sessionId: verified.sessionId,
-        },
+        verified.origin(),
         state.linkDispatcher.watchSnapshot(body),
     )
     .await
@@ -1113,9 +1110,7 @@ async fn watch_channel_open(
         Err(response) => return response,
     };
     withRuntimeHostInteractionOrigin(
-        RuntimeHostInteractionRequestOrigin::RemoteSession {
-            sessionId: verified.sessionId,
-        },
+        verified.origin(),
         state.linkDispatcher.watchChannelOpen(body),
     )
     .await
@@ -1245,9 +1240,7 @@ async fn handle_ws_envelope(
         }
         RemoteWsPayload::Call(request) => {
             withRuntimeHostInteractionOrigin(
-                RuntimeHostInteractionRequestOrigin::RemoteSession {
-                    sessionId: verified.sessionId,
-                },
+                verified.origin(),
                 async {
                     let mut core = state.core.lock().await;
                     RemoteWsResponse::Call(core.call(request.request).await)
@@ -1257,9 +1250,7 @@ async fn handle_ws_envelope(
         }
         RemoteWsPayload::WatchSnapshot(request) => {
             withRuntimeHostInteractionOrigin(
-                RuntimeHostInteractionRequestOrigin::RemoteSession {
-                    sessionId: verified.sessionId,
-                },
+                verified.origin(),
                 async {
                     let mut core = state.core.lock().await;
                     match core.watchSnapshot(request.request).await {
@@ -1312,7 +1303,17 @@ async fn verify_session_parts(
     }
     Ok(VerifiedRemoteSession {
         sessionId: sessionId.to_string(),
+        deviceId: deviceId.to_string(),
     })
+}
+
+impl VerifiedRemoteSession {
+    fn origin(&self) -> RuntimeHostInteractionRequestOrigin {
+        RuntimeHostInteractionRequestOrigin::RemoteSession {
+            sessionId: self.sessionId.clone(),
+            deviceId: self.deviceId.clone(),
+        }
+    }
 }
 
 fn accepted_session_from_record(

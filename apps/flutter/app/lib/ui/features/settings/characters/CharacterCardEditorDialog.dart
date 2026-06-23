@@ -50,7 +50,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
   final bool showItemActions;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
-  final List<_TtsConfigSummary> ttsConfigs;
+  final List<core_proxy.TtsConfig> ttsConfigs;
   final bool enableMemoryAutoUpdate;
   final bool disableUserPreferenceDescription;
   final Future<void> Function(bool enabled) onSaveMemoryAutoUpdate;
@@ -68,7 +68,7 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required bool showItemActions,
     required List<core_proxy.ProviderModelSummary> modelSummaries,
     required List<core_proxy.SharedMemoryStore> sharedMemoryStores,
-    required List<_TtsConfigSummary> ttsConfigs,
+    required List<core_proxy.TtsConfig> ttsConfigs,
     required bool enableMemoryAutoUpdate,
     required bool disableUserPreferenceDescription,
     required Future<void> Function(bool enabled) onSaveMemoryAutoUpdate,
@@ -468,6 +468,20 @@ class _CharacterCardEditorDialogState
     });
   }
 
+  Future<void> _selectTtsConfig() async {
+    final selected = await _CharacterTtsConfigSelectorDialog.show(
+      context: context,
+      configs: widget.ttsConfigs,
+      currentConfigId: _ttsConfigId,
+    );
+    if (selected == null) {
+      return;
+    }
+    setState(() {
+      _ttsConfigId = selected.id;
+    });
+  }
+
   Future<void> _setMemoryAutoUpdate(bool enabled) async {
     await widget.onSaveMemoryAutoUpdate(enabled);
     if (!mounted) {
@@ -525,6 +539,7 @@ class _CharacterCardEditorDialogState
       widget.modelSummaries,
       _chatModelId,
     );
+    final selectedTtsConfig = _ttsConfigById(widget.ttsConfigs, _ttsConfigId);
     final toolAccessSummary = _toolAccessSummary(l10n, _toolAccessConfig);
     final dialogActions = <Widget>[
       if (widget.showItemActions && !widget.card.isDefault)
@@ -654,8 +669,8 @@ class _CharacterCardEditorDialogState
                         ),
                         _BindingSwitchSection(
                           title: 'TTS 配置',
-                          subtitleOff: '不绑定 TTS 配置',
-                          subtitleOn: '使用指定 TTS 配置',
+                          subtitleOff: '跟随全局 TTS 配置',
+                          subtitleOn: '使用角色卡 TTS 配置',
                           value: _ttsBindingEnabled,
                           onChanged: widget.ttsConfigs.isEmpty
                               ? null
@@ -674,33 +689,13 @@ class _CharacterCardEditorDialogState
                                 child: Text('还没有 TTS 配置'),
                               )
                             else
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: DropdownButtonFormField<String?>(
-                                  initialValue: widget.ttsConfigs.any(
-                                    (config) => config.id == _ttsConfigId,
-                                  )
-                                      ? _ttsConfigId
-                                      : null,
-                                  items: <DropdownMenuItem<String?>>[
-                                    for (final config in widget.ttsConfigs)
-                                      DropdownMenuItem<String?>(
-                                        value: config.id,
-                                        child: Text(
-                                          '${config.name} · ${config.model} · ${config.voice}',
-                                        ),
-                                      ),
-                                  ],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _ttsConfigId = value;
-                                    });
-                                  },
-                                  style: OperitFormStyles.dropdownTextStyle(context),
-                                  decoration: const InputDecoration(
-                                    labelText: 'TTS 配置',
-                                  ),
+                              _DialogToolAccessConfigureField(
+                                label: 'TTS 配置',
+                                valueText: _ttsConfigBindingText(
+                                  selectedTtsConfig,
+                                  _ttsConfigId,
                                 ),
+                                onConfigure: _selectTtsConfig,
                               ),
                           ],
                         ),
@@ -1157,6 +1152,178 @@ class _CharacterModelOptionTile extends StatelessWidget {
                     ),
                     Text(
                       summary.providerName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CharacterTtsConfigSelectorDialog extends StatefulWidget {
+  const _CharacterTtsConfigSelectorDialog({
+    required this.configs,
+    required this.currentConfigId,
+  });
+
+  final List<core_proxy.TtsConfig> configs;
+  final String? currentConfigId;
+
+  static Future<core_proxy.TtsConfig?> show({
+    required BuildContext context,
+    required List<core_proxy.TtsConfig> configs,
+    required String? currentConfigId,
+  }) {
+    return showDialog<core_proxy.TtsConfig>(
+      context: context,
+      builder: (context) => _CharacterTtsConfigSelectorDialog(
+        configs: configs,
+        currentConfigId: currentConfigId,
+      ),
+    );
+  }
+
+  @override
+  State<_CharacterTtsConfigSelectorDialog> createState() =>
+      _CharacterTtsConfigSelectorDialogState();
+}
+
+class _CharacterTtsConfigSelectorDialogState
+    extends State<_CharacterTtsConfigSelectorDialog> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<core_proxy.TtsConfig> _filteredConfigs() {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return widget.configs;
+    }
+    return widget.configs
+        .where((config) => _ttsConfigSearchText(config).contains(query))
+        .toList(growable: false);
+  }
+
+  void _selectConfig(core_proxy.TtsConfig config) {
+    Navigator.of(context).pop(config);
+  }
+
+  Widget _configList(AppLocalizations l10n) {
+    final filteredConfigs = _filteredConfigs();
+    return Column(
+      children: <Widget>[
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            labelText: l10n.search,
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: filteredConfigs.isEmpty
+              ? Center(child: Text(l10n.noData))
+              : ListView.builder(
+                  itemCount: filteredConfigs.length,
+                  itemBuilder: (context, index) {
+                    final config = filteredConfigs[index];
+                    return _CharacterTtsConfigOptionTile(
+                      config: config,
+                      selected: config.id == widget.currentConfigId,
+                      onTap: () => _selectConfig(config),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (widget.configs.isEmpty) {
+      return AlertDialog(
+        title: const Text('选择 TTS 配置'),
+        content: SizedBox(width: 420, child: Text(l10n.noData)),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.cancel),
+          ),
+        ],
+      );
+    }
+    return AlertDialog(
+      title: const Text('选择 TTS 配置'),
+      content: SizedBox(width: 560, height: 480, child: _configList(l10n)),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
+    );
+  }
+}
+
+class _CharacterTtsConfigOptionTile extends StatelessWidget {
+  const _CharacterTtsConfigOptionTile({
+    required this.config,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final core_proxy.TtsConfig config;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          child: Row(
+            children: <Widget>[
+              SizedBox(
+                width: 24,
+                child: Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  size: 20,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _ttsConfigModelVoiceText(config),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      _ttsConfigProviderText(config),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: colorScheme.onSurfaceVariant),

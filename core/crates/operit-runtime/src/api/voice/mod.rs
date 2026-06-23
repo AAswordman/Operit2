@@ -1,8 +1,12 @@
-#[path = "VoiceService.rs"]
-pub mod VoiceService;
-#[path = "VoiceServiceFactory.rs"]
-pub mod VoiceServiceFactory;
+#[path = "HttpTtsResponsePipelineStep.rs"]
+pub mod HttpTtsResponsePipelineStep;
+#[path = "HttpVoiceProvider.rs"]
+pub mod HttpVoiceProvider;
 #[path = "OpenAIVoiceProvider.rs"]
 pub mod OpenAIVoiceProvider;
 #[path = "SystemVoiceProvider.rs"]
 pub mod SystemVoiceProvider;
+#[path = "VoiceService.rs"]
+pub mod VoiceService;
+#[path = "VoiceServiceFactory.rs"]
+pub mod VoiceServiceFactory;

@@ -26,6 +26,18 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
+    pub fn readBase64(&self, path: String) -> Result<Option<String>, String> {
+        let storageHost = defaultRuntimeStorageHost();
+        if !storageHost.exists(&path).map_err(|error| error.message)? {
+            return Ok(None);
+        }
+        let bytes = storageHost
+            .readBytes(&path)
+            .map_err(|error| error.message)?;
+        Ok(Some(STANDARD.encode(bytes)))
+    }
+
+    #[allow(non_snake_case)]
     pub fn writeText(&self, path: String, content: String) -> Result<(), String> {
         defaultRuntimeStorageHost()
             .writeBytes(&path, content.as_bytes())

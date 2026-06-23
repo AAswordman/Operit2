@@ -9,6 +9,7 @@ import '../data/DataSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
 import '../tools/ToolSettingsPanel.dart';
+import '../tts/TtsSettingsPanel.dart';
 import '../workspace/WorkspaceSettingsPanel.dart';
 
 class SettingsDetailView extends StatelessWidget {
@@ -25,6 +26,7 @@ class SettingsDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     return switch (category) {
       SettingsCategory.model => const ModelSettingsPanel(),
+      SettingsCategory.tts => const TtsSettingsPanel(),
       SettingsCategory.characters => const CharacterSettingsPanel(),
       SettingsCategory.tools => const ToolSettingsPanel(),
       SettingsCategory.workspace => const WorkspaceSettingsPanel(),

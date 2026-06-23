@@ -128,10 +128,9 @@ async fn rollback_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<
         .rollbackToMessage(index)
         .await
         .map_err(|error| error.to_string())?;
-    if rolledBack {
-        println!("rolled back to message: {index}");
-    } else {
-        println!("rollback skipped: message must exist and be a user message");
+    match rolledBack {
+        Some(message) => println!("rolled back to message: {index}\n{message}"),
+        None => println!("rollback skipped: message must exist and be a user message"),
     }
     Ok(())
 }
@@ -1176,7 +1175,6 @@ pub(crate) async fn dispatch_chat_message_with_application(
     } else {
         Some(replyToMessage)
     };
-    core.updateUserMessage(sendArgs.message);
     let beforeLastAiTimestamp = core
         .chatHistoryFlow()
         .value()
@@ -1189,7 +1187,7 @@ pub(crate) async fn dispatch_chat_message_with_application(
         PromptFunctionType::CHAT,
         None,
         None,
-        None,
+        sendArgs.message,
         None,
         Some(chatBinding.providerId),
         Some(chatBinding.modelId),
@@ -1257,8 +1255,7 @@ pub(crate) fn launch_chat_message_with_application(
     } else {
         Some(replyToMessage)
     };
-    core.updateUserMessage(sendArgs.message);
-
+    let messageText = sendArgs.message;
     let mut service = core
         .enhancedAiService
         .clone()
@@ -1302,7 +1299,7 @@ pub(crate) fn launch_chat_message_with_application(
                     PromptFunctionType::CHAT,
                     None,
                     Some(threadChatId),
-                    None,
+                    messageText,
                     None,
                     Some(chatBinding.providerId),
                     Some(chatBinding.modelId),
@@ -1451,7 +1448,7 @@ async fn send_chat_message_with_core_result(
             PromptFunctionType::CHAT,
             None,
             None,
-            Some(sendArgs.message),
+            sendArgs.message,
             None,
             None,
             None,

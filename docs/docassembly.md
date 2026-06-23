@@ -216,6 +216,7 @@ pub use core::chat::AIMessageManager::AIMessageManager
 
 ```text
 api/
+  voice/                       TTS provider/factory、系统 TTS、HTTP TTS、OpenAI 兼容 TTS
   chat/
     ChatRuntimeHolder.rs       主聊天 runtime 持有者
     ChatRuntimeSlot.rs         runtime slot
@@ -253,6 +254,9 @@ plugins/
 services/
   ChatServiceCore.rs
   core/*Delegate.rs
+  TtsSynthesisService.rs       按角色卡绑定配置生成音频资源
+  TtsPlaybackService.rs        通过 Host 播放/暂停/继续/停止系统 TTS
+  RuntimeHostInteractionService.rs Android owner host interaction
 
 ui/
   features/chat/webview/workspace/
@@ -321,6 +325,8 @@ system.app_usage
 system.app.install
 system.app.uninstall
 system.settings
+tts.synthesis
+tts.playback
 ```
 
 ### 3.3 operit-link
@@ -492,6 +498,7 @@ src/tools/runtime/mod.rs
 src/tools/storage/mod.rs
 src/tools/system/mod.rs
 src/tools/terminal/mod.rs
+src/tools/tts/mod.rs
 ```
 
 ### 4.1 Native Host Assembly
@@ -538,6 +545,7 @@ managedRuntimeProcess
 runtimeStorage
 sqlite
 systemOperation
+ttsPlayback
 ```
 
 Web storage 设计：
@@ -557,6 +565,44 @@ sql-wasm.js
 initSqlJs()
 Uint8Array blob
 integer string preservation
+```
+
+### 4.3 Voice / TTS Host Assembly
+
+TTS 分三层：
+
+```text
+runtime config
+  -> TtsConfigManager / TtsConfig
+  -> 共享 TTS 配置与角色卡 ttsConfigId 绑定
+
+runtime voice api
+  -> api/voice/VoiceServiceFactory
+  -> SystemVoiceProvider / HttpVoiceProvider / OpenAIVoiceProvider
+  -> HttpTtsResponsePipelineStep
+
+host capability
+  -> operit-host-api TtsSynthesisHost / TtsPlaybackHost
+  -> hosts/{android,linux,web,windows}
+```
+
+职责边界：
+
+```text
+TtsSynthesisService 只生成 runtime storage 音频资源
+TtsPlaybackService 只调用 TtsPlaybackHost 控制系统 TTS
+Flutter chat UI 只发起生成/播放请求、展示悬浮控制面板
+系统 TTS 不在 Flutter UI 中按平台分叉实现
+HTTP / OpenAI 兼容 TTS 的响应拆包由 api/voice 管道处理
+```
+
+平台接线：
+
+```text
+Windows  -> System.Speech 合成 wav，MCI 直接播放并支持暂停/继续/停止/状态
+Linux    -> espeak-ng 合成 wav，aplay 播放并支持暂停/继续/停止/状态
+Web      -> hosts/web 调用 globalThis.__operitHost.ttsPlayback，浏览器 speechSynthesis 只属于 web host bridge
+Android  -> RuntimeHostInteractionService 请求 owner app，OwnerSystemCapabilityChannel 使用 Android TextToSpeech
 ```
 
 ## 5. Flutter App Assembly
@@ -1172,6 +1218,8 @@ Mutex<HashMap<String, CoreEventStream>>
 FlutterApprovalBridge
 FlutterBrowserAutomationBridge
 NativeTerminalHost
+TtsSynthesisHost
+TtsPlaybackHost
 ```
 
 Native app access 持有：

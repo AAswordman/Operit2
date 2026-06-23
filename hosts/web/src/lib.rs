@@ -9,3 +9,4 @@ pub use tools::http::WebHttpHost;
 pub use tools::runtime::WebManagedRuntimeHost;
 pub use tools::storage::WebRuntimeStorageHost;
 pub use tools::system::WebSystemOperationHost;
+pub use tools::tts::WebTtsPlaybackHost;
