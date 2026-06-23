@@ -8,7 +8,7 @@ use crate::data::dao::ChatDao::ChatDao;
 use crate::data::dao::MessageDao::MessageDao;
 use crate::data::dao::MessageVariantDao::MessageVariantDao;
 
-pub const DATABASE_VERSION: i32 = 21;
+pub const DATABASE_VERSION: i32 = 22;
 
 #[derive(Debug, Error)]
 pub enum AppDatabaseError {
@@ -109,6 +109,7 @@ impl AppDatabase {
             18 => MIGRATION_18_19(self)?,
             19 => MIGRATION_19_20(self)?,
             20 => MIGRATION_20_21(self)?,
+            21 => MIGRATION_21_22(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -129,6 +130,7 @@ impl AppDatabase {
             DROP TABLE IF EXISTS message_variants;
             DROP TABLE IF EXISTS messages;
             DROP TABLE IF EXISTS chats;
+            DROP TABLE IF EXISTS usage_request_records;
             DROP TABLE IF EXISTS sync_sql_deletions;
             DROP TABLE IF EXISTS sync_sql_message_variant_rows;
             DROP TABLE IF EXISTS sync_sql_message_rows;
@@ -363,6 +365,12 @@ fn MIGRATION_20_21(database: &AppDatabase) -> Result<(), SqliteStoreError> {
 }
 
 #[allow(non_snake_case)]
+fn MIGRATION_21_22(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    createUsageRequestRecordsTable(&database.store)?;
+    database.store.setUserVersion(22)
+}
+
+#[allow(non_snake_case)]
 fn addColumnIfMissing(
     store: &SqliteStore,
     tableName: &str,
@@ -457,7 +465,43 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             ON message_variants(chatId, messageTimestamp, variantIndex);
         "#,
     )?;
+    createUsageRequestRecordsTable(store)?;
     createSyncTables(store)
+}
+
+#[allow(non_snake_case)]
+fn createUsageRequestRecordsTable(store: &SqliteStore) -> Result<(), SqliteStoreError> {
+    store.executeBatch(
+        r#"
+        CREATE TABLE IF NOT EXISTS usage_request_records (
+            id TEXT PRIMARY KEY NOT NULL,
+            createdAtMs INTEGER NOT NULL,
+            providerModel TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            modelName TEXT NOT NULL,
+            functionType TEXT NOT NULL,
+            source TEXT NOT NULL,
+            chatId TEXT,
+            inputTokens INTEGER NOT NULL,
+            outputTokens INTEGER NOT NULL,
+            cachedInputTokens INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_createdAtMs
+            ON usage_request_records(createdAtMs);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_providerModel
+            ON usage_request_records(providerModel);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_provider
+            ON usage_request_records(provider);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_modelName
+            ON usage_request_records(modelName);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_functionType
+            ON usage_request_records(functionType);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_source
+            ON usage_request_records(source);
+        CREATE INDEX IF NOT EXISTS index_usage_request_records_chatId
+            ON usage_request_records(chatId);
+        "#,
+    )
 }
 
 pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {

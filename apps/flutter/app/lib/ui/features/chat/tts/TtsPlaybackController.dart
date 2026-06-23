@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
 
 const String _systemTtsProviderType = 'SYSTEM_TTS';
@@ -99,9 +100,41 @@ class TtsPlaybackController extends ChangeNotifier {
     if (interrupt) {
       await stop();
     }
-    final request = _TtsPlaybackRequest(
+    final request = _TtsPlaybackRequest.character(
       bridge: bridge,
       characterCardId: characterCardId,
+      text: text,
+      title: title,
+      generation: _generation,
+    );
+    _queue.add(request);
+    _publish(
+      _state.copyWith(
+        phase: _state.phase == TtsPlaybackPhase.idle
+            ? TtsPlaybackPhase.preparing
+            : _state.phase,
+        queueLength: _queue.length,
+        clearError: true,
+      ),
+    );
+    if (!_draining) {
+      unawaited(_drainQueue());
+    }
+  }
+
+  Future<void> speakWithConfig({
+    required OperitRuntimeBridge bridge,
+    required String ttsConfigId,
+    required String text,
+    required String title,
+    bool interrupt = true,
+  }) async {
+    if (interrupt) {
+      await stop();
+    }
+    final request = _TtsPlaybackRequest.config(
+      bridge: bridge,
+      ttsConfigId: ttsConfigId,
       text: text,
       title: title,
       generation: _generation,
@@ -195,7 +228,7 @@ class TtsPlaybackController extends ChangeNotifier {
           continue;
         }
         if (usesHostSystemSpeech) {
-          final audioPath = _hostSpeechPath(request.characterCardId);
+          final audioPath = _hostSpeechPath(request.displayId);
           _publish(
             _state.copyWith(
               phase: TtsPlaybackPhase.playing,
@@ -261,30 +294,57 @@ class TtsPlaybackController extends ChangeNotifier {
 
   Future<bool> _usesHostSystemSpeech(_TtsPlaybackRequest request) async {
     final clients = GeneratedCoreProxyClients(request.bridge);
+    final config = switch (request.source) {
+      _TtsPlaybackSource.character => await _resolvedCharacterTtsConfig(
+        clients,
+        request.characterCardId,
+      ),
+      _TtsPlaybackSource.config =>
+        await clients.preferencesTtsConfigManager.getTtsConfig(
+          id: request.ttsConfigId,
+        ),
+    };
+    return config.providerType == _systemTtsProviderType;
+  }
+
+  Future<core_proxy.TtsConfig> _resolvedCharacterTtsConfig(
+    GeneratedCoreProxyClients clients,
+    String characterCardId,
+  ) async {
     final card = await clients.preferencesCharacterCardManager.getCharacterCard(
-      id: request.characterCardId,
+      id: characterCardId,
     );
     final ttsConfigId = card.ttsConfigId?.trim();
-    final config = ttsConfigId == null || ttsConfigId.isEmpty
+    return ttsConfigId == null || ttsConfigId.isEmpty
         ? await clients.preferencesTtsConfigManager.getCurrentTtsConfig()
         : await clients.preferencesTtsConfigManager.getTtsConfig(
             id: ttsConfigId,
           );
-    return config.providerType == _systemTtsProviderType;
   }
 
   Future<List<_TtsPlaybackAudioSource>> _synthesize(
     _TtsPlaybackRequest request,
   ) async {
+    final methodName = switch (request.source) {
+      _TtsPlaybackSource.character => 'synthesizeForCharacter',
+      _TtsPlaybackSource.config => 'synthesizeWithConfig',
+    };
+    final args = switch (request.source) {
+      _TtsPlaybackSource.character => <String, Object?>{
+        'characterCardId': request.characterCardId,
+        'text': request.text,
+      },
+      _TtsPlaybackSource.config => <String, Object?>{
+        'ttsConfigId': request.ttsConfigId,
+        'text': request.text,
+      },
+    };
     final result = await request.bridge.call(
       CoreCallRequest(
         requestId: _requestId(),
         targetPath: CoreObjectPath.parse('services.ttsSynthesisService'),
-        methodName: 'synthesizeForCharacter',
-        args: <String, Object?>{
-          'characterCardId': request.characterCardId,
-          'text': request.text,
-        },
+        methodName: methodName,
+        args: args,
       ),
     );
     final json = result as Map<String, Object?>;
@@ -303,14 +363,26 @@ class TtsPlaybackController extends ChangeNotifier {
   }
 
   Future<void> _speakHostSystem(_TtsPlaybackRequest request) async {
-    await _callHostSpeech(
-      request.bridge,
-      'speakForCharacter',
-      args: <String, Object?>{
+    final methodName = switch (request.source) {
+      _TtsPlaybackSource.character => 'speakForCharacter',
+      _TtsPlaybackSource.config => 'speakWithConfig',
+    };
+    final args = switch (request.source) {
+      _TtsPlaybackSource.character => <String, Object?>{
         'characterCardId': request.characterCardId,
         'text': request.text,
         'interrupt': true,
       },
+      _TtsPlaybackSource.config => <String, Object?>{
+        'ttsConfigId': request.ttsConfigId,
+        'text': request.text,
+        'interrupt': true,
+      },
+    };
+    await _callHostSpeech(
+      request.bridge,
+      methodName,
+      args: args,
     );
   }
 
@@ -389,20 +461,39 @@ class TtsPlaybackController extends ChangeNotifier {
 }
 
 class _TtsPlaybackRequest {
-  const _TtsPlaybackRequest({
+  const _TtsPlaybackRequest.character({
     required this.bridge,
     required this.characterCardId,
     required this.text,
     required this.title,
     required this.generation,
-  });
+  }) : source = _TtsPlaybackSource.character,
+       ttsConfigId = '';
+
+  const _TtsPlaybackRequest.config({
+    required this.bridge,
+    required this.ttsConfigId,
+    required this.text,
+    required this.title,
+    required this.generation,
+  }) : source = _TtsPlaybackSource.config,
+       characterCardId = '';
 
   final OperitRuntimeBridge bridge;
+  final _TtsPlaybackSource source;
   final String characterCardId;
+  final String ttsConfigId;
   final String text;
   final String title;
   final int generation;
+
+  String get displayId => switch (source) {
+    _TtsPlaybackSource.character => characterCardId,
+    _TtsPlaybackSource.config => ttsConfigId,
+  };
 }
+
+enum _TtsPlaybackSource { character, config }
 
 class _TtsPlaybackAudioSource {
   const _TtsPlaybackAudioSource({

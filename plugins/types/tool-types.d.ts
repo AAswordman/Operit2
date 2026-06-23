@@ -13,7 +13,7 @@ import {
     BluetoothScanResultData, BluetoothSessionData, BluetoothTransferData, BluetoothReadData,
     BluetoothBleServicesData, BluetoothBleNotificationData,
     UIPageResultData, UIActionResultData, CombinedOperationResultData, AutomationExecutionResultData,
-    IntentResultData, TerminalCommandResultData, HiddenTerminalCommandResultData,
+    IntentResultData, TerminalInfoResultData, TerminalCommandResultData, HiddenTerminalCommandResultData,
     TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData, MusicPlaybackResultData,
     FilePartContentData, FileApplyResultData,
     ChatServiceStartResultData, ChatCreationResultData, ChatListResultData, ChatFindResultData, AgentStatusResultData,
@@ -142,6 +142,7 @@ export interface ToolResultMap {
     'send_broadcast': IntentResultData;
 
     // Terminal operations
+    'get_terminal_info': TerminalInfoResultData;
     'execute_in_terminal_session': TerminalCommandResultData;
     'execute_in_terminal_session_streaming': TerminalCommandResultData;
     'execute_hidden_terminal_command': HiddenTerminalCommandResultData;

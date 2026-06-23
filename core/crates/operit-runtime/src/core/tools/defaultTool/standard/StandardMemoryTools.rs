@@ -11,9 +11,9 @@ use crate::core::tools::ToolResultDataClasses::{
     stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
     MemoryQueryResultData, ToolResultData,
 };
+use crate::data::model::CharacterCard::CharacterCardMemoryBindingMode;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
-use crate::data::model::CharacterCard::CharacterCardMemoryBindingMode;
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::util::OperitPaths::{

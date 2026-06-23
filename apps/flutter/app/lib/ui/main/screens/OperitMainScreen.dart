@@ -227,6 +227,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       _drawerOpen = false;
       _isNavigatingBack = false;
     });
+    if (_routerState.currentEntry.routeId == entry.routeId) {
+      return;
+    }
     _resetToRoute(entry.routeId, <String, Object?>{
       'conversationActivatedAt': DateTime.now().microsecondsSinceEpoch,
     }, RouteEntrySource.drawer);

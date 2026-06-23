@@ -12,6 +12,8 @@ use crate::core::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryH
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::ModelParameter::ModelParameter;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
@@ -507,6 +509,26 @@ impl ConversationService {
         if summaryContent.trim().is_empty() {
             return Ok("Conversation Summary: Unable to generate valid summary.".to_string());
         }
+        let apiPreferences = ApiPreferences::getInstance();
+        apiPreferences
+            .updateTokensForProviderModel(
+                &providerModel,
+                summaryInputTokens,
+                summaryOutputTokens,
+                summaryCachedInputTokens,
+            )
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        UsageStatisticsStore::new()
+            .recordProviderModelRequest(
+                providerModel,
+                FunctionType::SUMMARY,
+                UsageRequestSource::SUMMARY_GENERATION,
+                None,
+                summaryInputTokens,
+                summaryOutputTokens,
+                summaryCachedInputTokens,
+            )
+            .map_err(AiServiceError::RequestFailed)?;
         Ok(summaryContent)
     }
 

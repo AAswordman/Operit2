@@ -253,7 +253,9 @@ pub struct ToolPkgRegisteredHostEventHook {
     #[serde(default = "defaultTrue")]
     pub enabled: bool,
 }
-fn defaultTrue() -> bool { true }
+fn defaultTrue() -> bool {
+    true
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredAiProviderHandler {
@@ -1355,15 +1357,11 @@ fn validateHostEventHooks(
         }
         let source = hook.source.trim().to_string();
         if source.is_empty() {
-            return Err(format!(
-                "{registryName}[{index}].source is required"
-            ));
+            return Err(format!("{registryName}[{index}].source is required"));
         }
         let function = hook.function.trim().to_string();
         if function.is_empty() {
-            return Err(format!(
-                "{registryName}[{index}].function is required"
-            ));
+            return Err(format!("{registryName}[{index}].function is required"));
         }
         runtimes.push(ToolPkgHostEventHookRuntime {
             id,

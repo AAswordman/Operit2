@@ -11,13 +11,22 @@ pub trait VoiceService: Send + Sync {
 }
 
 pub fn normalizedAudioExtension(responseFormat: &str) -> Result<&'static str, String> {
-    match responseFormat.trim() {
+    let trimmed = responseFormat.trim();
+    match trimmed {
         "mp3" => Ok("mp3"),
         "opus" => Ok("opus"),
         "aac" => Ok("aac"),
         "flac" => Ok("flac"),
         "wav" => Ok("wav"),
         "pcm" => Ok("pcm"),
-        value => Err(format!("unsupported tts response format: {value}")),
+        value => match value.split_once('_').map(|(prefix, _)| prefix) {
+            Some("mp3") => Ok("mp3"),
+            Some("opus") => Ok("opus"),
+            Some("aac") => Ok("aac"),
+            Some("flac") => Ok("flac"),
+            Some("wav") => Ok("wav"),
+            Some("pcm") => Ok("pcm"),
+            _ => Err(format!("unsupported tts response format: {value}")),
+        },
     }
 }

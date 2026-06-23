@@ -9,8 +9,9 @@ use crate::core::tools::packTool::ToolPkgCommonPluginConstants::*;
 use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgRegisteredAiProvider,
     ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
-    ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook, ToolPkgRegisteredNavigationEntry,
-    ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule, ToolPkgRegisteredUiRoute,
+    ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook,
+    ToolPkgRegisteredNavigationEntry, ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule,
+    ToolPkgRegisteredUiRoute,
 };
 use crate::core::tools::ToolPackage::LocalizedText;
 

@@ -39,6 +39,8 @@ pub type SharedAiResponseStream = DelegatingRevisableSharedTextStream;
 pub enum AiServiceError {
     #[error("provider is not implemented: {0}")]
     ProviderNotImplemented(String),
+    #[error("request cancelled")]
+    RequestCancelled,
     #[error("connection failed: {0}")]
     ConnectionFailed(String),
     #[error("request failed: {0}")]
@@ -86,6 +88,7 @@ pub fn retry_error_text(error: &AiServiceError) -> String {
                 "网络中断".to_string()
             }
             AiServiceError::RequestFailed(value) => value.clone(),
+            AiServiceError::RequestCancelled => "请求已取消".to_string(),
             _ => message,
         }
     }

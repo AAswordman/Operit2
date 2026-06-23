@@ -589,6 +589,32 @@ export interface IntentResultData {
 }
 
 /**
+ * Terminal type availability entry
+ */
+export interface TerminalTypeInfoData {
+    /** Terminal type id, such as powershell, bash, linux, or android */
+    terminalType: string;
+    /** Whether this terminal type is available on the current platform */
+    available: boolean;
+    /** Human-readable terminal type description */
+    description: string;
+}
+
+/**
+ * Terminal environment information
+ */
+export interface TerminalInfoResultData {
+    /** Current runtime platform, such as windows, linux, or android */
+    platform: string;
+    /** Default terminal type for this platform */
+    defaultType: string;
+    /** Terminal types known to this host */
+    types: TerminalTypeInfoData[];
+    /** Returns a formatted string representation */
+    toString(): string;
+}
+
+/**
  * Terminal command execution result data
  */
 export interface TerminalCommandResultData {
@@ -604,7 +630,7 @@ export interface TerminalCommandResultData {
     /** ID of the terminal session used for execution */
     sessionId: string;
 
-    /** Whether this execution ended due to timeout. Timeout still resolves normally. */
+    /** Whether this execution ended due to timeout. On timeout, the current command is cancelled and the terminal session is kept. */
     timedOut?: boolean;
 
     /** Returns a formatted string representation of the terminal execution result */
@@ -653,7 +679,7 @@ export interface HiddenTerminalCommandResultData {
     /** Hidden executor key used for execution */
     executorKey: string;
 
-    /** Whether this execution ended due to timeout. Timeout still resolves normally. */
+    /** Whether this execution ended due to timeout. On timeout, the current command is cancelled and the hidden executor session is kept. */
     timedOut?: boolean;
 
     /** Returns a formatted string representation of the hidden terminal execution result */
@@ -728,8 +754,6 @@ export interface TerminalSessionScreenResultData {
     cols: number;
     /** Current visible screen text content */
     content: string;
-    /** Whether the current session has a tool-managed command still executing */
-    commandRunning?: boolean;
     /** Returns a formatted string representation */
     toString(): string;
 }

@@ -55,24 +55,54 @@ pub struct AvailableTtsVoice {
     pub speed: f64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[allow(non_snake_case)]
+pub struct TtsProviderOperationResultSpec {
+    pub itemsJsonPath: Option<String>,
+    pub modelJsonPath: Option<String>,
+    pub voiceJsonPath: Option<String>,
+    pub displayNameJsonPath: Option<String>,
+    pub descriptionJsonPath: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[allow(non_snake_case)]
+pub struct TtsProviderOperationSpec {
+    pub operationType: String,
+    pub handlerId: String,
+    pub method: String,
+    pub path: String,
+    pub requiresApiKey: bool,
+    pub authHeaderName: String,
+    pub authHeaderValue: String,
+    pub body: String,
+    pub result: TtsProviderOperationResultSpec,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[allow(non_snake_case)]
+pub struct TtsProviderCatalogEntry {
+    pub providerTypeId: String,
+    pub displayName: String,
+    pub defaultEndpoint: String,
+    pub defaultModel: String,
+    pub defaultResponseFormat: String,
+    pub defaultHttpMethod: String,
+    pub defaultContentType: String,
+    pub defaultRequestBody: String,
+    pub defaultHeaders: Vec<TtsHttpHeader>,
+    pub defaultResponsePipeline: Vec<TtsHttpResponsePipelineStep>,
+    pub operations: Vec<TtsProviderOperationSpec>,
+}
+
 pub struct TtsProviderType;
 
 impl TtsProviderType {
     pub const SYSTEM_TTS: &'static str = "SYSTEM_TTS";
     pub const HTTP_TTS: &'static str = "HTTP_TTS";
-    pub const OPENAI_COMPATIBLE: &'static str = "OPENAI_COMPATIBLE";
 
     pub fn normalize(providerType: &str) -> String {
-        let trimmed = providerType.trim();
-        if trimmed.eq_ignore_ascii_case(Self::SYSTEM_TTS) {
-            Self::SYSTEM_TTS.to_string()
-        } else if trimmed.eq_ignore_ascii_case(Self::HTTP_TTS) {
-            Self::HTTP_TTS.to_string()
-        } else if trimmed.eq_ignore_ascii_case(Self::OPENAI_COMPATIBLE) {
-            Self::OPENAI_COMPATIBLE.to_string()
-        } else {
-            trimmed.to_string()
-        }
+        providerType.trim().to_ascii_uppercase()
     }
 }
 

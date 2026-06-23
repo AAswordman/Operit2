@@ -7,7 +7,7 @@ import {
     AppUsageTimeResultData, DeviceInfoResultData, NotificationData, LocationData,
     BluetoothStateData, BluetoothBondedDevicesData, BluetoothScanResultData, BluetoothSessionData,
     BluetoothTransferData, BluetoothReadData, BluetoothBleServicesData, BluetoothBleNotificationData,
-    IntentResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
+    IntentResultData, TerminalInfoResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
     TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData,
     MusicPlaybackResultData
 } from './results';
@@ -262,18 +262,24 @@ export namespace System {
      */
     namespace terminal {
         /**
+         * Get terminal environment information for the current platform.
+         */
+        function info(): Promise<TerminalInfoResultData>;
+
+        /**
          * Create or get a terminal session.
          * @param sessionName The name for the session.
+         * @param type Optional terminal type, such as powershell, bash, linux, or android.
          * @returns Promise resolving to the session creation result.
          */
-        function create(sessionName?: string): Promise<TerminalSessionCreationResultData>;
+        function create(sessionName?: string, type?: string): Promise<TerminalSessionCreationResultData>;
 
         /**
          * Execute a command in a terminal session.
          * @param sessionId The ID of the session.
          * @param command The command to execute.
          * @param timeoutMs Optional timeout in milliseconds. Strongly recommended to always pass explicitly.
-         * @returns Promise resolving to the command execution result. On timeout, the promise still resolves and the returned result has `timedOut === true`.
+         * @returns Promise resolving to the command execution result. On timeout, the current command is cancelled, the terminal session is kept, and the returned result has `timedOut === true`.
          */
         function exec(sessionId: string, command: string, timeoutMs?: number | string): Promise<TerminalCommandResultData>;
 
@@ -295,7 +301,7 @@ export namespace System {
          * Commands using the same executorKey reuse the same hidden login context and are not shown in the visible terminal UI.
          * @param command The command to execute.
          * @param options Optional hidden executor options.
-         * @returns Promise resolving to the hidden command execution result. On timeout, the promise still resolves and the returned result has `timedOut === true`.
+         * @returns Promise resolving to the hidden command execution result. On timeout, the current command is cancelled, the hidden executor session is kept, and the returned result has `timedOut === true`.
          */
         function hiddenExec(command: string, options?: {
             executorKey?: string;

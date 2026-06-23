@@ -39,6 +39,8 @@ import {
     FileInfoData as _FileInfoData,
     HttpResponseData as _HttpResponseData,
     VisitWebResultData as _VisitWebResultData,
+    TerminalInfoResultData as _TerminalInfoResultData,
+    TerminalTypeInfoData as _TerminalTypeInfoData,
     TerminalCommandResultData as _TerminalCommandResultData,
     TerminalStreamEventData as _TerminalStreamEventData,
     HiddenTerminalCommandResultData as _HiddenTerminalCommandResultData,
@@ -209,6 +211,8 @@ declare global {
     type FileInfoData = _FileInfoData;
     type HttpResponseData = _HttpResponseData;
     type VisitWebResultData = _VisitWebResultData;
+    type TerminalInfoResultData = _TerminalInfoResultData;
+    type TerminalTypeInfoData = _TerminalTypeInfoData;
     type TerminalCommandResultData = _TerminalCommandResultData;
     type TerminalStreamEventData = _TerminalStreamEventData;
     type HiddenTerminalCommandResultData = _HiddenTerminalCommandResultData;

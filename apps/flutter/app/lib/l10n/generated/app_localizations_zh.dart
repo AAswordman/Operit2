@@ -2465,10 +2465,136 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataOutputTokens => '输出';
 
   @override
+  String get settingsDataOpenDetailedStats => '查看详细统计';
+
+  @override
+  String get settingsDataOpenDetailedStatsDescription =>
+      '打开每日趋势、输入输出 Token 变化，以及按供应商、模型、会话分类的使用明细。';
+
+  @override
   String get settingsDataRefreshTokenStats => '刷新统计';
 
   @override
   String get settingsDataResetTokenStats => '重置统计';
+
+  @override
+  String get settingsDataDetailedStatsTitle => '详细统计';
+
+  @override
+  String get settingsDataDetailedStatsDescription =>
+      '统计基于独立保存的模型请求明细计算。';
+
+  @override
+  String get settingsDataDetailedStatsEmpty => '暂无可展示的详细使用记录';
+
+  @override
+  String settingsDataDetailedStatsDateRange(String start, String end) {
+    return '$start 至 $end';
+  }
+
+  @override
+  String get settingsDataDetailedStatsSourceLabel => '模型请求明细';
+
+  @override
+  String get settingsDataDetailedStatsSourceChat => '对话回复';
+
+  @override
+  String get settingsDataDetailedStatsSourceToolResult => '工具结果续写';
+
+  @override
+  String get settingsDataDetailedStatsSourceSummary => '摘要生成';
+
+  @override
+  String get settingsDataDetailedStatsSourceMemory => '记忆分析';
+
+  @override
+  String get settingsDataDetailedStatsTotalRequests => '总请求数';
+
+  @override
+  String get settingsDataDetailedStatsCachedInput => '缓存输入';
+
+  @override
+  String get settingsDataDetailedStatsActiveDays => '活跃天数';
+
+  @override
+  String get settingsDataDetailedStatsChats => '会话数';
+
+  @override
+  String get settingsDataDetailedStatsProviders => '供应商数';
+
+  @override
+  String get settingsDataDetailedStatsModels => '模型数';
+
+  @override
+  String get settingsDataDetailedStatsDailyUsageTitle => '每日使用趋势';
+
+  @override
+  String get settingsDataDetailedStatsDailyUsageSubtitle => '按天统计请求次数';
+
+  @override
+  String get settingsDataDetailedStatsRequestsSeries => '请求数';
+
+  @override
+  String get settingsDataDetailedStatsInputOutputTitle => '输入 / 输出消耗趋势';
+
+  @override
+  String get settingsDataDetailedStatsInputOutputSubtitle =>
+      '按天统计输入与输出 Token 变化';
+
+  @override
+  String get settingsDataDetailedStatsProviderPieTitle => '供应商分布';
+
+  @override
+  String get settingsDataDetailedStatsModelPieTitle => '模型分布';
+
+  @override
+  String get settingsDataDetailedStatsChatPieTitle => '会话分布';
+
+  @override
+  String get settingsDataDetailedStatsTotalTokens => '总 Token';
+
+  @override
+  String get settingsDataDetailedStatsTopRequestsTitle => '单项请求排行';
+
+  @override
+  String get settingsDataDetailedStatsTopRequestsSubtitle =>
+      '单次请求 Token 消耗最高的记录';
+
+  @override
+  String get settingsDataDetailedStatsTopChatsTitle => '会话排行';
+
+  @override
+  String get settingsDataDetailedStatsTopChatsSubtitle => '按会话累计 Token 消耗排序';
+
+  @override
+  String get settingsDataDetailedStatsOther => '其他';
+
+  @override
+  String settingsDataDetailedStatsInputOutputSummary(
+    String input,
+    String output,
+    String chatTitle,
+    String time,
+  ) {
+    return '输入 $input · 输出 $output · $chatTitle · $time';
+  }
+
+  @override
+  String settingsDataDetailedStatsRequestModelSummary(
+    int requests,
+    int models,
+  ) {
+    return '$requests 次请求 · $models 个模型';
+  }
+
+  @override
+  String get settingsDataDetailedStatsUnlabeledProvider => '未标记供应商';
+
+  @override
+  String get settingsDataDetailedStatsUnlabeledModel => '未标记模型';
+
+  @override
+  String get settingsDataDetailedStatsUntitledChat => '未命名会话';
 
   @override
   String get settingsDataBackupSection => '备份与恢复';

@@ -812,10 +812,9 @@ impl AIMessageManager {
             stream.upstream.close();
             stream.event_channel.close();
         }
-        if let Some(mut service) = Self::takeActiveEnhancedAiService(&chatKey) {
+        if let Some(mut service) = Self::cloneActiveEnhancedAiService(&chatKey) {
             service.cancelConversation().await;
         }
-        Self::forgetActiveChatKey(&chatKey);
     }
 
     #[allow(non_snake_case)]
@@ -872,11 +871,12 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
-    fn takeActiveEnhancedAiService(chatKey: &str) -> Option<EnhancedAIService> {
+    fn cloneActiveEnhancedAiService(chatKey: &str) -> Option<EnhancedAIService> {
         let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
         map.lock()
             .expect("active enhanced ai service mutex poisoned")
-            .remove(chatKey)
+            .get(chatKey)
+            .cloned()
     }
 
     #[allow(non_snake_case)]

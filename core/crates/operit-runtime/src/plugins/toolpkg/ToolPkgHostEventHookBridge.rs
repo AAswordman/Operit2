@@ -20,8 +20,7 @@ static HOST_EVENT_SCHEDULE_GENERATION: OnceLock<Arc<AtomicU64>> = OnceLock::new(
 pub struct ToolPkgHostEventHookBridge;
 
 impl ToolPkgHostEventHookBridge {
-    pub fn register() {
-    }
+    pub fn register() {}
 
     #[allow(non_snake_case)]
     pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
@@ -168,7 +167,9 @@ fn syncHostEventSchedules() {
         }
         match hook.source.as_str() {
             "timer" => scheduleTimerHostEvent(hook, currentGeneration, Arc::clone(&generation)),
-            "interval" => scheduleIntervalHostEvent(hook, currentGeneration, Arc::clone(&generation)),
+            "interval" => {
+                scheduleIntervalHostEvent(hook, currentGeneration, Arc::clone(&generation))
+            }
             _ => {}
         }
     }
@@ -204,17 +205,15 @@ fn scheduleIntervalHostEvent(
     let Some(intervalMs) = hostEventTriggerDelayMs(&hook, "interval", "intervalMs") else {
         return;
     };
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(intervalMs));
-            if generationState.load(Ordering::SeqCst) != generation {
-                return;
-            }
-            ToolPkgHostEventHookBridge::dispatchHostEvent(
-                "interval",
-                intervalHostEventPayload(&hook, intervalMs),
-            );
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(intervalMs));
+        if generationState.load(Ordering::SeqCst) != generation {
+            return;
         }
+        ToolPkgHostEventHookBridge::dispatchHostEvent(
+            "interval",
+            intervalHostEventPayload(&hook, intervalMs),
+        );
     });
 }
 
@@ -253,7 +252,10 @@ fn hostEventTriggerDelayMs(
             "plugin.toolpkg.host_event.schedule.error",
             &[
                 ("hookId", hook.hookId.clone()),
-                ("error", format!("trigger.{fieldName} must be a positive integer")),
+                (
+                    "error",
+                    format!("trigger.{fieldName} must be a positive integer"),
+                ),
             ],
         );
         return None;
@@ -264,7 +266,10 @@ fn hostEventTriggerDelayMs(
             "plugin.toolpkg.host_event.schedule.error",
             &[
                 ("hookId", hook.hookId.clone()),
-                ("error", format!("trigger.{fieldName} must be a positive integer")),
+                (
+                    "error",
+                    format!("trigger.{fieldName} must be a positive integer"),
+                ),
             ],
         );
         return None;

@@ -4,9 +4,11 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
+use crate::api::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
 use crate::data::model::TtsCatalog::TtsCatalog;
 use crate::data::model::TtsConfig::{
-    AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
+    AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep,
+    TtsProviderCatalogEntry, TtsProviderType,
 };
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 
@@ -97,6 +99,11 @@ impl TtsConfigManager {
             configs.push(self.getTtsConfig(&id)?);
         }
         Ok(configs)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getProviderCatalogEntries(&self) -> Result<Vec<TtsProviderCatalogEntry>, String> {
+        TtsCatalog::providers()
     }
 
     #[allow(non_snake_case)]
@@ -292,7 +299,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
-    fn ensureDefaultSystemTtsConfig(&self) -> Result<(), String> {
+    fn bootstrapDefaultSystemTtsConfig(&self) -> Result<(), String> {
         let preferences = self
             .dataStore
             .dataFlow()
@@ -380,7 +387,8 @@ fn readExistingTtsConfig(
     let raw = preferences.get(&configJsonKey(id)).ok_or_else(|| {
         PreferencesDataStoreError::Message(format!("tts config payload missing: {id}"))
     })?;
-    serde_json::from_str::<TtsConfig>(raw).map_err(PreferencesDataStoreError::from)
+    let config = serde_json::from_str::<TtsConfig>(raw).map_err(PreferencesDataStoreError::from)?;
+    normalizeConfig(config).map_err(PreferencesDataStoreError::Message)
 }
 
 fn writeTtsConfig(preferences: &mut Preferences, config: &TtsConfig) {
@@ -394,12 +402,23 @@ fn writeTtsConfig(preferences: &mut Preferences, config: &TtsConfig) {
 fn availableTtsVoicesForProvider(
     providerConfig: &TtsConfig,
 ) -> Result<Vec<AvailableTtsVoice>, String> {
-    TtsCatalog::voicesForProvider(
+    let mut voices = TtsCatalog::voicesForProvider(
         &providerConfig.providerType,
         &providerConfig.model,
         &providerConfig.responseFormat,
         providerConfig.speed,
-    )
+    )?;
+    let remoteVoices = TtsVoiceListFetcher::fetch(providerConfig)?;
+    for remoteVoice in remoteVoices {
+        if voices
+            .iter()
+            .any(|voice| voice.model == remoteVoice.model && voice.voice == remoteVoice.voice)
+        {
+            continue;
+        }
+        voices.push(remoteVoice);
+    }
+    Ok(voices)
 }
 
 #[allow(non_snake_case)]
@@ -449,30 +468,46 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
         return Err("tts config name is empty".to_string());
     }
     let providerType = TtsProviderType::normalize(&config.providerType);
-    if providerType != TtsProviderType::SYSTEM_TTS
-        && providerType != TtsProviderType::HTTP_TTS
-        && providerType != TtsProviderType::OPENAI_COMPATIBLE
-    {
-        return Err(format!("unsupported tts provider type: {providerType}"));
-    }
-    let endpoint = config.endpoint.trim().to_string();
-    let model = config.model.trim().to_string();
-    if providerType == TtsProviderType::OPENAI_COMPATIBLE
-        || providerType == TtsProviderType::HTTP_TTS
-    {
+    let providerCatalog = TtsCatalog::provider(&providerType)?;
+    let endpoint = catalogText(&config.endpoint, &providerCatalog.defaultEndpoint);
+    let model = catalogText(&config.model, &providerCatalog.defaultModel);
+    if providerType != TtsProviderType::SYSTEM_TTS {
         if endpoint.is_empty() {
             return Err("tts config endpoint is empty".to_string());
         }
+        validateHttpUrl(&endpoint)?;
     }
-    if providerType == TtsProviderType::OPENAI_COMPATIBLE {
+    let voice = config.voice.trim().to_string();
+    let responseFormat = catalogText(
+        &config.responseFormat,
+        &providerCatalog.defaultResponseFormat,
+    );
+    let httpMethod = catalogText(&config.httpMethod, &providerCatalog.defaultHttpMethod);
+    let httpMethod = normalizeHttpMethod(&httpMethod)?;
+    let contentType = catalogText(&config.contentType, &providerCatalog.defaultContentType);
+    let requestBody = catalogText(&config.requestBody, &providerCatalog.defaultRequestBody);
+    let headers = catalogHeaders(config.headers, &providerCatalog);
+    let responsePipeline = catalogPipeline(config.responsePipeline, &providerCatalog);
+    if providerType != TtsProviderType::SYSTEM_TTS
+        && templateUsesModel(&endpoint, &requestBody, &headers)
+    {
         if model.is_empty() {
             return Err("tts config model is empty".to_string());
         }
     }
-    let voice = config.voice.trim().to_string();
-    let responseFormat = config.responseFormat.trim().to_string();
-    if providerType == TtsProviderType::OPENAI_COMPATIBLE && voice.is_empty() {
-        return Err("tts config voice is empty".to_string());
+    if providerType != TtsProviderType::SYSTEM_TTS
+        && templateUsesVoice(&endpoint, &requestBody, &headers)
+    {
+        if voice.is_empty() {
+            return Err("tts config voice is empty".to_string());
+        }
+    }
+    if providerType != TtsProviderType::SYSTEM_TTS
+        && templateUsesApiKey(&endpoint, &requestBody, &headers)
+    {
+        if config.apiKey.trim().is_empty() {
+            return Err("tts config api key is empty".to_string());
+        }
     }
     if responseFormat.is_empty() {
         return Err("tts config response format is empty".to_string());
@@ -480,11 +515,7 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     if config.speed <= 0.0 {
         return Err("tts config speed must be positive".to_string());
     }
-    let httpMethod = normalizeHttpMethod(&config.httpMethod)?;
-    let contentType = config.contentType.trim().to_string();
-    let requestBody = config.requestBody.trim().to_string();
     if providerType == TtsProviderType::HTTP_TTS {
-        validateHttpUrl(&endpoint)?;
         if httpMethod == "POST" && requestBody.is_empty() {
             return Err("http tts request body is empty".to_string());
         }
@@ -493,12 +524,19 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
         } else {
             requestBody.as_str()
         };
-        if !templateHasPlaceholder(template, "text") {
+        if !templateHasTextPlaceholder(template) {
             return Err("http tts text placeholder is missing".to_string());
         }
     }
-    let headers = normalizeHeaders(config.headers)?;
-    let responsePipeline = normalizePipeline(config.responsePipeline)?;
+    if providerType != TtsProviderType::SYSTEM_TTS
+        && httpMethod == "POST"
+        && !requestBody.is_empty()
+        && !templateHasTextPlaceholder(&requestBody)
+    {
+        return Err("tts request body text placeholder is missing".to_string());
+    }
+    let headers = normalizeHeaders(headers)?;
+    let responsePipeline = normalizePipeline(responsePipeline)?;
     Ok(TtsConfig {
         id: config.id.trim().to_string(),
         name,
@@ -517,6 +555,67 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     })
+}
+
+#[allow(non_snake_case)]
+fn catalogText(value: &str, catalogValue: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        catalogValue.trim().to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+#[allow(non_snake_case)]
+fn catalogHeaders(
+    headers: Vec<TtsHttpHeader>,
+    providerCatalog: &TtsProviderCatalogEntry,
+) -> Vec<TtsHttpHeader> {
+    if headers.is_empty() {
+        providerCatalog.defaultHeaders.clone()
+    } else {
+        headers
+    }
+}
+
+#[allow(non_snake_case)]
+fn catalogPipeline(
+    responsePipeline: Vec<TtsHttpResponsePipelineStep>,
+    providerCatalog: &TtsProviderCatalogEntry,
+) -> Vec<TtsHttpResponsePipelineStep> {
+    if responsePipeline.is_empty() {
+        providerCatalog.defaultResponsePipeline.clone()
+    } else {
+        responsePipeline
+    }
+}
+
+#[allow(non_snake_case)]
+fn templateUsesModel(endpoint: &str, requestBody: &str, headers: &[TtsHttpHeader]) -> bool {
+    templateHasPlaceholder(endpoint, "model")
+        || templateHasPlaceholder(requestBody, "model")
+        || headers
+            .iter()
+            .any(|header| templateHasPlaceholder(&header.value, "model"))
+}
+
+#[allow(non_snake_case)]
+fn templateUsesVoice(endpoint: &str, requestBody: &str, headers: &[TtsHttpHeader]) -> bool {
+    templateHasPlaceholder(endpoint, "voice")
+        || templateHasPlaceholder(requestBody, "voice")
+        || headers
+            .iter()
+            .any(|header| templateHasPlaceholder(&header.value, "voice"))
+}
+
+#[allow(non_snake_case)]
+fn templateUsesApiKey(endpoint: &str, requestBody: &str, headers: &[TtsHttpHeader]) -> bool {
+    templateHasPlaceholder(endpoint, "apiKey")
+        || templateHasPlaceholder(requestBody, "apiKey")
+        || headers
+            .iter()
+            .any(|header| templateHasPlaceholder(&header.value, "apiKey"))
 }
 
 #[allow(non_snake_case)]
@@ -582,7 +681,8 @@ fn normalizePipelineStepType(stepType: &str) -> Result<String, String> {
         | "parse_json_string"
         | "http_get"
         | "http_request_from_object"
-        | "base64_decode" => Ok(normalized),
+        | "base64_decode"
+        | "hex_decode" => Ok(normalized),
         _ => Err(format!(
             "unsupported http tts response pipeline step: {trimmed}"
         )),
@@ -593,6 +693,11 @@ fn normalizePipelineStepType(stepType: &str) -> Result<String, String> {
 fn templateHasPlaceholder(template: &str, name: &str) -> bool {
     let needle = format!("{{{name}}}");
     template.match_indices(&needle).next().is_some()
+}
+
+#[allow(non_snake_case)]
+fn templateHasTextPlaceholder(template: &str) -> bool {
+    templateHasPlaceholder(template, "text") || templateHasPlaceholder(template, "textXml")
 }
 
 #[allow(non_snake_case)]

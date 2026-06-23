@@ -31,12 +31,18 @@ class WorkspaceBrowserSessionInfo {
 }
 
 class _WorkspaceBrowserControls {
-  const _WorkspaceBrowserControls({required this.openBrowserTab});
+  const _WorkspaceBrowserControls({required this.revealBrowserTab});
 
-  final void Function({
+  final VoidCallback revealBrowserTab;
+}
+
+class _WorkspaceBrowserSessionOpener {
+  const _WorkspaceBrowserSessionOpener({required this.openBrowserTab});
+
+  final Future<void> Function({
     String? url,
-    String? localFilePath,
-    String? workspaceHtmlPath,
+    String? userAgent,
+    Map<String, String>? headers,
   })
   openBrowserTab;
 }
@@ -72,6 +78,8 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
   final Map<String, WorkspaceBrowserSessionInfo> _sessions =
       <String, WorkspaceBrowserSessionInfo>{};
   _WorkspaceBrowserControls? _browserControls;
+  Object? _browserControlsOwner;
+  _WorkspaceBrowserSessionOpener? _browserSessionOpener;
   final Map<String, _WorkspaceBrowserSessionControls> _sessionControls =
       <String, _WorkspaceBrowserSessionControls>{};
   final List<Completer<void>> _sessionWaiters = <Completer<void>>[];
@@ -94,19 +102,36 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
       List<WorkspaceBrowserSessionInfo>.unmodifiable(_sessions.values);
 
   void setBrowserControls({
-    required void Function({
+    required Object owner,
+    required VoidCallback revealBrowserTab,
+  }) {
+    final controls = _WorkspaceBrowserControls(
+      revealBrowserTab: revealBrowserTab,
+    );
+    _browserControlsOwner = owner;
+    _browserControls = controls;
+    _drainPendingOpenRequests();
+  }
+
+  void setBrowserSessionOpener({
+    required Future<void> Function({
       String? url,
-      String? localFilePath,
-      String? workspaceHtmlPath,
+      String? userAgent,
+      Map<String, String>? headers,
     })
     openBrowserTab,
   }) {
-    final controls = _WorkspaceBrowserControls(openBrowserTab: openBrowserTab);
-    _browserControls = controls;
-    _drainPendingOpenRequests(controls);
+    _browserSessionOpener = _WorkspaceBrowserSessionOpener(
+      openBrowserTab: openBrowserTab,
+    );
+    _drainPendingOpenRequests();
   }
 
-  void clearBrowserControls() {
+  void clearBrowserControls(Object owner) {
+    if (!identical(_browserControlsOwner, owner)) {
+      return;
+    }
+    _browserControlsOwner = null;
     _browserControls = null;
   }
 
@@ -118,13 +143,18 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
     return sessions.map((session) => session.toJson()).toList(growable: false);
   }
 
-  void openBrowserTab({String? url}) {
-    final controls = _browserControls;
-    if (controls == null) {
+  Future<void> openBrowserTab({String? url}) async {
+    final opener = _browserSessionOpener;
+    if (opener == null) {
       _pendingOpenRequests.add(_WorkspaceBrowserOpenRequest(url: url));
       return;
     }
-    controls.openBrowserTab(url: url);
+    await opener.openBrowserTab(url: url);
+    revealBrowserTab();
+  }
+
+  void revealBrowserTab() {
+    _browserControls?.revealBrowserTab();
   }
 
   Future<void> waitForSession({required Duration timeout}) {
@@ -146,6 +176,7 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
       throw StateError('Browser session controls are not registered');
     }
     controls.selectTab(sessionId);
+    revealBrowserTab();
   }
 
   void closeTab(String sessionId) {
@@ -304,13 +335,25 @@ class WorkspaceBrowserSessionRegistry extends ChangeNotifier {
     SchedulerBinding.instance.ensureVisualUpdate();
   }
 
-  void _drainPendingOpenRequests(_WorkspaceBrowserControls controls) {
+  void _drainPendingOpenRequests() {
+    final opener = _browserSessionOpener;
+    if (opener == null) {
+      return;
+    }
     final requests = List<_WorkspaceBrowserOpenRequest>.of(
       _pendingOpenRequests,
     );
     _pendingOpenRequests.clear();
     for (final request in requests) {
-      controls.openBrowserTab(url: request.url);
+      unawaited(_openPendingRequest(opener, request));
     }
+  }
+
+  Future<void> _openPendingRequest(
+    _WorkspaceBrowserSessionOpener opener,
+    _WorkspaceBrowserOpenRequest request,
+  ) async {
+    await opener.openBrowserTab(url: request.url);
+    revealBrowserTab();
   }
 }

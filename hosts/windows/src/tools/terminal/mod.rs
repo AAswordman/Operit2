@@ -21,6 +21,7 @@ static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
+const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
 
 #[derive(Clone, Default)]
 pub struct WindowsTerminalHost {
@@ -343,12 +344,14 @@ impl TerminalHost for WindowsTerminalHost {
             {
                 let mut state = self.lockState()?;
                 if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                    session.commandRunning = false;
-                    if !result.timedOut {
-                        if let Some(workingDir) = result.workingDir.clone() {
+                    if result.timedOut {
+                        if let Some(workingDir) = cancelTimedOutPtyCommand(session)? {
                             session.workingDir = workingDir;
                         }
+                    } else if let Some(workingDir) = result.workingDir.clone() {
+                        session.workingDir = workingDir;
                     }
+                    session.commandRunning = false;
                 }
             }
             return Ok(TerminalCommandOutput {
@@ -362,19 +365,23 @@ impl TerminalHost for WindowsTerminalHost {
         }
 
         let mut state = self.lockState()?;
-        let session = state
-            .sessions
-            .get_mut(&normalizedSessionId)
-            .ok_or_else(|| {
-                HostError::new(format!("Terminal session does not exist: {sessionId}"))
-            })?;
-        let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+        let (terminalType, result) = {
+            let session = state
+                .sessions
+                .get_mut(&normalizedSessionId)
+                .ok_or_else(|| {
+                    HostError::new(format!("Terminal session does not exist: {sessionId}"))
+                })?;
+            let terminalType = session.terminalType.clone();
+            let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+            (terminalType, result)
+        };
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
             exitCode: result.exitCode,
             sessionId: normalizedSessionId,
-            terminalType: session.terminalType.clone(),
+            terminalType,
             timedOut: result.timedOut,
         })
     }
@@ -425,10 +432,12 @@ impl TerminalHost for WindowsTerminalHost {
                 sessionId
             }
         };
-        let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
-            HostError::new(format!("Hidden terminal session missing: {sessionId}"))
-        })?;
-        let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+        let result = {
+            let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
+                HostError::new(format!("Hidden terminal session missing: {sessionId}"))
+            })?;
+            executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?
+        };
         Ok(HiddenTerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -938,6 +947,31 @@ fn executePtyCommandInSession(
 }
 
 #[allow(non_snake_case)]
+fn cancelTimedOutPtyCommand(session: &mut PtySession) -> HostResult<Option<String>> {
+    {
+        let mut writer = session
+            .writer
+            .lock()
+            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+        writer.write_all(b"\x03")?;
+        writer.flush()?;
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
+    let mut collected = Vec::new();
+    while Instant::now() < deadline {
+        let drained = drainPtyCommandOutput(&session.commandOutput, &mut collected, deadline)?;
+        if drained == 0 {
+            continue;
+        }
+        if let Some(marker) = findLastPtyPromptMarker(&collected)? {
+            return Ok(Some(marker.workingDir));
+        }
+    }
+    Ok(None)
+}
+
+#[allow(non_snake_case)]
 fn drainPtyCommandOutput(
     output: &PtyCommandOutput,
     collected: &mut Vec<u8>,
@@ -1385,19 +1419,29 @@ fn executeShellCommandInSession(
     command: &str,
     timeoutMs: u64,
 ) -> HostResult<SessionCommandResult> {
-    let marker = format!(
-        "__OPERIT_TERMINAL_{}__",
-        NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst)
-    );
+    let commandId = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    let marker = format!("__OPERIT_TERMINAL_{commandId}__");
     let endMarkerPrefix = format!("{marker}_END:");
-    let encodedCommand = BASE64_STANDARD.encode(command.as_bytes());
+    let pidMarkerPrefix = format!("{marker}_PID:");
+    let cwdMarkerPrefix = format!("{marker}_CWD:");
     let script = match session.kind {
-        TerminalKind::Bash => format!(
-            "printf '%s\\n' '{marker}_START'\n{{\n{command}\n}}\n__operit_exit_code=$?\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
-        ),
-        TerminalKind::PowerShell => format!(
-            "Write-Output '{marker}_START'\n$__operit_command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encodedCommand}'))\ntry {{\nInvoke-Expression $__operit_command\n$__operit_exit_code = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}\n}} catch {{ Write-Output $_.Exception.Message; $__operit_exit_code = 1 }}\n$__operit_pwd = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path))\nWrite-Output ('{endMarkerPrefix}' + $__operit_exit_code + ':' + $__operit_pwd)\n\n"
-        ),
+        TerminalKind::Bash => {
+            let heredocMarker = format!("__OPERIT_TERMINAL_CMD_{commandId}__");
+            let normalizedCommand = command.replace("\r\n", "\n").replace('\r', "\n");
+            format!(
+                "printf '%s\\n' '{marker}_START'\n__operit_script=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.sh\"\n__operit_stdout=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.out\"\n__operit_stderr=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.err\"\n__operit_cwd=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.cwd\"\ncat >\"$__operit_script\" <<'{heredocMarker}'\n{normalizedCommand}\n__operit_exit_code=$?\n__operit_pwd=$PWD\nprintf '%s' \"$__operit_pwd\" >\"$__OPERIT_CWD_FILE\"\n__operit_pwd_marker=$(printf '%s' \"$__operit_pwd\" | base64 | tr -d '\\n')\nprintf '%s%s\\n' '{cwdMarkerPrefix}' \"$__operit_pwd_marker\"\nexit \"$__operit_exit_code\"\n{heredocMarker}\n__OPERIT_CWD_FILE=\"$__operit_cwd\" setsid bash \"$__operit_script\" >\"$__operit_stdout\" 2>\"$__operit_stderr\" &\n__operit_command_pid=$!\nprintf '%s%s\\n' '{pidMarkerPrefix}' \"$__operit_command_pid\"\nwait \"$__operit_command_pid\"\n__operit_exit_code=$?\nif [ -s \"$__operit_cwd\" ]; then cd \"$(cat \"$__operit_cwd\")\"; fi\ncat \"$__operit_stdout\"\ncat \"$__operit_stderr\"\nrm -f \"$__operit_script\" \"$__operit_stdout\" \"$__operit_stderr\" \"$__operit_cwd\"\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
+            )
+        }
+        TerminalKind::PowerShell => {
+            let encodedCommand = BASE64_STANDARD.encode(command.as_bytes());
+            let workingDir = powershellSingleQuoted(&session.workingDir);
+            let childScript = format!(
+                "$__operit_command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encodedCommand}'))\ntry {{\nInvoke-Expression $__operit_command\n$__operit_exit_code = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}\n}} catch {{ Write-Output $_.Exception.Message; $__operit_exit_code = 1 }}\n$__operit_pwd = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Location).Path))\nWrite-Output ('{cwdMarkerPrefix}' + $__operit_pwd)\nexit $__operit_exit_code\n"
+            );
+            format!(
+                "Write-Output '{marker}_START'\n$__operit_temp = [IO.Path]::GetTempPath()\n$__operit_script = Join-Path $__operit_temp 'operit_terminal_{commandId}.ps1'\n$__operit_stdout = Join-Path $__operit_temp 'operit_terminal_{commandId}.out'\n$__operit_stderr = Join-Path $__operit_temp 'operit_terminal_{commandId}.err'\n$__operit_child = @'\n{childScript}'@\nSet-Content -LiteralPath $__operit_script -Value $__operit_child -Encoding UTF8\n$__operit_process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $__operit_script) -WorkingDirectory {workingDir} -WindowStyle Hidden -RedirectStandardOutput $__operit_stdout -RedirectStandardError $__operit_stderr -PassThru\nWrite-Output ('{pidMarkerPrefix}' + $__operit_process.Id)\n$__operit_process.WaitForExit()\nif (Test-Path -LiteralPath $__operit_stdout) {{ Get-Content -LiteralPath $__operit_stdout }}\nif (Test-Path -LiteralPath $__operit_stderr) {{ Get-Content -LiteralPath $__operit_stderr }}\n$__operit_exit_code = if ($null -ne $__operit_process.ExitCode) {{ [int]$__operit_process.ExitCode }} else {{ -1 }}\nRemove-Item -LiteralPath $__operit_script, $__operit_stdout, $__operit_stderr -ErrorAction SilentlyContinue\nWrite-Output ('{endMarkerPrefix}' + $__operit_exit_code)\n"
+            )
+        }
     };
     session.commandRunning = true;
     appendCommandToScreen(session, command);
@@ -1408,10 +1452,18 @@ fn executeShellCommandInSession(
     let start = SystemTime::now();
     let mut outputLines = Vec::new();
     let mut sawStart = false;
+    let mut commandPid = None;
     loop {
         let elapsed = start.elapsed().unwrap_or(Duration::from_millis(timeoutMs));
         if elapsed >= deadline {
             session.commandRunning = false;
+            cancelWindowsShellCommandProcessGroup(session.kind, commandPid);
+            collectWindowsShellCommandAfterCancel(
+                session,
+                &endMarkerPrefix,
+                &cwdMarkerPrefix,
+                &mut outputLines,
+            )?;
             let output = joinOutput(outputLines, drainStderr(session)?);
             appendScreenLines(session, &output);
             return Ok(SessionCommandResult {
@@ -1430,6 +1482,13 @@ fn executeShellCommandInSession(
                     continue;
                 }
                 if sawStart {
+                    if let Some(pidText) = line.strip_prefix(&pidMarkerPrefix) {
+                        commandPid = pidText.trim().parse::<u32>().ok();
+                        continue;
+                    }
+                    if applyShellWorkingDirectoryMarker(session, &cwdMarkerPrefix, &line) {
+                        continue;
+                    }
                     if let Some(endMarkerIndex) = line.rfind(&endMarkerPrefix) {
                         let outputBeforeEndMarker = &line[..endMarkerIndex];
                         if !outputBeforeEndMarker.is_empty() {
@@ -1461,6 +1520,63 @@ fn executeShellCommandInSession(
             }
         }
     }
+}
+
+#[allow(non_snake_case)]
+fn cancelWindowsShellCommandProcessGroup(kind: TerminalKind, pid: Option<u32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+    match kind {
+        TerminalKind::PowerShell => {
+            let pidText = pid.to_string();
+            let _ = Command::new("taskkill")
+                .args(["/PID", pidText.as_str(), "/T", "/F"])
+                .status();
+        }
+        TerminalKind::Bash => {
+            let command = format!("kill -TERM -{pid}; sleep 0.1; kill -KILL -{pid}");
+            let _ = Command::new("bash").arg("-lc").arg(command).status();
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn collectWindowsShellCommandAfterCancel(
+    session: &mut TerminalSession,
+    endMarkerPrefix: &str,
+    cwdMarkerPrefix: &str,
+    outputLines: &mut Vec<String>,
+) -> HostResult<()> {
+    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
+    while Instant::now() < deadline {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(100));
+        match session.stdoutRx.recv_timeout(wait) {
+            Ok(line) => {
+                if applyShellWorkingDirectoryMarker(session, cwdMarkerPrefix, &line) {
+                    continue;
+                }
+                if let Some(endMarkerIndex) = line.rfind(endMarkerPrefix) {
+                    let outputBeforeEndMarker = &line[..endMarkerIndex];
+                    if !outputBeforeEndMarker.is_empty() {
+                        outputLines.push(outputBeforeEndMarker.to_string());
+                    }
+                    return Ok(());
+                }
+                outputLines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(HostError::new(format!(
+                    "Terminal session '{}' closed while cancelling command",
+                    session.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]
@@ -1533,31 +1649,27 @@ fn terminalPrompt(session: &TerminalSession) -> String {
 }
 
 #[allow(non_snake_case)]
-fn parseEndMarkerPayload(session: &mut TerminalSession, payload: &str) -> HostResult<i32> {
-    match session.kind {
-        TerminalKind::Bash => parseExitCode(payload),
-        TerminalKind::PowerShell => {
-            let (exitCodeText, workingDirText) = payload.split_once(':').ok_or_else(|| {
-                HostError::new(format!(
-                    "Invalid PowerShell terminal end marker '{payload}'"
-                ))
-            })?;
-            let workingDirBytes =
-                BASE64_STANDARD
-                    .decode(workingDirText.as_bytes())
-                    .map_err(|error| {
-                        HostError::new(format!(
-                            "Invalid PowerShell terminal working directory marker: {error}"
-                        ))
-                    })?;
-            session.workingDir = String::from_utf8(workingDirBytes).map_err(|error| {
-                HostError::new(format!(
-                    "Invalid PowerShell terminal working directory UTF-8: {error}"
-                ))
-            })?;
-            parseExitCode(exitCodeText)
-        }
-    }
+fn applyShellWorkingDirectoryMarker(
+    session: &mut TerminalSession,
+    cwdMarkerPrefix: &str,
+    line: &str,
+) -> bool {
+    let Some(cwdText) = line.strip_prefix(cwdMarkerPrefix) else {
+        return false;
+    };
+    let Ok(workingDirBytes) = BASE64_STANDARD.decode(cwdText.trim().as_bytes()) else {
+        return false;
+    };
+    let Ok(workingDir) = String::from_utf8(workingDirBytes) else {
+        return false;
+    };
+    session.workingDir = workingDir;
+    true
+}
+
+#[allow(non_snake_case)]
+fn parseEndMarkerPayload(_session: &mut TerminalSession, payload: &str) -> HostResult<i32> {
+    parseExitCode(payload)
 }
 
 #[allow(non_snake_case)]
@@ -1567,6 +1679,11 @@ fn parseExitCode(exitCodeText: &str) -> HostResult<i32> {
             "Invalid terminal exit code marker '{exitCodeText}': {error}"
         ))
     })
+}
+
+#[allow(non_snake_case)]
+fn powershellSingleQuoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[allow(non_snake_case)]
@@ -1724,6 +1841,14 @@ fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind
 #[allow(non_snake_case)]
 fn sessionKey(terminalType: &str, name: &str) -> String {
     format!("{terminalType}:{name}")
+}
+
+#[allow(non_snake_case)]
+fn removeSessionMappings(state: &mut TerminalState, sessionId: &str) {
+    state.sessionNameToId.retain(|_, value| value != sessionId);
+    state
+        .hiddenExecutorKeyToSessionId
+        .retain(|_, value| value != sessionId);
 }
 
 #[allow(non_snake_case)]

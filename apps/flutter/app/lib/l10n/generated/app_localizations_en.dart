@@ -2555,10 +2555,142 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDataOutputTokens => 'Output';
 
   @override
+  String get settingsDataOpenDetailedStats => 'View detailed statistics';
+
+  @override
+  String get settingsDataOpenDetailedStatsDescription =>
+      'Open daily trends, input/output token changes, and usage breakdown by provider, model, and conversation.';
+
+  @override
   String get settingsDataRefreshTokenStats => 'Refresh statistics';
 
   @override
   String get settingsDataResetTokenStats => 'Reset statistics';
+
+  @override
+  String get settingsDataDetailedStatsTitle => 'Detailed statistics';
+
+  @override
+  String get settingsDataDetailedStatsDescription =>
+      'Statistics are calculated from dedicated model request records.';
+
+  @override
+  String get settingsDataDetailedStatsEmpty => 'No detailed usage records yet';
+
+  @override
+  String settingsDataDetailedStatsDateRange(String start, String end) {
+    return '$start to $end';
+  }
+
+  @override
+  String get settingsDataDetailedStatsSourceLabel => 'Model request records';
+
+  @override
+  String get settingsDataDetailedStatsSourceChat => 'Chat response';
+
+  @override
+  String get settingsDataDetailedStatsSourceToolResult =>
+      'Tool-result response';
+
+  @override
+  String get settingsDataDetailedStatsSourceSummary => 'Summary generation';
+
+  @override
+  String get settingsDataDetailedStatsSourceMemory => 'Memory analysis';
+
+  @override
+  String get settingsDataDetailedStatsTotalRequests => 'Total requests';
+
+  @override
+  String get settingsDataDetailedStatsCachedInput => 'Cached input';
+
+  @override
+  String get settingsDataDetailedStatsActiveDays => 'Active days';
+
+  @override
+  String get settingsDataDetailedStatsChats => 'Conversations';
+
+  @override
+  String get settingsDataDetailedStatsProviders => 'Providers';
+
+  @override
+  String get settingsDataDetailedStatsModels => 'Models';
+
+  @override
+  String get settingsDataDetailedStatsDailyUsageTitle => 'Daily usage trend';
+
+  @override
+  String get settingsDataDetailedStatsDailyUsageSubtitle =>
+      'Request count by day';
+
+  @override
+  String get settingsDataDetailedStatsRequestsSeries => 'Requests';
+
+  @override
+  String get settingsDataDetailedStatsInputOutputTitle =>
+      'Input / output consumption trend';
+
+  @override
+  String get settingsDataDetailedStatsInputOutputSubtitle =>
+      'Daily token changes for input and output';
+
+  @override
+  String get settingsDataDetailedStatsProviderPieTitle =>
+      'Provider distribution';
+
+  @override
+  String get settingsDataDetailedStatsModelPieTitle => 'Model distribution';
+
+  @override
+  String get settingsDataDetailedStatsChatPieTitle =>
+      'Conversation distribution';
+
+  @override
+  String get settingsDataDetailedStatsTotalTokens => 'Total tokens';
+
+  @override
+  String get settingsDataDetailedStatsTopRequestsTitle => 'Top requests';
+
+  @override
+  String get settingsDataDetailedStatsTopRequestsSubtitle =>
+      'Highest single-request token consumption';
+
+  @override
+  String get settingsDataDetailedStatsTopChatsTitle => 'Top conversations';
+
+  @override
+  String get settingsDataDetailedStatsTopChatsSubtitle =>
+      'Highest total token consumption by conversation';
+
+  @override
+  String get settingsDataDetailedStatsOther => 'Other';
+
+  @override
+  String settingsDataDetailedStatsInputOutputSummary(
+    String input,
+    String output,
+    String chatTitle,
+    String time,
+  ) {
+    return 'Input $input · Output $output · $chatTitle · $time';
+  }
+
+  @override
+  String settingsDataDetailedStatsRequestModelSummary(
+    int requests,
+    int models,
+  ) {
+    return '$requests requests · $models models';
+  }
+
+  @override
+  String get settingsDataDetailedStatsUnlabeledProvider => 'Unlabeled provider';
+
+  @override
+  String get settingsDataDetailedStatsUnlabeledModel => 'Unlabeled model';
+
+  @override
+  String get settingsDataDetailedStatsUntitledChat => 'Untitled conversation';
 
   @override
   String get settingsDataBackupSection => 'Backup & restore';

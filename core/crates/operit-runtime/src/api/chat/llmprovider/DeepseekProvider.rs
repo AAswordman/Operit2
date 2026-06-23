@@ -35,13 +35,15 @@ pub struct DeepseekProvider {
     state: Arc<Mutex<DeepseekProviderState>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct DeepseekProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
     cancelled: bool,
     tokenCacheManager: TokenCacheManager,
+    activeParent: Option<OpenAIProvider>,
+    activeParentGeneration: u64,
 }
 
 impl DeepseekProvider {
@@ -83,6 +85,33 @@ impl DeepseekProvider {
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
             state.outputTokenCount = state.tokenCacheManager.output_token_count() as i32;
+        }
+    }
+
+    fn setActiveParent(&self, parent: OpenAIProvider) -> u64 {
+        let mut state = self
+            .state
+            .lock()
+            .expect("DeepseekProvider state mutex poisoned");
+        state.activeParentGeneration = state.activeParentGeneration.wrapping_add(1);
+        state.activeParent = Some(parent);
+        state.activeParentGeneration
+    }
+
+    fn isCancelled(&self) -> bool {
+        self.state
+            .lock()
+            .expect("DeepseekProvider state mutex poisoned")
+            .cancelled
+    }
+
+    fn clearActiveParent(&self, generation: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("DeepseekProvider state mutex poisoned");
+        if state.activeParentGeneration == generation {
+            state.activeParent = None;
         }
     }
 
@@ -387,8 +416,14 @@ impl AIService for DeepseekProvider {
     }
 
     fn cancel_streaming(&mut self) {
-        if let Ok(mut state) = self.state.lock() {
+        let activeParent = if let Ok(mut state) = self.state.lock() {
             state.cancelled = true;
+            state.activeParent.clone()
+        } else {
+            None
+        };
+        if let Some(mut parent) = activeParent {
+            parent.cancel_streaming();
         }
     }
 
@@ -417,6 +452,10 @@ impl AIService for DeepseekProvider {
             let mut result = parent.send_prepared_request(request, request_body).await?;
             let event_channel = result.event_channel().clone();
             let mut provider = self.clone();
+            let activeParentGeneration = provider.setActiveParent(parent.clone());
+            if provider.isCancelled() {
+                parent.cancel_streaming();
+            }
             let cold_stream = FnStream::new(move |emit| {
                 result.collect(&mut |content| {
                     emit(content);
@@ -426,6 +465,7 @@ impl AIService for DeepseekProvider {
                     cached_input: parent.cached_input_token_count(),
                     output: parent.output_token_count(),
                 });
+                provider.clearActiveParent(activeParentGeneration);
             });
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }

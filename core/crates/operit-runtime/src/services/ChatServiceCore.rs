@@ -618,9 +618,24 @@ impl ChatServiceCore {
         Some((chatId, workspacePath, rewindTimestamp))
     }
 
-    pub fn resetTokenStatistics(&mut self) {}
+    pub fn resetTokenStatistics(&mut self) {
+        let service = self.enhancedAiService.as_mut();
+        if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+            delegate
+                .tokenStatisticsDelegate
+                .resetTokenStatistics(service);
+        }
+    }
 
-    pub fn updateCumulativeStatistics(&mut self) {}
+    pub fn updateCumulativeStatistics(&mut self) {
+        let chatId = self.chatHistoryDelegate.currentChatId.clone();
+        let service = self.enhancedAiService.as_ref();
+        if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+            delegate
+                .tokenStatisticsDelegate
+                .updateCumulativeStatistics(chatId, service);
+        }
+    }
 
     pub fn handleAttachment(&mut self, _filePath: String) {
         let filePath = _filePath.trim();

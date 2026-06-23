@@ -26,7 +26,7 @@ class WorkspaceWebVisitContent extends StatefulWidget {
 
 class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
   static const int _visitWebWaitSeconds = 0;
-  static const int _captchaWaitSeconds = 60;
+  static const int _captchaWaitSeconds = 10;
   static const Duration _loadTimeout = Duration(seconds: 10);
   static const Duration _extractDelay = Duration(milliseconds: 800);
   static const Duration _scriptTimeout = Duration(seconds: 10);

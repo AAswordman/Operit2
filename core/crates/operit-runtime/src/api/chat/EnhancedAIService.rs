@@ -42,7 +42,9 @@ use crate::data::model::ModelConfigData::ResolvedModelConfig;
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::data::skill::SkillRepository::SkillRepository;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
@@ -909,14 +911,22 @@ impl EnhancedAIService {
         let _ = reason;
     }
 
-    pub fn isExecutionContextActive(&self, context: &MessageExecutionContext) -> bool {
+    fn isExecutionContextActiveInSharedState(
+        shared_state: &Arc<Mutex<EnhancedAISharedState>>,
+        context: &MessageExecutionContext,
+    ) -> bool {
         context.isConversationActive
-            && self
-                .shared_state()
+            && shared_state
+                .lock()
+                .expect("EnhancedAIService shared_state mutex poisoned")
                 .active_execution_contexts
                 .get(&context.executionId)
                 .map(|active| active.isConversationActive)
                 .expect("execution context must be registered")
+    }
+
+    pub fn isExecutionContextActive(&self, context: &MessageExecutionContext) -> bool {
+        Self::isExecutionContextActiveInSharedState(&self.shared_state, context)
     }
 
     pub fn startAssistantResponseRound(&mut self, context: &mut MessageExecutionContext) {
@@ -1209,6 +1219,11 @@ impl EnhancedAIService {
             .conversationHistory
             .extend(preparedHistory.clone());
 
+        if !self.isExecutionContextActive(&execContext) {
+            self.unregisterExecutionContext(&execContext);
+            return Ok(());
+        }
+
         if !isSubTask {
             lifecycle.push(SendMessageLifecycleStage::SetConnectingState);
             self.setInputProcessingState(InputProcessingState::Connecting {
@@ -1348,6 +1363,10 @@ impl EnhancedAIService {
                 true,
             )
             .await?;
+        if !self.isExecutionContextActive(&execContext) {
+            self.unregisterExecutionContext(&execContext);
+            return Ok(());
+        }
         let tBeforeRequest = crate::core::chat::AIMessageManager::messageTimingNow();
         AppLogger::d(
             TAG,
@@ -1438,7 +1457,11 @@ impl EnhancedAIService {
         let mut isFirstChunk = true;
         let mut chunkCount = 0;
         let mut lastLogTime = crate::core::chat::AIMessageManager::messageTimingNow().startedAtMs;
+        let activeExecutionState = self.shared_state.clone();
         provider_stream.collect(&mut |content| {
+            if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, &execContext) {
+                return;
+            }
             if isFirstChunk {
                 if !isSubTask {
                     self.setInputProcessingState(InputProcessingState::Receiving {
@@ -1475,6 +1498,11 @@ impl EnhancedAIService {
         });
         let _ = eventForwarder.join();
 
+        if !self.isExecutionContextActive(&execContext) {
+            self.unregisterExecutionContext(&execContext);
+            return Ok(());
+        }
+
         lifecycle.push(SendMessageLifecycleStage::PersistTokenUsage);
         let (inputTokens, cachedInputTokens, outputTokens) = {
             let service = serviceForFunction.lock().await;
@@ -1507,6 +1535,15 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
+        persistProviderModelTokenUsage(
+            &providerModel,
+            functionType.clone(),
+            UsageRequestSource::CHAT_RESPONSE,
+            chatId.clone(),
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+        )?;
         let (
             accumulatedInputTokenCount,
             accumulatedOutputTokenCount,
@@ -1584,6 +1621,11 @@ impl EnhancedAIService {
             }
             self.unregisterExecutionContext(&execContext);
             return Err(error);
+        }
+
+        if !self.isExecutionContextActive(&execContext) {
+            self.unregisterExecutionContext(&execContext);
+            return Ok(());
         }
 
         if enableMemoryAutoUpdate && !isSubTask {
@@ -1672,13 +1714,17 @@ impl EnhancedAIService {
             toolNames.clone()
         };
 
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
+
         if !isSubTask {
             self.setInputProcessingState(InputProcessingState::ProcessingToolResult {
                 toolName: displayToolNames.clone(),
             });
         }
 
-        if !context.isConversationActive {
+        if !self.isExecutionContextActive(context) {
             return Ok(());
         }
 
@@ -1701,12 +1747,6 @@ impl EnhancedAIService {
         let currentChatHistory = context.conversationHistory.clone();
 
         self.startAssistantResponseRound(context);
-
-        if !isSubTask {
-            self.setInputProcessingState(InputProcessingState::ProcessingToolResult {
-                toolName: displayToolNames.clone(),
-            });
-        }
 
         let modelParameters = self.getModelParametersForFunction(
             functionType.clone(),
@@ -1733,6 +1773,9 @@ impl EnhancedAIService {
                 true,
             )
             .await?;
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
 
         if maxTokens > 0 {
             let usageRatio = currentTokens as f64 / maxTokens as f64;
@@ -1740,7 +1783,10 @@ impl EnhancedAIService {
                 if let Some(callback) = onTokenLimitExceeded {
                     callback();
                 }
-                context.isConversationActive = false;
+                self.invalidateExecutionContext(
+                    context,
+                    "processToolResults.tokenLimit".to_string(),
+                );
                 if !isSubTask {
                     self.stopAiService(characterName, avatarUri);
                 }
@@ -1779,10 +1825,18 @@ impl EnhancedAIService {
                 .await?
         };
 
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
+
         if !isSubTask {
             self.setInputProcessingState(InputProcessingState::Receiving {
                 message: "enhanced_receiving_tool_result".to_string(),
             });
+        }
+
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
         }
 
         let responseEventChannel = response.event_channel().clone();
@@ -1793,7 +1847,11 @@ impl EnhancedAIService {
                 collectorEventChannel.emit(event);
             });
         });
+        let activeExecutionState = self.shared_state.clone();
         response.collect(&mut |content| {
+            if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context) {
+                return;
+            }
             context.streamBuffer.push_str(&content);
             context
                 .roundManager
@@ -1801,6 +1859,64 @@ impl EnhancedAIService {
             collector.upstream.emit(content);
         });
         let _ = eventForwarder.join();
+
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
+
+        let (providerModel, inputTokens, cachedInputTokens, outputTokens) = {
+            let service = runtime.aiService.lock().await;
+            (
+                service.provider_model(),
+                service.input_token_count(),
+                service.cached_input_token_count(),
+                service.output_token_count(),
+            )
+        };
+        {
+            let mut shared = self.shared_state();
+            shared.accumulated_input_token_count += inputTokens;
+            shared.accumulated_output_token_count += outputTokens;
+            shared.accumulated_cached_input_token_count += cachedInputTokens;
+            shared.current_request_input_token_count = 0;
+            shared.current_request_output_token_count = 0;
+            shared.current_request_cached_input_token_count = 0;
+            shared.per_request_token_counts = Some((inputTokens, outputTokens));
+        }
+        persistProviderModelTokenUsage(
+            &providerModel,
+            functionType.clone(),
+            UsageRequestSource::TOOL_RESULT_RESPONSE,
+            chatId.clone(),
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+        )?;
+        let (
+            accumulatedInputTokenCount,
+            accumulatedOutputTokenCount,
+            accumulatedCachedInputTokenCount,
+        ) = {
+            let shared = self.shared_state();
+            (
+                shared.accumulated_input_token_count,
+                shared.accumulated_output_token_count,
+                shared.accumulated_cached_input_token_count,
+            )
+        };
+        AppLogger::d(
+            TAG,
+            &format!(
+                "Token count updated after tool result for {}. Input: {}, Output: {}, CachedInput: {}. Turn Accumulated: {}, {}, {}",
+                function_type_name(&functionType),
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+                accumulatedInputTokenCount,
+                accumulatedOutputTokenCount,
+                accumulatedCachedInputTokenCount
+            ),
+        );
 
         Box::pin(self.processStreamCompletion(
             collector,
@@ -1860,7 +1976,7 @@ impl EnhancedAIService {
         callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
         runtime: &mut SendMessageRuntime,
     ) -> Result<(), AiServiceError> {
-        if !context.isConversationActive {
+        if !self.isExecutionContextActive(context) {
             return Ok(());
         }
 
@@ -1967,7 +2083,7 @@ impl EnhancedAIService {
             Vec::new()
         };
 
-        if !context.isConversationActive {
+        if !self.isExecutionContextActive(context) {
             return Ok(());
         }
 
@@ -1978,7 +2094,7 @@ impl EnhancedAIService {
             metadata: HashMap::new(),
         });
 
-        if !context.isConversationActive {
+        if !self.isExecutionContextActive(context) {
             return Ok(());
         }
 
@@ -2111,6 +2227,10 @@ impl EnhancedAIService {
         disableWarning: bool,
         runtime: &mut SendMessageRuntime,
     ) -> Result<(), AiServiceError> {
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
+
         for invocation in &toolInvocations {
             if let Some(callback) = onToolInvocation.as_ref() {
                 callback(invocation.tool.name.clone());
@@ -2126,6 +2246,10 @@ impl EnhancedAIService {
             self.setInputProcessingState(InputProcessingState::ExecutingTool {
                 toolName: toolNames,
             });
+        }
+
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
         }
 
         self.tool_handler.registerDefaultTools();
@@ -2149,7 +2273,14 @@ impl EnhancedAIService {
             toolExposureMode,
         );
 
+        if !self.isExecutionContextActive(context) {
+            return Ok(());
+        }
+
         for content in emittedToolResultMessages {
+            if !self.isExecutionContextActive(context) {
+                return Ok(());
+            }
             context.streamBuffer.push_str(&content);
             context
                 .roundManager
@@ -2579,6 +2710,34 @@ fn apply_finalized_current_user_turn(
         metadata: Default::default(),
     });
     history
+}
+
+#[allow(non_snake_case)]
+fn persistProviderModelTokenUsage(
+    providerModel: &str,
+    functionType: FunctionType,
+    source: UsageRequestSource,
+    chatId: Option<String>,
+    inputTokens: i32,
+    outputTokens: i32,
+    cachedInputTokens: i32,
+) -> Result<(), AiServiceError> {
+    let apiPreferences = ApiPreferences::getInstance();
+    apiPreferences
+        .updateTokensForProviderModel(providerModel, inputTokens, outputTokens, cachedInputTokens)
+        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+    UsageStatisticsStore::new()
+        .recordProviderModelRequest(
+            providerModel.to_string(),
+            functionType,
+            source,
+            chatId,
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+        )
+        .map(|_| ())
+        .map_err(AiServiceError::RequestFailed)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

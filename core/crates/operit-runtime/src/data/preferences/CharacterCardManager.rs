@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::data::model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig, CharacterSharedMemoryMount, OperitAttachedTagPayload,
-    OperitCharacterCardPayload,
-    OperitTavernExtension, TavernCharacterCard, TavernCharacterData, TavernExtensions,
+    OperitCharacterCardPayload, OperitTavernExtension, TavernCharacterCard, TavernCharacterData,
+    TavernExtensions,
 };
 use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::model::PromptTag::{PromptTag, TagType};

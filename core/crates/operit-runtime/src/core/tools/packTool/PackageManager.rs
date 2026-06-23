@@ -3213,7 +3213,28 @@ fn mergeToolsForState(baseTools: &[PackageTool], state: &ToolPackageState) -> Ve
 
 #[allow(non_snake_case)]
 fn buildConditionCapabilitiesSnapshot() -> BTreeMap<String, ConditionValue> {
+    let platformName = std::env::consts::OS;
     BTreeMap::from([
+        (
+            "platform.name".to_string(),
+            ConditionValue::Str(platformName.to_string()),
+        ),
+        (
+            "platform.windows".to_string(),
+            ConditionValue::Bool(platformName == "windows"),
+        ),
+        (
+            "platform.linux".to_string(),
+            ConditionValue::Bool(platformName == "linux"),
+        ),
+        (
+            "platform.android".to_string(),
+            ConditionValue::Bool(platformName == "android"),
+        ),
+        (
+            "platform.macos".to_string(),
+            ConditionValue::Bool(platformName == "macos"),
+        ),
         (
             "ui.virtual_display".to_string(),
             ConditionValue::Bool(false),

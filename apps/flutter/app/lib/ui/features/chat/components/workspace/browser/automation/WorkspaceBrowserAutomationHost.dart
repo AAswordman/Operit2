@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/browser/BrowserAutomationBridge.dart';
 import 'package:operit2/core/browser/BrowserAutomationModels.dart';
 
+import '../WorkspaceBrowserSessionStore.dart';
 import 'WorkspaceBrowserAutomationController.dart';
 import 'WorkspaceBrowserSessionRegistry.dart';
 
@@ -29,11 +30,14 @@ class _WorkspaceBrowserAutomationHostState
     extends State<WorkspaceBrowserAutomationHost> {
   final WorkspaceBrowserSessionRegistry _registry =
       WorkspaceBrowserSessionRegistry.instance;
+  final WorkspaceBrowserSessionStore _browserSessionStore =
+      WorkspaceBrowserSessionStore.instance;
   void Function()? _disposeBridgeHandler;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_browserSessionStore.ensureLoaded());
     _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
   }
 
@@ -77,7 +81,7 @@ class _WorkspaceBrowserAutomationHostState
       case 'browser_navigate':
         final url = _required(params, 'url');
         if (_registry.activeController == null) {
-          _registry.openBrowserTab(url: url);
+          await _registry.openBrowserTab(url: url);
           await _registry.waitForSession(timeout: const Duration(seconds: 30));
           return jsonEncode(<String, Object?>{'url': url});
         }
@@ -172,7 +176,7 @@ class _WorkspaceBrowserAutomationHostState
         return jsonEncode(_registry.listTabs());
       case 'create':
         final url = _required(params, 'url');
-        _registry.openBrowserTab(url: url);
+        await _registry.openBrowserTab(url: url);
         await _registry.waitForSession(timeout: const Duration(seconds: 30));
         return jsonEncode(_registry.listTabs());
       case 'select':

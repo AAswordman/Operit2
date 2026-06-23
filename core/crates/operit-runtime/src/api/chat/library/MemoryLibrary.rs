@@ -10,9 +10,12 @@ use crate::api::chat::enhance::MultiServiceManager::SharedAIServiceHandle;
 use crate::api::chat::llmprovider::AIService::SendMessageRequest;
 use crate::core::chat::hooks::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
+use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::Memory::{Memory, MemoryTag};
+use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::repository::MemoryRepository::MemoryRepository;
+use crate::data::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::util::stream::Stream::Stream;
 use crate::util::AppLogger::AppLogger;
@@ -375,8 +378,9 @@ impl MemoryLibrary {
             ("user".to_string(), analysisMessage),
         ]);
         let mut result = String::new();
-        {
+        let (providerModel, inputTokens, cachedInputTokens, outputTokens) = {
             let mut service = aiService.lock().await;
+            let providerModel = service.provider_model();
             let mut stream = service
                 .send_message(SendMessageRequest {
                     chat_history: messages,
@@ -394,7 +398,33 @@ impl MemoryLibrary {
             stream.collect(&mut |chunk| {
                 result.push_str(&chunk);
             });
-        }
+            (
+                providerModel,
+                service.input_token_count(),
+                service.cached_input_token_count(),
+                service.output_token_count(),
+            )
+        };
+        let apiPreferences = ApiPreferences::getInstance();
+        apiPreferences
+            .updateTokensForProviderModel(
+                &providerModel,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+            )
+            .map_err(|error| error.to_string())?;
+        UsageStatisticsStore::new()
+            .recordProviderModelRequest(
+                providerModel,
+                FunctionType::MEMORY,
+                UsageRequestSource::MEMORY_ANALYSIS,
+                None,
+                inputTokens,
+                outputTokens,
+                cachedInputTokens,
+            )
+            .map_err(|error| error.to_string())?;
         let _ = searchConfig;
         parseAnalysisResult(&ChatUtils::remove_thinking_content(&result), useEnglish)
     }

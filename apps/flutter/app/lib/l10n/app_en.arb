@@ -1229,8 +1229,80 @@
   "settingsDataTokenSection": "Usage statistics",
   "settingsDataInputTokens": "Input",
   "settingsDataOutputTokens": "Output",
+  "settingsDataOpenDetailedStats": "View detailed statistics",
+  "settingsDataOpenDetailedStatsDescription": "Open daily trends, input/output token changes, and usage breakdown by provider, model, and conversation.",
   "settingsDataRefreshTokenStats": "Refresh statistics",
   "settingsDataResetTokenStats": "Reset statistics",
+  "settingsDataDetailedStatsTitle": "Detailed statistics",
+  "settingsDataDetailedStatsDescription": "Statistics are calculated from dedicated model request records.",
+  "settingsDataDetailedStatsEmpty": "No detailed usage records yet",
+  "settingsDataDetailedStatsDateRange": "{start} to {end}",
+  "@settingsDataDetailedStatsDateRange": {
+    "placeholders": {
+      "start": {
+        "type": "String"
+      },
+      "end": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsSourceLabel": "Model request records",
+  "settingsDataDetailedStatsSourceChat": "Chat response",
+  "settingsDataDetailedStatsSourceToolResult": "Tool-result response",
+  "settingsDataDetailedStatsSourceSummary": "Summary generation",
+  "settingsDataDetailedStatsSourceMemory": "Memory analysis",
+  "settingsDataDetailedStatsTotalRequests": "Total requests",
+  "settingsDataDetailedStatsCachedInput": "Cached input",
+  "settingsDataDetailedStatsActiveDays": "Active days",
+  "settingsDataDetailedStatsChats": "Conversations",
+  "settingsDataDetailedStatsProviders": "Providers",
+  "settingsDataDetailedStatsModels": "Models",
+  "settingsDataDetailedStatsDailyUsageTitle": "Daily usage trend",
+  "settingsDataDetailedStatsDailyUsageSubtitle": "Request count by day",
+  "settingsDataDetailedStatsRequestsSeries": "Requests",
+  "settingsDataDetailedStatsInputOutputTitle": "Input / output consumption trend",
+  "settingsDataDetailedStatsInputOutputSubtitle": "Daily token changes for input and output",
+  "settingsDataDetailedStatsProviderPieTitle": "Provider distribution",
+  "settingsDataDetailedStatsModelPieTitle": "Model distribution",
+  "settingsDataDetailedStatsChatPieTitle": "Conversation distribution",
+  "settingsDataDetailedStatsTotalTokens": "Total tokens",
+  "settingsDataDetailedStatsTopRequestsTitle": "Top requests",
+  "settingsDataDetailedStatsTopRequestsSubtitle": "Highest single-request token consumption",
+  "settingsDataDetailedStatsTopChatsTitle": "Top conversations",
+  "settingsDataDetailedStatsTopChatsSubtitle": "Highest total token consumption by conversation",
+  "settingsDataDetailedStatsOther": "Other",
+  "settingsDataDetailedStatsInputOutputSummary": "Input {input} · Output {output} · {chatTitle} · {time}",
+  "@settingsDataDetailedStatsInputOutputSummary": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      },
+      "chatTitle": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestModelSummary": "{requests} requests · {models} models",
+  "@settingsDataDetailedStatsRequestModelSummary": {
+    "placeholders": {
+      "requests": {
+        "type": "int"
+      },
+      "models": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsUnlabeledProvider": "Unlabeled provider",
+  "settingsDataDetailedStatsUnlabeledModel": "Unlabeled model",
+  "settingsDataDetailedStatsUntitledChat": "Untitled conversation",
   "settingsDataBackupSection": "Backup & restore",
   "settingsDataChatHistoriesBackup": "Chat data",
   "settingsDataChatHistoriesBackupDescription": "Back up all chats and messages. Restore updates or creates chats by chat ID.",

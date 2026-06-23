@@ -9,6 +9,7 @@ impl HttpTtsResponsePipelineStepType {
     pub const HTTP_GET: &'static str = "http_get";
     pub const HTTP_REQUEST_FROM_OBJECT: &'static str = "http_request_from_object";
     pub const BASE64_DECODE: &'static str = "base64_decode";
+    pub const HEX_DECODE: &'static str = "hex_decode";
 
     pub fn normalize(stepType: &str) -> Result<String, String> {
         let trimmed = stepType.trim();
@@ -19,7 +20,8 @@ impl HttpTtsResponsePipelineStepType {
             | Self::PARSE_JSON_STRING
             | Self::HTTP_GET
             | Self::HTTP_REQUEST_FROM_OBJECT
-            | Self::BASE64_DECODE => Ok(normalized),
+            | Self::BASE64_DECODE
+            | Self::HEX_DECODE => Ok(normalized),
             _ => Err(format!(
                 "unsupported http tts response pipeline step: {trimmed}"
             )),

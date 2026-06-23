@@ -553,7 +553,9 @@ fn validateBuildMetadata(value: &str) -> Result<(), String> {
     }
     for item in value.split('.') {
         if item.is_empty() {
-            return Err(format!("Version build metadata identifier is empty: {value}"));
+            return Err(format!(
+                "Version build metadata identifier is empty: {value}"
+            ));
         }
         if !item
             .bytes()
@@ -589,7 +591,8 @@ fn comparePreRelease(left: &PreRelease, right: &PreRelease) -> CmpOrdering {
     }
     let pairCount = left.identifiers.len().min(right.identifiers.len());
     for index in 0..pairCount {
-        let order = comparePreReleaseIdentifier(&left.identifiers[index], &right.identifiers[index]);
+        let order =
+            comparePreReleaseIdentifier(&left.identifiers[index], &right.identifiers[index]);
         if order != CmpOrdering::Equal {
             return order;
         }
@@ -698,13 +701,15 @@ fn selectLatestReleaseInfo(
             selected = Some((parsed, release, packageAsset));
         }
     }
-    Ok(selected.map(|(_, latestRelease, packageAsset)| ReleaseInfo {
-        version: latestRelease.tag_name.trim_start_matches('v').to_string(),
-        assetName: packageAsset.name.clone(),
-        downloadUrl: packageAsset.browser_download_url.clone(),
-        releaseNotes: latestRelease.body.unwrap_or_default(),
-        releasePageUrl: latestRelease.html_url,
-    }))
+    Ok(
+        selected.map(|(_, latestRelease, packageAsset)| ReleaseInfo {
+            version: latestRelease.tag_name.trim_start_matches('v').to_string(),
+            assetName: packageAsset.name.clone(),
+            downloadUrl: packageAsset.browser_download_url.clone(),
+            releaseNotes: latestRelease.body.unwrap_or_default(),
+            releasePageUrl: latestRelease.html_url,
+        }),
+    )
 }
 
 #[allow(non_snake_case)]
@@ -907,7 +912,9 @@ fn downloadRangeToFile(
         .header(USER_AGENT, "Operit")
         .header(RANGE, format!("bytes={start}-{end}"))
         .send()
-        .map_err(|error| downloadRequestError(&format!("download bytes={start}-{end}"), url, &error))?;
+        .map_err(|error| {
+            downloadRequestError(&format!("download bytes={start}-{end}"), url, &error)
+        })?;
     if response.status().as_u16() != 206 {
         return Err(format!(
             "HTTP {}: Range request failed for bytes={start}-{end}",
@@ -1044,33 +1051,18 @@ mod tests {
             .unwrap(),
             0
         );
-        assert!(
-            GithubReleaseUtil::compareVersions("v2.0.1-dev.1", "2.0.0")
-                .unwrap()
-                > 0
-        );
+        assert!(GithubReleaseUtil::compareVersions("v2.0.1-dev.1", "2.0.0").unwrap() > 0);
     }
 
     #[test]
     fn compares_release_tags_with_prerelease_order() {
         assert!(
-            GithubReleaseUtil::compareVersions("v2.0.0-preview.2", "2.0.0-preview.1")
-                .unwrap()
-                > 0
+            GithubReleaseUtil::compareVersions("v2.0.0-preview.2", "2.0.0-preview.1").unwrap() > 0
         );
+        assert!(GithubReleaseUtil::compareVersions("v2.0.0-rc.1", "2.0.0-preview.9").unwrap() > 0);
+        assert!(GithubReleaseUtil::compareVersions("v2.0.0", "2.0.0-rc.9").unwrap() > 0);
         assert!(
-            GithubReleaseUtil::compareVersions("v2.0.0-rc.1", "2.0.0-preview.9")
-                .unwrap()
-                > 0
-        );
-        assert!(
-            GithubReleaseUtil::compareVersions("v2.0.0", "2.0.0-rc.9")
-                .unwrap()
-                > 0
-        );
-        assert!(
-            GithubReleaseUtil::compareVersions("v2.0.0-dev.20260619", "2.0.0-preview.1")
-                .unwrap()
+            GithubReleaseUtil::compareVersions("v2.0.0-dev.20260619", "2.0.0-preview.1").unwrap()
                 < 0
         );
     }

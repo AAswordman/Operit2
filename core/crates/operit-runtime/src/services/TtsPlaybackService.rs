@@ -6,7 +6,9 @@ use operit_host_api::{AudioPlaybackHost, TtsPlaybackHost, TtsPlaybackRequest, Tt
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::data::model::TtsConfig::{TtsHostPlaybackResult, TtsPlaybackResult, TtsProviderType};
+use crate::data::model::TtsConfig::{
+    TtsConfig, TtsHostPlaybackResult, TtsPlaybackResult, TtsProviderType,
+};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::util::TtsCleaner::TtsCleaner;
@@ -77,6 +79,36 @@ impl TtsPlaybackService {
                 .getCurrentTtsConfig()
                 .map_err(|error| error.to_string())?,
         };
+        self.speakWithResolvedConfig(config, cleanedText, interrupt)
+    }
+
+    pub fn speakWithConfig(
+        &self,
+        ttsConfigId: &str,
+        text: &str,
+        interrupt: bool,
+    ) -> Result<TtsHostPlaybackResult, String> {
+        let ttsConfigId = ttsConfigId.trim();
+        if ttsConfigId.is_empty() {
+            return Err("tts config id is empty".to_string());
+        }
+        let cleanedText = TtsCleaner::clean(text);
+        if cleanedText.is_empty() {
+            return Err("tts text is empty".to_string());
+        }
+        let config = self
+            .ttsConfigManager
+            .getTtsConfig(ttsConfigId)
+            .map_err(|error| error.to_string())?;
+        self.speakWithResolvedConfig(config, cleanedText, interrupt)
+    }
+
+    fn speakWithResolvedConfig(
+        &self,
+        config: TtsConfig,
+        cleanedText: String,
+        interrupt: bool,
+    ) -> Result<TtsHostPlaybackResult, String> {
         let providerType = TtsProviderType::normalize(&config.providerType);
         if providerType != TtsProviderType::SYSTEM_TTS {
             return Err(format!(

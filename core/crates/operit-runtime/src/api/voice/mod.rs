@@ -6,6 +6,8 @@ pub mod HttpVoiceProvider;
 pub mod OpenAIVoiceProvider;
 #[path = "SystemVoiceProvider.rs"]
 pub mod SystemVoiceProvider;
+#[path = "TtsVoiceListFetcher.rs"]
+pub mod TtsVoiceListFetcher;
 #[path = "VoiceService.rs"]
 pub mod VoiceService;
 #[path = "VoiceServiceFactory.rs"]

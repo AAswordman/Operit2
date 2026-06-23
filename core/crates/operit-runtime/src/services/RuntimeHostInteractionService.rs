@@ -334,43 +334,135 @@ pub struct RuntimeHostInteractionResponse {
 
 impl RuntimeHostInteractionResponse {
     pub fn browserAutomation(response: RuntimeHostInteractionBrowserAutomationResponse) -> Self {
-        Self::withResponse(Some(response), None, None, None, None, None, None, None, None)
+        Self::withResponse(
+            Some(response),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn webVisit(response: RuntimeHostInteractionWebVisitResponse) -> Self {
-        Self::withResponse(None, Some(response), None, None, None, None, None, None, None)
+        Self::withResponse(
+            None,
+            Some(response),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn composeWebViewController(
         response: RuntimeHostInteractionComposeWebViewControllerResponse,
     ) -> Self {
-        Self::withResponse(None, None, Some(response), None, None, None, None, None, None)
+        Self::withResponse(
+            None,
+            None,
+            Some(response),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn systemCaptureScreenshot(
         response: RuntimeHostInteractionSystemCaptureScreenshotResponse,
     ) -> Self {
-        Self::withResponse(None, None, None, Some(response), None, None, None, None, None)
+        Self::withResponse(
+            None,
+            None,
+            None,
+            Some(response),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
-    pub fn systemRecognizeText(response: RuntimeHostInteractionSystemRecognizeTextResponse) -> Self {
-        Self::withResponse(None, None, None, None, Some(response), None, None, None, None)
+    pub fn systemRecognizeText(
+        response: RuntimeHostInteractionSystemRecognizeTextResponse,
+    ) -> Self {
+        Self::withResponse(
+            None,
+            None,
+            None,
+            None,
+            Some(response),
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn audioPlay(response: RuntimeHostInteractionAudioPlayResponse) -> Self {
-        Self::withResponse(None, None, None, None, None, Some(response), None, None, None)
+        Self::withResponse(
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(response),
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn ttsSynthesis(response: RuntimeHostInteractionTtsSynthesisResponse) -> Self {
-        Self::withResponse(None, None, None, None, None, None, Some(response), None, None)
+        Self::withResponse(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(response),
+            None,
+            None,
+        )
     }
 
     pub fn ttsPlayback(response: RuntimeHostInteractionTtsPlaybackResponse) -> Self {
-        Self::withResponse(None, None, None, None, None, None, None, Some(response), None)
+        Self::withResponse(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(response),
+            None,
+        )
     }
 
     pub fn toolPermission(response: RuntimeHostInteractionToolPermissionResponse) -> Self {
-        Self::withResponse(None, None, None, None, None, None, None, None, Some(response))
+        Self::withResponse(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(response),
+        )
     }
 
     fn withResponse(
@@ -523,8 +615,7 @@ impl Stream for RuntimeHostInteractionEventStream {
                 .pending
                 .values()
                 .find(|pending| {
-                    !delivered.contains(&pending.request.requestId)
-                        && self.matchesPending(pending)
+                    !delivered.contains(&pending.request.requestId) && self.matchesPending(pending)
                 })
                 .map(|pending| pending.request.clone());
             if let Some(request) = next {

@@ -14,6 +14,8 @@ pub mod MemoryRepository;
 pub mod RuntimeStorageRepository;
 #[path = "UIHierarchyManager.rs"]
 pub mod UIHierarchyManager;
+#[path = "UsageStatisticsStore.rs"]
+pub mod UsageStatisticsStore;
 #[path = "UserMarkdownRepository.rs"]
 pub mod UserMarkdownRepository;
 #[path = "WorkflowRepository.rs"]
@@ -28,6 +30,7 @@ pub use MemoryAutoSaveCandidateRepository::*;
 pub use MemoryRepository::*;
 pub use RuntimeStorageRepository::*;
 pub use UIHierarchyManager::*;
+pub use UsageStatisticsStore::*;
 pub use UserMarkdownRepository::*;
 pub use WorkflowRepository::*;
 pub use WorkspaceService::*;

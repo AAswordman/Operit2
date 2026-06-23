@@ -5,6 +5,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::AIService::{
@@ -39,13 +40,29 @@ pub struct OpenAIProvider {
     state: Arc<Mutex<OpenAIProviderState>>,
 }
 
-#[derive(Debug, Default)]
 struct OpenAIProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
     cancelled: bool,
+    cancelGeneration: u64,
+    cancelSignal: watch::Sender<u64>,
     tokenCacheManager: TokenCacheManager,
+}
+
+impl Default for OpenAIProviderState {
+    fn default() -> Self {
+        let (cancelSignal, _) = watch::channel(0);
+        Self {
+            inputTokenCount: 0,
+            cachedInputTokenCount: 0,
+            outputTokenCount: 0,
+            cancelled: false,
+            cancelGeneration: 0,
+            cancelSignal,
+            tokenCacheManager: TokenCacheManager::default(),
+        }
+    }
 }
 
 pub struct StreamingState {
@@ -470,6 +487,88 @@ impl OpenAIProvider {
             .lock()
             .map(|state| state.cancelled)
             .unwrap_or(false)
+    }
+
+    fn begin_request(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = false;
+        }
+    }
+
+    fn mark_cancelled(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = true;
+            state.cancelGeneration = state.cancelGeneration.wrapping_add(1);
+            let _ = state.cancelSignal.send(state.cancelGeneration);
+        }
+    }
+
+    fn cancel_receiver(&self) -> watch::Receiver<u64> {
+        self.state
+            .lock()
+            .expect("OpenAIProvider state mutex poisoned")
+            .cancelSignal
+            .subscribe()
+    }
+
+    async fn waitForCancellation(mut receiver: watch::Receiver<u64>, observedGeneration: u64) {
+        while receiver.changed().await.is_ok() {
+            if *receiver.borrow() != observedGeneration {
+                break;
+            }
+        }
+    }
+
+    async fn sendHttpRequest(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AiServiceError> {
+        let receiver = self.cancel_receiver();
+        let observedGeneration = *receiver.borrow();
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+        let receiver = self.cancel_receiver();
+        let observedGeneration = *receiver.borrow();
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+        let receiver = self.cancel_receiver();
+        let observedGeneration = *receiver.borrow();
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn delayRetryOrCancel(&self, retryAttempt: i32) -> Result<(), AiServiceError> {
+        let receiver = self.cancel_receiver();
+        let observedGeneration = *receiver.borrow();
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        let delayMs = super::LlmRetryPolicy::LlmRetryPolicy::nextDelayMs(retryAttempt);
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(delayMs as u64)) => Ok(()),
+            _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
+        }
     }
 
     pub fn create_request_body(
@@ -1446,18 +1545,14 @@ impl AIService for OpenAIProvider {
     }
 
     fn cancel_streaming(&mut self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.cancelled = true;
-        }
+        self.mark_cancelled();
     }
 
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        if let Ok(mut state) = self.state.lock() {
-            state.cancelled = false;
-        }
+        self.begin_request();
         self.reset_token_counts();
 
         let request_body = self.create_request_body(&request)?;
@@ -1526,6 +1621,7 @@ impl OpenAIProvider {
         request: SendMessageRequest,
         request_body: Value,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        self.begin_request();
         if request.stream {
             let mut provider = self.clone();
             let event_channel = empty_revisable_event_channel();
@@ -1566,16 +1662,20 @@ impl OpenAIProvider {
 
                         loop {
                             let client = reqwest::Client::new();
-                            let response = match client
-                                .post(&api_endpoint)
-                                .headers(headers.clone())
-                                .json(&request_body.clone())
-                                .send()
+                            let response = match worker_provider
+                                .sendHttpRequest(
+                                    client
+                                        .post(&api_endpoint)
+                                        .headers(headers.clone())
+                                        .json(&request_body.clone()),
+                                )
                                 .await
                             {
                                 Ok(response) => response,
+                                Err(AiServiceError::RequestCancelled) => {
+                                    break Err(AiServiceError::RequestCancelled);
+                                }
                                 Err(error) => {
-                                    let error = AiServiceError::ConnectionFailed(error.to_string());
                                     let errorText = retry_error_text(&error);
                                     if !enable_retry {
                                         break Err(error);
@@ -1591,7 +1691,7 @@ impl OpenAIProvider {
                                             newRetryCount,
                                         ));
                                     }
-                                    delay_retry_ms(newRetryCount).await;
+                                    worker_provider.delayRetryOrCancel(newRetryCount).await?;
                                     retryCount = newRetryCount;
                                     continue;
                                 }
@@ -1599,9 +1699,7 @@ impl OpenAIProvider {
 
                             let status = response.status();
                             if !status.is_success() {
-                                let message = response.text().await.map_err(|error| {
-                                    AiServiceError::ConnectionFailed(error.to_string())
-                                })?;
+                                let message = worker_provider.readResponseText(response).await?;
                                 let error =
                                     AiServiceError::RequestFailed(format!("{status}: {message}"));
                                 let errorText = retry_error_text(&error);
@@ -1616,7 +1714,7 @@ impl OpenAIProvider {
                                 if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
                                     on_non_fatal_error(retry_message(&errorText, newRetryCount));
                                 }
-                                delay_retry_ms(newRetryCount).await;
+                                worker_provider.delayRetryOrCancel(newRetryCount).await?;
                                 retryCount = newRetryCount;
                                 continue;
                             }
@@ -1631,6 +1729,10 @@ impl OpenAIProvider {
                                 .await;
                             match result {
                                 Ok(()) => break Ok(()),
+                                Err(AiServiceError::RequestCancelled) => {
+                                    let _ = emitter.emit_rollback(&request_savepoint_id);
+                                    break Err(AiServiceError::RequestCancelled);
+                                }
                                 Err(error) => {
                                     let errorText = retry_error_text(&error);
                                     if !enable_retry {
@@ -1649,7 +1751,7 @@ impl OpenAIProvider {
                                             newRetryCount,
                                         ));
                                     }
-                                    delay_retry_ms(newRetryCount).await;
+                                    worker_provider.delayRetryOrCancel(newRetryCount).await?;
                                     retryCount = newRetryCount;
                                 }
                             }
@@ -1666,33 +1768,90 @@ impl OpenAIProvider {
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }
 
+        let provider = self.clone();
+        let event_channel = empty_revisable_event_channel();
+        let stream_event_channel = event_channel.clone();
+        let mut request_parts = Some((
+            self.api_endpoint.clone(),
+            self.headers()?,
+            request_body,
+            request.enable_retry,
+            request.on_non_fatal_error.clone(),
+        ));
+        let cold_stream = FnStream::new(move |emit| {
+            let (api_endpoint, headers, request_body, enable_retry, on_non_fatal_error) =
+                request_parts
+                    .take()
+                    .expect("OpenAIProvider non-stream request must only be collected once");
+            let (tx, rx) = channel::<String>();
+            let worker_provider = provider.clone();
+            let worker_event_channel = stream_event_channel.clone();
+            let worker = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime must build for OpenAIProvider non-stream request");
+                let result = runtime.block_on(worker_provider.sendNonStreamingPreparedRequest(
+                    api_endpoint,
+                    headers,
+                    request_body,
+                    enable_retry,
+                    on_non_fatal_error,
+                ));
+                if let Ok(chunks) = result {
+                    for chunk in chunks {
+                        let _ = tx.send(chunk);
+                    }
+                }
+                worker_event_channel.close();
+            });
+            while let Ok(chunk) = rx.recv() {
+                emit(chunk);
+            }
+            let _ = worker.join();
+        });
+        Ok(Box::new(with_event_channel(cold_stream, event_channel)))
+    }
+
+    async fn sendNonStreamingPreparedRequest(
+        &self,
+        api_endpoint: String,
+        headers: HeaderMap,
+        request_body: Value,
+        enable_retry: bool,
+        on_non_fatal_error: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> Result<Vec<String>, AiServiceError> {
         let response = {
             let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
             let mut retryCount = 0;
             loop {
                 let client = reqwest::Client::new();
-                let response = match client
-                    .post(&self.api_endpoint)
-                    .headers(self.headers()?)
-                    .json(&request_body)
-                    .send()
+                let response = match self
+                    .sendHttpRequest(
+                        client
+                            .post(&api_endpoint)
+                            .headers(headers.clone())
+                            .json(&request_body),
+                    )
                     .await
                 {
                     Ok(response) => response,
+                    Err(AiServiceError::RequestCancelled) => {
+                        return Err(AiServiceError::RequestCancelled);
+                    }
                     Err(error) => {
-                        let error = AiServiceError::ConnectionFailed(error.to_string());
                         let errorText = retry_error_text(&error);
-                        if !request.enable_retry {
+                        if !enable_retry {
                             return Err(error);
                         }
                         let newRetryCount = retryCount + 1;
                         if newRetryCount > maxRetries {
                             return Err(error);
                         }
-                        if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
                             on_non_fatal_error(retry_message(&errorText, newRetryCount));
                         }
-                        delay_retry_ms(newRetryCount).await;
+                        self.delayRetryOrCancel(newRetryCount).await?;
                         retryCount = newRetryCount;
                         continue;
                     }
@@ -1700,23 +1859,20 @@ impl OpenAIProvider {
 
                 let status = response.status();
                 if !status.is_success() {
-                    let message = response
-                        .text()
-                        .await
-                        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                    let message = self.readResponseText(response).await?;
                     let error = AiServiceError::RequestFailed(format!("{status}: {message}"));
                     let errorText = retry_error_text(&error);
-                    if !request.enable_retry {
+                    if !enable_retry {
                         return Err(error);
                     }
                     let newRetryCount = retryCount + 1;
                     if newRetryCount > maxRetries {
                         return Err(error);
                     }
-                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
                         on_non_fatal_error(retry_message(&errorText, newRetryCount));
                     }
-                    delay_retry_ms(newRetryCount).await;
+                    self.delayRetryOrCancel(newRetryCount).await?;
                     retryCount = newRetryCount;
                     continue;
                 }
@@ -1724,10 +1880,7 @@ impl OpenAIProvider {
             }
         };
 
-        let json_response: Value = response
-            .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let json_response = self.readResponseJson(response).await?;
         let token_counts = json_response
             .get("usage")
             .map(parse_usage_counts)
@@ -1752,8 +1905,7 @@ impl OpenAIProvider {
             }
         }
         chunks.extend(extract_tool_calls_xml_chunks(&json_response));
-
-        Ok(response_stream_from_chunks(chunks))
+        Ok(chunks)
     }
 }
 

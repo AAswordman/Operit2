@@ -1229,8 +1229,80 @@
   "settingsDataTokenSection": "使用统计",
   "settingsDataInputTokens": "输入",
   "settingsDataOutputTokens": "输出",
+  "settingsDataOpenDetailedStats": "查看详细统计",
+  "settingsDataOpenDetailedStatsDescription": "打开每日趋势、输入输出 Token 变化，以及按供应商、模型、会话分类的使用明细。",
   "settingsDataRefreshTokenStats": "刷新统计",
   "settingsDataResetTokenStats": "重置统计",
+  "settingsDataDetailedStatsTitle": "详细统计",
+  "settingsDataDetailedStatsDescription": "统计基于独立保存的模型请求明细计算。",
+  "settingsDataDetailedStatsEmpty": "暂无可展示的详细使用记录",
+  "settingsDataDetailedStatsDateRange": "{start} 至 {end}",
+  "@settingsDataDetailedStatsDateRange": {
+    "placeholders": {
+      "start": {
+        "type": "String"
+      },
+      "end": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsSourceLabel": "模型请求明细",
+  "settingsDataDetailedStatsSourceChat": "对话回复",
+  "settingsDataDetailedStatsSourceToolResult": "工具结果续写",
+  "settingsDataDetailedStatsSourceSummary": "摘要生成",
+  "settingsDataDetailedStatsSourceMemory": "记忆分析",
+  "settingsDataDetailedStatsTotalRequests": "总请求数",
+  "settingsDataDetailedStatsCachedInput": "缓存输入",
+  "settingsDataDetailedStatsActiveDays": "活跃天数",
+  "settingsDataDetailedStatsChats": "会话数",
+  "settingsDataDetailedStatsProviders": "供应商数",
+  "settingsDataDetailedStatsModels": "模型数",
+  "settingsDataDetailedStatsDailyUsageTitle": "每日使用趋势",
+  "settingsDataDetailedStatsDailyUsageSubtitle": "按天统计请求次数",
+  "settingsDataDetailedStatsRequestsSeries": "请求数",
+  "settingsDataDetailedStatsInputOutputTitle": "输入 / 输出消耗趋势",
+  "settingsDataDetailedStatsInputOutputSubtitle": "按天统计输入与输出 Token 变化",
+  "settingsDataDetailedStatsProviderPieTitle": "供应商分布",
+  "settingsDataDetailedStatsModelPieTitle": "模型分布",
+  "settingsDataDetailedStatsChatPieTitle": "会话分布",
+  "settingsDataDetailedStatsTotalTokens": "总 Token",
+  "settingsDataDetailedStatsTopRequestsTitle": "单项请求排行",
+  "settingsDataDetailedStatsTopRequestsSubtitle": "单次请求 Token 消耗最高的记录",
+  "settingsDataDetailedStatsTopChatsTitle": "会话排行",
+  "settingsDataDetailedStatsTopChatsSubtitle": "按会话累计 Token 消耗排序",
+  "settingsDataDetailedStatsOther": "其他",
+  "settingsDataDetailedStatsInputOutputSummary": "输入 {input} · 输出 {output} · {chatTitle} · {time}",
+  "@settingsDataDetailedStatsInputOutputSummary": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      },
+      "chatTitle": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestModelSummary": "{requests} 次请求 · {models} 个模型",
+  "@settingsDataDetailedStatsRequestModelSummary": {
+    "placeholders": {
+      "requests": {
+        "type": "int"
+      },
+      "models": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsUnlabeledProvider": "未标记供应商",
+  "settingsDataDetailedStatsUnlabeledModel": "未标记模型",
+  "settingsDataDetailedStatsUntitledChat": "未命名会话",
   "settingsDataBackupSection": "备份与恢复",
   "settingsDataChatHistoriesBackup": "聊天数据",
   "settingsDataChatHistoriesBackupDescription": "备份全部聊天和消息；恢复时按聊天 ID 更新或新增。",

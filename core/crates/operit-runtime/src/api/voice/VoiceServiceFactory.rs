@@ -1,10 +1,10 @@
 #![allow(non_snake_case)]
 
 use crate::api::voice::HttpVoiceProvider::HttpVoiceProvider;
-use crate::api::voice::OpenAIVoiceProvider::OpenAIVoiceProvider;
 use crate::api::voice::SystemVoiceProvider::SystemVoiceProvider;
 use crate::api::voice::VoiceService::VoiceService;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::data::model::TtsCatalog::TtsCatalog;
 use crate::data::model::TtsConfig::{TtsConfig, TtsProviderType};
 
 pub struct VoiceServiceFactory;
@@ -22,9 +22,10 @@ impl VoiceServiceFactory {
                     .ok_or_else(|| "TtsSynthesisHost is required for SYSTEM_TTS".to_string())?;
                 Ok(Box::new(SystemVoiceProvider::new(host)))
             }
-            TtsProviderType::HTTP_TTS => Ok(Box::new(HttpVoiceProvider::new())),
-            TtsProviderType::OPENAI_COMPATIBLE => Ok(Box::new(OpenAIVoiceProvider::new())),
-            _ => Err(format!("unsupported tts provider type: {providerType}")),
+            _ => {
+                TtsCatalog::provider(&providerType)?;
+                Ok(Box::new(HttpVoiceProvider::new()))
+            }
         }
     }
 }

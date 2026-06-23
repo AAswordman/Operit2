@@ -571,7 +571,6 @@ pub struct TerminalSessionScreenResultData {
     pub rows: usize,
     pub cols: usize,
     pub content: String,
-    pub commandRunning: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1319,7 +1318,6 @@ impl TerminalSessionScreenResultData {
         sb.push_str("Terminal Session Screen Snapshot:\n");
         sb.push_str(&format!("Session: {}\n", self.sessionId));
         sb.push_str(&format!("Size: {}x{}\n", self.cols, self.rows));
-        sb.push_str(&format!("Command Running: {}\n", self.commandRunning));
         sb.push('\n');
         sb.push_str(&self.content);
         sb

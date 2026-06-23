@@ -4699,6 +4699,18 @@ abstract class AppLocalizations {
   /// **'Output'**
   String get settingsDataOutputTokens;
 
+  /// No description provided for @settingsDataOpenDetailedStats.
+  ///
+  /// In en, this message translates to:
+  /// **'View detailed statistics'**
+  String get settingsDataOpenDetailedStats;
+
+  /// No description provided for @settingsDataOpenDetailedStatsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Open daily trends, input/output token changes, and usage breakdown by provider, model, and conversation.'**
+  String get settingsDataOpenDetailedStatsDescription;
+
   /// No description provided for @settingsDataRefreshTokenStats.
   ///
   /// In en, this message translates to:
@@ -4710,6 +4722,215 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reset statistics'**
   String get settingsDataResetTokenStats;
+
+  /// No description provided for @settingsDataDetailedStatsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Detailed statistics'**
+  String get settingsDataDetailedStatsTitle;
+
+  /// No description provided for @settingsDataDetailedStatsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Statistics are calculated from dedicated model request records.'**
+  String get settingsDataDetailedStatsDescription;
+
+  /// No description provided for @settingsDataDetailedStatsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No detailed usage records yet'**
+  String get settingsDataDetailedStatsEmpty;
+
+  /// No description provided for @settingsDataDetailedStatsDateRange.
+  ///
+  /// In en, this message translates to:
+  /// **'{start} to {end}'**
+  String settingsDataDetailedStatsDateRange(String start, String end);
+
+  /// No description provided for @settingsDataDetailedStatsSourceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model request records'**
+  String get settingsDataDetailedStatsSourceLabel;
+
+  /// No description provided for @settingsDataDetailedStatsSourceChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat response'**
+  String get settingsDataDetailedStatsSourceChat;
+
+  /// No description provided for @settingsDataDetailedStatsSourceToolResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool-result response'**
+  String get settingsDataDetailedStatsSourceToolResult;
+
+  /// No description provided for @settingsDataDetailedStatsSourceSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Summary generation'**
+  String get settingsDataDetailedStatsSourceSummary;
+
+  /// No description provided for @settingsDataDetailedStatsSourceMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory analysis'**
+  String get settingsDataDetailedStatsSourceMemory;
+
+  /// No description provided for @settingsDataDetailedStatsTotalRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Total requests'**
+  String get settingsDataDetailedStatsTotalRequests;
+
+  /// No description provided for @settingsDataDetailedStatsCachedInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Cached input'**
+  String get settingsDataDetailedStatsCachedInput;
+
+  /// No description provided for @settingsDataDetailedStatsActiveDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Active days'**
+  String get settingsDataDetailedStatsActiveDays;
+
+  /// No description provided for @settingsDataDetailedStatsChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversations'**
+  String get settingsDataDetailedStatsChats;
+
+  /// No description provided for @settingsDataDetailedStatsProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'Providers'**
+  String get settingsDataDetailedStatsProviders;
+
+  /// No description provided for @settingsDataDetailedStatsModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Models'**
+  String get settingsDataDetailedStatsModels;
+
+  /// No description provided for @settingsDataDetailedStatsDailyUsageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily usage trend'**
+  String get settingsDataDetailedStatsDailyUsageTitle;
+
+  /// No description provided for @settingsDataDetailedStatsDailyUsageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request count by day'**
+  String get settingsDataDetailedStatsDailyUsageSubtitle;
+
+  /// No description provided for @settingsDataDetailedStatsRequestsSeries.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests'**
+  String get settingsDataDetailedStatsRequestsSeries;
+
+  /// No description provided for @settingsDataDetailedStatsInputOutputTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Input / output consumption trend'**
+  String get settingsDataDetailedStatsInputOutputTitle;
+
+  /// No description provided for @settingsDataDetailedStatsInputOutputSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily token changes for input and output'**
+  String get settingsDataDetailedStatsInputOutputSubtitle;
+
+  /// No description provided for @settingsDataDetailedStatsProviderPieTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider distribution'**
+  String get settingsDataDetailedStatsProviderPieTitle;
+
+  /// No description provided for @settingsDataDetailedStatsModelPieTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model distribution'**
+  String get settingsDataDetailedStatsModelPieTitle;
+
+  /// No description provided for @settingsDataDetailedStatsChatPieTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation distribution'**
+  String get settingsDataDetailedStatsChatPieTitle;
+
+  /// No description provided for @settingsDataDetailedStatsTotalTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Total tokens'**
+  String get settingsDataDetailedStatsTotalTokens;
+
+  /// No description provided for @settingsDataDetailedStatsTopRequestsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Top requests'**
+  String get settingsDataDetailedStatsTopRequestsTitle;
+
+  /// No description provided for @settingsDataDetailedStatsTopRequestsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Highest single-request token consumption'**
+  String get settingsDataDetailedStatsTopRequestsSubtitle;
+
+  /// No description provided for @settingsDataDetailedStatsTopChatsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Top conversations'**
+  String get settingsDataDetailedStatsTopChatsTitle;
+
+  /// No description provided for @settingsDataDetailedStatsTopChatsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Highest total token consumption by conversation'**
+  String get settingsDataDetailedStatsTopChatsSubtitle;
+
+  /// No description provided for @settingsDataDetailedStatsOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Other'**
+  String get settingsDataDetailedStatsOther;
+
+  /// No description provided for @settingsDataDetailedStatsInputOutputSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Input {input} · Output {output} · {chatTitle} · {time}'**
+  String settingsDataDetailedStatsInputOutputSummary(
+    String input,
+    String output,
+    String chatTitle,
+    String time,
+  );
+
+  /// No description provided for @settingsDataDetailedStatsRequestModelSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{requests} requests · {models} models'**
+  String settingsDataDetailedStatsRequestModelSummary(int requests, int models);
+
+  /// No description provided for @settingsDataDetailedStatsUnlabeledProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlabeled provider'**
+  String get settingsDataDetailedStatsUnlabeledProvider;
+
+  /// No description provided for @settingsDataDetailedStatsUnlabeledModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlabeled model'**
+  String get settingsDataDetailedStatsUnlabeledModel;
+
+  /// No description provided for @settingsDataDetailedStatsUntitledChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Untitled conversation'**
+  String get settingsDataDetailedStatsUntitledChat;
 
   /// No description provided for @settingsDataBackupSection.
   ///

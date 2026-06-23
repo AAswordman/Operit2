@@ -2084,6 +2084,7 @@ class _MineAccountLoadingCard extends StatelessWidget {
       border: Border.all(
         color: colorScheme.outlineVariant.withValues(alpha: 0.16),
       ),
+      material: true,
       child: const ListTile(
         leading: M3LoadingIndicator(size: 24),
         title: Text('GitHub 账号'),

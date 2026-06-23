@@ -319,7 +319,10 @@ class _MarketCardLeadingIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final initial = title.trim().isEmpty ? '?' : title.trim()[0].toUpperCase();
+    final trimmedTitle = title.trim();
+    final initial = trimmedTitle.isEmpty
+        ? '?'
+        : trimmedTitle.characters.first.toUpperCase();
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.primaryContainer,

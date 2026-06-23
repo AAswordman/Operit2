@@ -379,7 +379,6 @@ fn terminalSessionScreenResultData(data: &TerminalScreenOutput) -> TerminalSessi
         rows: data.rows,
         cols: data.cols,
         content: data.content.clone(),
-        commandRunning: data.commandRunning,
     }
 }
 

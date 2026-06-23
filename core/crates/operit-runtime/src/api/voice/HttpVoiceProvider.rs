@@ -76,6 +76,10 @@ impl PlaceholderValue {
             .map(|encoded| encoded[1..encoded.len() - 1].to_string())
             .map_err(|error| error.to_string())
     }
+
+    fn asXmlContent(&self) -> String {
+        xmlEscape(&self.asString())
+    }
 }
 
 fn placeholders(config: &TtsConfig, text: &str) -> BTreeMap<String, PlaceholderValue> {
@@ -101,6 +105,10 @@ fn placeholders(config: &TtsConfig, text: &str) -> BTreeMap<String, PlaceholderV
     values.insert("speed".to_string(), PlaceholderValue::Number(config.speed));
     values.insert("text".to_string(), PlaceholderValue::Text(text.to_string()));
     values.insert(
+        "textXml".to_string(),
+        PlaceholderValue::Text(text.to_string()),
+    );
+    values.insert(
         "uuid".to_string(),
         PlaceholderValue::Text(Uuid::new_v4().to_string()),
     );
@@ -118,6 +126,7 @@ fn executeConfiguredRequest(
     let method = normalizeMethod(&config.httpMethod)?;
     let url = replacePlaceholders(&config.endpoint, placeholders, PlaceholderMode::Url)?;
     let mut headers = replaceHeaders(&config.headers, placeholders)?;
+    let bodyPlaceholderMode = placeholderModeFromContentType(&config.contentType);
     if method == "POST" {
         let contentType = config.contentType.trim();
         if !contentType.is_empty() {
@@ -125,8 +134,7 @@ fn executeConfiguredRequest(
         }
     }
     let body = if method == "POST" {
-        replacePlaceholders(&config.requestBody, placeholders, PlaceholderMode::JsonBody)?
-            .into_bytes()
+        replacePlaceholders(&config.requestBody, placeholders, bodyPlaceholderMode)?.into_bytes()
     } else {
         Vec::new()
     };
@@ -151,10 +159,12 @@ fn replaceHeaders(
     Ok(result)
 }
 
+#[derive(Clone, Copy)]
 enum PlaceholderMode {
     Plain,
     Url,
     JsonBody,
+    XmlBody,
 }
 
 fn replacePlaceholders(
@@ -183,6 +193,7 @@ fn replacePlaceholders(
                         value.asJsonLiteral()?
                     }
                 }
+                PlaceholderMode::XmlBody => value.asXmlContent(),
             };
             output.push_str(&replacement);
             index += tokenLen;
@@ -224,6 +235,26 @@ fn percentEncode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+fn placeholderModeFromContentType(contentType: &str) -> PlaceholderMode {
+    let normalized = contentType
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if normalized == "application/json" || normalized.ends_with("+json") {
+        PlaceholderMode::JsonBody
+    } else if normalized == "application/xml"
+        || normalized == "text/xml"
+        || normalized == "application/ssml+xml"
+        || normalized.ends_with("+xml")
+    {
+        PlaceholderMode::XmlBody
+    } else {
+        PlaceholderMode::Plain
+    }
+}
+
 fn resolvePipelineAudio(
     initialPayload: BinaryPayload,
     steps: &[TtsHttpResponsePipelineStep],
@@ -249,6 +280,9 @@ fn resolvePipelineAudio(
             }
             HttpTtsResponsePipelineStepType::BASE64_DECODE => {
                 PipelineValue::Binary(decodeBase64Value(current, index)?)
+            }
+            HttpTtsResponsePipelineStepType::HEX_DECODE => {
+                PipelineValue::Binary(decodeHexValue(current, index)?)
             }
             _ => {
                 return Err(format!(
@@ -416,6 +450,39 @@ fn decodeBase64Value(current: PipelineValue, stepIndex: usize) -> Result<BinaryP
                 stepIndex + 1
             )
         })?;
+    Ok(BinaryPayload {
+        bytes,
+        contentType: None,
+    })
+}
+
+fn decodeHexValue(current: PipelineValue, stepIndex: usize) -> Result<BinaryPayload, String> {
+    let raw = scalarTextFromPipeline(current, stepIndex, "hex_decode")?;
+    let text = raw.trim();
+    if text.len() % 2 != 0 {
+        return Err(format!(
+            "http tts response pipeline hex_decode step {} received odd length data",
+            stepIndex + 1
+        ));
+    }
+    let bytes = text
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|chunk| {
+            let hex = std::str::from_utf8(chunk).map_err(|error| {
+                format!(
+                    "http tts response pipeline hex_decode step {} received invalid utf-8: {error}",
+                    stepIndex + 1
+                )
+            })?;
+            u8::from_str_radix(hex, 16).map_err(|error| {
+                format!(
+                    "http tts response pipeline hex_decode step {} failed: {error}",
+                    stepIndex + 1
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(BinaryPayload {
         bytes,
         contentType: None,
@@ -590,4 +657,19 @@ fn numberString(value: f64) -> String {
     serde_json::Number::from_f64(value)
         .expect("tts numeric placeholder must be finite")
         .to_string()
+}
+
+fn xmlEscape(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            '"' => output.push_str("&quot;"),
+            '\'' => output.push_str("&apos;"),
+            other => output.push(other),
+        }
+    }
+    output
 }

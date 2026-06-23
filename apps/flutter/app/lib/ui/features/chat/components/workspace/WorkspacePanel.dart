@@ -13,6 +13,7 @@ import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceTabStrip.dart';
+import 'browser/WorkspaceBrowserSessionStore.dart';
 import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
@@ -52,6 +53,8 @@ class WorkspacePanel extends StatefulWidget {
 class _WorkspacePanelState extends State<WorkspacePanel> {
   final WorkspaceBrowserSessionRegistry _browserSessionRegistry =
       WorkspaceBrowserSessionRegistry.instance;
+  final WorkspaceBrowserSessionStore _browserSessionStore =
+      WorkspaceBrowserSessionStore.instance;
   final WorkspaceWebVisitSessionRegistry _webVisitSessionRegistry =
       WorkspaceWebVisitSessionRegistry.instance;
   final WorkspaceTerminalSessions _terminalSessions =
@@ -75,6 +78,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void initState() {
     super.initState();
+    _configureBrowserWorkspaceAccess();
     _registerBrowserControls();
     _registerWebVisitControls();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -89,6 +93,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didUpdateWidget(covariant WorkspacePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _configureBrowserWorkspaceAccess();
     _registerBrowserControls();
     _registerWebVisitControls();
     if (!oldWidget.hasBoundWorkspace && widget.hasBoundWorkspace) {
@@ -98,7 +103,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   @override
   void dispose() {
-    _browserSessionRegistry.clearBrowserControls();
+    _browserSessionRegistry.clearBrowserControls(this);
     _webVisitSessionRegistry.clearControls();
     for (final entry in _webVisitCompleters.entries) {
       final completer = entry.value;
@@ -162,7 +167,17 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   void _registerBrowserControls() {
-    _browserSessionRegistry.setBrowserControls(openBrowserTab: _openBrowserTab);
+    _browserSessionRegistry.setBrowserControls(
+      owner: this,
+      revealBrowserTab: _openBrowserWorkspaceTab,
+    );
+  }
+
+  void _configureBrowserWorkspaceAccess() {
+    _browserSessionStore.configureWorkspaceAccess(
+      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
+      onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
+    );
   }
 
   void _registerWebVisitControls() {
@@ -194,47 +209,70 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     String? userAgent,
     Map<String, String>? headers,
   }) {
-    widget.onRevealRequested();
-    final title = _browserTabTitle(
-      url: url,
-      localFilePath: localFilePath,
-      workspaceHtmlPath: workspaceHtmlPath,
+    unawaited(
+      _openBrowserTabAsync(
+        url: url,
+        localFilePath: localFilePath,
+        workspaceHtmlPath: workspaceHtmlPath,
+        userAgent: userAgent,
+        headers: headers,
+      ),
     );
-    final tab = WorkspaceTab(
-      kind: WorkspaceTabKind.browser,
-      title: title,
-      icon: Icons.public,
-      url: url,
-      userAgent: userAgent,
-      headers: headers,
-      absolutePath: localFilePath,
-      workspaceHtmlPath: workspaceHtmlPath,
-    );
-    setState(() {
-      _tabs.add(tab);
-      _selectedIndex = _tabs.length - 1;
-    });
   }
 
-  String _browserTabTitle({
+  Future<void> _openBrowserTabAsync({
     String? url,
     String? localFilePath,
     String? workspaceHtmlPath,
-  }) {
+    String? userAgent,
+    Map<String, String>? headers,
+  }) async {
     final htmlPath = workspaceHtmlPath?.trim();
     if (htmlPath != null && htmlPath.isNotEmpty) {
-      return htmlPath.split(RegExp(r'[\\/]')).last;
+      await _browserSessionStore.openWorkspaceHtmlTab(
+        htmlPath,
+        initialUrl: url,
+      );
+    } else {
+      final filePath = localFilePath?.trim();
+      if (filePath != null && filePath.isNotEmpty) {
+        await _browserSessionStore.openLocalFileTab(filePath);
+      } else {
+        await _browserSessionStore.openTab(
+          url: url,
+          userAgent: userAgent,
+          headers: headers,
+        );
+      }
     }
-    final filePath = localFilePath?.trim();
-    if (filePath != null && filePath.isNotEmpty) {
-      return filePath.split(RegExp(r'[\\/]')).last;
+    if (!mounted) {
+      return;
     }
-    final rawUrl = url?.trim();
-    if (rawUrl != null && rawUrl.isNotEmpty) {
-      final uri = Uri.tryParse(rawUrl);
-      return uri?.host.isNotEmpty == true ? uri!.host : rawUrl;
+    _openBrowserWorkspaceTab();
+  }
+
+  void _openBrowserWorkspaceTab() {
+    if (!mounted) {
+      return;
     }
-    return '';
+    widget.onRevealRequested();
+    final existingIndex = _tabs.indexWhere(
+      (item) => item.kind == WorkspaceTabKind.browser,
+    );
+    setState(() {
+      if (existingIndex >= 0) {
+        _selectedIndex = existingIndex;
+        return;
+      }
+      _tabs.add(
+        const WorkspaceTab(
+          kind: WorkspaceTabKind.browser,
+          title: '',
+          icon: Icons.public,
+        ),
+      );
+      _selectedIndex = _tabs.length - 1;
+    });
   }
 
   Future<WebVisitResponse> _openWebVisitTab(WebVisitRequest request) {
@@ -505,7 +543,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                               ),
                               onTap: () {
                                 Navigator.of(context).pop();
-                                widget.onRevealRequested();
+                                _openBrowserWorkspaceTab();
                                 _browserSessionRegistry.selectTab(
                                   session.sessionId,
                                 );

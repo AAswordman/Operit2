@@ -29,12 +29,14 @@ pub struct OpenAIResponsesProvider {
     state: Arc<Mutex<OpenAIResponsesProviderState>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct OpenAIResponsesProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
     cancelled: bool,
+    activeParent: Option<OpenAIProvider>,
+    activeParentGeneration: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +89,33 @@ impl OpenAIResponsesProvider {
             state.inputTokenCount = usage.actualInputTokens;
             state.cachedInputTokenCount = usage.cachedInputTokens;
             state.outputTokenCount = usage.outputTokens;
+        }
+    }
+
+    fn setActiveParent(&self, parent: OpenAIProvider) -> u64 {
+        let mut state = self
+            .state
+            .lock()
+            .expect("OpenAIResponsesProvider state mutex poisoned");
+        state.activeParentGeneration = state.activeParentGeneration.wrapping_add(1);
+        state.activeParent = Some(parent);
+        state.activeParentGeneration
+    }
+
+    fn isCancelled(&self) -> bool {
+        self.state
+            .lock()
+            .expect("OpenAIResponsesProvider state mutex poisoned")
+            .cancelled
+    }
+
+    fn clearActiveParent(&self, generation: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("OpenAIResponsesProvider state mutex poisoned");
+        if state.activeParentGeneration == generation {
+            state.activeParent = None;
         }
     }
 
@@ -707,8 +736,14 @@ impl AIService for OpenAIResponsesProvider {
     }
 
     fn cancel_streaming(&mut self) {
-        if let Ok(mut state) = self.state.lock() {
+        let activeParent = if let Ok(mut state) = self.state.lock() {
             state.cancelled = true;
+            state.activeParent.clone()
+        } else {
+            None
+        };
+        if let Some(mut parent) = activeParent {
+            parent.cancel_streaming();
         }
     }
 
@@ -736,6 +771,10 @@ impl AIService for OpenAIResponsesProvider {
             let mut parent_stream = parent.send_prepared_request(request, requestBody).await?;
             let event_channel = parent_stream.event_channel().clone();
             let mut provider = self.clone();
+            let activeParentGeneration = provider.setActiveParent(parent.clone());
+            if provider.isCancelled() {
+                parent.cancel_streaming();
+            }
             let cold_stream = FnStream::new(move |emit| {
                 parent_stream.collect(&mut |content| {
                     emit(content);
@@ -747,6 +786,7 @@ impl AIService for OpenAIResponsesProvider {
                     cachedInputTokens: parent.cached_input_token_count(),
                     outputTokens: parent.output_token_count(),
                 });
+                provider.clearActiveParent(activeParentGeneration);
             });
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }

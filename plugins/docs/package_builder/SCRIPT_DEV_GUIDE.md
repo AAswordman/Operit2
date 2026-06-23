@@ -363,6 +363,11 @@ METADATA
 
 #### 可用 capability key（内置）
 
+-   `platform.name`: 当前运行平台名称（如 `windows` / `linux` / `android` / `macos`）
+-   `platform.windows`: 当前运行平台是否为 Windows（boolean）
+-   `platform.linux`: 当前运行平台是否为 Linux（boolean）
+-   `platform.android`: 当前运行平台是否为 Android（boolean）
+-   `platform.macos`: 当前运行平台是否为 macOS（boolean）
 -   `ui.virtual_display`: 是否具备虚拟屏能力（boolean）
 -   `android.permission_level`: 权限等级（enum，会以字符串形式参与比较）
 -   `android.shizuku_available`: Shizuku 是否可用（boolean）

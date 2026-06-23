@@ -11,6 +11,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'UsageStatisticsDetailScreen.dart';
 
 const XTypeGroup _rawSnapshotFileTypeGroup = XTypeGroup(
   label: 'Operit snapshot',
@@ -84,6 +85,13 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     await widget.clients.chatRuntimeHolderMain.resetTokenStatistics();
     setState(() => _busy = false);
     _reload();
+  }
+
+  Future<void> _openDetailedStatistics() {
+    return UsageStatisticsDetailScreen.open(
+      context: context,
+      clients: widget.clients,
+    );
   }
 
   Future<void> _exportRawSnapshot() async {
@@ -548,6 +556,17 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                 _InfoLine(
                   label: l10n.settingsDataOutputTokens,
                   value: data.outputTokens.toString(),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: _busy ? null : _openDetailedStatistics,
+                  icon: const Icon(Icons.query_stats_outlined),
+                  label: Text(l10n.settingsDataOpenDetailedStats),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.settingsDataOpenDetailedStatsDescription,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
                 _ActionLine(
                   icon: Icons.refresh,

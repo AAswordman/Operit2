@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(target_family = "unix")]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +30,7 @@ static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
 const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
+const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
 type RawFd = i32;
 #[cfg(target_os = "android")]
 type AndroidPid = libc::pid_t;
@@ -347,12 +350,14 @@ impl TerminalHost for AndroidTerminalHost {
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                session.commandRunning = false;
-                if !result.timedOut {
-                    if let Some(workingDir) = result.workingDir.clone() {
+                if result.timedOut {
+                    if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
                         session.workingDir = workingDir;
                     }
+                } else if let Some(workingDir) = result.workingDir.clone() {
+                    session.workingDir = workingDir;
                 }
+                session.commandRunning = false;
             }
         }
         Ok(TerminalCommandOutput {
@@ -409,10 +414,12 @@ impl TerminalHost for AndroidTerminalHost {
                 sessionId
             }
         };
-        let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
-            HostError::new(format!("Hidden terminal session missing: {sessionId}"))
-        })?;
-        let result = executeAndroidShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
+        let result = {
+            let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
+                HostError::new(format!("Hidden terminal session missing: {sessionId}"))
+            })?;
+            executeAndroidShellCommandInSession(session, &normalizedCommand, timeoutMs)?
+        };
         Ok(HiddenTerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -743,6 +750,24 @@ fn executeAndroidPtyCommandInSession(
             });
         }
     }
+}
+
+fn cancelTimedOutAndroidPtyCommand(session: &mut AndroidPtySession) -> HostResult<Option<String>> {
+    writeAndroidPtyBytes(&session.writer, b"\x03")?;
+
+    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
+    let mut collected = Vec::new();
+    while Instant::now() < deadline {
+        let drained =
+            drainAndroidPtyCommandOutput(&session.commandOutput, &mut collected, deadline)?;
+        if drained == 0 {
+            continue;
+        }
+        if let Some(marker) = findLastAndroidPtyPromptMarker(&collected)? {
+            return Ok(Some(marker.workingDir));
+        }
+    }
+    Ok(None)
 }
 
 fn drainAndroidPtyCommandOutput(
@@ -1192,6 +1217,8 @@ fn createAndroidShellSession(
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
+    #[cfg(target_family = "unix")]
+    command.process_group(0);
     let mut child = command.spawn()?;
     let stdin = child
         .stdin
@@ -1241,13 +1268,14 @@ fn executeAndroidShellCommandInSession(
     command: &str,
     timeoutMs: u64,
 ) -> HostResult<AndroidSessionCommandResult> {
-    let marker = format!(
-        "__OPERIT_TERMINAL_{}__",
-        NEXT_TERMINAL_ID.fetch_add(1, Ordering::SeqCst)
-    );
+    let commandId = NEXT_TERMINAL_ID.fetch_add(1, Ordering::SeqCst);
+    let marker = format!("__OPERIT_TERMINAL_{commandId}__");
     let endMarkerPrefix = format!("{marker}_END:");
+    let pidMarkerPrefix = format!("{marker}_PID:");
+    let heredocMarker = format!("__OPERIT_TERMINAL_CMD_{commandId}__");
+    let normalizedCommand = command.replace("\r\n", "\n").replace('\r', "\n");
     let script = format!(
-        "printf '%s\\n' '{marker}_START'\n{{\n{command}\n}}\n__operit_exit_code=$?\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
+        "printf '%s\\n' '{marker}_START'\n__operit_script=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.sh\"\n__operit_cwd=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.cwd\"\ncat >\"$__operit_script\" <<'{heredocMarker}'\n{normalizedCommand}\n__operit_exit_code=$?\nprintf '%s' \"$PWD\" >\"$__OPERIT_CWD_FILE\"\nexit \"$__operit_exit_code\"\n{heredocMarker}\n__OPERIT_CWD_FILE=\"$__operit_cwd\" setsid /bin/bash --noprofile --norc \"$__operit_script\" &\n__operit_command_pid=$!\nprintf '%s%s\\n' '{pidMarkerPrefix}' \"$__operit_command_pid\"\nwait \"$__operit_command_pid\"\n__operit_exit_code=$?\nif [ -s \"$__operit_cwd\" ]; then cd \"$(cat \"$__operit_cwd\")\"; fi\nrm -f \"$__operit_script\" \"$__operit_cwd\"\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
     );
     session.commandRunning = true;
     session.stdin.write_all(script.as_bytes())?;
@@ -1257,12 +1285,15 @@ fn executeAndroidShellCommandInSession(
     let start = SystemTime::now();
     let mut outputLines = Vec::new();
     let mut sawStart = false;
+    let mut commandPid = None;
     loop {
         let elapsed = match start.elapsed() {
             Ok(value) => value,
             Err(_) => deadline,
         };
         if elapsed >= deadline {
+            cancelAndroidShellCommandProcessGroup(commandPid);
+            collectAndroidShellCommandAfterCancel(session, &endMarkerPrefix, &mut outputLines)?;
             session.commandRunning = false;
             let output = joinOutput(outputLines, drainAndroidStderr(session)?);
             appendAndroidScreenLines(session, &output);
@@ -1282,6 +1313,10 @@ fn executeAndroidShellCommandInSession(
                     continue;
                 }
                 if sawStart {
+                    if let Some(pidText) = line.strip_prefix(&pidMarkerPrefix) {
+                        commandPid = pidText.trim().parse::<i32>().ok();
+                        continue;
+                    }
                     if let Some(endMarkerIndex) = line.rfind(&endMarkerPrefix) {
                         let outputBeforeEndMarker = &line[..endMarkerIndex];
                         if !outputBeforeEndMarker.is_empty() {
@@ -1316,6 +1351,57 @@ fn executeAndroidShellCommandInSession(
             }
         }
     }
+}
+
+fn cancelAndroidShellCommandProcessGroup(pid: Option<i32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+    #[cfg(target_os = "android")]
+    unsafe {
+        let pid = pid as libc::pid_t;
+        libc::kill(-pid, libc::SIGTERM);
+        thread::sleep(Duration::from_millis(100));
+        libc::kill(-pid, libc::SIGKILL);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = pid;
+    }
+}
+
+fn collectAndroidShellCommandAfterCancel(
+    session: &mut AndroidTerminalSession,
+    endMarkerPrefix: &str,
+    outputLines: &mut Vec<String>,
+) -> HostResult<()> {
+    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
+    while Instant::now() < deadline {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(100));
+        match session.stdoutRx.recv_timeout(wait) {
+            Ok(line) => {
+                if let Some(endMarkerIndex) = line.rfind(endMarkerPrefix) {
+                    let outputBeforeEndMarker = &line[..endMarkerIndex];
+                    if !outputBeforeEndMarker.is_empty() {
+                        outputLines.push(outputBeforeEndMarker.to_string());
+                    }
+                    return Ok(());
+                }
+                outputLines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(HostError::new(format!(
+                    "Terminal session '{}' closed while cancelling command",
+                    session.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn drainAndroidStderr(session: &AndroidTerminalSession) -> HostResult<Vec<String>> {
@@ -1517,6 +1603,13 @@ fn androidLogWrite(priority: libc::c_int, message: &str) {
 
 fn sessionKey(terminalType: &str, name: &str) -> String {
     format!("{terminalType}:{name}")
+}
+
+fn removeAndroidSessionMappings(state: &mut AndroidTerminalState, sessionId: &str) {
+    state.sessionNameToId.retain(|_, value| value != sessionId);
+    state
+        .hiddenExecutorKeyToSessionId
+        .retain(|_, value| value != sessionId);
 }
 
 fn nextTerminalId() -> String {

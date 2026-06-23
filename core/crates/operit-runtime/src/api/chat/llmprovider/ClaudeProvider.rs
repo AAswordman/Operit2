@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
+use std::sync::{Arc, Mutex};
 
 use super::AIService::{
     delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
@@ -11,9 +12,13 @@ use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::data::model::ToolPrompt::ToolPrompt;
-use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
+use crate::util::stream::RevisableTextStream::{
+    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
+};
+use crate::util::stream::Stream::FnStream;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 
+#[derive(Clone)]
 pub struct ClaudeProvider {
     pub api_endpoint: String,
     pub api_key: String,
@@ -21,6 +26,11 @@ pub struct ClaudeProvider {
     pub provider_type: String,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    state: Arc<Mutex<ClaudeProviderState>>,
+}
+
+#[derive(Debug, Default)]
+struct ClaudeProviderState {
     inputTokenCount: i32,
     cachedInputTokenCount: i32,
     outputTokenCount: i32,
@@ -43,10 +53,84 @@ impl ClaudeProvider {
             provider_type,
             enable_tool_call,
             custom_headers,
-            inputTokenCount: 0,
-            cachedInputTokenCount: 0,
-            outputTokenCount: 0,
-            cancelled: false,
+            state: Arc::new(Mutex::new(ClaudeProviderState::default())),
+        }
+    }
+
+    fn set_cancelled(&self, cancelled: bool) {
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .cancelled = cancelled;
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .cancelled
+    }
+
+    fn set_token_counts(&self, token_counts: TokenCounts) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned");
+        state.inputTokenCount = token_counts.input;
+        state.cachedInputTokenCount = token_counts.cached_input;
+        state.outputTokenCount = token_counts.output;
+    }
+
+    async fn waitUntilCancelled(self) {
+        loop {
+            if self.is_cancelled() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn sendHttpRequest(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AiServiceError> {
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn delayRetryOrCancel(&self, retryAttempt: i32) -> Result<(), AiServiceError> {
+        if self.is_cancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        let delayMs = super::LlmRetryPolicy::LlmRetryPolicy::nextDelayMs(retryAttempt);
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(delayMs as u64)) => Ok(()),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
 
@@ -306,14 +390,13 @@ impl ClaudeProvider {
             .and_then(|value| value.get("output_tokens"))
             .and_then(Value::as_i64)
             .unwrap_or(0) as i32;
-        self.inputTokenCount = input;
-        self.cachedInputTokenCount = cached_input;
-        self.outputTokenCount = output;
-        TokenCounts {
+        let token_counts = TokenCounts {
             input,
             cached_input,
             output,
-        }
+        };
+        self.set_token_counts(token_counts.clone());
+        token_counts
     }
 }
 
@@ -321,47 +404,124 @@ impl ClaudeProvider {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for ClaudeProvider {
     fn input_token_count(&self) -> i32 {
-        self.inputTokenCount
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .inputTokenCount
     }
     fn cached_input_token_count(&self) -> i32 {
-        self.cachedInputTokenCount
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .cachedInputTokenCount
     }
     fn output_token_count(&self) -> i32 {
-        self.outputTokenCount
+        self.state
+            .lock()
+            .expect("ClaudeProvider state mutex poisoned")
+            .outputTokenCount
     }
     fn provider_model(&self) -> String {
         format!("{}:{}", self.provider_type, self.model_name)
     }
     fn reset_token_counts(&mut self) {
-        self.inputTokenCount = 0;
-        self.cachedInputTokenCount = 0;
-        self.outputTokenCount = 0;
+        self.set_token_counts(TokenCounts {
+            input: 0,
+            cached_input: 0,
+            output: 0,
+        });
     }
     fn cancel_streaming(&mut self) {
-        self.cancelled = true;
+        self.set_cancelled(true);
     }
 
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        self.cancelled = false;
+        self.set_cancelled(false);
         self.reset_token_counts();
+        if request.stream {
+            let event_channel = empty_revisable_event_channel();
+            let streamEventChannel = event_channel.clone();
+            let mut provider = self.clone();
+            let mut ownedRequest = Some(request);
+            let coldStream = FnStream::new(move |emit| {
+                let request = ownedRequest
+                    .take()
+                    .expect("ClaudeProvider stream must only be collected once");
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime must build for ClaudeProvider stream");
+                if let Ok(mut responseStream) =
+                    runtime.block_on(provider.send_streaming_message(request))
+                {
+                    responseStream.collect(emit);
+                }
+                streamEventChannel.close();
+            });
+            return Ok(Box::new(with_event_channel(coldStream, event_channel)));
+        }
+        let event_channel = empty_revisable_event_channel();
+        let streamEventChannel = event_channel.clone();
+        let mut provider = self.clone();
+        let mut ownedRequest = Some(request);
+        let coldStream = FnStream::new(move |emit| {
+            let request = ownedRequest
+                .take()
+                .expect("ClaudeProvider non-stream request must only be collected once");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime must build for ClaudeProvider non-stream request");
+            if let Ok(mut responseStream) =
+                runtime.block_on(provider.send_non_streaming_message(request))
+            {
+                responseStream.collect(emit);
+            }
+            streamEventChannel.close();
+        });
+        Ok(Box::new(with_event_channel(coldStream, event_channel)))
+    }
+
+    async fn calculate_input_tokens(
+        &self,
+        chat_history: &[PromptTurn],
+        available_tools: &[ToolPrompt],
+    ) -> Result<i32, AiServiceError> {
+        let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
+        let tool_chars: usize = available_tools
+            .iter()
+            .map(|tool| tool.name.len() + tool.description.len())
+            .sum();
+        Ok(((history_chars + tool_chars + 3) / 4) as i32)
+    }
+}
+
+impl ClaudeProvider {
+    async fn send_streaming_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
         let mut retryCount = 0;
         loop {
-            let stream = request.stream;
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
-                .post(&self.api_endpoint)
-                .headers(self.headers()?)
-                .json(&request_body)
-                .send()
+            let response = match self
+                .sendHttpRequest(
+                    reqwest::Client::new()
+                        .post(&self.api_endpoint)
+                        .headers(self.headers()?)
+                        .json(&request_body),
+                )
                 .await
             {
                 Ok(response) => response,
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
                 Err(error) => {
-                    let error = AiServiceError::ConnectionFailed(error.to_string());
                     let errorText = retry_error_text(&error);
                     if !request.enable_retry {
                         return Err(error);
@@ -373,17 +533,14 @@ impl AIService for ClaudeProvider {
                     if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                         on_non_fatal_error(retry_message(&errorText, newRetryCount));
                     }
-                    delay_retry_ms(newRetryCount).await;
+                    self.delayRetryOrCancel(newRetryCount).await?;
                     retryCount = newRetryCount;
                     continue;
                 }
             };
             let status = response.status();
             if !status.is_success() {
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let text = self.readResponseText(response).await?;
                 let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
                 let errorText = retry_error_text(&error);
                 if !request.enable_retry {
@@ -396,35 +553,94 @@ impl AIService for ClaudeProvider {
                 if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                     on_non_fatal_error(retry_message(&errorText, newRetryCount));
                 }
-                delay_retry_ms(newRetryCount).await;
+                self.delayRetryOrCancel(newRetryCount).await?;
                 retryCount = newRetryCount;
                 continue;
             }
-            if stream {
-                match self.process_streaming_response(response).await {
-                    Ok(responseStream) => return Ok(responseStream),
-                    Err(error) => {
-                        let errorText = retry_error_text(&error);
-                        if !request.enable_retry {
-                            return Err(error);
-                        }
-                        let newRetryCount = retryCount + 1;
-                        if newRetryCount > maxRetries {
-                            return Err(error);
-                        }
-                        if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                            on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                        }
-                        delay_retry_ms(newRetryCount).await;
-                        retryCount = newRetryCount;
-                        continue;
+            match self.process_streaming_response(response).await {
+                Ok(responseStream) => return Ok(responseStream),
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
+                Err(error) => {
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
                     }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    self.delayRetryOrCancel(newRetryCount).await?;
+                    retryCount = newRetryCount;
+                    continue;
                 }
             }
-            let json_response: Value = response
-                .json()
+        }
+    }
+
+    async fn send_non_streaming_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+        let mut retryCount = 0;
+        loop {
+            let request_body = self.create_request_body(&request)?;
+            let response = match self
+                .sendHttpRequest(
+                    reqwest::Client::new()
+                        .post(&self.api_endpoint)
+                        .headers(self.headers()?)
+                        .json(&request_body),
+                )
                 .await
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            {
+                Ok(response) => response,
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
+                Err(error) => {
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
+                    }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    self.delayRetryOrCancel(newRetryCount).await?;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let text = self.readResponseText(response).await?;
+                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
+                let errorText = retry_error_text(&error);
+                if !request.enable_retry {
+                    return Err(error);
+                }
+                let newRetryCount = retryCount + 1;
+                if newRetryCount > maxRetries {
+                    return Err(error);
+                }
+                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                }
+                self.delayRetryOrCancel(newRetryCount).await?;
+                retryCount = newRetryCount;
+                continue;
+            }
+
+            let json_response = self.readResponseJson(response).await?;
             let token_counts = self.apply_usage(json_response.get("usage"));
             let mut chunks = Vec::new();
             if let Some(content) = json_response.get("content").and_then(Value::as_array) {
@@ -451,21 +667,6 @@ impl AIService for ClaudeProvider {
         }
     }
 
-    async fn calculate_input_tokens(
-        &self,
-        chat_history: &[PromptTurn],
-        available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
-        let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
-        let tool_chars: usize = available_tools
-            .iter()
-            .map(|tool| tool.name.len() + tool.description.len())
-            .sum();
-        Ok(((history_chars + tool_chars + 3) / 4) as i32)
-    }
-}
-
-impl ClaudeProvider {
     async fn process_streaming_response(
         &mut self,
         response: reqwest::Response,
@@ -486,7 +687,7 @@ impl ClaudeProvider {
         let mut emitted_any = false;
 
         while let Some(item) = bytes_stream.next().await {
-            if self.cancelled {
+            if self.is_cancelled() {
                 break;
             }
             let bytes =
@@ -544,9 +745,7 @@ impl ClaudeProvider {
         if is_in_thinking_block {
             chunks.push("</think>\n".to_string());
         }
-        self.inputTokenCount = token_counts.input;
-        self.cachedInputTokenCount = token_counts.cached_input;
-        self.outputTokenCount = token_counts.output;
+        self.set_token_counts(token_counts);
         Ok(response_stream_from_chunks(chunks))
     }
 

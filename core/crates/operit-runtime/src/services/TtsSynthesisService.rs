@@ -8,7 +8,7 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::api::voice::VoiceServiceFactory::VoiceServiceFactory;
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::data::model::TtsConfig::TtsSynthesisResult;
+use crate::data::model::TtsConfig::{TtsConfig, TtsSynthesisResult};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::util::TtsCleaner::TtsCleaner;
@@ -73,17 +73,46 @@ impl TtsSynthesisService {
                 .getCurrentTtsConfig()
                 .map_err(|error| error.to_string())?,
         };
-        let voiceService = VoiceServiceFactory::createVoiceService(&config, self.context.as_ref())?;
+        self.synthesizeWithResolvedConfig(characterCardId, &config, &cleanedText)
+    }
+
+    pub fn synthesizeWithConfig(
+        &self,
+        ttsConfigId: &str,
+        text: &str,
+    ) -> Result<TtsSynthesisResult, String> {
+        let ttsConfigId = ttsConfigId.trim();
+        if ttsConfigId.is_empty() {
+            return Err("tts config id is empty".to_string());
+        }
+        let cleanedText = TtsCleaner::clean(text);
+        if cleanedText.is_empty() {
+            return Err("tts text is empty".to_string());
+        }
+        let config = self
+            .ttsConfigManager
+            .getTtsConfig(ttsConfigId)
+            .map_err(|error| error.to_string())?;
+        self.synthesizeWithResolvedConfig(ttsConfigId, &config, &cleanedText)
+    }
+
+    fn synthesizeWithResolvedConfig(
+        &self,
+        audioNamePrefix: &str,
+        config: &TtsConfig,
+        cleanedText: &str,
+    ) -> Result<TtsSynthesisResult, String> {
+        let voiceService = VoiceServiceFactory::createVoiceService(config, self.context.as_ref())?;
         let segments = TtsSegmenter::segment(&cleanedText, 4000);
         let storageHost = defaultRuntimeStorageHost();
         let mut audioPaths = Vec::new();
         let mut audioStoragePaths = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
-            let bytes = voiceService.synthesize(&config, segment)?;
-            let extension = voiceService.outputExtension(&config)?;
+            let bytes = voiceService.synthesize(config, segment)?;
+            let extension = voiceService.outputExtension(config)?;
             let fileName = format!(
                 "{}_{}_{}.{}",
-                characterCardId,
+                audioNamePrefix,
                 Uuid::new_v4(),
                 index,
                 extension

@@ -311,8 +311,12 @@ class UnifiedMarketDetailHeaderCard extends StatelessWidget {
 }
 
 String marketDetailInitial(String value) {
+  return _firstDisplayCharacter(value).toUpperCase();
+}
+
+String _firstDisplayCharacter(String value) {
   final trimmed = value.trim();
-  return trimmed.isEmpty ? '?' : trimmed[0].toUpperCase();
+  return trimmed.isEmpty ? '?' : trimmed.characters.first;
 }
 
 class _ArtifactDetailLargeIcon extends StatelessWidget {
@@ -852,11 +856,7 @@ class ArtifactCommentTile extends StatelessWidget {
                         ? null
                         : NetworkImage(comment.user.avatarUrl),
                     child: comment.user.avatarUrl.trim().isEmpty
-                        ? Text(
-                            comment.user.login.trim().isEmpty
-                                ? '?'
-                                : comment.user.login.trim()[0],
-                          )
+                        ? Text(_firstDisplayCharacter(comment.user.login))
                         : null,
                   ),
                   const SizedBox(width: 8),
