@@ -826,11 +826,11 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
 ''');
   }
 
-  Future<void> _handlePermissionRequest(
+  void _handlePermissionRequest(
     WorkspaceBrowserTabState tab,
     WebViewPermissionRequest request,
-  ) async {
-    await _requiredUiDelegate.handlePermissionRequest(tab, request);
+  ) {
+    _requiredUiDelegate.handlePermissionRequest(tab, request);
   }
 
   void _syncSessionRegistry() {
