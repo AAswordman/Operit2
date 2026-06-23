@@ -2481,8 +2481,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataDetailedStatsTitle => '详细统计';
 
   @override
-  String get settingsDataDetailedStatsDescription =>
-      '统计基于独立保存的模型请求明细计算。';
+  String get settingsDataDetailedStatsDescription => '统计基于独立保存的模型请求明细计算。';
 
   @override
   String get settingsDataDetailedStatsEmpty => '暂无可展示的详细使用记录';

@@ -604,6 +604,71 @@ impl GeminiProvider {
         Ok(headers)
     }
 
+    async fn send_non_streaming_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+        let mut retryCount = 0;
+        loop {
+            let request_body = self.create_request_body(&request)?;
+            let response = match reqwest::Client::new()
+                .post(self.request_url(false))
+                .headers(self.headers()?)
+                .json(&request_body)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = AiServiceError::ConnectionFailed(error.to_string());
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
+                    }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    delay_retry_ms(newRetryCount).await;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
+                let errorText = retry_error_text(&error);
+                if !request.enable_retry {
+                    return Err(error);
+                }
+                let newRetryCount = retryCount + 1;
+                if newRetryCount > maxRetries {
+                    return Err(error);
+                }
+                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                }
+                delay_retry_ms(newRetryCount).await;
+                retryCount = newRetryCount;
+                continue;
+            }
+            let json: Value = response
+                .json()
+                .await
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let content = self.extract_content_from_json(&json)?;
+            return Ok(response_stream_from_chunks(vec![content]));
+        }
+    }
+
     async fn send_streaming_message(
         &mut self,
         request: SendMessageRequest,
