@@ -782,27 +782,62 @@ String _sharedOwnerKey(String sharedMemoryId) {
   return 'shared:${sharedMemoryId.trim()}';
 }
 
-class _TtsConfigSummary {
-  const _TtsConfigSummary({
-    required this.id,
-    required this.name,
-    required this.model,
-    required this.voice,
-  });
-
-  factory _TtsConfigSummary.fromJson(Map<String, Object?> json) {
-    return _TtsConfigSummary(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      model: json['model'] as String,
-      voice: json['voice'] as String,
-    );
+core_proxy.TtsConfig? _ttsConfigById(
+  List<core_proxy.TtsConfig> configs,
+  String? id,
+) {
+  if (id == null) {
+    return null;
   }
+  for (final config in configs) {
+    if (config.id == id) {
+      return config;
+    }
+  }
+  return null;
+}
 
-  final String id;
-  final String name;
-  final String model;
-  final String voice;
+String _ttsConfigBindingText(core_proxy.TtsConfig? config, String? id) {
+  if (config != null) {
+    return _ttsConfigDisplayText(config);
+  }
+  if (id != null) {
+    return 'TTS 配置不存在：$id';
+  }
+  return '请选择 TTS 配置';
+}
+
+String _ttsConfigDisplayText(core_proxy.TtsConfig config) {
+  return '${_ttsConfigProviderText(config)} · ${_ttsConfigModelVoiceText(config)}';
+}
+
+String _ttsConfigProviderText(core_proxy.TtsConfig config) {
+  final endpoint = config.endpoint.trim();
+  if (endpoint.isEmpty) {
+    return config.providerType;
+  }
+  return '${config.providerType} · $endpoint';
+}
+
+String _ttsConfigModelVoiceText(core_proxy.TtsConfig config) {
+  final model = config.model.trim();
+  final voice = config.voice.trim();
+  if (model.isEmpty && voice.isEmpty) {
+    return '系统默认音色';
+  }
+  if (model.isEmpty) {
+    return voice;
+  }
+  if (voice.isEmpty) {
+    return model;
+  }
+  return '$model · $voice';
+}
+
+String _ttsConfigSearchText(core_proxy.TtsConfig config) {
+  return '${config.name} ${config.providerType} ${config.endpoint} '
+          '${config.model} ${config.voice}'
+      .toLowerCase();
 }
 
 class _ToolAccessOption {

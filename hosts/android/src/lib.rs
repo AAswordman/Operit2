@@ -8,6 +8,7 @@ mod runtime_common;
 mod runtime_storage;
 mod system_operation;
 mod terminal;
+mod tts_playback;
 mod tts_synthesis;
 mod web_visit;
 
@@ -18,5 +19,6 @@ pub use managed_runtime::AndroidManagedRuntimeHost;
 pub use runtime_storage::AndroidRuntimeStorageHost;
 pub use system_operation::AndroidSystemOperationHost;
 pub use terminal::AndroidTerminalHost;
+pub use tts_playback::{AndroidTtsPlaybackCommand, AndroidTtsPlaybackHost};
 pub use tts_synthesis::AndroidTtsSynthesisHost;
 pub use web_visit::AndroidWebVisitHost;

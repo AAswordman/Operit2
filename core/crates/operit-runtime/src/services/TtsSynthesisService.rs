@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
 
-use std::fs;
-
 use uuid::Uuid;
 
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_store::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::api::voice::VoiceServiceFactory::VoiceServiceFactory;
@@ -63,24 +63,21 @@ impl TtsSynthesisService {
             .characterCardManager
             .getCharacterCard(characterCardId)
             .map_err(|error| error.to_string())?;
-        let configId = card
-            .ttsConfigId
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("character card has no tts config: {characterCardId}"))?;
-        let config = self
-            .ttsConfigManager
-            .getTtsConfig(configId)
-            .map_err(|error| error.to_string())?;
-        if !config.enabled {
-            return Err(format!("tts config is disabled: {}", config.id));
-        }
+        let config = match card.ttsConfigId.as_ref().map(|value| value.trim()) {
+            Some(configId) if !configId.is_empty() => self
+                .ttsConfigManager
+                .getTtsConfig(configId)
+                .map_err(|error| error.to_string())?,
+            _ => self
+                .ttsConfigManager
+                .getCurrentTtsConfig()
+                .map_err(|error| error.to_string())?,
+        };
         let voiceService = VoiceServiceFactory::createVoiceService(&config, self.context.as_ref())?;
         let segments = TtsSegmenter::segment(&cleanedText, 4000);
-        let audioDir = self.paths.tts_audio_dir();
-        fs::create_dir_all(&audioDir).map_err(|error| error.to_string())?;
+        let storageHost = defaultRuntimeStorageHost();
         let mut audioPaths = Vec::new();
+        let mut audioStoragePaths = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
             let bytes = voiceService.synthesize(&config, segment)?;
             let extension = voiceService.outputExtension(&config)?;
@@ -91,10 +88,17 @@ impl TtsSynthesisService {
                 index,
                 extension
             );
-            let path = audioDir.join(fileName);
-            fs::write(&path, bytes).map_err(|error| error.to_string())?;
+            let storagePath = format!("{RUNTIME_TTS_AUDIO_DIR_PATH}/{fileName}");
+            storageHost
+                .writeBytes(&storagePath, &bytes)
+                .map_err(|error| error.message)?;
+            let path = self.paths.root_dir().join(&storagePath);
             audioPaths.push(path.to_string_lossy().to_string());
+            audioStoragePaths.push(storagePath);
         }
-        Ok(TtsSynthesisResult { audioPaths })
+        Ok(TtsSynthesisResult {
+            audioPaths,
+            audioStoragePaths,
+        })
     }
 }

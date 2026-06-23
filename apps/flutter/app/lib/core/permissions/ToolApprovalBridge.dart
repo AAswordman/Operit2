@@ -51,6 +51,7 @@ class ToolApprovalBridge {
             systemRecognizeText: null,
             audioPlay: null,
             ttsSynthesis: null,
+            ttsPlayback: null,
             toolPermission: RuntimeHostInteractionToolPermissionResponse(
               result: _resultName(result),
             ),

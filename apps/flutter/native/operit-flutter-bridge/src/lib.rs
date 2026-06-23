@@ -33,21 +33,20 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
-use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerAudioPlay, requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
-    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText, requestOwnerTtsSynthesis,
-    requestOwnerToolPermission, requestOwnerWebVisit,
-    RuntimeHostInteractionAudioPlayPayload, RuntimeHostInteractionBrowserAutomationPayload,
-    RuntimeHostInteractionComposeWebViewControllerPayload,
-    RuntimeHostInteractionSystemRecognizeTextPayload,
-    RuntimeHostInteractionToolPermissionPayload,
-    RuntimeHostInteractionTtsSynthesisPayload,
-    RuntimeHostInteractionToolPermissionTool,
-    RuntimeHostInteractionToolPermissionToolParameter,
-    RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
-};
 use operit_runtime::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgHostEventRegistration;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
+use operit_runtime::services::RuntimeHostInteractionService::{
+    requestOwnerAudioPlay, requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
+    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
+    requestOwnerToolPermission, requestOwnerTtsPlayback, requestOwnerTtsSynthesis,
+    requestOwnerWebVisit,
+    RuntimeHostInteractionAudioPlayPayload, RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionComposeWebViewControllerPayload,
+    RuntimeHostInteractionSystemRecognizeTextPayload, RuntimeHostInteractionToolPermissionPayload,
+    RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
+    RuntimeHostInteractionTtsPlaybackPayload, RuntimeHostInteractionTtsSynthesisPayload,
+    RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
+};
 
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
@@ -56,20 +55,20 @@ use operit_host_android_native::{
     AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
-    AndroidTerminalHost as NativeTerminalHost,
+    AndroidTerminalHost as NativeTerminalHost, AndroidTtsPlaybackHost as NativeTtsPlaybackHost,
     AndroidTtsSynthesisHost as NativeTtsSynthesisHost,
 };
-#[cfg(target_os = "linux")]
-use operit_host_linux_native::LinuxTtsSynthesisHost as NativeTtsSynthesisHost;
-#[cfg(windows)]
-use operit_host_windows_native::WindowsTtsSynthesisHost as NativeTtsSynthesisHost;
 #[cfg(target_os = "android")]
 use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxAudioPlaybackHost as NativeAudioPlaybackHost,
-    LinuxFileSystemHost as NativeFileSystemHost, LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
-    LinuxHttpHost as NativeHttpHost,
+    LinuxTtsPlaybackHost as NativeTtsPlaybackHost,
+    LinuxTtsSynthesisHost as NativeTtsSynthesisHost,
+};
+#[cfg(target_os = "linux")]
+use operit_host_linux_native::{
+    LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxFileSystemHost as NativeFileSystemHost,
+    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
@@ -80,6 +79,12 @@ use operit_host_web::{
     WebManagedRuntimeHost as NativeManagedRuntimeHost,
     WebRuntimeStorageHost as NativeRuntimeStorageHost,
     WebSystemOperationHost as NativeSystemOperationHost,
+    WebTtsPlaybackHost as NativeTtsPlaybackHost,
+};
+#[cfg(windows)]
+use operit_host_windows_native::{
+    WindowsTtsPlaybackHost as NativeTtsPlaybackHost,
+    WindowsTtsSynthesisHost as NativeTtsSynthesisHost,
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
@@ -137,8 +142,7 @@ impl ConcurrentLocalCoreProxy {
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Clone)]
-struct FlutterBrowserAutomationBridge {
-}
+struct FlutterBrowserAutomationBridge {}
 
 impl FlutterBrowserAutomationBridge {
     fn new() -> Self {
@@ -181,8 +185,7 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
 }
 
 #[derive(Clone)]
-struct FlutterWebVisitBridge {
-}
+struct FlutterWebVisitBridge {}
 
 impl FlutterWebVisitBridge {
     fn new() -> Self {
@@ -213,9 +216,8 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
             includeImageLinks: request.includeImageLinks,
             requestedAtMillis: current_time_millis_u64(),
         };
-        let response =
-            requestOwnerWebVisit(pending, Duration::from_secs(60))
-                .map_err(operit_host_api::HostError::new)?;
+        let response = requestOwnerWebVisit(pending, Duration::from_secs(60))
+            .map_err(operit_host_api::HostError::new)?;
         if response.requestId != requestId {
             return Err(operit_host_api::HostError::new(format!(
                 "web visit response requestId mismatch: {} != {requestId}",
@@ -258,8 +260,7 @@ impl operit_host_api::WebVisitHost for FlutterWebVisitBridge {
 }
 
 #[derive(Clone)]
-struct FlutterComposeDslWebViewBridge {
-}
+struct FlutterComposeDslWebViewBridge {}
 
 impl FlutterComposeDslWebViewBridge {
     fn new() -> Self {
@@ -293,7 +294,6 @@ impl FlutterSystemOperationBridge {
             native: NativeSystemOperationHost::new(),
         }
     }
-
 }
 
 #[cfg(target_os = "android")]
@@ -856,8 +856,9 @@ impl CoreLinkClient for SharedFlutterCoreClient {
 fn install_permission_requester(core: &mut LocalCoreProxy) {
     let context = core.localApplicationMut().applicationContext.clone();
     let handler = AIToolHandler::getInstance(context);
-    handler.getToolPermissionSystem().setPermissionRequester(
-        move |tool, description| {
+    handler
+        .getToolPermissionSystem()
+        .setPermissionRequester(move |tool, description| {
             let response = requestOwnerToolPermission(
                 RuntimeHostInteractionToolPermissionPayload {
                     tool: tool_to_permission_payload(tool),
@@ -872,8 +873,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
             }
-        },
-    );
+        });
 }
 
 fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermissionTool {
@@ -882,10 +882,12 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
         parameters: tool
             .parameters
             .iter()
-            .map(|parameter| RuntimeHostInteractionToolPermissionToolParameter {
-                name: parameter.name.clone(),
-                value: parameter.value.clone(),
-            })
+            .map(
+                |parameter| RuntimeHostInteractionToolPermissionToolParameter {
+                    name: parameter.name.clone(),
+                    value: parameter.value.clone(),
+                },
+            )
             .collect(),
     }
 }
@@ -967,17 +969,60 @@ fn create_local_core(
                 })
             }),
         )));
+        context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::fromController(
+            Arc::new(|command| {
+                let (text, voice, locale, speed, pitch, interrupt) = match command.request {
+                    Some(request) => (
+                        request.text,
+                        request.voice,
+                        request.locale,
+                        request.speed,
+                        request.pitch,
+                        request.interrupt,
+                    ),
+                    None => (
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        1.0,
+                        1.0,
+                        false,
+                    ),
+                };
+                let response = requestOwnerTtsPlayback(
+                    RuntimeHostInteractionTtsPlaybackPayload {
+                        command: command.command,
+                        text,
+                        voice,
+                        locale,
+                        speed,
+                        pitch,
+                        interrupt,
+                    },
+                    Duration::from_secs(120),
+                )
+                .map_err(operit_host_api::HostError::new)?;
+                Ok(operit_host_api::TtsPlaybackStatus {
+                    path: response.path,
+                    active: response.active,
+                    paused: response.paused,
+                    details: response.details,
+                })
+            }),
+        )));
     }
     #[cfg(target_os = "linux")]
     {
         context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
         context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
+        context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
         context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     }
     #[cfg(windows)]
     {
         context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
         context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
+        context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
         context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     }
     let application = OperitApplication::newWithContext(context);
@@ -1020,6 +1065,7 @@ fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
+    context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }

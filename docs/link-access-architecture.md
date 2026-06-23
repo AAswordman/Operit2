@@ -81,6 +81,8 @@ apps/cli/src
 
 `operit-link` 可以提供 HTTP/WebSocket 的 link 承载工具，但这些工具只处理已经被 app access 接受的 link 请求。请求是谁发来的、是否可信、用什么 session、签名如何验证，都由调用它的 app access 层决定。
 
+远程请求的 `sessionId` 与 `deviceId` 保留在 app access 层；host access 验签后把二者写入 `RuntimeHostInteractionRequestOrigin::RemoteSession`，再交给 `operit-link` dispatcher。`operit-link` 协议 envelope 不增加 target device 字段。
+
 ## 4. Request Flow
 
 Flutter local：
@@ -162,6 +164,28 @@ Android BroadcastReceiver
 ```
 
 Host 反向触发 runtime 只走 host runtime ingress。它不是 CoreProxy 调用，不进入 `operit-link` 协议，也不通过 Flutter UI bridge 增加事件入口。桌面平台由 host crate 实现 `HostRuntimeEventHost`；Android 因系统广播只能由 app 进程注册，所以由 Android app 侧收集广播后送入同一个 `RuntimeEventIngressService`。
+
+Runtime owner host interaction：
+
+```text
+runtime core
+  -> RuntimeHostInteractionService
+  -> owner app subscriber / owner host bridge
+  -> platform capability
+```
+
+TTS owner interaction：
+
+```text
+Android SYSTEM_TTS playback
+  -> TtsPlaybackService
+  -> AndroidTtsPlaybackHost callback
+  -> RuntimeHostInteractionService(ttsPlayback)
+  -> OwnerSystemCapabilityChannel
+  -> Android TextToSpeech
+```
+
+远程连接只转发 core call/watch 请求到 runtime owner。`TtsPlaybackHost`、`TtsSynthesisHost`、Android owner interaction 都归 runtime owner 所在 app/host 处理；remote client 不接管远端 runtime 的 host 能力。
 
 ## 5. Prohibited Placement
 

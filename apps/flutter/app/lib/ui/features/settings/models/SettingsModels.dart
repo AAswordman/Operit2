@@ -6,6 +6,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 
 enum SettingsCategory {
   model,
+  tts,
   characters,
   tools,
   workspace,
@@ -37,6 +38,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryModelSubtitle,
         description: l10n.settingsCategoryModelDescription,
         icon: Icons.hub_outlined,
+      ),
+      SettingsCategory.tts => const SettingsCategorySpec(
+        title: '语音 TTS',
+        subtitle: '供应商、音色、全局当前',
+        description: '管理语音合成供应商、模型/音色配置，并选择全局当前 TTS。',
+        icon: Icons.record_voice_over_outlined,
       ),
       SettingsCategory.characters => SettingsCategorySpec(
         title: l10n.settingsCategoryCharactersTitle,

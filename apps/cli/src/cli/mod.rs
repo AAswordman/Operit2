@@ -201,10 +201,12 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
     let manager = TtsConfigManager::getInstance();
     match args.get(0).map(String::as_str) {
         Some("list") if args.len() == 1 => {
+            let currentConfigId = manager.getCurrentTtsConfigId()?;
             for config in manager.getAllTtsConfigs()? {
+                let currentMark = if config.id == currentConfigId { " current=true" } else { "" };
                 println!(
-                    "id={} name={} providerType={} model={} voice={} enabled={}",
-                    config.id, config.name, config.providerType, config.model, config.voice, config.enabled
+                    "id={} name={} providerType={} model={} voice={}{}",
+                    config.id, config.name, config.providerType, config.model, config.voice, currentMark
                 );
             }
             Ok(())
@@ -215,6 +217,19 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
                 "{}",
                 serde_json::to_string_pretty(&config).expect("tts config must serialize")
             );
+            Ok(())
+        }
+        Some("current") if args.len() == 1 => {
+            let config = manager.getCurrentTtsConfig()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).expect("tts config must serialize")
+            );
+            Ok(())
+        }
+        Some("use") if args.len() == 2 => {
+            let id = manager.setCurrentTtsConfigId(&args[1])?;
+            println!("currentTtsConfigId={id}");
             Ok(())
         }
         Some("create") if args.len() == 8 => {
@@ -230,7 +245,11 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
                 voice: args[5].clone(),
                 responseFormat,
                 speed,
-                enabled: true,
+                httpMethod: "POST".to_string(),
+                requestBody: String::new(),
+                contentType: "application/json".to_string(),
+                headers: Vec::new(),
+                responsePipeline: Vec::new(),
                 createdAt: 0,
                 updatedAt: 0,
             })?;
@@ -247,7 +266,9 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
                 "voice" => config.voice = args[3].clone(),
                 "response-format" => config.responseFormat = args[3].clone(),
                 "speed" => config.speed = args[3].parse::<f64>().map_err(|error| error.to_string())?,
-                "enabled" => config.enabled = parse_bool_arg(&args[3])?,
+                "http-method" => config.httpMethod = args[3].clone(),
+                "request-body" => config.requestBody = args[3].clone(),
+                "content-type" => config.contentType = args[3].clone(),
                 field => return Err(format!("unknown tts config field: {field}")),
             }
             let updated = manager.updateTtsConfig(config)?;
@@ -292,7 +313,8 @@ fn run_tts_synthesize_cli_command(args: &[String]) -> Result<(), String> {
     }
     let characterId = characterId.ok_or_else(|| "--character is required".to_string())?;
     let text = text.ok_or_else(|| "--text is required".to_string())?;
-    let result = TtsSynthesisService::getInstance().synthesizeForCharacter(&characterId, &text)?;
+    let result = TtsSynthesisService::new(operit_store::RuntimeStorePaths::RuntimeStorePaths::default())
+        .synthesizeForCharacter(&characterId, &text)?;
     for path in result.audioPaths {
         println!("audioPath={path}");
     }
@@ -302,8 +324,10 @@ fn run_tts_synthesize_cli_command(args: &[String]) -> Result<(), String> {
 fn print_tts_usage() {
     println!("operit2 cli tts config list");
     println!("operit2 cli tts config show <id>");
+    println!("operit2 cli tts config current");
+    println!("operit2 cli tts config use <id>");
     println!("operit2 cli tts config create <name> <endpoint> <api-key> <model> <voice> <response-format> <speed>");
-    println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|enabled> <value>");
+    println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|http-method|request-body|content-type> <value>");
     println!("operit2 cli tts config delete <id>");
     println!("operit2 cli tts synthesize --character <id> --text <text>");
 }
@@ -1224,7 +1248,7 @@ fn print_cli_usage() {
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli memory <character|shared|mount|unmount>");
-    println!("operit2 cli tts config <list|show|create|update|delete>");
+    println!("operit2 cli tts config <list|show|current|use|create|update|delete>");
     println!("operit2 cli tts synthesize --character <id> --text <text>");
     println!("operit2 cli export <memory|chat|snapshot>");
     println!("operit2 cli import <memory|chat|snapshot>");

@@ -4,8 +4,8 @@ use std::sync::{Arc, OnceLock};
 use operit_host_api::{
     AudioPlaybackHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
     HostEnvironmentDescriptor, HostRuntimeEventHost, HttpHost, ManagedRuntimeHost,
-    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsSynthesisHost,
-    WebVisitHost,
+    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost,
+    TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -35,6 +35,7 @@ pub struct OperitApplicationContext {
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub ttsSynthesisHost: Option<Arc<dyn TtsSynthesisHost>>,
+    pub ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
@@ -56,6 +57,7 @@ impl OperitApplicationContext {
             systemOperationHost: None,
             audioPlaybackHost: None,
             ttsSynthesisHost: None,
+            ttsPlaybackHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -79,6 +81,7 @@ impl OperitApplicationContext {
             systemOperationHost: None,
             audioPlaybackHost: None,
             ttsSynthesisHost: None,
+            ttsPlaybackHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -105,6 +108,7 @@ impl OperitApplicationContext {
             systemOperationHost: None,
             audioPlaybackHost: None,
             ttsSynthesisHost: None,
+            ttsPlaybackHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -132,6 +136,7 @@ impl OperitApplicationContext {
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             ttsSynthesisHost: None,
+            ttsPlaybackHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -163,6 +168,7 @@ impl OperitApplicationContext {
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             ttsSynthesisHost: None,
+            ttsPlaybackHost: None,
             managedRuntimeHost: Some(managedRuntimeHost),
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
@@ -201,6 +207,12 @@ impl OperitApplicationContext {
     #[allow(non_snake_case)]
     pub fn withTtsSynthesisHost(mut self, ttsSynthesisHost: Arc<dyn TtsSynthesisHost>) -> Self {
         self.ttsSynthesisHost = Some(ttsSynthesisHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withTtsPlaybackHost(mut self, ttsPlaybackHost: Arc<dyn TtsPlaybackHost>) -> Self {
+        self.ttsPlaybackHost = Some(ttsPlaybackHost);
         self
     }
 

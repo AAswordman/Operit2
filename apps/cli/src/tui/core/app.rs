@@ -1208,16 +1208,11 @@ impl OperitTui {
         };
         self.core
             .chat_runtime_holder_main()
-            .updateUserMessage(send_args.message)
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .chat_runtime_holder_main()
             .sendUserMessage(
                 PromptFunctionType::CHAT,
                 None,
                 None,
-                None,
+                send_args.message,
                 None,
                 Some(chat_binding.providerId),
                 Some(chat_binding.modelId),

@@ -49,6 +49,11 @@ pub(crate) fn call_system(method: &str, args: &[JsValue]) -> HostResult<JsValue>
     call_function(&module, method, args)
 }
 
+pub(crate) fn call_tts_playback(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("ttsPlayback")?;
+    call_function(&module, method, args)
+}
+
 fn bridge_module(name: &str) -> HostResult<JsValue> {
     let global = js_sys::global();
     let host = Reflect::get(global.as_ref(), &JsValue::from_str("__operitHost")).map_err(js_error)?;

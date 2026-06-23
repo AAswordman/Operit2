@@ -130,7 +130,7 @@ class _CharacterSettingsData {
   final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<core_proxy.PromptTag> tags;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
-  final List<_TtsConfigSummary> ttsConfigs;
+  final List<core_proxy.TtsConfig> ttsConfigs;
   final List<_ToolAccessOption> builtinToolOptions;
   final List<_ToolAccessOption> packageToolOptions;
   final List<_ToolAccessOption> skillToolOptions;

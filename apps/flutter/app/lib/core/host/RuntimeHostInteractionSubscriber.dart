@@ -31,6 +31,7 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionKind.systemRecognizeText,
     RuntimeHostInteractionKind.audioPlay,
     RuntimeHostInteractionKind.ttsSynthesis,
+    RuntimeHostInteractionKind.ttsPlayback,
   ];
 
   static StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
@@ -102,6 +103,9 @@ class RuntimeHostInteractionSubscriber {
         ),
       RuntimeHostInteractionKind.ttsSynthesis => _handleTtsSynthesis(
           _requirePayload(request.ttsSynthesis, request.kind),
+        ),
+      RuntimeHostInteractionKind.ttsPlayback => _handleTtsPlayback(
+          _requirePayload(request.ttsPlayback, request.kind),
         ),
       RuntimeHostInteractionKind.toolPermission => throw StateError(
           'tool permission is handled by the approval bridge',
@@ -235,6 +239,19 @@ class RuntimeHostInteractionSubscriber {
     );
   }
 
+  static Future<RuntimeHostInteractionResponse> _handleTtsPlayback(
+    RuntimeHostInteractionTtsPlaybackPayload payload,
+  ) async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerTtsPlayback',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionTtsPlaybackResponse.fromJson(
+      rawResponse as Map<String, Object?>,
+    );
+    return _response(ttsPlayback: response);
+  }
+
   static RuntimeHostInteractionWebVisitResult _webVisitResult(
     WebVisitResult result,
   ) {
@@ -272,6 +289,7 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionSystemRecognizeTextResponse? systemRecognizeText,
     RuntimeHostInteractionAudioPlayResponse? audioPlay,
     RuntimeHostInteractionTtsSynthesisResponse? ttsSynthesis,
+    RuntimeHostInteractionTtsPlaybackResponse? ttsPlayback,
     RuntimeHostInteractionToolPermissionResponse? toolPermission,
   }) {
     return RuntimeHostInteractionResponse(
@@ -282,6 +300,7 @@ class RuntimeHostInteractionSubscriber {
       systemRecognizeText: systemRecognizeText,
       audioPlay: audioPlay,
       ttsSynthesis: ttsSynthesis,
+      ttsPlayback: ttsPlayback,
       toolPermission: toolPermission,
     );
   }

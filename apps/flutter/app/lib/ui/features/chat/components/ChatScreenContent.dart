@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../common/components/M3LoadingIndicator.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../viewmodel/ChatViewModel.dart';
+import '../tts/TtsFloatingPanel.dart';
+import '../tts/TtsPlaybackController.dart';
 import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
 import 'ChatMultiSelectBar.dart';
@@ -253,6 +254,7 @@ class ChatScreenContent extends StatelessWidget {
             ),
           ),
         ),
+        const TtsFloatingPanel(),
       ],
     );
   }
@@ -314,32 +316,13 @@ class ChatScreenContent extends StatelessWidget {
         _showTtsSnack(context, '消息内容为空，无法生成语音');
         return;
       }
-      final result = await viewModel.bridge.call(
-        CoreCallRequest(
-          requestId: _requestId(),
-          targetPath: CoreObjectPath.parse('services.ttsSynthesisService'),
-          methodName: 'synthesizeForCharacter',
-          args: <String, Object?>{
-            'characterCardId': matchingCards.first.id,
-            'text': text,
-          },
-        ),
+      await TtsPlaybackController.instance.speakForCharacter(
+        bridge: viewModel.bridge,
+        characterCardId: matchingCards.first.id,
+        text: text,
+        title: targetCharacterName,
       );
-      final audioPaths = ((result as Map<String, Object?>)['audioPaths']
-              as List<Object?>)
-          .map((path) => path as String)
-          .toList(growable: false);
-      for (final path in audioPaths) {
-        await viewModel.bridge.call(
-          CoreCallRequest(
-            requestId: _requestId(),
-            targetPath: CoreObjectPath.parse('services.ttsPlaybackService'),
-            methodName: 'playAudio',
-            args: <String, Object?>{'path': path},
-          ),
-        );
-      }
-      _showTtsSnack(context, '语音已开始播放');
+      _showTtsSnack(context, '已加入语音队列');
     } catch (error) {
       _showTtsSnack(context, '生成/播放语音失败：$error');
     }
@@ -454,5 +437,3 @@ class ChatScreenContent extends StatelessWidget {
     }
   }
 }
-
-String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';

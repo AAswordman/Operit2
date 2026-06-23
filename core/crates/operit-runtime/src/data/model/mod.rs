@@ -90,6 +90,8 @@ pub mod SerializableTypography;
 pub mod StandardModelParameters;
 #[path = "ToolPrompt.rs"]
 pub mod ToolPrompt;
+#[path = "TtsCatalog.rs"]
+pub mod TtsCatalog;
 #[path = "TtsConfig.rs"]
 pub mod TtsConfig;
 #[path = "Workflow.rs"]
@@ -144,6 +146,7 @@ pub use SerializableColorScheme::*;
 pub use SerializableTypography::*;
 pub use StandardModelParameters::*;
 pub use ToolPrompt::*;
+pub use TtsCatalog::*;
 pub use TtsConfig::*;
 pub use Workflow::*;
 pub use WorkflowExecutionLog::*;
