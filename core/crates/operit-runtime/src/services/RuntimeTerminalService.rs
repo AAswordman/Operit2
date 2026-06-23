@@ -8,9 +8,9 @@ use base64::Engine;
 use operit_host_api::TerminalHost;
 use serde::{Deserialize, Serialize};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::util::stream::HotStream::MutableSharedStreamImpl;
-use crate::util::stream::Stream::Stream;
+use operit_util::stream::Stream::Stream;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeTerminalSessionInfo {

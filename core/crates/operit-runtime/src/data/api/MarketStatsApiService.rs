@@ -446,7 +446,7 @@ impl MarketStatsApiService {
     #[allow(non_snake_case)]
     pub fn newWithGitHubToken(githubToken: Option<String>) -> Self {
         Self {
-            httpHost: crate::core::application::OperitApplicationContext::defaultHttpHost(),
+            httpHost: operit_context::OperitApplicationContext::defaultHttpHost(),
             githubToken,
         }
     }

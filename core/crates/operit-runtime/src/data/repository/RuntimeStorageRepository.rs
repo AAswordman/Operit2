@@ -2,7 +2,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 
 pub struct RuntimeStorageRepository;
 

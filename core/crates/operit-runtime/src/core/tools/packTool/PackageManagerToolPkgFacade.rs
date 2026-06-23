@@ -10,10 +10,10 @@ use crate::core::tools::packTool::PackageManager::{
     ToolPkgNavigationEntry, ToolPkgSubpackageInfo, ToolPkgToolboxUiModule, ToolPkgUiRoute,
     ToolPkgWorkspaceTemplate, ToolPkgWorkspaceTemplateImportResult,
 };
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
+use operit_tools::packTool::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_NAVIGATION_ENTRY_ACTION, TOOLPKG_NAV_SURFACE_TOOLBOX, TOOLPKG_RUNTIME_COMPOSE_DSL,
 };
-use crate::core::tools::packTool::ToolPkgParser::{
+use operit_tools::packTool::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgSubpackageRuntime,
 };
 
@@ -1238,7 +1238,7 @@ fn copyRecursively(source: &Path, destination: &Path) -> Result<(), String> {
 mod tests {
     use super::PackageManagerToolPkgFacade;
     use crate::core::tools::packTool::PackageManager::PackageManager;
-    use crate::core::tools::packTool::ToolPkgParser::{
+    use operit_tools::packTool::ToolPkgParser::{
         ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType,
     };
     use crate::core::tools::ToolPackage::ToolPackage;

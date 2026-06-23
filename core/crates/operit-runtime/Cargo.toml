@@ -15,15 +15,19 @@ futures-util.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 json5.workspace = true
 md-5 = "0.10"
-operit-host-api = { path = "../operit-host-api" }
-operit-store = { path = "../operit-store" }
+operit-context = { path = "../../../sdk/shared/context" }
+operit-host-api = { path = "../../../sdk/shared/host-api" }
+operit-store = { path = "../../../sdk/shared/store" }
+operit-tools = { path = "../../../sdk/shared/tools" }
+operit-util = { path = "../../../sdk/shared/util" }
+toolpkg-runtime = { path = "../../../sdk/toolpkg-runtime/runtime" }
 reqwest.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true

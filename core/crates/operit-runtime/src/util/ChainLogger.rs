@@ -1,4 +1,4 @@
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 pub const SEND_CHAIN: &str = "SendChain";
 pub const MESSAGE_STORE_CHAIN: &str = "MessageStoreChain";

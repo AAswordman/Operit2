@@ -26,7 +26,7 @@ use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use crate::util::stream::HotStream::SharedStream;
 use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
-use crate::util::stream::Stream::Stream;
+use operit_util::stream::Stream::Stream;
 use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};

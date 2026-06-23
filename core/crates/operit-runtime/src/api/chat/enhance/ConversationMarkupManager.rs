@@ -1,4 +1,4 @@
-use crate::core::tools::ToolResultDataClasses::ToolResultData;
+use operit_tools::ToolResultDataClasses::ToolResultData;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +133,7 @@ impl ConversationMarkupManager {
 #[cfg(test)]
 mod tests {
     use super::{ConversationMarkupManager, ToolResult};
-    use crate::core::tools::ToolResultDataClasses::{
+    use operit_tools::ToolResultDataClasses::{
         DirectoryListingData, FileEntry, StringResultData, TerminalCommandResultData,
         ToolResultData,
     };

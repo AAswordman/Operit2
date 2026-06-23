@@ -22,7 +22,7 @@ use rquickjs::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::javascript::JsComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use crate::core::tools::javascript::JsExecutionResultProtocol::{
     buildJsExecutionErrorPayload, decodeJsExecutionResultValue, extractJsExecutionErrorMessage,
@@ -38,10 +38,10 @@ use crate::core::tools::javascript::JsToolPkgRegistration::{
 };
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::data::preferences::EnvPreferences::EnvPreferences;
-use crate::util::stream::Stream::Stream;
-use crate::util::AppLogger::AppLogger;
+use operit_util::stream::Stream::Stream;
+use operit_util::AppLogger::AppLogger;
 use crate::util::LocaleUtils::LocaleUtils;
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 
 const TAG: &str = "OperitQuickJsEngine";
 const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;

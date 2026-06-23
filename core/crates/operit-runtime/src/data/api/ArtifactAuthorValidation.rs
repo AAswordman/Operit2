@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::tools::packTool::PackageManager::PublishablePackageSource;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgArchiveParser;
+use operit_tools::packTool::ToolPkgParser::ToolPkgArchiveParser;
 use crate::data::api::MarketStatsApiService::{
     ArtifactProjectDetailResponse, ArtifactProjectNodeResponse,
 };

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use operit_host_api::HostEnvironmentDescriptor;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::config::SystemToolPrompts::{
     SystemToolPromptCategory as ConfigSystemToolPromptCategory, SystemToolPrompts,
     ToolPrompt as ConfigToolPrompt,

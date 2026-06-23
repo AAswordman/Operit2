@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolParameter::MCPToolParameter;
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct MCPToolExecutor {

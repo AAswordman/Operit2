@@ -7,9 +7,6 @@ pub mod PackageManager;
 #[path = "PackageManagerToolPkgFacade.rs"]
 pub mod PackageManagerToolPkgFacade;
 
-#[path = "ToolPkgCommonPluginConstants.rs"]
-pub mod ToolPkgCommonPluginConstants;
-
 #[path = "ToolPkgComposeDslDebugDumpReceiver.rs"]
 pub mod ToolPkgComposeDslDebugDumpReceiver;
 
@@ -22,17 +19,11 @@ pub mod ToolPkgDebugInstallReceiver;
 #[path = "ToolPkgHookModels.rs"]
 pub mod ToolPkgHookModels;
 
+#[path = "ToolPkgJsPackageParser.rs"]
+pub mod ToolPkgJsPackageParser;
+
 #[path = "ToolPkgMainRegistrationScriptParser.rs"]
 pub mod ToolPkgMainRegistrationScriptParser;
 
 #[path = "ToolPkgLoader.rs"]
 pub mod ToolPkgLoader;
-
-#[path = "ToolPkgManager.rs"]
-pub mod ToolPkgManager;
-
-#[path = "ToolPkgParser.rs"]
-pub mod ToolPkgParser;
-
-#[path = "ToolPkgTemplateModels.rs"]
-pub mod ToolPkgTemplateModels;

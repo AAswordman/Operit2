@@ -91,8 +91,7 @@ impl ModelConfigConnectionTester {
                     })
                     .await
                     .map_err(|error| error.to_string())?;
-                let _ = collect_stream_chunks(stream);
-                Ok(())
+                Self::ensureResponseContent(stream)
             })
             .await;
 
@@ -129,8 +128,7 @@ impl ModelConfigConnectionTester {
                         })
                         .await
                         .map_err(|error| error.to_string())?;
-                    let _ = collect_stream_chunks(stream);
-                    Ok(())
+                    Self::ensureResponseContent(stream)
                 })
                 .await;
             }
@@ -152,7 +150,7 @@ impl ModelConfigConnectionTester {
                         "{}\nPlease analyze this image briefly.",
                         MediaLinkBuilder::image(&imageId)
                     );
-                    let result = service
+                    let result = match service
                         .send_message(SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
@@ -165,10 +163,10 @@ impl ModelConfigConnectionTester {
                             on_tool_invocation: None,
                         })
                         .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                    {
+                        Ok(stream) => Self::ensureResponseContent(stream),
+                        Err(error) => Err(error.to_string()),
+                    };
                     ImagePoolManager::remove_image(&imageId);
                     let _ = std::fs::remove_file(&imagePath);
                     result
@@ -194,7 +192,7 @@ impl ModelConfigConnectionTester {
                         "{}\nPlease analyze this audio briefly.",
                         MediaLinkBuilder::audio(&audioId)
                     );
-                    let result = service
+                    let result = match service
                         .send_message(SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
@@ -207,10 +205,10 @@ impl ModelConfigConnectionTester {
                             on_tool_invocation: None,
                         })
                         .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                    {
+                        Ok(stream) => Self::ensureResponseContent(stream),
+                        Err(error) => Err(error.to_string()),
+                    };
                     MediaPoolManager::remove_media(&audioId);
                     let _ = std::fs::remove_file(&audioPath);
                     result
@@ -236,7 +234,7 @@ impl ModelConfigConnectionTester {
                         "{}\nPlease analyze this video briefly.",
                         MediaLinkBuilder::video(&videoId)
                     );
-                    let result = service
+                    let result = match service
                         .send_message(SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
@@ -249,10 +247,10 @@ impl ModelConfigConnectionTester {
                             on_tool_invocation: None,
                         })
                         .await
-                        .map(|stream| {
-                            let _ = collect_stream_chunks(stream);
-                        })
-                        .map_err(|error| error.to_string());
+                    {
+                        Ok(stream) => Self::ensureResponseContent(stream),
+                        Err(error) => Err(error.to_string()),
+                    };
                     MediaPoolManager::remove_media(&videoId);
                     let _ = std::fs::remove_file(&videoPath);
                     result
@@ -286,6 +284,17 @@ impl ModelConfigConnectionTester {
                 success: false,
                 error: Some(error),
             }),
+        }
+    }
+
+    fn ensureResponseContent(
+        stream: Box<dyn crate::util::stream::RevisableTextStream::RevisableTextStreamLike>,
+    ) -> Result<(), String> {
+        let chunks = collect_stream_chunks(stream);
+        if chunks.iter().any(|chunk| !chunk.trim().is_empty()) {
+            Ok(())
+        } else {
+            Err("No response content".to_string())
         }
     }
 

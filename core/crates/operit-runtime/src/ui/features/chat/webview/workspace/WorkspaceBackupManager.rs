@@ -7,9 +7,9 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::core::tools::AIToolHook::AIToolHook;

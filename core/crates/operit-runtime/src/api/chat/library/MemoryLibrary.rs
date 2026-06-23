@@ -17,11 +17,11 @@ use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSetti
 use crate::data::repository::MemoryRepository::MemoryRepository;
 use crate::data::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
-use crate::util::stream::Stream::Stream;
-use crate::util::AppLogger::AppLogger;
+use operit_util::stream::Stream::Stream;
+use operit_util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{tag_ranges, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
-use crate::util::OperitPaths::characterMemoryOwnerKey;
+use operit_util::OperitPaths::characterMemoryOwnerKey;
 
 const TAG: &str = "MemoryLibrary";
 

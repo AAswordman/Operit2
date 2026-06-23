@@ -7,9 +7,9 @@ use operit_host_api::{
     SystemOperationHost, SystemSettingData as HostSystemSettingData,
 };
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_tools::ToolResultDataClasses::{
     stringResultData, AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData,
     DeviceInfoResultData, LocationData, Notification, NotificationData, SystemSettingData,
     ToolResultData,

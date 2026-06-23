@@ -1,4 +1,4 @@
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 
 #[derive(Debug, Clone, Eq, PartialEq)]

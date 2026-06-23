@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolParameter, ToolValidationResult,
 };
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
@@ -36,7 +36,7 @@ use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ToolResultDataClasses::{
     stringResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
     SleepResultData, ToolResultData,
 };
@@ -144,7 +144,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                 if runtimeContext
                     .as_ref()
                     .map(|context| context.toolExposureMode.clone())
-                    != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
+                    != Some(operit_tools::ToolExecutionManager::ToolExposureMode::CLI)
                 {
                     return toolErrorResult(
                         tool,
@@ -214,7 +214,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
                 if runtimeContext
                     .as_ref()
                     .map(|context| context.toolExposureMode.clone())
-                    != Some(crate::api::chat::enhance::ToolExecutionManager::ToolExposureMode::CLI)
+                    != Some(operit_tools::ToolExecutionManager::ToolExposureMode::CLI)
                 {
                     return toolErrorResult(
                         tool,

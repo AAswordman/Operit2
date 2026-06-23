@@ -1,5 +1,5 @@
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
-use crate::util::stream::Stream::{Stream, VecStream};
+use operit_util::stream::Stream::{Stream, VecStream};
 use crate::util::stream::StreamGroup::StreamGroup;
 use std::collections::VecDeque;
 use std::thread;

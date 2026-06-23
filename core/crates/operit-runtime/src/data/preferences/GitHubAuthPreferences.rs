@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };

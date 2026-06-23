@@ -1,0 +1,43 @@
+[package]
+name = "toolpkg-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aes = "0.8"
+base64.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+json5.workspace = true
+md-5 = "0.10"
+chrono.workspace = true
+operit-context = { path = "../../shared/context" }
+operit-host-api = { path = "../../shared/host-api" }
+operit-store = { path = "../../shared/store" }
+operit-tools = { path = "../../shared/tools" }
+operit-util = { path = "../../shared/util" }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+rquickjs.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3"
+quickjs-wasm-rs = "3.1.0"
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"] }
+
+[[bin]]
+name = "toolpkg-runtime"
+path = "src/main.rs"

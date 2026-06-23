@@ -21,7 +21,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "typeRoots": [
-      "../../../types",
+      "../../../../sdk/toolpkg-runtime/types",
       "./node_modules/@types",
       "../../../node_modules/@types"
     ]
@@ -29,7 +29,7 @@
   "include": [
     "./**/*.ts",
     "./**/*.d.ts",
-    "../../../types/**/*.d.ts"
+    "../../../../sdk/toolpkg-runtime/types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules"

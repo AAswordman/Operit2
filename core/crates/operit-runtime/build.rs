@@ -291,6 +291,9 @@ fn collect_skill_includes(
     let plugins_canonical = plugins_dir
         .canonicalize()
         .expect("canonicalize plugins directory");
+    let sdk_types_canonical = sdk_types_root(plugins_dir)
+        .canonicalize()
+        .expect("canonicalize sdk toolpkg types directory");
 
     for include in config.includes {
         let source = skill_dir
@@ -298,8 +301,9 @@ fn collect_skill_includes(
             .canonicalize()
             .expect("canonicalize skill include source");
         assert!(
-            is_path_inside(&source, &plugins_canonical),
-            "skill include source must stay under plugins directory: {}",
+            is_path_inside(&source, &plugins_canonical)
+                || is_path_inside(&source, &sdk_types_canonical),
+            "skill include source must stay under plugins or sdk toolpkg types directory: {}",
             source.display()
         );
         println!("cargo:rerun-if-changed={}", source.display());
@@ -397,4 +401,13 @@ fn pluginsSourceRoot(manifest_dir: &Path) -> PathBuf {
         .join("..")
         .join("..")
         .join("plugins")
+}
+
+#[allow(non_snake_case)]
+fn sdk_types_root(plugins_dir: &Path) -> PathBuf {
+    plugins_dir
+        .join("..")
+        .join("sdk")
+        .join("toolpkg-runtime")
+        .join("types")
 }

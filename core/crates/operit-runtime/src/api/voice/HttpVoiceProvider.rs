@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::api::voice::HttpTtsResponsePipelineStep::HttpTtsResponsePipelineStepType;
 use crate::api::voice::VoiceService::{normalizedAudioExtension, VoiceService};
-use crate::core::application::OperitApplicationContext::defaultHttpHost;
+use operit_context::OperitApplicationContext::defaultHttpHost;
 use crate::data::model::TtsConfig::{TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep};
 
 pub struct HttpVoiceProvider;

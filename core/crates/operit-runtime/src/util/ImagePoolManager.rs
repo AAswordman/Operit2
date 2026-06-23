@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 const TAG: &str = "ImagePoolManager";
 const DEFAULT_SCALE_PERCENT: i32 = 100;

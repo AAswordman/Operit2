@@ -5,8 +5,8 @@ use zip::ZipArchive;
 
 use crate::api::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::api::chat::llmprovider::AIService::{collect_stream_chunks, SendMessageRequest};
-use crate::core::application::OperitApplicationContext::defaultHttpHost;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::defaultHttpHost;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;

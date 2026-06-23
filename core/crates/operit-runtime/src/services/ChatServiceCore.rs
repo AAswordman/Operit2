@@ -1,5 +1,5 @@
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
@@ -23,7 +23,7 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::StateFlow;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -1,4 +1,4 @@
-use crate::util::stream::Stream::{Stream, VecStream};
+use operit_util::stream::Stream::{Stream, VecStream};
 use crate::util::stream::StreamGroup::StreamGroup;
 use crate::util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType, NativeMarkdownSplitter,
@@ -83,7 +83,7 @@ where
         let mut chars = Vec::new();
         self.collect(&mut |ch| chars.push(ch));
         NativeMarkdownSplitter::native_markdown_split_stream_by_block(
-            crate::util::stream::Stream::VecStream::new(chars),
+            operit_util::stream::Stream::VecStream::new(chars),
         )
     }
 
@@ -91,7 +91,7 @@ where
         let mut chars = Vec::new();
         self.collect(&mut |ch| chars.push(ch));
         NativeMarkdownSplitter::native_markdown_split_stream_by_inline(
-            crate::util::stream::Stream::VecStream::new(chars),
+            operit_util::stream::Stream::VecStream::new(chars),
         )
     }
 
@@ -133,7 +133,7 @@ where
         let mut chunks = Vec::new();
         self.collect(&mut |chunk| chunks.push(chunk));
         NativeMarkdownSplitter::native_markdown_split_string_stream_by_block(
-            crate::util::stream::Stream::VecStream::new(chunks),
+            operit_util::stream::Stream::VecStream::new(chunks),
         )
     }
 
@@ -141,7 +141,7 @@ where
         let mut chunks = Vec::new();
         self.collect(&mut |chunk| chunks.push(chunk));
         NativeMarkdownSplitter::native_markdown_split_string_stream_by_inline(
-            crate::util::stream::Stream::VecStream::new(chunks),
+            operit_util::stream::Stream::VecStream::new(chunks),
         )
     }
 

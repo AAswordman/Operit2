@@ -11,7 +11,7 @@ use operit_host_api::{
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 
 const REQUEST_TIMEOUT_MS: u64 = 180_000;
 const SPAWN_TIMEOUT_MS: u64 = 180_000;

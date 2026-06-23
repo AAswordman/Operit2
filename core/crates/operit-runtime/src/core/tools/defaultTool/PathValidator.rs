@@ -1,7 +1,7 @@
 use operit_host_api::FileSystemHost;
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolResultDataClasses::stringResultData;
 
 pub struct PathValidator;
 

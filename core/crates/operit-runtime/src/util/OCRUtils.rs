@@ -1,5 +1,5 @@
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::util::AppLogger::AppLogger;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
+use operit_util::AppLogger::AppLogger;
 use operit_host_api::{OCRLanguage, OCRQuality};
 
 const TAG: &str = "OCRUtils";

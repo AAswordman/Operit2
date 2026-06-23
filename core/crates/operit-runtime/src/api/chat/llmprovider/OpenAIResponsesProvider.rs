@@ -13,7 +13,7 @@ use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
-use crate::util::stream::Stream::FnStream;
+use operit_util::stream::Stream::FnStream;
 
 #[derive(Clone)]
 pub struct OpenAIResponsesProvider {
@@ -109,6 +109,51 @@ impl OpenAIResponsesProvider {
             .cancelled
     }
 
+    async fn waitUntilCancelled(self) {
+        loop {
+            if self.isCancelled() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn sendHttpRequest(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AiServiceError> {
+        if self.isCancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
+        if self.isCancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
+    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+        if self.isCancelled() {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        tokio::select! {
+            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
+        }
+    }
+
     fn clearActiveParent(&self, generation: u64) {
         let mut state = self
             .state
@@ -117,6 +162,51 @@ impl OpenAIResponsesProvider {
         if state.activeParentGeneration == generation {
             state.activeParent = None;
         }
+    }
+
+    async fn sendNonStreamingPreparedRequest(
+        &self,
+        api_endpoint: String,
+        headers: HeaderMap,
+        request_body: Value,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let response = self
+            .sendHttpRequest(
+                reqwest::Client::new()
+                    .post(&api_endpoint)
+                    .headers(headers)
+                    .json(&request_body),
+            )
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = self.readResponseText(response).await?;
+            return Err(AiServiceError::RequestFailed(format!(
+                "{status}: {message}"
+            )));
+        }
+
+        let jsonResponse = self.readResponseJson(response).await?;
+        let parsed = OpenAIResponsesPayloadAdapter::parse_non_streaming_response(&jsonResponse);
+        if let Some(usage) = parsed.usage {
+            self.apply_usage_counts(&usage);
+        }
+
+        let mut chunks = Vec::new();
+        for reasoning in parsed.reasoningChunks {
+            chunks.push(format!("<think>{reasoning}</think>"));
+        }
+        chunks.extend(parsed.textChunks);
+        if let Value::Array(toolCalls) = parsed.toolCalls {
+            for toolCall in toolCalls {
+                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &toolCall.to_string(),
+                ));
+            }
+        }
+
+        Ok(response_stream_from_chunks(chunks))
     }
 
     pub fn create_request_body(
@@ -791,48 +881,31 @@ impl AIService for OpenAIResponsesProvider {
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }
 
-        let response = reqwest::Client::new()
-            .post(&self.responsesApiEndpoint)
-            .headers(self.headers()?)
-            .json(&requestBody)
-            .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let message = response
-                .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            return Err(AiServiceError::RequestFailed(format!(
-                "{status}: {message}"
-            )));
-        }
-
-        let jsonResponse: Value = response
-            .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let parsed = OpenAIResponsesPayloadAdapter::parse_non_streaming_response(&jsonResponse);
-        if let Some(usage) = parsed.usage {
-            self.apply_usage_counts(&usage);
-        }
-
-        let mut chunks = Vec::new();
-        for reasoning in parsed.reasoningChunks {
-            chunks.push(format!("<think>{reasoning}</think>"));
-        }
-        chunks.extend(parsed.textChunks);
-        if let Value::Array(toolCalls) = parsed.toolCalls {
-            for toolCall in toolCalls {
-                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                    &toolCall.to_string(),
-                ));
+        let provider = self.clone();
+        let event_channel =
+            crate::util::stream::RevisableTextStream::empty_revisable_event_channel();
+        let stream_event_channel = event_channel.clone();
+        let mut request_parts = Some((
+            self.responsesApiEndpoint.clone(),
+            self.headers()?,
+            requestBody,
+        ));
+        let cold_stream = FnStream::new(move |emit| {
+            let (api_endpoint, headers, request_body) = request_parts
+                .take()
+                .expect("OpenAIResponsesProvider non-stream request must only be collected once");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime must build for OpenAIResponsesProvider non-stream request");
+            if let Ok(mut response_stream) = runtime.block_on(
+                provider.sendNonStreamingPreparedRequest(api_endpoint, headers, request_body),
+            ) {
+                response_stream.collect(emit);
             }
-        }
-
-        Ok(response_stream_from_chunks(chunks))
+            stream_event_channel.close();
+        });
+        Ok(Box::new(with_event_channel(cold_stream, event_channel)))
     }
 }
 

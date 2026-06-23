@@ -1,5 +1,5 @@
 use crate::api::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use crate::core::application::OperitApplicationContext::{
+use operit_context::OperitApplicationContext::{
     setDefaultHttpHost, OperitApplicationContext,
 };
 use crate::core::chat::AIMessageManager::AIMessageManager;
@@ -30,8 +30,8 @@ use operit_store::SyncOperationStore::{
 };
 use std::sync::{Mutex, OnceLock};
 
-use crate::util::AppLogger::AppLogger;
-use crate::util::OperitPaths;
+use operit_util::AppLogger::AppLogger;
+use operit_util::OperitPaths;
 
 static APPLICATION_CONTEXT: OnceLock<Mutex<Option<OperitApplicationContext>>> = OnceLock::new();
 

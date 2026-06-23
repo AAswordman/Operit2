@@ -9,8 +9,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::AIService::{
-    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
-    AiServiceError, SendMessageRequest, TokenCounts,
+    retry_error_text, retry_message, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -21,7 +20,7 @@ use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike, TextStreamEvent,
     TextStreamEventType,
 };
-use crate::util::stream::Stream::FnStream;
+use operit_util::stream::Stream::FnStream;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 use crate::util::ChatUtils::ChatUtils;
 use crate::util::TokenCacheManager::TokenCacheManager;
@@ -534,7 +533,10 @@ impl OpenAIProvider {
         }
     }
 
-    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
         if self.is_cancelled() {
@@ -771,24 +773,32 @@ impl OpenAIProvider {
         let mut response_stream = response.bytes_stream();
 
         let result = async {
-            while let Some(item) = response_stream.next().await {
-                if self.is_cancelled() {
-                    break;
-                }
-                let bytes =
-                    item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-                state
-                    .pending_line
-                    .push_str(&String::from_utf8_lossy(&bytes));
+            let mut cancellationReceiver = self.cancel_receiver();
+            let observedGeneration = *cancellationReceiver.borrow();
+            loop {
+                tokio::select! {
+                    item = response_stream.next() => {
+                        let Some(item) = item else {
+                            break;
+                        };
+                        let bytes = item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                        state.pending_line.push_str(&String::from_utf8_lossy(&bytes));
 
-                while let Some(newline_index) = state.pending_line.find('\n') {
-                    let line = state.pending_line[..newline_index].trim().to_string();
-                    state.pending_line = state.pending_line[newline_index + 1..].to_string();
-                    let emitted_before = state.chunks.len();
-                    self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
-                    for chunk in state.chunks[emitted_before..].iter().cloned() {
-                        let _ = tx.send(chunk.clone());
-                        emitter.emit_chunk(&chunk);
+                        while let Some(newline_index) = state.pending_line.find('\n') {
+                            let line = state.pending_line[..newline_index].trim().to_string();
+                            state.pending_line = state.pending_line[newline_index + 1..].to_string();
+                            let emitted_before = state.chunks.len();
+                            self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
+                            for chunk in state.chunks[emitted_before..].iter().cloned() {
+                                let _ = tx.send(chunk.clone());
+                                emitter.emit_chunk(&chunk);
+                            }
+                        }
+                    }
+                    changed = cancellationReceiver.changed() => {
+                        if changed.is_ok() && *cancellationReceiver.borrow() != observedGeneration {
+                            break;
+                        }
                     }
                 }
             }

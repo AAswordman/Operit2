@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::data::model::ModelConfigData::ApiProviderType;
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };

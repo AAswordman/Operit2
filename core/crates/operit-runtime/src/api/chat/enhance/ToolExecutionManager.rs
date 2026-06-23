@@ -3,13 +3,13 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::chat::enhance::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
 use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ToolResultDataClasses::stringResultData;
 use crate::data::preferences::CharacterCardToolAccessResolver::{
     CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
 };

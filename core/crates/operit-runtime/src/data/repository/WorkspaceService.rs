@@ -8,7 +8,7 @@ use operit_store::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::data::dao::ChatDao::ChatDao;

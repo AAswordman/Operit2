@@ -1,4 +1,4 @@
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 use crate::util::ChatUtils::ChatUtils;
 
 #[derive(Debug, Clone, Default)]

@@ -759,7 +759,7 @@ python sync_example_packages.py --delete-extra
 }
 */
 
-/// <reference path="../../types/index.d.ts" />
+/// <reference path="./types/index.d.ts" />
 
 const WindowsControl = (function () {
     async function wrap(func, params) {
@@ -877,7 +877,7 @@ Compose DSL 是一种基于 JavaScript 的声明式 UI 框架，灵感来自 Jet
 ### 6.2 基本示例
 
 ```javascript
-/// <reference path="../../types/index.d.ts" />
+/// <reference path="./types/index.d.ts" />
 
 function Screen(ctx) {
     // 状态管理

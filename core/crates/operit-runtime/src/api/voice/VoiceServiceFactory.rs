@@ -3,7 +3,7 @@
 use crate::api::voice::HttpVoiceProvider::HttpVoiceProvider;
 use crate::api::voice::SystemVoiceProvider::SystemVoiceProvider;
 use crate::api::voice::VoiceService::VoiceService;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::data::model::TtsCatalog::TtsCatalog;
 use crate::data::model::TtsConfig::{TtsConfig, TtsProviderType};
 

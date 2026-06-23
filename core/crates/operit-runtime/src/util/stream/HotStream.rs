@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::util::stream::Stream::Stream;
+use operit_util::stream::Stream::Stream;
 
 /// Stream that can have multiple collectors and optional replayed items.
 pub trait SharedStream<T>: Stream<Item = T>

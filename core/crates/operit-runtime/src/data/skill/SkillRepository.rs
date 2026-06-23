@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::application::OperitApplicationContext::defaultHttpHost;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::defaultHttpHost;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::skill::SkillManager::{BundledExternalSkillCandidate, SkillManager};
 use crate::core::tools::skill::SkillPackage::SkillPackage;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;

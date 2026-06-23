@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 use crate::util::ImagePoolManager::{decode_base64, encode_base64};
 
 const TAG: &str = "MediaPoolManager";

@@ -1,7 +1,7 @@
 use crate::util::stream::HotStream::{
     mutable_shared_stream, share, MutableSharedStreamImpl, SharedStream, StreamStart,
 };
-use crate::util::stream::Stream::Stream;
+use operit_util::stream::Stream::Stream;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TextStreamEvent {

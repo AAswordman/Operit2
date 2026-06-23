@@ -18,7 +18,7 @@ use crate::data::model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::util::stream::HotStream::StreamStart;
 use crate::util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 use crate::util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_store::PreferencesDataStore::FlowLike;
 
@@ -909,7 +909,7 @@ struct ActiveChatTextStream {
     stream: Box<dyn crate::util::stream::RevisableTextStream::RevisableTextStreamLike>,
 }
 
-impl crate::util::stream::Stream::Stream for ActiveChatTextStream {
+impl operit_util::stream::Stream::Stream for ActiveChatTextStream {
     type Item = String;
 
     fn is_locked(&self) -> bool {

@@ -7,7 +7,7 @@ use super::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
 };
 use crate::core::chat::hooks::PromptTurn::PromptTurn;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
+use operit_tools::packTool::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS, TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS,
     TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE, TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
 };

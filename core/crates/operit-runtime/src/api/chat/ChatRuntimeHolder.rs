@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::api::chat::enhance::ConversationService::ConversationService;
 use crate::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::api::chat::EnhancedAIService::EnhancedAIService;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::AIToolHandler::AIToolHandler;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::ChatServiceCore;

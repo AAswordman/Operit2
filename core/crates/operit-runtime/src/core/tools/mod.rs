@@ -19,9 +19,6 @@ pub mod ToolPermissionSystem;
 #[path = "ToolRegistration.rs"]
 pub mod ToolRegistration;
 
-#[path = "ToolResultDataClasses.rs"]
-pub mod ToolResultDataClasses;
-
 pub mod climode;
 
 #[path = "condition/mod.rs"]

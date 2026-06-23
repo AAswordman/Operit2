@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::data::mcp::plugins::MCPBridgeClient::MCPBridgeClient;
 

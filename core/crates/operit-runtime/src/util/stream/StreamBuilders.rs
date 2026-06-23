@@ -1,4 +1,4 @@
-use crate::util::stream::Stream::{FnStream, Stream, VecStream};
+use operit_util::stream::Stream::{FnStream, Stream, VecStream};
 
 pub fn empty_stream<T>() -> VecStream<T> {
     VecStream::new(Vec::<T>::new())

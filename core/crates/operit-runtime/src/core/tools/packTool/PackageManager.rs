@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
+use toolpkg_runtime::{ToolPkgRuntime, ToolPkgRuntimeOptions};
 use crate::core::tools::condition::ConditionEvaluator::{ConditionEvaluator, ConditionValue};
 use crate::core::tools::javascript::JsEngine::JsEngine;
 use crate::core::tools::mcp::MCPManager::MCPManager;
@@ -12,19 +13,16 @@ use crate::core::tools::mcp::MCPPackage::MCPPackage;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::core::tools::packTool::PackageManagerToolPkgFacade::PackageManagerToolPkgFacade;
 use crate::core::tools::packTool::ToolPkgLoader::ToolPkgLoader;
-use crate::core::tools::packTool::ToolPkgManager::{ToolPkgManager, ToolPkgRuntimeChangeListener};
-use crate::core::tools::packTool::ToolPkgParser::{
+use operit_tools::packTool::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgResourceRuntime,
     ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 use crate::core::tools::skill::SkillManager::SkillManager;
-use crate::core::tools::ToolPackage::{
-    EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
-};
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use crate::core::tools::ToolPackage::{LocalizedText, PackageTool, ToolPackage, ToolPackageState};
+use operit_tools::ToolResultDataClasses::stringResultData;
 use crate::data::mcp::MCPLocalServer::MCPLocalServer;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -38,6 +36,8 @@ const BUNDLED_EXTERNAL_IMPORTS_KEY: &str = "bundled_external_imports";
 const TOOLPKG_SUBPACKAGE_STATES_KEY: &str = "toolpkg_subpackage_states";
 const TOOLPKG_CACHE_SIGNATURE_FILE: &str = ".toolpkg-cache-signature";
 const PACKAGE_MANAGER_LOG_TAG: &str = "ToolPkg";
+
+pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>) + Send + Sync>;
 
 pub type CachedMcpToolInfo = crate::data::mcp::MCPLocalServer::CachedToolInfo;
 
@@ -224,7 +224,8 @@ pub struct PackageManager {
     activatedPackages: BTreeSet<String>,
     availablePackages: BTreeMap<String, ToolPackage>,
     cachedMcpTools: BTreeMap<String, Vec<CachedMcpToolInfo>>,
-    toolPkgManager: ToolPkgManager,
+    toolPkgRuntime: ToolPkgRuntime,
+    runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
     activePackageStateIds: BTreeMap<String, Option<String>>,
     externalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
     bundledExternalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
@@ -253,7 +254,10 @@ impl PackageManager {
             activatedPackages: BTreeSet::new(),
             availablePackages: BTreeMap::new(),
             cachedMcpTools: BTreeMap::new(),
-            toolPkgManager: ToolPkgManager::new(context.clone()),
+            toolPkgRuntime: ToolPkgRuntime::new(ToolPkgRuntimeOptions {
+                languageCode: "en".to_string(),
+            }),
+            runtimeChangeListeners: Arc::new(Mutex::new(Vec::new())),
             activePackageStateIds: BTreeMap::new(),
             externalPackageScanCache: BTreeMap::new(),
             bundledExternalPackageScanCache: BTreeMap::new(),
@@ -289,18 +293,17 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
-        self.toolPkgManager
-            .releaseToolPkgExecutionEngine(contextKey);
+        self.toolPkgRuntime.releaseExecutionEngine(contextKey);
     }
 
     #[allow(non_snake_case)]
     pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> JsEngine {
-        self.toolPkgManager.getToolPkgExecutionEngine(contextKey)
+        self.toolPkgRuntime.getOrCreateExecutionEngine(contextKey)
     }
 
     #[allow(non_snake_case)]
     pub fn findToolPkgExecutionEngine(&self, contextKey: &str) -> Option<JsEngine> {
-        self.toolPkgManager.findToolPkgExecutionEngine(contextKey)
+        self.toolPkgRuntime.findExecutionEngine(contextKey)
     }
 
     #[allow(non_snake_case)]
@@ -550,14 +553,24 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub(crate) fn toolPkgContainersInternal(&self) -> BTreeMap<String, ToolPkgContainerRuntime> {
-        self.toolPkgManager.getToolPkgContainerRuntimeMap()
+        self.toolPkgRuntime.getLoadedPackages()
+            .into_values()
+            .map(|loaded| (loaded.outcome.package.containerRuntime.packageName.clone(), loaded.outcome.package.containerRuntime))
+            .collect()
     }
 
     #[allow(non_snake_case)]
     pub(crate) fn toolPkgSubpackageByPackageNameInternal(
         &self,
     ) -> BTreeMap<String, ToolPkgSubpackageRuntime> {
-        self.toolPkgManager.getToolPkgSubpackageRuntimeMap()
+        let mut result = BTreeMap::new();
+        for loaded in self.toolPkgRuntime.getLoadedPackages().into_values() {
+            let runtime = &loaded.outcome.package.containerRuntime;
+            for subpackage in &runtime.subpackages {
+                result.insert(subpackage.packageName.clone(), subpackage.clone());
+            }
+        }
+        result
     }
 
     pub fn isPackageActivated(&self, packageName: &str) -> bool {
@@ -695,8 +708,8 @@ impl PackageManager {
             return false;
         }
         if let Some(subpackageRuntime) = self
-            .toolPkgManager
-            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+            .toolPkgRuntime
+            .resolveToolPkgSubpackageRuntime(&normalizedPackageName)
         {
             return enabledPackageSet.contains(&subpackageRuntime.containerPackageName);
         }
@@ -726,7 +739,7 @@ impl PackageManager {
         let mut subpackageStates = self.getToolPkgSubpackageStatesInternal();
 
         if let Some(containerRuntime) = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntime(&normalizedPackageName)
         {
             let containerAlreadyEnabled = enabledPackageNames.contains(&normalizedPackageName);
@@ -779,8 +792,8 @@ impl PackageManager {
         }
 
         if let Some(subpackageRuntime) = self
-            .toolPkgManager
-            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+            .toolPkgRuntime
+            .resolveToolPkgSubpackageRuntime(&normalizedPackageName)
         {
             enabledPackageNames.insert(subpackageRuntime.containerPackageName.clone());
             enabledPackageNames.insert(normalizedPackageName.clone());
@@ -807,7 +820,7 @@ impl PackageManager {
                 );
             }
             if let Some(runtime) = self
-                .toolPkgManager
+                .toolPkgRuntime
                 .getToolPkgContainerRuntime(&subpackageRuntime.containerPackageName)
             {
                 self.ensureToolPkgCache(&runtime);
@@ -848,7 +861,7 @@ impl PackageManager {
         self.activatedPackages.remove(&normalizedPackageName);
 
         if let Some(containerRuntime) = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntime(&normalizedPackageName)
         {
             let mut packageWasRemoved = enabledPackageNames.remove(&normalizedPackageName);
@@ -878,7 +891,7 @@ impl PackageManager {
                 );
             }
             self.deleteToolPkgCacheDir(&normalizedPackageName);
-            self.toolPkgManager
+            self.toolPkgRuntime
                 .destroyDefaultToolPkgExecutionEngine(&normalizedPackageName);
             self.notifyToolPkgRuntimeChangeListeners();
             if packageWasRemoved {
@@ -894,8 +907,8 @@ impl PackageManager {
         }
 
         if self
-            .toolPkgManager
-            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+            .toolPkgRuntime
+            .resolveToolPkgSubpackageRuntime(&normalizedPackageName)
             .is_some()
         {
             let packageWasRemoved = enabledPackageNames.remove(&normalizedPackageName);
@@ -954,14 +967,14 @@ impl PackageManager {
         let normalizedPackageName = self.normalizePackageName(packageName);
 
         if let Some(subpackageRuntime) = self
-            .toolPkgManager
-            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+            .toolPkgRuntime
+            .resolveToolPkgSubpackageRuntime(&normalizedPackageName)
         {
             return self.deletePackage(&subpackageRuntime.containerPackageName);
         }
 
         let containerRuntime = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntime(&normalizedPackageName);
         if containerRuntime
             .as_ref()
@@ -1077,13 +1090,29 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn getEnabledToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
-        self.toolPkgManager
-            .getEnabledToolPkgContainerRuntimes(&self.getEnabledPackageNames())
+        let enabledPackageNames = BTreeSet::from_iter(self.getEnabledPackageNames());
+        let mut runtimes = self.toolPkgRuntime.getToolPkgContainerRuntimes()
+            .into_iter()
+            .filter(|runtime| {
+                enabledPackageNames.contains(&runtime.packageName)
+                    || runtime
+                        .subpackages
+                        .iter()
+                        .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName))
+            })
+            .collect::<Vec<_>>();
+        runtimes.sort_by(|left, right| left.packageName.cmp(&right.packageName));
+        runtimes
     }
 
     #[allow(non_snake_case)]
     pub fn getToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
-        self.toolPkgManager.getToolPkgContainerRuntimes()
+        let mut runtimes: Vec<_> = self.toolPkgRuntime.getLoadedPackages()
+            .into_values()
+            .map(|loaded| loaded.outcome.package.containerRuntime)
+            .collect();
+        runtimes.sort_by(|left, right| left.packageName.cmp(&right.packageName));
+        runtimes
     }
 
     #[allow(non_snake_case)]
@@ -1200,7 +1229,7 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn getBundledExternalToolPkgContainerRuntimes(&mut self) -> Vec<ToolPkgContainerRuntime> {
         let loadedContainerNames = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntimes()
             .into_iter()
             .map(|runtime| runtime.packageName)
@@ -1287,7 +1316,7 @@ impl PackageManager {
         containerPackageName: &str,
     ) -> Option<ToolPkgContainerRuntime> {
         let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
-        self.toolPkgManager
+        self.toolPkgRuntime
             .getToolPkgContainerRuntime(&normalizedContainerPackageName)
     }
 
@@ -1297,8 +1326,8 @@ impl PackageManager {
         packageName: &str,
     ) -> Option<ToolPkgSubpackageRuntime> {
         let normalizedPackageName = self.normalizePackageName(packageName);
-        self.toolPkgManager
-            .resolveToolPkgSubpackageRuntimeInternal(&normalizedPackageName)
+        self.toolPkgRuntime
+            .resolveToolPkgSubpackageRuntime(&normalizedPackageName)
     }
 
     #[allow(non_snake_case)]
@@ -1345,7 +1374,10 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn unregisterMCPServerPackage(&mut self, serverName: &str) -> bool {
         let normalizedServerName = self.normalizePackageName(serverName);
-        let removed = self.availablePackages.remove(&normalizedServerName).is_some();
+        let removed = self
+            .availablePackages
+            .remove(&normalizedServerName)
+            .is_some();
         self.activatedPackages.remove(&normalizedServerName);
         self.activePackageStateIds.remove(&normalizedServerName);
         self.cachedMcpTools.remove(&normalizedServerName);
@@ -1369,7 +1401,7 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn registerToolPkg(&mut self, loadResult: ToolPkgLoadResult) -> bool {
         if !self
-            .toolPkgManager
+            .toolPkgRuntime
             .canRegisterToolPkg(&loadResult, &self.availablePackages)
         {
             return false;
@@ -1379,7 +1411,9 @@ impl PackageManager {
             loadResult.containerPackage.name.clone(),
             loadResult.containerPackage.clone(),
         );
-        for subpackage in self.toolPkgManager.registerToolPkg(loadResult) {
+        let subpackagePackages = loadResult.subpackagePackages.clone();
+        self.toolPkgRuntime.registerToolPkg(loadResult);
+        for subpackage in subpackagePackages {
             self.availablePackages
                 .insert(subpackage.name.clone(), subpackage);
         }
@@ -1389,14 +1423,26 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     pub fn addToolPkgRuntimeChangeListener(&self, listener: ToolPkgRuntimeChangeListener) {
-        self.toolPkgManager
-            .addToolPkgRuntimeChangeListener(listener, self.getEnabledToolPkgContainerRuntimes());
+        let activeContainers = self.getEnabledToolPkgContainerRuntimes();
+        {
+            let mut listeners = self.runtimeChangeListeners
+                .lock()
+                .expect("runtime change listeners mutex poisoned");
+            listeners.push(listener.clone());
+        }
+        listener(activeContainers);
     }
 
     #[allow(non_snake_case)]
     pub(crate) fn notifyToolPkgRuntimeChangeListeners(&self) {
-        self.toolPkgManager
-            .notifyToolPkgRuntimeChangeListeners(self.getEnabledToolPkgContainerRuntimes());
+        let activeContainers = self.getEnabledToolPkgContainerRuntimes();
+        let listeners = self.runtimeChangeListeners
+            .lock()
+            .expect("runtime change listeners mutex poisoned")
+            .clone();
+        for listener in listeners {
+            listener(activeContainers.clone());
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1413,7 +1459,7 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn loadAvailablePackages(&mut self) {
         let previousContainerNames = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntimes()
             .into_iter()
             .map(|runtime| runtime.packageName)
@@ -1428,7 +1474,7 @@ impl PackageManager {
             .cloned()
             .collect::<BTreeSet<_>>();
         for packageName in previousContainerNames.union(&nextContainerNames) {
-            self.toolPkgManager
+            self.toolPkgRuntime
                 .destroyDefaultToolPkgExecutionEngine(packageName);
         }
         self.applyPackageScanSnapshot(mergedSnapshot);
@@ -1441,8 +1487,8 @@ impl PackageManager {
 
         for (packageName, toolPackage) in self.availablePackages.clone() {
             if toolPackage.is_built_in
-                || self.toolPkgManager.hasSubpackage(&packageName)
-                || self.toolPkgManager.isToolPkgContainer(&packageName)
+                || self.toolPkgRuntime.hasSubpackage(&packageName)
+                || self.toolPkgRuntime.isToolPkgContainer(&packageName)
             {
                 continue;
             }
@@ -1479,7 +1525,7 @@ impl PackageManager {
             });
         }
 
-        for runtime in self.toolPkgManager.getToolPkgContainerRuntimes() {
+        for runtime in self.toolPkgRuntime.getToolPkgContainerRuntimes() {
             if runtime.sourceType != ToolPkgSourceType::EXTERNAL {
                 continue;
             }
@@ -1723,12 +1769,14 @@ impl PackageManager {
             }
         } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
             match fs::read_to_string(path).and_then(|content| {
-                self.parsePackageMetadata(&content, "")
-                    .map(|package| ToolPackage {
-                        is_built_in: true,
-                        ..package
-                    })
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+                crate::core::tools::packTool::ToolPkgJsPackageParser::parseToolPackageMetadata(
+                    &content, "",
+                )
+                .map(|package| ToolPackage {
+                    is_built_in: true,
+                    ..package
+                })
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
             }) {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
@@ -1761,8 +1809,10 @@ impl PackageManager {
             result.toolPackage = self.loadPackageFromJsFile(path);
         } else if lowerPath.ends_with(".hjson") {
             match fs::read_to_string(path).and_then(|content| {
-                self.parsePackageMetadata(&content, "")
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+                crate::core::tools::packTool::ToolPkgJsPackageParser::parseToolPackageMetadata(
+                    &content, "",
+                )
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
             }) {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
@@ -1860,8 +1910,8 @@ impl PackageManager {
     #[allow(non_snake_case)]
     fn applyPackageScanSnapshot(&mut self, snapshot: PackageScanSnapshot) {
         self.availablePackages = snapshot.availablePackages;
-        self.toolPkgManager
-            .replaceRuntimeMaps(snapshot.toolPkgContainers, snapshot.toolPkgSubpackages);
+        self.toolPkgRuntime
+            .replaceRuntimeMaps(snapshot.toolPkgContainers);
     }
 
     #[allow(non_snake_case)]
@@ -2190,7 +2240,7 @@ impl PackageManager {
             };
             let packageName = loadResult.containerPackage.name.clone();
             if !self
-                .toolPkgManager
+                .toolPkgRuntime
                 .canRegisterToolPkg(&loadResult, &self.availablePackages)
             {
                 return format!(
@@ -2232,7 +2282,9 @@ impl PackageManager {
                 Ok(value) => value,
                 Err(error) => return format!("Error importing package: {error}"),
             };
-            match self.parsePackageMetadata(&content, "") {
+            match crate::core::tools::packTool::ToolPkgJsPackageParser::parseToolPackageMetadata(
+                &content, "",
+            ) {
                 Ok(value) => value,
                 Err(error) => return format!("Error importing package: {error}"),
             }
@@ -2253,10 +2305,8 @@ impl PackageManager {
         };
 
         if self.availablePackages.contains_key(&packageMetadata.name)
-            || self
-                .toolPkgManager
-                .isToolPkgContainer(&packageMetadata.name)
-            || self.toolPkgManager.hasSubpackage(&packageMetadata.name)
+            || self.toolPkgRuntime.isToolPkgContainer(&packageMetadata.name)
+            || self.toolPkgRuntime.hasSubpackage(&packageMetadata.name)
         {
             return format!(
                 "A package with name '{}' already exists in available packages",
@@ -2316,10 +2366,7 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn getToolPkgMainScriptInternal(&self, containerPackageName: &str) -> Option<String> {
         let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
-        self.toolPkgManager.getToolPkgMainScriptInternal(
-            &normalizedContainerPackageName,
-            &self.getEnabledPackageNames(),
-        )
+        self.toolPkgRuntime.getToolPkgMainScript(&normalizedContainerPackageName).ok()
     }
 
     #[allow(non_snake_case)]
@@ -2701,7 +2748,7 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn removeFromCachesAfterDelete(&mut self, packageName: &str) {
-        if let Some(container) = self.toolPkgManager.removeToolPkgContainer(packageName) {
+        if let Some(container) = self.toolPkgRuntime.removeToolPkgContainer(packageName) {
             self.availablePackages.remove(packageName);
             for subpackage in container.subpackages {
                 self.availablePackages.remove(&subpackage.packageName);
@@ -2721,7 +2768,7 @@ impl PackageManager {
         }
 
         if let Some(containerRuntime) = self
-            .toolPkgManager
+            .toolPkgRuntime
             .getToolPkgContainerRuntime(&normalizedPackageName)
         {
             if containerRuntime.sourceType == ToolPkgSourceType::EXTERNAL {
@@ -2843,108 +2890,7 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn parseJsPackage(&self, jsContent: &str) -> Result<ToolPackage, String> {
-        let metadataString = self.extractMetadataFromJs(jsContent);
-        let packageMetadata = self.parsePackageMetadata(&metadataString, jsContent)?;
-        let tools = packageMetadata
-            .tools
-            .into_iter()
-            .map(|tool| PackageTool {
-                script: jsContent.to_string(),
-                ..tool
-            })
-            .collect::<Vec<_>>();
-        let states = packageMetadata
-            .states
-            .into_iter()
-            .map(|state| ToolPackageState {
-                tools: state
-                    .tools
-                    .into_iter()
-                    .map(|tool| PackageTool {
-                        script: jsContent.to_string(),
-                        ..tool
-                    })
-                    .collect(),
-                ..state
-            })
-            .collect();
-        Ok(ToolPackage {
-            tools,
-            states,
-            ..packageMetadata
-        })
-    }
-
-    #[allow(non_snake_case)]
-    fn parsePackageMetadata(
-        &self,
-        metadataString: &str,
-        script: &str,
-    ) -> Result<ToolPackage, String> {
-        let normalized = normalizeHjsonLikeMetadata(metadataString);
-        let value: serde_json::Value =
-            json5::from_str(&normalized).map_err(|error| error.to_string())?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| "Package metadata must be an object".to_string())?;
-
-        let name = stringField(object, "name");
-        if name.is_empty() {
-            return Err("Package metadata must have a name".to_string());
-        }
-        let toolsValue = object
-            .get("tools")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let tools = toolsValue
-            .iter()
-            .filter_map(|value| parsePackageTool(value, script).ok())
-            .collect::<Vec<_>>();
-        let states = object
-            .get("states")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|value| parsePackageState(value, script).ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let env = object
-            .get("env")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| items.iter().filter_map(parseEnvVar).collect::<Vec<_>>())
-            .unwrap_or_default();
-
-        Ok(ToolPackage {
-            name,
-            description: localizedTextField(object.get("description")),
-            tools,
-            states,
-            env,
-            is_built_in: boolField(object, "isBuiltIn") || boolField(object, "is_built_in"),
-            enabled_by_default: boolField(object, "enabledByDefault")
-                || boolField(object, "enabled_by_default"),
-            display_name: localizedTextField(
-                object
-                    .get("display_name")
-                    .or_else(|| object.get("displayName")),
-            ),
-            category: stringField(object, "category").if_empty_then("Other"),
-            author: stringListField(object.get("author")),
-        })
-    }
-
-    #[allow(non_snake_case)]
-    fn extractMetadataFromJs(&self, jsContent: &str) -> String {
-        let metadataPattern =
-            regex::Regex::new(r"/\*\s*METADATA\s*([\s\S]*?)\*/").expect("valid metadata regex");
-        metadataPattern
-            .captures(jsContent)
-            .and_then(|captures| captures.get(1))
-            .map(|metadata| metadata.as_str().trim().to_string())
-            .unwrap_or_else(|| "{}".to_string())
+        crate::core::tools::packTool::ToolPkgJsPackageParser::parseToolPkgJsPackage(jsContent)
     }
 
     #[allow(non_snake_case)]
@@ -3249,308 +3195,6 @@ fn buildConditionCapabilitiesSnapshot() -> BTreeMap<String, ConditionValue> {
         ),
         ("ui.shower_display".to_string(), ConditionValue::Bool(false)),
     ])
-}
-
-trait EmptyStringExt {
-    fn if_empty_then(self, value: &str) -> String;
-}
-
-impl EmptyStringExt for String {
-    fn if_empty_then(self, value: &str) -> String {
-        if self.trim().is_empty() {
-            value.to_string()
-        } else {
-            self
-        }
-    }
-}
-
-fn stringField(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
-    object
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_string()
-}
-
-fn boolField(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
-    match object.get(key) {
-        Some(serde_json::Value::Bool(value)) => *value,
-        Some(serde_json::Value::Number(value)) => value.as_i64().unwrap_or(0) != 0,
-        Some(serde_json::Value::String(value)) => {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "true" | "1" | "yes" | "on"
-            )
-        }
-        _ => false,
-    }
-}
-
-fn localizedTextField(value: Option<&serde_json::Value>) -> LocalizedText {
-    match value {
-        Some(serde_json::Value::String(text)) => {
-            let mut values = std::collections::HashMap::new();
-            values.insert("default".to_string(), text.clone());
-            LocalizedText { values }
-        }
-        Some(serde_json::Value::Object(object)) => {
-            let mut values = std::collections::HashMap::new();
-            for (key, value) in object {
-                if let Some(text) = value.as_str() {
-                    values.insert(key.clone(), text.to_string());
-                }
-            }
-            LocalizedText { values }
-        }
-        _ => LocalizedText::default(),
-    }
-}
-
-fn stringListField(value: Option<&serde_json::Value>) -> Vec<String> {
-    match value {
-        Some(serde_json::Value::String(text)) => vec![text.trim().to_string()]
-            .into_iter()
-            .filter(|item| !item.is_empty())
-            .collect(),
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn parsePackageTool(value: &serde_json::Value, script: &str) -> Result<PackageTool, String> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| "Package tool must be an object".to_string())?;
-    let parameters = object
-        .get("parameters")
-        .and_then(serde_json::Value::as_array)
-        .map(|items| items.iter().filter_map(parsePackageToolParameter).collect())
-        .unwrap_or_default();
-    Ok(PackageTool {
-        name: stringField(object, "name"),
-        description: localizedTextField(object.get("description")),
-        parameters,
-        script: script.to_string(),
-        advice: boolField(object, "advice"),
-    })
-}
-
-fn parsePackageToolParameter(value: &serde_json::Value) -> Option<PackageToolParameter> {
-    let object = value.as_object()?;
-    Some(PackageToolParameter {
-        name: stringField(object, "name"),
-        description: localizedTextField(object.get("description")),
-        parameter_type: stringField(object, "type").if_empty_then("string"),
-        required: object
-            .get("required")
-            .map(|_| boolField(object, "required"))
-            .unwrap_or(true),
-    })
-}
-
-fn parsePackageState(value: &serde_json::Value, script: &str) -> Result<ToolPackageState, String> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| "Package state must be an object".to_string())?;
-    let tools = object
-        .get("tools")
-        .and_then(serde_json::Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| parsePackageTool(item, script).ok())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    Ok(ToolPackageState {
-        id: stringField(object, "id"),
-        condition: stringField(object, "condition").if_empty_then("true"),
-        inherit_tools: object
-            .get("inheritTools")
-            .or_else(|| object.get("inherit_tools"))
-            .and_then(|_| {
-                Some(boolField(object, "inheritTools") || boolField(object, "inherit_tools"))
-            })
-            .unwrap_or(false),
-        exclude_tools: object
-            .get("excludeTools")
-            .or_else(|| object.get("exclude_tools"))
-            .and_then(|value| Some(stringListField(Some(value))))
-            .unwrap_or_default(),
-        tools,
-    })
-}
-
-fn parseEnvVar(value: &serde_json::Value) -> Option<EnvVar> {
-    match value {
-        serde_json::Value::String(name) => Some(EnvVar {
-            name: name.trim().to_string(),
-            description: LocalizedText::default(),
-            required: true,
-            default_value: None,
-        }),
-        serde_json::Value::Object(object) => Some(EnvVar {
-            name: stringField(object, "name"),
-            description: localizedTextField(object.get("description")),
-            required: object
-                .get("required")
-                .map(|_| boolField(object, "required"))
-                .unwrap_or(true),
-            default_value: object
-                .get("defaultValue")
-                .or_else(|| object.get("default_value"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-        }),
-        _ => None,
-    }
-}
-
-#[allow(non_snake_case)]
-fn normalizeHjsonLikeMetadata(input: &str) -> String {
-    let mut lines = Vec::new();
-    for rawLine in input.lines() {
-        let line = stripInlineComment(rawLine).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        lines.push(normalizeBareWords(&line));
-    }
-
-    let mut output = String::new();
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            let previous = lines[index - 1].trim_end();
-            let current = line.trim_start();
-            if needsCommaBetween(previous, current) {
-                output.push(',');
-            }
-            output.push('\n');
-        }
-        output.push_str(line);
-    }
-    output
-}
-
-#[allow(non_snake_case)]
-fn stripInlineComment(line: &str) -> String {
-    let mut inString = false;
-    let mut quote = '\0';
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut index = 0usize;
-    while index < chars.len() {
-        let ch = chars[index];
-        if inString {
-            if ch == quote && (index == 0 || chars[index - 1] != '\\') {
-                inString = false;
-            }
-            index += 1;
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            inString = true;
-            quote = ch;
-            index += 1;
-            continue;
-        }
-        if ch == '/' && index + 1 < chars.len() && chars[index + 1] == '/' {
-            return chars[..index].iter().collect();
-        }
-        index += 1;
-    }
-    line.to_string()
-}
-
-#[allow(non_snake_case)]
-fn normalizeBareWords(line: &str) -> String {
-    let mut out = String::new();
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut index = 0usize;
-    let mut inString = false;
-    let mut quote = '\0';
-    while index < chars.len() {
-        let ch = chars[index];
-        out.push(ch);
-        if inString {
-            if ch == quote && (index == 0 || chars[index - 1] != '\\') {
-                inString = false;
-            }
-            index += 1;
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            inString = true;
-            quote = ch;
-            index += 1;
-            continue;
-        }
-        if ch == ':' {
-            let mut lookahead = index + 1;
-            while lookahead < chars.len() && chars[lookahead].is_whitespace() {
-                out.push(chars[lookahead]);
-                lookahead += 1;
-            }
-            if lookahead >= chars.len() {
-                index = lookahead;
-                continue;
-            }
-            let next = chars[lookahead];
-            if next == '"'
-                || next == '\''
-                || next == '{'
-                || next == '['
-                || next == '-'
-                || next.is_ascii_digit()
-            {
-                index = lookahead;
-                continue;
-            }
-            let mut end = lookahead;
-            while end < chars.len() {
-                let c = chars[end];
-                if c == ',' || c == '}' || c == ']' {
-                    break;
-                }
-                end += 1;
-            }
-            let rawValue = chars[lookahead..end].iter().collect::<String>();
-            let value = rawValue.trim();
-            let lower = value.to_ascii_lowercase();
-            if matches!(lower.as_str(), "true" | "false" | "null") || value.is_empty() {
-                out.push_str(value);
-            } else {
-                out.push('"');
-                out.push_str(&value.replace('"', "\\\""));
-                out.push('"');
-            }
-            index = end;
-            continue;
-        }
-        index += 1;
-    }
-    out
-}
-
-#[allow(non_snake_case)]
-fn needsCommaBetween(previous: &str, current: &str) -> bool {
-    if previous.is_empty()
-        || previous.ends_with(',')
-        || previous.ends_with('{')
-        || previous.ends_with('[')
-        || current.starts_with('}')
-        || current.starts_with(']')
-    {
-        return false;
-    }
-    true
 }
 
 #[allow(non_snake_case)]

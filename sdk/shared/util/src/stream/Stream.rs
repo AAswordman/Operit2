@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::util::AppLogger::AppLogger;
+use crate::AppLogger::AppLogger;
 
 pub struct StreamLogger;
 

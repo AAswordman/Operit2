@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::data::mcp::plugins::MCPBridge::MCPBridge;

@@ -8,19 +8,19 @@ use operit_host_api::{
     HttpRequestData, SystemOperationHost,
 };
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
+use operit_tools::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
-use crate::api::chat::enhance::ToolExecutionManager::ToolExecutionManager;
-use crate::api::chat::enhance::ToolExecutionManager::{
+use operit_tools::ToolExecutionManager::ToolExecutionManager;
+use operit_tools::ToolExecutionManager::{
     AITool, ToolExecutor, ToolParameter, ToolValidationResult,
 };
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::core::tools::ToolExecutionLimits::ToolExecutionLimits;
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ToolResultDataClasses::{
     stringResultData, BinaryFileContentData, DirectoryListingData, FileApplyResultData,
     FileContentData, FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
     FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,

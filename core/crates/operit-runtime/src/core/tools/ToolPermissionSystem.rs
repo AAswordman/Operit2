@@ -8,7 +8,7 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
+use operit_tools::ToolExecutionManager::AITool;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionLevel {

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::skill::SkillRepository::SkillRepository;

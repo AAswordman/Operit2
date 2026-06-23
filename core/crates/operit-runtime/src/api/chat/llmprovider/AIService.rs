@@ -9,7 +9,7 @@ use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
     RevisableTextStreamLike,
 };
-use crate::util::stream::Stream::VecStream;
+use operit_util::stream::Stream::VecStream;
 use async_trait::async_trait;
 use serde_json::Value;
 use thiserror::Error;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use operit_host_api::{AudioPlaybackHost, TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::data::model::TtsConfig::{
     TtsConfig, TtsHostPlaybackResult, TtsPlaybackResult, TtsProviderType,
 };

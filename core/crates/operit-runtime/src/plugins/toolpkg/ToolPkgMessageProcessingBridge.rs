@@ -9,8 +9,8 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingPlugin, MessageProcessingPluginRegistry,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
+use operit_tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgMessageProcessingHookRegistration,
 };

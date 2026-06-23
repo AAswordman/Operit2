@@ -9,7 +9,7 @@ use crate::data::model::Memory::{
 use crate::data::model::MemoryExportModel::{
     ImportStrategy, MemoryExportData, MemoryImportResult, SerializableLink, SerializableMemory,
 };
-use crate::util::OperitPaths::{memoryLinkSqlitePath, memorySqlitePath};
+use operit_util::OperitPaths::{memoryLinkSqlitePath, memorySqlitePath};
 use operit_store::ObjectBoxStore::ObjectBox;
 
 #[derive(Clone)]

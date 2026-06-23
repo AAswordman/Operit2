@@ -3,11 +3,11 @@ use std::sync::{Mutex, OnceLock};
 
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolExecutor, ToolValidationResult,
 };
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ToolResultDataClasses::{
     stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
     MemoryQueryResultData, ToolResultData,
 };
@@ -16,7 +16,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
-use crate::util::OperitPaths::{
+use operit_util::OperitPaths::{
     characterMemoryOwnerKey, parseMemoryOwnerKey, sharedMemoryOwnerKey,
 };
 

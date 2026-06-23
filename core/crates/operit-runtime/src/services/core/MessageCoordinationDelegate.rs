@@ -27,7 +27,7 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::util::stream::Stream::Stream;
+use operit_util::stream::Stream::Stream;
 use crate::util::ChainLogger::{self, SEND_CHAIN};
 
 #[derive(Clone, Debug, PartialEq)]

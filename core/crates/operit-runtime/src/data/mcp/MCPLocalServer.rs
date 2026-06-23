@@ -3,7 +3,7 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[derive(Clone, Debug)]

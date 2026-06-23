@@ -1,10 +1,8 @@
 [workspace]
 members = [
-    "crates/operit-host-api",
     "crates/operit-command-core",
     "crates/operit-core-proxy",
     "crates/operit-link",
-    "crates/operit-store",
     "crates/operit-runtime",
 ]
 resolver = "2"

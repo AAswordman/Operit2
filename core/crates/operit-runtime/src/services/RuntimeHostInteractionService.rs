@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::util::stream::Stream::Stream;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
+use operit_util::stream::Stream::Stream;
 
 tokio::task_local! {
     static RUNTIME_HOST_INTERACTION_ORIGIN: RuntimeHostInteractionRequestOrigin;

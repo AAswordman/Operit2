@@ -32,6 +32,10 @@ def _plugin_packages_root() -> Path:
     return _plugins_root() / "packages"
 
 
+def _toolpkg_sdk_types_root() -> Path:
+    return _repo_root() / "sdk" / "toolpkg-runtime" / "types"
+
+
 def _find_manifest_file(folder: Path) -> Path | None:
     for file_name in MANIFEST_FILENAMES:
         manifest = folder / file_name
@@ -128,7 +132,7 @@ def _collect_prebuild_inputs(source_dir: Path, child_dir: Path) -> list[Path]:
             continue
         if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
             paths.append(file_path)
-    types_dir = _plugins_root() / "types"
+    types_dir = _toolpkg_sdk_types_root()
     if types_dir.is_dir():
         for file_path in types_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
@@ -150,7 +154,7 @@ def _collect_root_prebuild_inputs(source_dir: Path) -> list[Path]:
     for file_path in source_dir.iterdir():
         if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:
             paths.append(file_path)
-    types_dir = _plugins_root() / "types"
+    types_dir = _toolpkg_sdk_types_root()
     if types_dir.is_dir():
         for file_path in types_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in {".ts", ".d.ts"}:

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use operit_host_api::HttpRequestData;
 use serde_json::Value;
 
-use crate::core::application::OperitApplicationContext::defaultHttpHost;
+use operit_context::OperitApplicationContext::defaultHttpHost;
 use crate::data::model::TtsCatalog::TtsCatalog;
 use crate::data::model::TtsConfig::{
     AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsProviderCatalogEntry, TtsProviderOperationSpec,

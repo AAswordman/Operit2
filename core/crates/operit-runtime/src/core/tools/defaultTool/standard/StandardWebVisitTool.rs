@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
 use reqwest::Url;
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_tools::ToolResultDataClasses::{
     stringResultData, LinkData, ToolResultData, VisitWebResultData,
 };
 

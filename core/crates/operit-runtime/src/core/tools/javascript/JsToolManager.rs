@@ -3,15 +3,15 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
 use crate::core::tools::javascript::JsEngine::JsEngine;
 use crate::core::tools::javascript::JsExecutionResultProtocol::{
     extractJsExecutionFailure, JsExecutionFailure,
 };
 use crate::core::tools::packTool::PackageManager::PackageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct JsToolManager {
@@ -416,9 +416,9 @@ impl JsToolManager {
 #[cfg(test)]
 mod tests {
     use super::JsToolManager;
-    use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+    use operit_context::OperitApplicationContext::OperitApplicationContext;
     use crate::core::tools::packTool::PackageManager::PackageManager;
-    use crate::core::tools::packTool::ToolPkgParser::{
+    use operit_tools::packTool::ToolPkgParser::{
         ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
     };
     use crate::core::tools::AIToolHandler::AIToolHandler;

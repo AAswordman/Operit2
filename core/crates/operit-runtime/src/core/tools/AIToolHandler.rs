@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPManager::MCPManager;
 use crate::core::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use crate::core::tools::packTool::PackageManager::PackageManager;
@@ -11,7 +11,7 @@ use crate::core::tools::AIToolHook::AIToolHook;
 use crate::core::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use crate::core::tools::ToolPermissionSystem::ToolPermissionSystem;
 use crate::core::tools::ToolRegistration::registerAllTools;
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ToolResultDataClasses::stringResultData;
 use crate::util::ChainLogger::{self, TOOL_CHAIN};
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -30,6 +30,11 @@ pub struct AIToolHandler {
     inner: Arc<Mutex<AIToolHandlerState>>,
 }
 
+pub trait ExternalToolInvocationBridge: Send + Sync {
+    #[allow(non_snake_case)]
+    fn invokeTool(&self, tool: &AITool) -> Vec<ToolResult>;
+}
+
 pub struct AIToolHandlerState {
     availableTools: BTreeMap<String, Box<dyn ToolExecutor>>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
@@ -38,6 +43,7 @@ pub struct AIToolHandlerState {
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
     packageManager: Option<Arc<Mutex<PackageManager>>>,
+    externalToolBridge: Option<Arc<dyn ExternalToolInvocationBridge>>,
 }
 
 impl AIToolHandler {
@@ -81,6 +87,7 @@ impl AIToolHandler {
                 hooks: Vec::new(),
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
                 packageManager: None,
+                externalToolBridge: None,
             })),
         }
     }
@@ -97,6 +104,7 @@ impl AIToolHandler {
                     hooks: Vec::new(),
                     toolPermissionSystem: ToolPermissionSystem::getInstance(),
                     packageManager: None,
+                    externalToolBridge: None,
                 }))
             })
             .clone();
@@ -184,6 +192,29 @@ impl AIToolHandler {
             .expect("AIToolHandler mutex poisoned")
             .hooks
             .clear();
+    }
+
+    #[allow(non_snake_case)]
+    pub fn setExternalToolBridge(&mut self, bridge: Option<Arc<dyn ExternalToolInvocationBridge>>) {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .externalToolBridge = bridge;
+    }
+
+    #[allow(non_snake_case)]
+    fn externalToolBridge(&self) -> Option<Arc<dyn ExternalToolInvocationBridge>> {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .externalToolBridge
+            .clone()
+    }
+
+    #[allow(non_snake_case)]
+    fn invokeExternalToolBridge(&self, tool: &AITool) -> Option<Vec<ToolResult>> {
+        self.externalToolBridge()
+            .map(|bridge| bridge.invokeTool(tool))
     }
 
     fn notifyHooks<F>(&self, action: F)
@@ -501,6 +532,17 @@ impl AIToolHandler {
             ],
         );
         if !self.getToolExecutorOrActivate(&tool.name) {
+            if let Some(collected) = self.invokeExternalToolBridge(tool) {
+                ChainLogger::info(
+                    TOOL_CHAIN,
+                    "tool.stream.external_done",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultCount", collected.len().to_string()),
+                    ],
+                );
+                return Some(collected);
+            }
             ChainLogger::warn(
                 TOOL_CHAIN,
                 "tool.stream.not_found",
@@ -516,6 +558,17 @@ impl AIToolHandler {
                 .availableTools
                 .remove(&tool.name)
         }) else {
+            if let Some(collected) = self.invokeExternalToolBridge(tool) {
+                ChainLogger::info(
+                    TOOL_CHAIN,
+                    "tool.stream.external_done",
+                    &[
+                        ("tool", tool.name.clone()),
+                        ("resultCount", collected.len().to_string()),
+                    ],
+                );
+                return Some(collected);
+            }
             ChainLogger::warn(
                 TOOL_CHAIN,
                 "tool.stream.not_registered",
@@ -653,6 +706,37 @@ impl AIToolHandler {
                 .availableTools
                 .remove(&tool.name)
         }) else {
+            if let Some(collected) = self.invokeExternalToolBridge(&tool) {
+                self.notifyToolExecutionStarted(&tool);
+                let result = collected.last().cloned().unwrap_or_else(|| ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some("External tool bridge returned no results.".to_string()),
+                });
+                self.notifyToolExecutionResult(&tool, &result);
+                self.notifyToolExecutionFinished(&tool);
+                if result.success {
+                    ChainLogger::info(
+                        TOOL_CHAIN,
+                        "tool.execute.external_done",
+                        &[
+                            ("tool", tool.name.clone()),
+                            (
+                                "resultChars",
+                                ChainLogger::lenField(&result.result.toString()),
+                            ),
+                        ],
+                    );
+                } else if let Some(error) = result.error.as_ref() {
+                    ChainLogger::error(
+                        TOOL_CHAIN,
+                        "tool.execute.external_error",
+                        &[("tool", tool.name.clone()), ("error", error.clone())],
+                    );
+                }
+                return result;
+            }
             let notFoundResult = ToolResult {
                 toolName: tool.name.clone(),
                 success: false,

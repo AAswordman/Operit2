@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::core::tools::javascript::JsEngine::JsEngine;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::*;
-use crate::core::tools::packTool::ToolPkgParser::{
+use operit_tools::packTool::ToolPkgCommonPluginConstants::*;
+use operit_tools::packTool::ToolPkgParser::{
     ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgRegisteredAiProvider,
     ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
     ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook,
@@ -28,11 +28,67 @@ impl ToolPkgMainRegistrationScriptParser {
     }
 
     #[allow(non_snake_case)]
+    pub fn parseWithLanguage(
+        script: &str,
+        toolPkgId: &str,
+        mainScriptPath: &str,
+        jsEngine: &JsEngine,
+        languageCode: &str,
+    ) -> ToolPkgMainRegistrationParseResult {
+        Self::parseWithLanguageAndTextResources(
+            script,
+            toolPkgId,
+            mainScriptPath,
+            jsEngine,
+            languageCode,
+            None,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    pub fn parseWithLanguageAndTextResources(
+        script: &str,
+        toolPkgId: &str,
+        mainScriptPath: &str,
+        jsEngine: &JsEngine,
+        languageCode: &str,
+        textResources: Option<Arc<BTreeMap<String, String>>>,
+    ) -> ToolPkgMainRegistrationParseResult {
+        Self::parseWithTextResourcesInternal(
+            script,
+            toolPkgId,
+            mainScriptPath,
+            jsEngine,
+            Some(languageCode),
+            textResources,
+        )
+    }
+
+    #[allow(non_snake_case)]
     pub(crate) fn parseWithTextResources(
         script: &str,
         toolPkgId: &str,
         mainScriptPath: &str,
         jsEngine: &JsEngine,
+        textResources: Option<Arc<BTreeMap<String, String>>>,
+    ) -> ToolPkgMainRegistrationParseResult {
+        Self::parseWithTextResourcesInternal(
+            script,
+            toolPkgId,
+            mainScriptPath,
+            jsEngine,
+            None,
+            textResources,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    fn parseWithTextResourcesInternal(
+        script: &str,
+        toolPkgId: &str,
+        mainScriptPath: &str,
+        jsEngine: &JsEngine,
+        languageCode: Option<&str>,
         textResources: Option<Arc<BTreeMap<String, String>>>,
     ) -> ToolPkgMainRegistrationParseResult {
         let mut params = BTreeMap::new();
@@ -53,6 +109,14 @@ impl ToolPkgMainRegistrationScriptParser {
             "__operit_script_screen".to_string(),
             Value::String(mainScriptPath.to_string()),
         );
+        if let Some(languageCode) = languageCode {
+            if !languageCode.trim().is_empty() {
+                params.insert(
+                    "__operit_package_lang".to_string(),
+                    Value::String(languageCode.trim().to_string()),
+                );
+            }
+        }
 
         let capturedResult: Result<
             crate::core::tools::javascript::JsToolPkgRegistration::ToolPkgMainRegistrationCapture,

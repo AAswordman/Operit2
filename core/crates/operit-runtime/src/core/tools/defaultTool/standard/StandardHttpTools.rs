@@ -12,9 +12,9 @@ use operit_host_api::{
 use serde_json::{json, Map, Value};
 use url::Url;
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::{
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_tools::ToolResultDataClasses::{
     stringResultData, HttpResponseData, ToolResultData,
 };
 

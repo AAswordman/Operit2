@@ -5,8 +5,8 @@ use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
-    AiServiceError, SendMessageRequest, TokenCounts,
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -15,7 +15,7 @@ use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
 };
-use crate::util::stream::Stream::FnStream;
+use operit_util::stream::Stream::FnStream;
 use crate::util::ChatMarkupRegex::ChatMarkupRegex;
 
 #[derive(Clone)]
@@ -103,7 +103,10 @@ impl ClaudeProvider {
         }
     }
 
-    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
@@ -686,10 +689,14 @@ impl ClaudeProvider {
         let mut non_sse_json_lines_buffer = String::new();
         let mut emitted_any = false;
 
-        while let Some(item) = bytes_stream.next().await {
-            if self.is_cancelled() {
+        loop {
+            let item = tokio::select! {
+                item = bytes_stream.next() => item,
+                _ = self.clone().waitUntilCancelled() => break,
+            };
+            let Some(item) = item else {
                 break;
-            }
+            };
             let bytes =
                 item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             pending_line.push_str(&String::from_utf8_lossy(&bytes));

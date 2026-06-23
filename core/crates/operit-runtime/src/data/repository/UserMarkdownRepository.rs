@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::util::OperitPaths::{memoryStoreRootPath, userMarkdownPath};
+use operit_util::OperitPaths::{memoryStoreRootPath, userMarkdownPath};
 
 #[derive(Clone, Debug)]
 pub struct UserMarkdownRepository {

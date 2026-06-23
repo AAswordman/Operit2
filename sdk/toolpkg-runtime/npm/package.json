@@ -1,0 +1,22 @@
+{
+  "name": "@operit/toolpkg-runtime",
+  "version": "0.1.0",
+  "description": "Embeddable ToolPkg runtime client for Node and Electron hosts.",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "types/index.d.ts",
+  "bin": {
+    "toolpkg-runtime": "bin/toolpkg-runtime.js"
+  },
+  "files": [
+    "index.js",
+    "types",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

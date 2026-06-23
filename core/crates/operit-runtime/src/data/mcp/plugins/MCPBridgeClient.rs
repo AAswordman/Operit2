@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::data::mcp::plugins::MCPBridge::{MCPBridge, ServiceInfo};
 
 pub struct MCPBridgeClient {

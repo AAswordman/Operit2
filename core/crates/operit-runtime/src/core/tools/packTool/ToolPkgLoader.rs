@@ -4,11 +4,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::core::tools::javascript::JsEngine::JsEngine;
-use crate::core::tools::packTool::ToolPkgParser::{
+use operit_tools::packTool::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
 use crate::core::tools::ToolPackage::ToolPackage;
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 const TAG: &str = "ToolPkg";
 
@@ -170,7 +170,7 @@ fn parseMainRegistration(
 #[allow(non_snake_case)]
 fn readToolPkgTextResources<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
-    entryIndex: &crate::core::tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
+    entryIndex: &operit_tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
 ) -> std::collections::BTreeMap<String, String> {
     let mut resources = std::collections::BTreeMap::new();
     for entryName in &entryIndex.entryNames {
@@ -184,7 +184,7 @@ fn readToolPkgTextResources<R: std::io::Read + std::io::Seek>(
 #[allow(non_snake_case)]
 fn readIndexedTextResource(
     textResources: &std::collections::BTreeMap<String, String>,
-    entryIndex: &crate::core::tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
+    entryIndex: &operit_tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
     rawPath: &str,
 ) -> Option<String> {
     let entryName = entryIndex.resolveEntryName(rawPath)?;

@@ -6,8 +6,8 @@ use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::AIService::{
-    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
-    AiServiceError, SendMessageRequest, TokenCounts,
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
 };
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
@@ -20,7 +20,7 @@ use crate::data::model::ToolPrompt::ToolPrompt;
 use crate::util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
 };
-use crate::util::stream::Stream::FnStream;
+use operit_util::stream::Stream::FnStream;
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 #[derive(Clone)]
@@ -136,7 +136,10 @@ impl GeminiProvider {
         }
     }
 
-    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
@@ -612,16 +615,20 @@ impl GeminiProvider {
         let mut retryCount = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
-                .post(self.request_url(true))
-                .headers(self.headers()?)
-                .json(&request_body)
-                .send()
+            let response = match self
+                .sendHttpRequest(
+                    reqwest::Client::new()
+                        .post(self.request_url(true))
+                        .headers(self.headers()?)
+                        .json(&request_body),
+                )
                 .await
             {
                 Ok(response) => response,
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
                 Err(error) => {
-                    let error = AiServiceError::ConnectionFailed(error.to_string());
                     let errorText = retry_error_text(&error);
                     if !request.enable_retry {
                         return Err(error);
@@ -633,17 +640,14 @@ impl GeminiProvider {
                     if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                         on_non_fatal_error(retry_message(&errorText, newRetryCount));
                     }
-                    delay_retry_ms(newRetryCount).await;
+                    self.delayRetryOrCancel(newRetryCount).await?;
                     retryCount = newRetryCount;
                     continue;
                 }
             };
             let status = response.status();
             if !status.is_success() {
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let text = self.readResponseText(response).await?;
                 let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
                 let errorText = retry_error_text(&error);
                 if !request.enable_retry {
@@ -656,12 +660,15 @@ impl GeminiProvider {
                 if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                     on_non_fatal_error(retry_message(&errorText, newRetryCount));
                 }
-                delay_retry_ms(newRetryCount).await;
+                self.delayRetryOrCancel(newRetryCount).await?;
                 retryCount = newRetryCount;
                 continue;
             }
             match self.process_streaming_response(response).await {
                 Ok(responseStream) => return Ok(responseStream),
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
                 Err(error) => {
                     let errorText = retry_error_text(&error);
                     if !request.enable_retry {
@@ -674,11 +681,85 @@ impl GeminiProvider {
                     if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                         on_non_fatal_error(retry_message(&errorText, newRetryCount));
                     }
-                    delay_retry_ms(newRetryCount).await;
+                    self.delayRetryOrCancel(newRetryCount).await?;
                     retryCount = newRetryCount;
                     continue;
                 }
             }
+        }
+    }
+
+    async fn send_non_streaming_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
+        let mut retryCount = 0;
+        loop {
+            let request_body = self.create_request_body(&request)?;
+            let response = match self
+                .sendHttpRequest(
+                    reqwest::Client::new()
+                        .post(self.request_url(false))
+                        .headers(self.headers()?)
+                        .json(&request_body),
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled);
+                }
+                Err(error) => {
+                    let errorText = retry_error_text(&error);
+                    if !request.enable_retry {
+                        return Err(error);
+                    }
+                    let newRetryCount = retryCount + 1;
+                    if newRetryCount > maxRetries {
+                        return Err(error);
+                    }
+                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                    }
+                    self.delayRetryOrCancel(newRetryCount).await?;
+                    retryCount = newRetryCount;
+                    continue;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let text = self.readResponseText(response).await?;
+                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
+                let errorText = retry_error_text(&error);
+                if !request.enable_retry {
+                    return Err(error);
+                }
+                let newRetryCount = retryCount + 1;
+                if newRetryCount > maxRetries {
+                    return Err(error);
+                }
+                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
+                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
+                }
+                self.delayRetryOrCancel(newRetryCount).await?;
+                retryCount = newRetryCount;
+                continue;
+            }
+
+            let json_response = self.readResponseJson(response).await?;
+            let mut chunks = Vec::new();
+            let content = self.extract_content_from_json(&json_response)?;
+            if content.is_empty() {
+                chunks.push(" ".to_string());
+            } else {
+                chunks.push(content);
+            }
+            if self.isInThinkingMode {
+                chunks.push("</think>".to_string());
+                self.isInThinkingMode = false;
+            }
+            return Ok(response_stream_from_chunks(chunks));
         }
     }
 
@@ -689,10 +770,14 @@ impl GeminiProvider {
         let mut chunks = Vec::new();
         let mut pending = String::new();
         let mut bytes_stream = response.bytes_stream();
-        while let Some(item) = bytes_stream.next().await {
-            if self.is_cancelled() {
+        loop {
+            let item = tokio::select! {
+                item = bytes_stream.next() => item,
+                _ = self.clone().waitUntilCancelled() => break,
+            };
+            let Some(item) = item else {
                 break;
-            }
+            };
             let bytes =
                 item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
             pending.push_str(&String::from_utf8_lossy(&bytes));

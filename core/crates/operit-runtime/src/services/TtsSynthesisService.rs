@@ -7,7 +7,7 @@ use operit_store::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::api::voice::VoiceServiceFactory::VoiceServiceFactory;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::data::model::TtsConfig::{TtsConfig, TtsSynthesisResult};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;

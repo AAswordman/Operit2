@@ -23,10 +23,10 @@ mdns-sd = "0.12"
 include_dir = "0.7"
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
-operit-host-api = { path = "../../core/crates/operit-host-api" }
+operit-host-api = { path = "../../sdk/shared/host-api" }
 operit-link = { path = "../../core/crates/operit-link" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }
-operit-store = { path = "../../core/crates/operit-store" }
+operit-store = { path = "../../sdk/shared/store" }
 ratatui = "0.28"
 unicode-width = "0.1"
 rand_core = { version = "0.6", features = ["getrandom"] }

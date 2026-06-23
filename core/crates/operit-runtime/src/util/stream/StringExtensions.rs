@@ -1,4 +1,4 @@
-use crate::util::stream::Stream::VecStream;
+use operit_util::stream::Stream::VecStream;
 
 pub trait StringExtensions {
     fn stream(&self) -> VecStream<char>;

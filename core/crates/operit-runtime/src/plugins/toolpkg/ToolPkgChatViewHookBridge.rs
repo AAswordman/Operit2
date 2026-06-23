@@ -3,8 +3,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
+use operit_tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     toolPkgPackageManager, ToolPkgChatViewHookRegistration,
 };

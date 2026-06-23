@@ -10,7 +10,7 @@ use crate::core::tools::javascript::JsInitRuntimeScriptBuilder;
 use crate::core::tools::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
 use crate::core::tools::javascript::JsToolPkgRegistration::buildToolPkgRegistrationBridgeScript;
 use crate::core::tools::javascript::JsTools::getJsToolsDefinition;
-use crate::util::OperitPaths;
+use operit_util::OperitPaths;
 
 pub struct JsBootstrapModule {
     pub fileName: String,

@@ -1,4 +1,4 @@
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::defaultTool::standard::StandardBrowserAutomationTools::StandardBrowserAutomationTools;
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools;
 use crate::core::tools::defaultTool::standard::StandardHttpTools::StandardHttpTools;

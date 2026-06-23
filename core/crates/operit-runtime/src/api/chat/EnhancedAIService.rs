@@ -8,7 +8,7 @@ use operit_store::PreferencesDataStore::MutableStateFlow;
 use regex::Regex;
 use serde_json::{json, Value};
 
-use crate::api::chat::enhance::ConversationMarkupManager::{
+use operit_tools::ConversationMarkupManager::{
     ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
     ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
 };
@@ -17,7 +17,7 @@ use crate::api::chat::enhance::ConversationService::{
     PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
 };
 use crate::api::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
-use crate::api::chat::enhance::ToolExecutionManager::{
+use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
 use crate::api::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
@@ -49,11 +49,11 @@ use crate::data::repository::UserMarkdownRepository::UserMarkdownRepository;
 use crate::data::skill::SkillRepository::SkillRepository;
 use crate::util::stream::RevisableTextStream::RevisableTextStreamLike;
 use crate::util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
-use crate::util::stream::Stream::{FnStream, Stream};
-use crate::util::AppLogger::AppLogger;
+use operit_util::stream::Stream::{FnStream, Stream};
+use operit_util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
-use crate::util::OperitPaths::characterMemoryOwnerKey;
+use operit_util::OperitPaths::characterMemoryOwnerKey;
 
 const TAG: &str = "EnhancedAIService";
 
@@ -427,7 +427,7 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             .collect::<Vec<_>>();
         drop(package_manager_guard);
         let skill_packages = SkillRepository::getInstance(
-            &crate::core::application::OperitApplicationContext::OperitApplicationContext::new(),
+            &operit_context::OperitApplicationContext::OperitApplicationContext::new(),
         )
         .getAiVisibleSkillPackages()
         .into_iter()
@@ -1670,7 +1670,7 @@ impl EnhancedAIService {
     pub async fn processToolResults(
         &mut self,
         collector: &SharedAiResponseStream,
-        results: Vec<crate::api::chat::enhance::ConversationMarkupManager::ToolResult>,
+        results: Vec<operit_tools::ConversationMarkupManager::ToolResult>,
         context: &mut MessageExecutionContext,
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,
@@ -2202,7 +2202,7 @@ impl EnhancedAIService {
     pub async fn handleToolInvocation(
         &mut self,
         collector: &SharedAiResponseStream,
-        toolInvocations: Vec<crate::api::chat::enhance::ToolExecutionManager::ToolInvocation>,
+        toolInvocations: Vec<operit_tools::ToolExecutionManager::ToolInvocation>,
         context: &mut MessageExecutionContext,
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,

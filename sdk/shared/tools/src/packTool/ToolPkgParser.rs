@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::*;
-use crate::core::tools::packTool::ToolPkgTemplateModels::{
+use crate::packTool::ToolPkgCommonPluginConstants::*;
+use crate::packTool::ToolPkgTemplateModels::{
     ToolPkgManifestWorkflowTemplate, ToolPkgManifestWorkspaceTemplate,
     ToolPkgWorkflowTemplateRuntime, ToolPkgWorkspaceTemplateRuntime,
 };
-use crate::core::tools::ToolPackage::{LocalizedText, ToolPackage};
+use crate::ToolPackage::{LocalizedText, ToolPackage};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolPkgSourceType {
@@ -370,10 +370,10 @@ pub struct ToolPkgContainerRuntime {
     pub resources: Vec<ToolPkgResourceRuntime>,
     #[serde(rename = "workflowTemplates")]
     pub workflowTemplates:
-        Vec<crate::core::tools::packTool::ToolPkgTemplateModels::ToolPkgWorkflowTemplateRuntime>,
+        Vec<crate::packTool::ToolPkgTemplateModels::ToolPkgWorkflowTemplateRuntime>,
     #[serde(rename = "workspaceTemplates")]
     pub workspaceTemplates:
-        Vec<crate::core::tools::packTool::ToolPkgTemplateModels::ToolPkgWorkspaceTemplateRuntime>,
+        Vec<crate::packTool::ToolPkgTemplateModels::ToolPkgWorkspaceTemplateRuntime>,
     #[serde(rename = "uiModules")]
     pub uiModules: Vec<ToolPkgUiModuleRuntime>,
     #[serde(rename = "uiRoutes")]

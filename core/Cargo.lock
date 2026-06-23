@@ -1276,6 +1276,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-context"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+]
+
+[[package]]
 name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
@@ -1329,8 +1336,11 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-context",
  "operit-host-api",
  "operit-store",
+ "operit-tools",
+ "operit-util",
  "quickjs-wasm-rs",
  "regex",
  "reqwest",
@@ -1341,6 +1351,7 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "toolpkg-runtime",
  "url",
  "uuid",
  "wasm-bindgen",
@@ -1357,6 +1368,29 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "operit-tools"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "json5",
+ "operit-host-api",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
+name = "operit-util"
+version = "0.1.0"
+dependencies = [
+ "operit-context",
+ "operit-host-api",
+ "operit-store",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2281,6 +2315,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "toolpkg-runtime"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64",
+ "chrono",
+ "flate2",
+ "getrandom 0.2.17",
+ "image",
+ "js-sys",
+ "json5",
+ "md-5",
+ "operit-context",
+ "operit-host-api",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "quickjs-wasm-rs",
+ "regex",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+ "zip",
 ]
 
 [[package]]

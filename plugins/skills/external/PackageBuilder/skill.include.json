@@ -9,7 +9,7 @@
       "target": "references/TOOLPKG_FORMAT_GUIDE.md"
     },
     {
-      "source": "../../../types",
+      "source": "../../../../sdk/toolpkg-runtime/types",
       "target": "types"
     },
     {

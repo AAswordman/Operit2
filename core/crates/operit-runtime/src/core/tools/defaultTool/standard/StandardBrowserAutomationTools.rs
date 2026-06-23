@@ -3,9 +3,9 @@ use std::sync::Arc;
 use operit_host_api::{BrowserAutomationHost, BrowserAutomationRequest};
 use serde_json::{Map, Value};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
-use crate::core::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolExecutor, ToolValidationResult};
+use operit_tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct StandardBrowserAutomationTools {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use operit_host_api::HostRuntimeEventRegistration;
 use serde_json::Value;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 
@@ -31,7 +31,7 @@ impl RuntimeEventIngressService {
                         let _ = service.ingestEvent(event);
                     }
                     Err(error) => {
-                        crate::util::AppLogger::AppLogger::e(
+                        operit_util::AppLogger::AppLogger::e(
                             "RuntimeEventIngress",
                             &format!("invalid host runtime event: {error}"),
                         );

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read};
 use std::sync::{Mutex, OnceLock};
 
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use crate::core::tools::AIToolHandler::AIToolHandler;
-use crate::core::tools::ToolResultDataClasses::ToolResultData;
+use operit_tools::ToolResultDataClasses::ToolResultData;
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
 use aes::{Aes128, Aes192, Aes256};
 use base64::Engine;
@@ -377,7 +377,7 @@ fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
 
 #[allow(non_snake_case)]
 fn serializeToolExecutionResult(
-    result: &crate::api::chat::enhance::ConversationMarkupManager::ToolResult,
+    result: &operit_tools::ConversationMarkupManager::ToolResult,
 ) -> String {
     let serializedData = serializeToolResultData(&result.result);
     let mut object = serde_json::Map::new();
@@ -468,8 +468,8 @@ pub fn callToolSync(
 #[cfg(test)]
 mod tests {
     use super::{serializeToolExecutionResult, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
-    use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-    use crate::core::tools::ToolResultDataClasses::{
+    use operit_tools::ConversationMarkupManager::ToolResult;
+    use operit_tools::ToolResultDataClasses::{
         BinaryResultData, StringResultData, TerminalCommandResultData, ToolResultData,
     };
     use serde_json::Value;

@@ -1,5 +1,5 @@
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
-use crate::util::stream::Stream::StreamLogger;
+use operit_util::stream::Stream::StreamLogger;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum JsonType {

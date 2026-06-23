@@ -10,5 +10,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "0.3"
-operit-host-api = { path = "../../core/crates/operit-host-api" }
+operit-host-api = { path = "../../sdk/shared/host-api" }
 wasm-bindgen = "0.2"

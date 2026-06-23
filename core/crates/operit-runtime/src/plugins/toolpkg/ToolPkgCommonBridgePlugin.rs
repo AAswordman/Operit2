@@ -34,7 +34,7 @@ impl OperitPlugin for ToolPkgCommonBridgePlugin {
 
 #[allow(non_snake_case)]
 fn syncToolPkgRegistrations(
-    activeContainers: Vec<crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime>,
+    activeContainers: Vec<operit_tools::packTool::ToolPkgParser::ToolPkgContainerRuntime>,
 ) {
     crate::plugins::toolpkg::ToolPkgMessageProcessingBridge::ToolPkgMessageProcessingBridge::syncToolPkgRegistrations(activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgPromptHookBridge::ToolPkgPromptHookBridge::syncToolPkgRegistrations(activeContainers.clone());

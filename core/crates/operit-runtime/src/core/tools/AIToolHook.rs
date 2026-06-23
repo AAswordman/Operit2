@@ -1,5 +1,5 @@
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
 
 pub trait AIToolHook: Send + Sync {
     fn id(&self) -> &str;

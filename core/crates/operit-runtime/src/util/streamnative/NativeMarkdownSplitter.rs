@@ -11,7 +11,7 @@ use crate::util::stream::plugins::StreamMarkdownPlugin::{
 };
 use crate::util::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::util::stream::plugins::StreamXmlPlugin::StreamXmlPlugin;
-use crate::util::stream::Stream::{Stream, VecStream};
+use operit_util::stream::Stream::{Stream, VecStream};
 use crate::util::stream::StreamGroup::StreamGroup;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

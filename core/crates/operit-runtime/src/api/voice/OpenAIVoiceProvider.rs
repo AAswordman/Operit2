@@ -5,7 +5,7 @@ use serde_json::json;
 use operit_host_api::HttpRequestData;
 
 use crate::api::voice::VoiceService::VoiceService;
-use crate::core::application::OperitApplicationContext::defaultHttpHost;
+use operit_context::OperitApplicationContext::defaultHttpHost;
 use crate::data::model::TtsConfig::TtsConfig;
 
 pub struct OpenAIVoiceProvider;

@@ -1,4 +1,4 @@
-use crate::util::stream::Stream::{Stream, VecStream};
+use operit_util::stream::Stream::{Stream, VecStream};
 
 pub trait StreamProcessor<T, R> {
     fn process(&mut self, stream: &mut dyn Stream<Item = T>) -> R;

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_context::OperitApplicationContext::OperitApplicationContext;
 use crate::core::tools::mcp::MCPServerConfig::MCPServerConfig;
 use crate::core::tools::mcp::MCPTool::MCPTool;
 use crate::core::tools::mcp::MCPToolParameter::MCPToolParameter;
