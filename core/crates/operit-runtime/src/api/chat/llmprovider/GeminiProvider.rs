@@ -136,7 +136,10 @@ impl GeminiProvider {
         }
     }
 
-    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }

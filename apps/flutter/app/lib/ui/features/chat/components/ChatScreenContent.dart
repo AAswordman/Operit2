@@ -322,7 +322,6 @@ class ChatScreenContent extends StatelessWidget {
         text: text,
         title: targetCharacterName,
       );
-      _showTtsSnack(context, '已加入语音队列');
     } catch (error) {
       _showTtsSnack(context, '生成/播放语音失败：$error');
     }

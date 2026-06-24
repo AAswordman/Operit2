@@ -43,7 +43,6 @@ class WorkspaceTab {
     this.workspaceHtmlPath,
     this.webVisitRequest,
     this.terminalSessionId,
-    this.terminalSessionKind,
     this.terminalType,
     this.terminalWorkingDir,
   });
@@ -62,7 +61,6 @@ class WorkspaceTab {
   final String? workspaceHtmlPath;
   final WebVisitRequest? webVisitRequest;
   final String? terminalSessionId;
-  final String? terminalSessionKind;
   final String? terminalType;
   final String? terminalWorkingDir;
 }

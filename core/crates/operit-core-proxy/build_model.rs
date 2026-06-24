@@ -132,8 +132,13 @@ pub(crate) struct SerializableType {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SerializableTypeKind {
-    Struct { fields: Vec<SerializableField> },
-    Enum { variants: Vec<SerializableEnumVariant>, unit_only: bool },
+    Struct {
+        fields: Vec<SerializableField>,
+    },
+    Enum {
+        variants: Vec<SerializableEnumVariant>,
+        unit_only: bool,
+    },
 }
 
 #[derive(Clone, Debug)]

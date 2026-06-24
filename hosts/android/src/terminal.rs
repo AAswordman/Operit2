@@ -1,16 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::CString;
-use std::io::{BufRead, BufReader, Write};
-#[cfg(target_family = "unix")]
-use std::os::unix::process::CommandExt;
+use std::io::Write;
 use std::path::Path;
-use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
@@ -21,7 +17,7 @@ use operit_host_api::{
 };
 use uuid::Uuid;
 
-use crate::runtime_common::{buildAndroidProotCommand, requiredAndroidRuntimePath};
+use crate::runtime_common::requiredAndroidRuntimePath;
 
 #[cfg(target_os = "android")]
 use std::ptr;
@@ -54,22 +50,9 @@ pub struct AndroidTerminalHost {
 
 #[derive(Default)]
 struct AndroidTerminalState {
-    sessions: BTreeMap<String, AndroidTerminalSession>,
     sessionNameToId: BTreeMap<String, String>,
     hiddenExecutorKeyToSessionId: BTreeMap<String, String>,
     ptySessions: BTreeMap<String, AndroidPtySession>,
-}
-
-struct AndroidTerminalSession {
-    id: String,
-    name: String,
-    terminalType: String,
-    child: Child,
-    stdin: ChildStdin,
-    stdoutRx: Receiver<String>,
-    stderrLines: Arc<Mutex<VecDeque<String>>>,
-    screenLines: VecDeque<String>,
-    commandRunning: bool,
 }
 
 struct AndroidPtySession {
@@ -196,6 +179,7 @@ impl AndroidTerminalHost {
                 "Android PTY session does not exist: {sessionId}"
             )));
         }
+        removeAndroidSessionMappings(&mut state, sessionId);
         Ok(())
     }
 
@@ -384,49 +368,16 @@ impl TerminalHost for AndroidTerminalHost {
             value => value.to_string(),
         };
         let key = sessionKey(&normalizedTerminalType, &normalizedExecutorKey);
-        let mut state = self.lockState()?;
-        let sessionId = match state.hiddenExecutorKeyToSessionId.get(&key).cloned() {
-            Some(sessionId) if state.sessions.contains_key(&sessionId) => sessionId,
-            Some(sessionId) => {
-                state.hiddenExecutorKeyToSessionId.remove(&key);
-                let _ = sessionId;
-                let session = createAndroidShellSession(
-                    format!("hidden:{normalizedExecutorKey}"),
-                    normalizedTerminalType.clone(),
-                )?;
-                let sessionId = session.id.clone();
-                state
-                    .hiddenExecutorKeyToSessionId
-                    .insert(key.clone(), sessionId.clone());
-                state.sessions.insert(sessionId.clone(), session);
-                sessionId
-            }
-            None => {
-                let session = createAndroidShellSession(
-                    format!("hidden:{normalizedExecutorKey}"),
-                    normalizedTerminalType.clone(),
-                )?;
-                let sessionId = session.id.clone();
-                state
-                    .hiddenExecutorKeyToSessionId
-                    .insert(key, sessionId.clone());
-                state.sessions.insert(sessionId.clone(), session);
-                sessionId
-            }
-        };
-        let result = {
-            let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
-                HostError::new(format!("Hidden terminal session missing: {sessionId}"))
-            })?;
-            executeAndroidShellCommandInSession(session, &normalizedCommand, timeoutMs)?
-        };
+        let sessionId =
+            hiddenAndroidPtySessionId(self, &key, &normalizedExecutorKey, &normalizedTerminalType)?;
+        let output = self.executeInSession(&sessionId, &normalizedCommand, timeoutMs)?;
         Ok(HiddenTerminalCommandOutput {
             command: normalizedCommand,
-            output: result.output,
-            exitCode: result.exitCode,
+            output: output.output,
+            exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
             terminalType: normalizedTerminalType,
-            timedOut: result.timedOut,
+            timedOut: output.timedOut,
         })
     }
 
@@ -469,6 +420,9 @@ impl TerminalHost for AndroidTerminalHost {
         state
             .sessionNameToId
             .retain(|_, value| value != &normalizedSessionId);
+        state
+            .hiddenExecutorKeyToSessionId
+            .retain(|_, value| value != &normalizedSessionId);
         Ok(TerminalCloseOutput {
             sessionId: normalizedSessionId.clone(),
             success: true,
@@ -508,6 +462,39 @@ struct AndroidSessionCommandResult {
     exitCode: i32,
     timedOut: bool,
     workingDir: Option<String>,
+}
+
+fn hiddenAndroidPtySessionId(
+    host: &AndroidTerminalHost,
+    executorKey: &str,
+    executorLabel: &str,
+    terminalType: &str,
+) -> HostResult<String> {
+    {
+        let mut state = host.lockState()?;
+        if let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() {
+            if state.ptySessions.contains_key(&sessionId) {
+                return Ok(sessionId);
+            }
+            state.hiddenExecutorKeyToSessionId.remove(executorKey);
+            removeAndroidSessionMappings(&mut state, &sessionId);
+        }
+    }
+
+    let session = createAndroidPtySession(
+        format!("hidden:{executorLabel}"),
+        terminalType.to_string(),
+        "/root".to_string(),
+        24,
+        80,
+    )?;
+    let sessionId = nextTerminalId();
+    let mut state = host.lockState()?;
+    state
+        .hiddenExecutorKeyToSessionId
+        .insert(executorKey.to_string(), sessionId.clone());
+    state.ptySessions.insert(sessionId.clone(), session);
+    Ok(sessionId)
 }
 
 fn createAndroidPtySession(
@@ -1206,258 +1193,6 @@ fn closeAndroidPtyProcess(pid: AndroidPid, fd: RawFd) {
     {
         let _ = (pid, fd);
     }
-}
-
-fn createAndroidShellSession(
-    name: String,
-    terminalType: String,
-) -> HostResult<AndroidTerminalSession> {
-    let mut command = buildAndroidProotCommand("/bin/bash", Some("/home/operit"))?;
-    command.arg("-l");
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    #[cfg(target_family = "unix")]
-    command.process_group(0);
-    let mut child = command.spawn()?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stdin"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stdout"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stderr"))?;
-    let (stdoutTx, stdoutRx) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().flatten() {
-            let _ = stdoutTx.send(line);
-        }
-    });
-    let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
-    let stderrLinesForThread = stderrLines.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().flatten() {
-            if let Ok(mut lines) = stderrLinesForThread.lock() {
-                lines.push_back(line);
-                while lines.len() > 400 {
-                    lines.pop_front();
-                }
-            }
-        }
-    });
-    Ok(AndroidTerminalSession {
-        id: nextTerminalId(),
-        name,
-        terminalType,
-        child,
-        stdin,
-        stdoutRx,
-        stderrLines,
-        screenLines: VecDeque::new(),
-        commandRunning: false,
-    })
-}
-
-fn executeAndroidShellCommandInSession(
-    session: &mut AndroidTerminalSession,
-    command: &str,
-    timeoutMs: u64,
-) -> HostResult<AndroidSessionCommandResult> {
-    let commandId = NEXT_TERMINAL_ID.fetch_add(1, Ordering::SeqCst);
-    let marker = format!("__OPERIT_TERMINAL_{commandId}__");
-    let endMarkerPrefix = format!("{marker}_END:");
-    let pidMarkerPrefix = format!("{marker}_PID:");
-    let heredocMarker = format!("__OPERIT_TERMINAL_CMD_{commandId}__");
-    let normalizedCommand = command.replace("\r\n", "\n").replace('\r', "\n");
-    let script = format!(
-        "printf '%s\\n' '{marker}_START'\n__operit_script=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.sh\"\n__operit_cwd=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.cwd\"\ncat >\"$__operit_script\" <<'{heredocMarker}'\n{normalizedCommand}\n__operit_exit_code=$?\nprintf '%s' \"$PWD\" >\"$__OPERIT_CWD_FILE\"\nexit \"$__operit_exit_code\"\n{heredocMarker}\n__OPERIT_CWD_FILE=\"$__operit_cwd\" setsid /bin/bash --noprofile --norc \"$__operit_script\" &\n__operit_command_pid=$!\nprintf '%s%s\\n' '{pidMarkerPrefix}' \"$__operit_command_pid\"\nwait \"$__operit_command_pid\"\n__operit_exit_code=$?\nif [ -s \"$__operit_cwd\" ]; then cd \"$(cat \"$__operit_cwd\")\"; fi\nrm -f \"$__operit_script\" \"$__operit_cwd\"\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
-    );
-    session.commandRunning = true;
-    session.stdin.write_all(script.as_bytes())?;
-    session.stdin.flush()?;
-
-    let deadline = Duration::from_millis(timeoutMs);
-    let start = SystemTime::now();
-    let mut outputLines = Vec::new();
-    let mut sawStart = false;
-    let mut commandPid = None;
-    loop {
-        let elapsed = match start.elapsed() {
-            Ok(value) => value,
-            Err(_) => deadline,
-        };
-        if elapsed >= deadline {
-            cancelAndroidShellCommandProcessGroup(commandPid);
-            collectAndroidShellCommandAfterCancel(session, &endMarkerPrefix, &mut outputLines)?;
-            session.commandRunning = false;
-            let output = joinOutput(outputLines, drainAndroidStderr(session)?);
-            appendAndroidScreenLines(session, &output);
-            return Ok(AndroidSessionCommandResult {
-                output,
-                exitCode: -1,
-                timedOut: true,
-                workingDir: None,
-            });
-        }
-        let remaining = deadline - elapsed;
-        let wait = remaining.min(Duration::from_millis(100));
-        match session.stdoutRx.recv_timeout(wait) {
-            Ok(line) => {
-                if line == format!("{marker}_START") {
-                    sawStart = true;
-                    continue;
-                }
-                if sawStart {
-                    if let Some(pidText) = line.strip_prefix(&pidMarkerPrefix) {
-                        commandPid = pidText.trim().parse::<i32>().ok();
-                        continue;
-                    }
-                    if let Some(endMarkerIndex) = line.rfind(&endMarkerPrefix) {
-                        let outputBeforeEndMarker = &line[..endMarkerIndex];
-                        if !outputBeforeEndMarker.is_empty() {
-                            outputLines.push(outputBeforeEndMarker.to_string());
-                        }
-                        session.commandRunning = false;
-                        let exitCodeText = line[endMarkerIndex + endMarkerPrefix.len()..].trim();
-                        let exitCode = exitCodeText.parse::<i32>().map_err(|error| {
-                            HostError::new(format!(
-                                "Invalid terminal exit code marker '{exitCodeText}': {error}"
-                            ))
-                        })?;
-                        let output = joinOutput(outputLines, drainAndroidStderr(session)?);
-                        appendAndroidScreenLines(session, &output);
-                        return Ok(AndroidSessionCommandResult {
-                            output,
-                            exitCode,
-                            timedOut: false,
-                            workingDir: None,
-                        });
-                    }
-                    outputLines.push(line);
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                session.commandRunning = false;
-                return Err(HostError::new(format!(
-                    "Terminal session '{}' closed while executing command",
-                    session.name
-                )));
-            }
-        }
-    }
-}
-
-fn cancelAndroidShellCommandProcessGroup(pid: Option<i32>) {
-    let Some(pid) = pid else {
-        return;
-    };
-    #[cfg(target_os = "android")]
-    unsafe {
-        let pid = pid as libc::pid_t;
-        libc::kill(-pid, libc::SIGTERM);
-        thread::sleep(Duration::from_millis(100));
-        libc::kill(-pid, libc::SIGKILL);
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = pid;
-    }
-}
-
-fn collectAndroidShellCommandAfterCancel(
-    session: &mut AndroidTerminalSession,
-    endMarkerPrefix: &str,
-    outputLines: &mut Vec<String>,
-) -> HostResult<()> {
-    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
-    while Instant::now() < deadline {
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .min(Duration::from_millis(100));
-        match session.stdoutRx.recv_timeout(wait) {
-            Ok(line) => {
-                if let Some(endMarkerIndex) = line.rfind(endMarkerPrefix) {
-                    let outputBeforeEndMarker = &line[..endMarkerIndex];
-                    if !outputBeforeEndMarker.is_empty() {
-                        outputLines.push(outputBeforeEndMarker.to_string());
-                    }
-                    return Ok(());
-                }
-                outputLines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(HostError::new(format!(
-                    "Terminal session '{}' closed while cancelling command",
-                    session.name
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn drainAndroidStderr(session: &AndroidTerminalSession) -> HostResult<Vec<String>> {
-    let mut lines = session
-        .stderrLines
-        .lock()
-        .map_err(|_| HostError::new("terminal stderr mutex poisoned"))?;
-    let mut collected = Vec::new();
-    while let Some(line) = lines.pop_front() {
-        collected.push(line);
-    }
-    Ok(collected)
-}
-
-fn drainLiveAndroidShellOutputToScreen(session: &mut AndroidTerminalSession) -> HostResult<()> {
-    while let Ok(line) = session.stdoutRx.try_recv() {
-        appendAndroidScreenLines(session, &line);
-    }
-    let stderrLines = drainAndroidStderr(session)?;
-    for line in stderrLines {
-        appendAndroidScreenLines(session, &line);
-    }
-    Ok(())
-}
-
-fn joinOutput(mut stdoutLines: Vec<String>, stderrLines: Vec<String>) -> String {
-    stdoutLines.extend(stderrLines);
-    stdoutLines.join("\n")
-}
-
-fn appendAndroidScreenLines(session: &mut AndroidTerminalSession, output: &str) {
-    for line in output.lines() {
-        session.screenLines.push_back(line.to_string());
-        while session.screenLines.len() > 200 {
-            session.screenLines.pop_front();
-        }
-    }
-}
-
-fn applyTerminalInput(
-    session: &mut AndroidTerminalSession,
-    input: Option<&str>,
-    control: Option<&str>,
-) -> HostResult<usize> {
-    let mut acceptedChars = 0;
-    if let Some(input) = input {
-        session.stdin.write_all(input.as_bytes())?;
-        acceptedChars += input.chars().count();
-    }
-    if let Some(control) = control {
-        let sequence = controlToSequence(control, input)?;
-        session.stdin.write_all(sequence.as_bytes())?;
-        acceptedChars += sequence.chars().count();
-    }
-    session.stdin.flush()?;
-    Ok(acceptedChars)
 }
 
 fn applyAndroidPtyTerminalInput(

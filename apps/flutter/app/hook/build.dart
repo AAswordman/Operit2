@@ -24,6 +24,12 @@ void main(List<String> args) async {
       input.packageRoot.resolve('../../../hosts/web/'),
     );
     final webDir = Directory.fromUri(input.packageRoot.resolve('web/'));
+    final webBuildDir = Directory.fromUri(
+      input.packageRoot.resolve('build/web/'),
+    );
+    final webAccessAssetsDir = Directory.fromUri(
+      input.packageRoot.resolve('assets/web_access/'),
+    );
     final depsDir = Directory.fromUri(
       input.packageRoot.resolve('.dart_tool/web-build-deps/'),
     );
@@ -37,6 +43,7 @@ void main(List<String> args) async {
     );
     final targetOs = _targetOs(input);
     final shouldBuildWebAssets = targetOs == null || targetOs == 'web';
+    final shouldBundleWebAccessAssets = targetOs != null && targetOs != 'web';
 
     await _addDirectoryFileDependencies(output, pluginsRoot, {
       '.js',
@@ -95,6 +102,9 @@ void main(List<String> args) async {
         sqlDist.uri.resolve('sql-wasm.wasm'),
       ).copy(File.fromUri(webDir.uri.resolve('sql-wasm.wasm')).path);
     }
+    if (shouldBundleWebAccessAssets) {
+      await _syncDirectory(webBuildDir, webAccessAssetsDir);
+    }
   });
 }
 
@@ -145,6 +155,58 @@ Future<void> _addRustDependencies(
       output.dependencies.add(entity.uri);
     }
   }
+}
+
+Future<void> _syncDirectory(Directory source, Directory destination) async {
+  if (!source.existsSync()) {
+    throw StateError('Web access source bundle does not exist: ${source.path}');
+  }
+  if (destination.existsSync()) {
+    await destination.delete(recursive: true);
+  }
+  await destination.create(recursive: true);
+  await for (final entity in source.list(recursive: true, followLinks: false)) {
+    final relativePath = _relativePath(source, entity);
+    if (_isFlutterBundledWebAccessCopy(relativePath)) {
+      continue;
+    }
+    final targetPath = _joinPath(destination.path, relativePath);
+    if (entity is Directory) {
+      await Directory(targetPath).create(recursive: true);
+    } else if (entity is File) {
+      final targetFile = File(targetPath);
+      await targetFile.parent.create(recursive: true);
+      await entity.copy(targetFile.path);
+    }
+  }
+}
+
+String _relativePath(Directory root, FileSystemEntity entity) {
+  final rootPath = root.uri.toFilePath(windows: Platform.isWindows);
+  final entityPath = entity.uri.toFilePath(windows: Platform.isWindows);
+  if (!entityPath.startsWith(rootPath)) {
+    throw StateError('Path escapes sync root: $entityPath');
+  }
+  return entityPath.substring(rootPath.length);
+}
+
+bool _isFlutterBundledWebAccessCopy(String relativePath) {
+  final segments = relativePath
+      .split(RegExp(r'[\\/]'))
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  return segments.length >= 3 &&
+      segments[0] == 'assets' &&
+      segments[1] == 'assets' &&
+      segments[2] == 'web_access';
+}
+
+String _joinPath(String base, String relative) {
+  final segments = relative
+      .split(RegExp(r'[\\/]'))
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  return <String>[base, ...segments].join(Platform.pathSeparator);
 }
 
 Future<void> _run(

@@ -43,6 +43,7 @@ operit-host-linux-native = { path = "../../../../hosts/linux" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
+js-sys = "0.3"
 operit-host-web = { path = "../../../../hosts/web" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

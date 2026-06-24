@@ -10,19 +10,16 @@ import 'package:xterm/xterm.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
 import '../../../../../theme/OperitTheme.dart';
 import 'WorkspacePtyProcess.dart';
-import 'WorkspaceTerminalSessions.dart';
 
 class WorkspaceTerminalContent extends StatefulWidget {
   const WorkspaceTerminalContent({
     super.key,
     required this.sessionId,
-    required this.sessionKind,
     required this.terminalType,
     required this.workingDir,
   });
 
   final String sessionId;
-  final String sessionKind;
   final String terminalType;
   final String workingDir;
 
@@ -35,18 +32,13 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   late final Terminal _terminal;
   late final TerminalController _controller;
   late final FocusNode _focusNode;
-  final WorkspaceTerminalSessions _terminalSessions =
-      const WorkspaceTerminalSessions();
   StreamSubscription<String>? _outputSubscription;
   WorkspacePtyProcess? _pty;
-  Timer? _screenTimer;
   Object? _startupError;
   int? _pendingRows;
   int? _pendingColumns;
   final StringBuffer _pendingTerminalOutput = StringBuffer();
-  String _lastShellContent = '';
   bool _terminalFlushScheduled = false;
-  bool _shellRefreshRunning = false;
   bool _exited = false;
   bool _ctrlLatched = false;
   bool _altLatched = false;
@@ -74,8 +66,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   @override
   void didUpdateWidget(covariant WorkspaceTerminalContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionId != widget.sessionId ||
-        oldWidget.sessionKind != widget.sessionKind) {
+    if (oldWidget.sessionId != widget.sessionId) {
       _restartSession();
     }
   }
@@ -83,7 +74,6 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   @override
   void dispose() {
     _outputSubscription?.cancel();
-    _screenTimer?.cancel();
     _pty?.kill();
     _pendingTerminalOutput.clear();
     _focusNode.dispose();
@@ -213,18 +203,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   }
 
   Future<void> _attachSession() async {
-    if (widget.sessionKind == 'pty') {
-      await _attachPty();
-      return;
-    }
-    if (widget.sessionKind == 'shell') {
-      await _attachShell();
-      return;
-    }
-    _startupError = StateError('未知终端会话类型: ${widget.sessionKind}');
-    if (mounted) {
-      setState(() {});
-    }
+    await _attachPty();
   }
 
   Future<void> _attachPty() async {
@@ -257,37 +236,15 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     }
   }
 
-  Future<void> _attachShell() async {
-    try {
-      _startupError = null;
-      await _refreshShellScreen();
-      _screenTimer = Timer.periodic(
-        const Duration(milliseconds: 400),
-        (_) => unawaited(_refreshShellScreen()),
-      );
-      if (mounted) {
-        setState(() {});
-      }
-    } catch (error) {
-      _startupError = error;
-      if (mounted) {
-        setState(() {});
-      }
-    }
-  }
-
   Future<void> _restartSession() async {
     await _outputSubscription?.cancel();
     _outputSubscription = null;
-    _screenTimer?.cancel();
-    _screenTimer = null;
     _pty?.kill();
     _pty = null;
     _pendingTerminalOutput.clear();
     _terminalFlushScheduled = false;
     _terminal.eraseDisplay();
     _startupError = null;
-    _lastShellContent = '';
     _exited = true;
     if (mounted) {
       setState(() {});
@@ -296,31 +253,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   }
 
   void _writeToSession(String data) {
-    if (widget.sessionKind == 'pty') {
-      _pty?.write(const convert.Utf8Encoder().convert(data));
-      return;
-    }
-    unawaited(
-      _terminalSessions.inputSession(sessionId: widget.sessionId, input: data),
-    );
-  }
-
-  Future<void> _refreshShellScreen() async {
-    if (_shellRefreshRunning) {
-      return;
-    }
-    _shellRefreshRunning = true;
-    try {
-      final screen = await _terminalSessions.getSessionScreen(widget.sessionId);
-      if (screen.content == _lastShellContent) {
-        return;
-      }
-      _lastShellContent = screen.content;
-      _terminal.eraseDisplay();
-      _terminal.write(screen.content.replaceAll('\n', '\r\n'));
-    } finally {
-      _shellRefreshRunning = false;
-    }
+    _pty?.write(const convert.Utf8Encoder().convert(data));
   }
 
   void _queueTerminalWrite(String data) {

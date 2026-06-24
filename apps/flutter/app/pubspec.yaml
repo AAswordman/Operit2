@@ -86,20 +86,34 @@ flutter:
   assets:
     - android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
     - assets/images/operit_avatar.png
-    - assets/web_access/
-    - assets/web_access/assets/
-    - assets/web_access/assets/android/app/src/main/res/mipmap-xxxhdpi/
-    - assets/web_access/assets/assets/fonts/
-    - assets/web_access/assets/assets/images/
-    - assets/web_access/assets/fonts/
-    - assets/web_access/assets/packages/cupertino_icons/assets/
-    - assets/web_access/assets/packages/flutter_math_fork/lib/katex_fonts/fonts/
-    - assets/web_access/assets/packages/liquid_glass_widgets/shaders/
-    - assets/web_access/assets/shaders/
-    - assets/web_access/canvaskit/
-    - assets/web_access/canvaskit/chromium/
-    - assets/web_access/canvaskit/experimental_webparagraph/
-    - assets/web_access/icons/
+    - path: assets/web_access/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/android/app/src/main/res/mipmap-xxxhdpi/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/assets/fonts/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/assets/images/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/fonts/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/packages/cupertino_icons/assets/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/packages/flutter_math_fork/lib/katex_fonts/fonts/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/packages/liquid_glass_widgets/shaders/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/assets/shaders/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/canvaskit/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/canvaskit/chromium/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/canvaskit/experimental_webparagraph/
+      platforms: [android, ios, linux, macos, windows]
+    - path: assets/web_access/icons/
+      platforms: [android, ios, linux, macos, windows]
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

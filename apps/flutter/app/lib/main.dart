@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/errors/UnhandledErrorReporter.dart';
@@ -13,6 +12,7 @@ import 'core/link_host/LinkHostServer.dart';
 import 'ui/main/OperitApp.dart';
 import 'ui/window/DetachedChatWindowApp.dart';
 import 'ui/window/OperitWindowArguments.dart';
+import 'ui/window/OperitWindowPlatform.dart';
 
 void main(List<String> _) async {
   await runZonedGuarded(
@@ -22,10 +22,7 @@ void main(List<String> _) async {
       _installClientLogHooks();
       await RuntimeConnectionManager.instance.initialize();
       await LiquidGlassWidgets.initialize();
-      final windowController = await WindowController.fromCurrentEngine();
-      final windowArguments = OperitWindowArguments.parse(
-        windowController.arguments,
-      );
+      final windowArguments = await readOperitWindowArguments();
       switch (windowArguments) {
         case MainWindowArguments():
           await _runMainWindow();

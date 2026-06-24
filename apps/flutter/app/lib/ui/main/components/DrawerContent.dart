@@ -15,6 +15,7 @@ import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
 import '../../window/DetachedChatWindowLauncher.dart';
+import '../../window/OperitWindowPlatform.dart';
 import 'CollapsedDrawerContent.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
@@ -431,6 +432,7 @@ class _DrawerContentState extends State<DrawerContent> {
       builder: (context) {
         return ConversationActionDialog(
           history: history,
+          canOpenInWindow: operitSupportsDesktopMultiWindow,
           canMoveUp: index > 0,
           canMoveDown: index >= 0 && index < _histories.length - 1,
         );
@@ -1046,11 +1048,15 @@ class _DrawerContentState extends State<DrawerContent> {
                             onLongPress: () {
                               _showConversationActionDialog(history);
                             },
+                            canDetach: operitSupportsDesktopMultiWindow,
                             onDetach: () {
                               DetachedChatWindowLauncher.openChat(
                                 chatId: history.id,
                                 title: history.title,
-                              ).catchError((Object error, StackTrace stackTrace) {
+                              ).catchError((
+                                Object error,
+                                StackTrace stackTrace,
+                              ) {
                                 debugPrint(
                                   'Failed to open detached chat window: $error\n$stackTrace',
                                 );

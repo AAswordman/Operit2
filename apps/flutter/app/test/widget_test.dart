@@ -31,24 +31,8 @@ void main() {
         });
       }
       if (call.method == 'watchStream') {
-        return jsonEncode({'subscriptionId': 'test-subscription'});
-      }
-      if (call.method == 'pollWatchStream') {
-        return jsonEncode([
-          {
-            'requestId': null,
-            'targetPath': {
-              'segments': ['chatRuntimeHolder', 'main'],
-            },
-            'propertyName': 'getResponseStream',
-            'kind': 'Completed',
-            'value': {
-              'chatId': 'test-chat',
-              'type': 'completed',
-              'value': null,
-            },
-          },
-        ]);
+        final envelope = jsonDecode(call.arguments as String);
+        return jsonEncode({'subscriptionId': envelope['subscriptionId']});
       }
       if (call.method == 'closeWatchStream') {
         return jsonEncode({'ok': true});

@@ -1867,6 +1867,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "jni",
+ "js-sys",
  "mdns-sd",
  "operit-core-proxy",
  "operit-host-android-native",

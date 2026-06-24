@@ -10,7 +10,6 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../../data/preferences/UserPreferencesManager.dart';
 import 'WorkspaceFileModels.dart';
 
 typedef ChatMessageLocatorPreview = core_proxy.ChatMessageLocatorPreview;
@@ -50,10 +49,6 @@ class ChatViewModel {
   final ChatRuntimeSurface runtimeSurface;
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
-  late final UserPreferencesManager _preferencesManager =
-      UserPreferencesManager(clients: clients);
-  final StreamController<void> _stateRefreshRequests =
-      StreamController<void>.broadcast();
 
   static GeneratedChatRuntimeHolderMainCoreProxy _chatProxyFor(
     OperitRuntimeBridge bridge,
@@ -73,123 +68,33 @@ class ChatViewModel {
 
   Stream<ChatViewModelSnapshot> watchMainState() {
     final controller = StreamController<ChatViewModelSnapshot>();
-    final subscriptions = <StreamSubscription<dynamic>>[];
-    var disposed = false;
-    var scheduled = false;
-    var generation = 0;
+    StreamSubscription<core_proxy.ChatMainState>? subscription;
     final boundMessageStreams =
         <int, _ReplayTextStream<ChatResponseStreamEvent>>{};
     final boundResponseSubscriptions =
         <int, StreamSubscription<ChatResponseStreamEvent>>{};
 
-    String? currentChatId;
-    List<ChatUiMessage>? chatHistory;
-    List<core_proxy.ChatHistory>? chatHistories;
-    List<String>? activeStreamingChatIds;
-    Map<String, Object?>? inputProcessingStatesByChatId;
-
-    bool isReady() {
-      return chatHistory != null &&
-          chatHistories != null &&
-          activeStreamingChatIds != null &&
-          inputProcessingStatesByChatId != null;
-    }
-
-    Future<void> emitCurrent(String source, int requestGeneration) async {
-      if (disposed || controller.isClosed || !isReady()) {
-        return;
-      }
-      final snapshot = await _buildMainSnapshotFromFlowState(
-        currentChatId: currentChatId,
-        chatHistory: chatHistory!,
-        chatHistories: chatHistories!,
-        activeStreamingChatIds: activeStreamingChatIds!,
-        inputProcessingStatesByChatId: inputProcessingStatesByChatId!,
-        boundMessageStreams: boundMessageStreams,
-        boundResponseSubscriptions: boundResponseSubscriptions,
-      );
-      if (disposed || controller.isClosed || requestGeneration != generation) {
-        return;
-      }
-      controller.add(snapshot);
-    }
-
-    void scheduleEmit(String source) {
-      generation += 1;
-      if (scheduled) {
-        return;
-      }
-      scheduled = true;
-      scheduleMicrotask(() {
-        scheduled = false;
-        unawaited(emitCurrent(source, generation));
-      });
-    }
-
-    void forwardError(Object error, StackTrace stackTrace) {
-      if (!disposed && !controller.isClosed) {
-        controller.addError(error, stackTrace);
-      }
-    }
-
-    void listen<T>(
-      String source,
-      Stream<T> stream,
-      void Function(T value) apply,
-    ) {
-      subscriptions.add(
-        stream.listen((value) {
-          apply(value);
-          scheduleEmit(source);
-        }, onError: forwardError),
-      );
-    }
-
     controller.onListen = () {
-      listen<List<ChatUiMessage>>(
-        'chatHistoryFlow',
-        _rawChatHistoryFlowChanges(),
-        (value) {
-          chatHistory = value;
+      subscription = _chat.chatMainStateFlowChanges().listen(
+        (state) {
+          final snapshot = _snapshotFromMainState(
+            state,
+            boundMessageStreams: boundMessageStreams,
+            boundResponseSubscriptions: boundResponseSubscriptions,
+          );
+          if (!controller.isClosed) {
+            controller.add(snapshot);
+          }
         },
-      );
-      listen<String?>('currentChatIdFlow', _chat.currentChatIdFlowChanges(), (
-        value,
-      ) {
-        currentChatId = value;
-      });
-      listen<List<core_proxy.ChatHistory>>(
-        'chatHistoriesFlow',
-        _chat.chatHistoriesFlowChanges(),
-        (value) {
-          chatHistories = value;
+        onError: (Object error, StackTrace stackTrace) {
+          if (!controller.isClosed) {
+            controller.addError(error, stackTrace);
+          }
         },
-      );
-      listen<List<String>>(
-        'activeStreamingChatIdsFlow',
-        _chat.activeStreamingChatIdsFlowChanges(),
-        (value) {
-          activeStreamingChatIds = value;
-        },
-      );
-      listen<Map<String, Object?>>(
-        'inputProcessingStateByChatIdFlow',
-        _chat.inputProcessingStateByChatIdFlowChanges(),
-        (value) {
-          inputProcessingStatesByChatId = value;
-        },
-      );
-      listen<void>(
-        'responseStreamCompletedRefresh',
-        _stateRefreshRequests.stream,
-        (_) {},
       );
     };
     controller.onCancel = () async {
-      disposed = true;
-      for (final subscription in subscriptions) {
-        await subscription.cancel();
-      }
+      await subscription?.cancel();
       await _closeAllBoundResponseStreams(
         boundMessageStreams: boundMessageStreams,
         boundResponseSubscriptions: boundResponseSubscriptions,
@@ -198,52 +103,32 @@ class ChatViewModel {
     return controller.stream;
   }
 
-  void requestMainStateRefresh() {
-    if (!_stateRefreshRequests.isClosed) {
-      _stateRefreshRequests.add(null);
-    }
-  }
-
-  Future<ChatViewModelSnapshot> _buildMainSnapshotFromFlowState({
-    required String? currentChatId,
-    required List<ChatUiMessage> chatHistory,
-    required List<core_proxy.ChatHistory> chatHistories,
-    required List<String> activeStreamingChatIds,
-    required Map<String, Object?> inputProcessingStatesByChatId,
+  ChatViewModelSnapshot _snapshotFromMainState(
+    core_proxy.ChatMainState state, {
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
     boundMessageStreams,
     required Map<int, StreamSubscription<ChatResponseStreamEvent>>
     boundResponseSubscriptions,
-  }) async {
-    final currentChatMetadata = _currentChatMetadataFromSnapshot(
-      currentChatId,
-      chatHistories,
-    );
-    final currentCharacterCardAvatarUri = await _characterCardAvatarUriByName(
-      currentChatMetadata.characterCardName,
-    );
-    final activeCharacterCardName = await _activeCharacterCardName();
-    final inputProcessingState = currentChatId == null
-        ? 'Idle'
-        : inputProcessingStatesByChatId[currentChatId] ?? 'Idle';
+  }) {
     return _bindActiveResponseStream(
       ChatViewModelSnapshot(
-        currentChatId: currentChatId,
-        currentChatTitle: currentChatMetadata.title,
-        currentCharacterCardName: currentChatMetadata.characterCardName,
-        currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
-        currentWorkspacePath: currentChatMetadata.workspacePath,
-        activeCharacterCardName: activeCharacterCardName,
-        isLoading:
-            currentChatId != null &&
-            activeStreamingChatIds.contains(currentChatId),
+        currentChatId: state.currentChatId,
+        currentChatTitle: state.currentChatTitle,
+        currentModelName: state.currentModelName,
+        currentCharacterCardName: state.currentCharacterCardName,
+        currentCharacterCardAvatarUri: state.currentCharacterCardAvatarUri,
+        currentWorkspacePath: state.currentWorkspacePath,
+        activeCharacterCardName: state.activeCharacterCardName,
+        isLoading: state.isLoading,
         inputProcessingState: ChatInputProcessingState.fromJson(
-          inputProcessingState,
+          state.inputProcessingState,
         ),
-        messages: chatHistory,
-        hasOlderDisplayHistory: await _chat.hasOlderDisplayHistory(),
-        hasNewerDisplayHistory: await _chat.hasNewerDisplayHistory(),
-        isLoadingDisplayWindow: await _chat.isLoadingDisplayWindow(),
+        messages: state.messages
+            .map((item) => ChatUiMessage.fromJson(item as Map<String, Object?>))
+            .toList(growable: false),
+        hasOlderDisplayHistory: state.hasOlderDisplayHistory,
+        hasNewerDisplayHistory: state.hasNewerDisplayHistory,
+        isLoadingDisplayWindow: state.isLoadingDisplayWindow,
       ),
       boundMessageStreams: boundMessageStreams,
       boundResponseSubscriptions: boundResponseSubscriptions,
@@ -254,16 +139,6 @@ class ChatViewModel {
     String text, {
     ChatUiMessage? replyToMessage,
   }) async {
-    final binding = await clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
-    final providerId = binding.providerId.trim();
-    final modelId = binding.modelId.trim();
-    if (providerId.isEmpty || modelId.isEmpty) {
-      throw StateError(
-        'CHAT model binding is incomplete: providerId="$providerId" modelId="$modelId"',
-      );
-    }
-
     final attachments = await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: core_proxy.PromptFunctionType.chat,
@@ -271,8 +146,8 @@ class ChatViewModel {
       chatIdOverride: null,
       messageText: text,
       proxySenderNameOverride: null,
-      chatProviderIdOverride: providerId,
-      chatModelIdOverride: modelId,
+      chatProviderIdOverride: null,
+      chatModelIdOverride: null,
       attachments: attachments,
       replyToMessage: replyToMessage?.toProxy(),
       turnOptions: const core_proxy.ChatTurnOptions(
@@ -417,14 +292,7 @@ class ChatViewModel {
   }
 
   Future<String> currentModelName() async {
-    final binding = await clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
-    final config = await clients.preferencesModelConfigManager
-        .getResolvedModelConfig(
-          providerId: binding.providerId,
-          modelId: binding.modelId,
-        );
-    return config.modelId;
+    return (await _chat.chatMainStateFlowSnapshot()).currentModelName;
   }
 
   Future<String> createAndBindDefaultWorkspace(
@@ -487,16 +355,6 @@ class ChatViewModel {
     );
   }
 
-  Stream<List<ChatUiMessage>> _rawChatHistoryFlowChanges() {
-    return bridge.watchChanges(_chat.targetPath.key, 'chatHistoryFlow').map(
-      (event) {
-        return (event.value as List<Object?>)
-            .map((item) => ChatUiMessage.fromJson(item as Map<String, Object?>))
-            .toList(growable: false);
-      },
-    );
-  }
-
   ChatViewModelSnapshot _bindActiveResponseStream(
     ChatViewModelSnapshot snapshot, {
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
@@ -526,16 +384,13 @@ class ChatViewModel {
             stream.add(event);
             if (event.eventType == 'completed' && event.parentBlockId == null) {
               stream.close();
-              _requestStateRefreshAfterStreamCompleted();
             }
           },
           onError: (Object error, StackTrace stackTrace) {
             debugPrint('Failed to watch response stream: $error\n$stackTrace');
-            _requestStateRefreshAfterStreamCompleted();
           },
           onDone: () {
             stream.close();
-            _requestStateRefreshAfterStreamCompleted();
           },
         );
       });
@@ -564,14 +419,6 @@ class ChatViewModel {
       }
     }
     return null;
-  }
-
-  void _requestStateRefreshAfterStreamCompleted() {
-    Future<void>.delayed(const Duration(milliseconds: 220), () {
-      if (!_stateRefreshRequests.isClosed) {
-        _stateRefreshRequests.add(null);
-      }
-    });
   }
 
   void _closeInactiveBoundResponseStreams(
@@ -617,67 +464,13 @@ class ChatViewModel {
     }
     return chatId;
   }
-
-  ChatViewModelChatMetadata _currentChatMetadataFromSnapshot(
-    String? currentChatId,
-    List<core_proxy.ChatHistory> chatHistories,
-  ) {
-    for (final history in chatHistories) {
-      if (history.id == currentChatId) {
-        return ChatViewModelChatMetadata(
-          title: history.title,
-          characterCardName: history.characterCardName,
-          workspacePath: history.workspace,
-        );
-      }
-    }
-    return const ChatViewModelChatMetadata(
-      title: '',
-      characterCardName: null,
-      workspacePath: null,
-    );
-  }
-
-  Future<String?> _activeCharacterCardName() async {
-    final activePrompt = await clients.preferencesActivePromptManager
-        .getActivePrompt();
-    final prompt = activePrompt as Map<String, Object?>;
-    final characterCard = prompt['CharacterCard'] as Map<String, Object?>?;
-    if (characterCard == null) {
-      return null;
-    }
-    final id = characterCard['id'] as String;
-    final card = await clients.preferencesCharacterCardManager.getCharacterCard(
-      id: id,
-    );
-    return card.name;
-  }
-
-  Future<String?> _characterCardAvatarUriByName(String? name) async {
-    final normalizedName = name?.trim();
-    if (normalizedName == null || normalizedName.isEmpty) {
-      return null;
-    }
-    final card = await clients.preferencesCharacterCardManager
-        .findCharacterCardByName(name: normalizedName);
-    if (card == null) {
-      return null;
-    }
-    final hasTheme = await _preferencesManager.hasCharacterCardTheme(card.id);
-    if (!hasTheme) {
-      return null;
-    }
-    final snapshot = await _preferencesManager.resolveThemePreferenceSnapshot(
-      characterCardId: card.id,
-    );
-    return snapshot.customAiAvatarUri;
-  }
 }
 
 class ChatViewModelSnapshot {
   const ChatViewModelSnapshot({
     required this.currentChatId,
     required this.currentChatTitle,
+    required this.currentModelName,
     required this.currentCharacterCardName,
     required this.currentCharacterCardAvatarUri,
     required this.currentWorkspacePath,
@@ -692,6 +485,7 @@ class ChatViewModelSnapshot {
 
   final String? currentChatId;
   final String currentChatTitle;
+  final String currentModelName;
   final String? currentCharacterCardName;
   final String? currentCharacterCardAvatarUri;
   final String? currentWorkspacePath;
@@ -707,6 +501,7 @@ class ChatViewModelSnapshot {
     return ChatViewModelSnapshot(
       currentChatId: currentChatId,
       currentChatTitle: currentChatTitle,
+      currentModelName: currentModelName,
       currentCharacterCardName: currentCharacterCardName,
       currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
       currentWorkspacePath: currentWorkspacePath,
@@ -719,18 +514,6 @@ class ChatViewModelSnapshot {
       isLoadingDisplayWindow: isLoadingDisplayWindow,
     );
   }
-}
-
-class ChatViewModelChatMetadata {
-  const ChatViewModelChatMetadata({
-    required this.title,
-    required this.characterCardName,
-    required this.workspacePath,
-  });
-
-  final String title;
-  final String? characterCardName;
-  final String? workspacePath;
 }
 
 class ChatUiMessage {

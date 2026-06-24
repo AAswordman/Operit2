@@ -1,4 +1,6 @@
-use operit_store::PreferencesDataStore::{Flow, PreferencesDataStoreError};
+use operit_store::PreferencesDataStore::{
+    combine2, CoroutineScope, PreferencesDataStoreError, SharingStarted, StateFlow,
+};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -25,30 +27,44 @@ impl ActivePromptManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn activePromptFlow(&self) -> Flow<ActivePrompt> {
-        let cardManager = self.characterCardManager.clone();
-        let groupManager = self.characterGroupCardManager.clone();
-        groupManager
-            .observeActiveCharacterGroupId()
-            .map(move |groupId| {
-                if let Some(groupId) = groupId {
-                    return ActivePrompt::CharacterGroup { id: groupId };
-                }
-                let cardId = cardManager
-                    .observeActiveCharacterCardId()
-                    .first()
-                    .ok()
-                    .flatten()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string());
-                ActivePrompt::CharacterCard { id: cardId }
-            })
+    pub fn activePromptFlow(&self) -> StateFlow<ActivePrompt> {
+        let cardIdFlow = self.characterCardManager.observeActiveCharacterCardId();
+        let groupIdFlow = self
+            .characterGroupCardManager
+            .observeActiveCharacterGroupId();
+        let cardIdState = cardIdFlow.stateIn(
+            CoroutineScope,
+            SharingStarted::Lazily,
+            cardIdFlow
+                .first()
+                .expect("CharacterCardManager.observeActiveCharacterCardId must succeed"),
+        );
+        let groupIdState = groupIdFlow.stateIn(
+            CoroutineScope,
+            SharingStarted::Lazily,
+            groupIdFlow
+                .first()
+                .expect("CharacterGroupCardManager.observeActiveCharacterGroupId must succeed"),
+        );
+        combine2(&groupIdState, &cardIdState, |groupId, cardId| {
+            if let Some(groupId) = groupId {
+                return ActivePrompt::CharacterGroup { id: groupId };
+            }
+            match cardId
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                Some(id) => ActivePrompt::CharacterCard { id },
+                None => ActivePrompt::CharacterCard {
+                    id: CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string(),
+                },
+            }
+        })
     }
 
     #[allow(non_snake_case)]
     pub fn getActivePrompt(&self) -> Result<ActivePrompt, PreferencesDataStoreError> {
-        self.activePromptFlow().first()
+        Ok(self.activePromptFlow().value())
     }
 
     #[allow(non_snake_case)]

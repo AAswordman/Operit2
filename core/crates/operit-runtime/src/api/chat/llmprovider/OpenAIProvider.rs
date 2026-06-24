@@ -534,7 +534,10 @@ impl OpenAIProvider {
         }
     }
 
-    async fn readResponseText(&self, response: reqwest::Response) -> Result<String, AiServiceError> {
+    async fn readResponseText(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<String, AiServiceError> {
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
         if self.is_cancelled() {

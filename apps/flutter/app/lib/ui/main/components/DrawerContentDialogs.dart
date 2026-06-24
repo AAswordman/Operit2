@@ -136,11 +136,13 @@ class ConversationActionDialog extends StatelessWidget {
   const ConversationActionDialog({
     super.key,
     required this.history,
+    required this.canOpenInWindow,
     required this.canMoveUp,
     required this.canMoveDown,
   });
 
   final core_proxy.ChatHistory history;
+  final bool canOpenInWindow;
   final bool canMoveUp;
   final bool canMoveDown;
 
@@ -172,12 +174,13 @@ class ConversationActionDialog extends StatelessWidget {
               ),
             ),
           ),
-          _ConversationActionTile(
-            icon: Icons.open_in_new,
-            label: '在新窗口打开',
-            onTap: () =>
-                Navigator.of(context).pop(ConversationAction.openInWindow),
-          ),
+          if (canOpenInWindow)
+            _ConversationActionTile(
+              icon: Icons.open_in_new,
+              label: '在新窗口打开',
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.openInWindow),
+            ),
           _ConversationActionTile(
             icon: Icons.edit,
             label: l10n.editTitle,

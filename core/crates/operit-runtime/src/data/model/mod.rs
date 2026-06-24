@@ -20,10 +20,14 @@ pub mod CharacterCardChatStats;
 pub mod CharacterGroupCard;
 #[path = "CharacterGroupChatStats.rs"]
 pub mod CharacterGroupChatStats;
+#[path = "ChatDisplayWindowState.rs"]
+pub mod ChatDisplayWindowState;
 #[path = "ChatEntity.rs"]
 pub mod ChatEntity;
 #[path = "ChatHistory.rs"]
 pub mod ChatHistory;
+#[path = "ChatMainState.rs"]
+pub mod ChatMainState;
 #[path = "ChatMessage.rs"]
 pub mod ChatMessage;
 #[path = "ChatMessageDisplayMode.rs"]
@@ -111,8 +115,10 @@ pub use CharacterCard::*;
 pub use CharacterCardChatStats::*;
 pub use CharacterGroupCard::*;
 pub use CharacterGroupChatStats::*;
+pub use ChatDisplayWindowState::*;
 pub use ChatEntity::*;
 pub use ChatHistory::*;
+pub use ChatMainState::*;
 pub use ChatMessage::*;
 pub use ChatMessageDisplayMode::*;
 pub use ChatMessageLocatorPreview::*;

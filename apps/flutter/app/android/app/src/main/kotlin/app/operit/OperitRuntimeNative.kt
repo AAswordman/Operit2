@@ -11,8 +11,7 @@ object OperitRuntimeNative {
     @JvmStatic external fun call(handle: Long, request: ByteArray): String
     @JvmStatic external fun watchSnapshot(handle: Long, request: ByteArray): String
     @JvmStatic external fun watchStream(handle: Long, request: ByteArray): String
-    @JvmStatic external fun pollWatchStream(handle: Long, subscriptionId: String): String
-    @JvmStatic external fun pollWatchStreams(handle: Long, subscriptionIdsJson: String): String
+    @JvmStatic external fun nextWatchChannelEvent(handle: Long): String
     @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): String
     @JvmStatic
     external fun startWebAccessServer(

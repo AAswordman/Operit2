@@ -509,7 +509,6 @@ class _AIChatScreenState extends State<AIChatScreen>
           return;
         }
         _applySnapshot(snapshot);
-        _refreshCurrentModelLabel();
         _updateTopBarTitle();
         _scheduleScrollToBottom();
       },
@@ -598,7 +597,6 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
     _pendingChatSwitchSnapshot = null;
     _commitSnapshot(snapshot, keepPreparingChatSwitch: true);
-    _refreshCurrentModelLabel();
     _updateTopBarTitle();
     final renderReady = await _waitForPreparedChatSwitchRender(generation);
     if (!renderReady) {
@@ -648,7 +646,10 @@ class _AIChatScreenState extends State<AIChatScreen>
         ..addAll(snapshot.messages);
       _loading = snapshot.isLoading;
       _inputProcessingState = snapshot.inputProcessingState;
-      _modelLabel = _resolveModelLabel(snapshot.messages);
+      _modelLabel = _resolveModelLabel(
+        snapshot.messages,
+        snapshot.currentModelName,
+      );
       _currentChatId = snapshot.currentChatId;
       _currentWorkspacePath = snapshot.currentWorkspacePath;
       _currentChatTitle = snapshot.currentChatTitle;
@@ -807,14 +808,14 @@ class _AIChatScreenState extends State<AIChatScreen>
       return;
     }
     if (_hasNewerDisplayHistory && !_isLoadingDisplayWindow) {
-      _viewModel
-          .showLatestMessagesForCurrentChat()
-          .then((_) {
-            _viewModel.requestMainStateRefresh();
-          })
-          .catchError((Object error, StackTrace stackTrace) {
-            debugPrint('Failed to show latest messages: $error\n$stackTrace');
-          });
+      unawaited(
+        _viewModel.showLatestMessagesForCurrentChat().catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          debugPrint('Failed to show latest messages: $error\n$stackTrace');
+        }),
+      );
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -888,7 +889,6 @@ class _AIChatScreenState extends State<AIChatScreen>
           );
           _inputFocusNode.requestFocus();
         }
-        _viewModel.requestMainStateRefresh();
       },
     );
   }
@@ -902,7 +902,6 @@ class _AIChatScreenState extends State<AIChatScreen>
           showResendButton: message.sender == 'user',
           onSave: (content) async {
             await _viewModel.updateMessage(index, content);
-            _viewModel.requestMainStateRefresh();
           },
           onResend: (content) async {
             if (_currentWorkspacePath != null &&
@@ -912,12 +911,10 @@ class _AIChatScreenState extends State<AIChatScreen>
                 index: index,
                 onConfirm: () async {
                   await _viewModel.rewindAndResendMessage(index, content);
-                  _viewModel.requestMainStateRefresh();
                 },
               );
             } else {
               await _viewModel.rewindAndResendMessage(index, content);
-              _viewModel.requestMainStateRefresh();
             }
           },
         );
@@ -951,13 +948,15 @@ class _AIChatScreenState extends State<AIChatScreen>
   }
 
   void _insertSummary(ChatUiMessage message) {
-    _viewModel
-        .insertSummary(message)
-        .then((_) => _viewModel.requestMainStateRefresh())
-        .catchError((Object error, StackTrace stackTrace) {
-          debugPrint('Failed to insert summary: $error\n$stackTrace');
-          return null;
-        });
+    unawaited(
+      _viewModel.insertSummary(message).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('Failed to insert summary: $error\n$stackTrace');
+        return false;
+      }),
+    );
   }
 
   Future<void> _createBranch(int timestamp) async {
@@ -1022,25 +1021,24 @@ class _AIChatScreenState extends State<AIChatScreen>
     }
     await _viewModel.deleteMessages(indices);
     _exitMultiSelectMode();
-    _viewModel.requestMainStateRefresh();
   }
 
   Future<void> _loadOlderDisplayWindow() async {
     await _viewModel.loadOlderMessagesForCurrentChat();
-    _viewModel.requestMainStateRefresh();
   }
 
   Future<void> _loadNewerDisplayWindow() async {
     await _viewModel.loadNewerMessagesForCurrentChat();
-    _viewModel.requestMainStateRefresh();
   }
 
   Future<void> _showLatestDisplayWindow() async {
     await _viewModel.showLatestMessagesForCurrentChat();
-    _viewModel.requestMainStateRefresh();
   }
 
-  String _resolveModelLabel(List<ChatUiMessage> messages) {
+  String _resolveModelLabel(
+    List<ChatUiMessage> messages,
+    String currentModelName,
+  ) {
     for (final message in messages.reversed) {
       if (message.modelName.isNotEmpty) {
         return message.modelName.length > 26
@@ -1048,15 +1046,12 @@ class _AIChatScreenState extends State<AIChatScreen>
             : message.modelName;
       }
     }
-    return AppLocalizations.of(context)!.model;
-  }
-
-  Future<void> _refreshCurrentModelLabel() async {
-    final modelName = await _viewModel.currentModelName();
-    if (!mounted) {
-      return;
+    if (currentModelName.isNotEmpty) {
+      return currentModelName.length > 26
+          ? '${currentModelName.substring(0, 26)}...'
+          : currentModelName;
     }
-    _setModelLabel(modelName);
+    return AppLocalizations.of(context)!.model;
   }
 
   void _setModelLabel(String modelName) {
@@ -1206,9 +1201,7 @@ class _AIChatScreenState extends State<AIChatScreen>
           onSelectAllMessages: _selectAllMessages,
           onClearMessageSelection: _clearMessageSelection,
           onDeleteSelectedMessages: _deleteSelectedMessages,
-          onRefreshRequested: () async {
-            _viewModel.requestMainStateRefresh();
-          },
+          onRefreshRequested: _viewModel.showLatestMessagesForCurrentChat,
           isMultiSelectMode: data.isMultiSelectMode,
           selectedMessageIndices: data.selectedMessageIndices,
           isPreparingChatSwitch: data.isPreparingChatSwitch,
@@ -1379,7 +1372,6 @@ class _AIChatScreenState extends State<AIChatScreen>
       throw StateError('No current chat');
     }
     await _viewModel.createAndBindDefaultWorkspace(chatId, projectType);
-    _viewModel.requestMainStateRefresh();
   }
 
   Future<void> _bindWorkspace(String workspace) async {
@@ -1388,6 +1380,5 @@ class _AIChatScreenState extends State<AIChatScreen>
       throw StateError('No current chat');
     }
     await _viewModel.bindChatToWorkspace(chatId, workspace);
-    _viewModel.requestMainStateRefresh();
   }
 }

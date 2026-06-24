@@ -2,6 +2,8 @@
 pub mod ObjectBoxStore;
 #[path = "PreferencesDataStore.rs"]
 pub mod PreferencesDataStore;
+#[path = "PreferencesEncryption.rs"]
+pub mod PreferencesEncryption;
 #[path = "RuntimeStorageHost.rs"]
 pub mod RuntimeStorageHost;
 #[path = "RuntimeStorageLayout.rs"]

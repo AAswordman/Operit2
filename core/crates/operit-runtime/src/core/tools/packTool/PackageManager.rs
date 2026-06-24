@@ -1345,7 +1345,10 @@ impl PackageManager {
     #[allow(non_snake_case)]
     pub fn unregisterMCPServerPackage(&mut self, serverName: &str) -> bool {
         let normalizedServerName = self.normalizePackageName(serverName);
-        let removed = self.availablePackages.remove(&normalizedServerName).is_some();
+        let removed = self
+            .availablePackages
+            .remove(&normalizedServerName)
+            .is_some();
         self.activatedPackages.remove(&normalizedServerName);
         self.activePackageStateIds.remove(&normalizedServerName);
         self.cachedMcpTools.remove(&normalizedServerName);

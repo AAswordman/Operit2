@@ -187,7 +187,120 @@ Android SYSTEM_TTS playback
 
 远程连接只转发 core call/watch 请求到 runtime owner。`TtsPlaybackHost`、`TtsSynthesisHost`、Android owner interaction 都归 runtime owner 所在 app/host 处理；remote client 不接管远端 runtime 的 host 能力。
 
-## 5. Prohibited Placement
+## 5. Watch Stream Protocol
+
+`watchStream` 表示一个逻辑订阅。协议必须把多个逻辑订阅复用到少量物理 watch channel 上，以解决浏览器和移动端连接数量、系统资源和调度开销问题。
+
+watch channel 是主动事件通道。实现应等待 core 侧产生事件，并在事件出现时写入物理通道；固定间隔轮询不是 Core Link watch 协议语义，不得作为 watch stream 传输接口。
+
+HTTP watch channel 使用以下端点：
+
+```text
+POST /link/watch/channel/events
+POST /link/watch/channel/open
+POST /link/watch/channel/close
+```
+
+`/link/watch/channel/events` 打开物理事件通道，请求体只包含 channel：
+
+```json
+{
+  "channelId": "watch-channel-0"
+}
+```
+
+HTTP 响应必须是持续事件流：
+
+```text
+content-type: application/x-ndjson
+```
+
+每一行是一个 watch channel frame。当前 frame 形状为：
+
+```json
+{
+  "subscriptionId": "watch-0",
+  "event": {
+    "kind": "Changed",
+    "value": {}
+  }
+}
+```
+
+frame 中的 `event` 必须是 `CoreEvent`。接收方按 `subscriptionId` 分发到对应的 `watchStream`。读端必须忽略未知字段，以便后续增加 `channelId`、`seq`、`type` 等诊断或排序字段。
+
+`/link/watch/channel/open` 在既有 channel 上创建逻辑订阅：
+
+```json
+{
+  "channelId": "watch-channel-0",
+  "subscriptionId": "watch-0",
+  "request": {
+    "requestId": "flutter-0",
+    "targetPath": { "segments": ["chatRuntimeHolder", "main"] },
+    "propertyName": "chatHistoryFlow",
+    "args": {}
+  }
+}
+```
+
+服务端必须原样返回 `subscriptionId`：
+
+```json
+{
+  "subscriptionId": "watch-0"
+}
+```
+
+`subscriptionId` 由客户端生成，作用域限定在 `channelId` 内。同一个 channel 内重复 `subscriptionId` 是协议错误。一个 channel 可以承载多个 subscription；当前客户端约定一个 channel 最多承载 16 个 subscription。
+
+`/link/watch/channel/close` 关闭一个逻辑订阅：
+
+```json
+{
+  "channelId": "watch-channel-0",
+  "subscriptionId": "watch-0"
+}
+```
+
+事件顺序规则：
+
+```text
+同一个 subscriptionId 内，CoreEvent 顺序必须保持。
+不同 subscriptionId 之间，不定义全局顺序。
+CoreEvent.kind == Completed 表示该 subscription 自然结束。
+发送 Completed 后，服务端必须释放该 subscription。
+客户端主动 close 后，不要求服务端再发送 Completed。
+物理 channel 断开时，该 channel 上全部 subscription 都失效。
+```
+
+各运行环境必须实现同一套 watch channel 语义：
+
+```text
+HTTP remote
+  使用 /link/watch/channel/events 的 NDJSON 长响应。
+
+WebSocket
+  可承载相同 watch channel frame，但 frame 语义必须与 HTTP watch channel 一致。
+
+Android / desktop native bridge
+  call、watchSnapshot、watch channel open/close 可以走请求响应通道。
+  watch channel event 必须由 native 主动推送到 Dart，再按 subscriptionId 分发。
+  Dart UI isolate 不应通过固定周期 poll 来驱动 watchStream。
+
+Web / wasm bridge
+  JS/wasm 侧应提供主动事件回调或等价事件通道，再按 subscriptionId 分发。
+```
+
+核心约束：
+
+```text
+多个 watchStream 合并到少量 watch channel。
+watch channel 主动传输事件。
+轮询不是 watch stream 协议。
+```
+
+## 6. Prohibited Placement
 
 以下内容不得放进 `operit-link`：
 

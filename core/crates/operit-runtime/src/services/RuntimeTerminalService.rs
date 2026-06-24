@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::TerminalHost;
+use operit_host_api::{TerminalHost, TerminalSessionListEntry};
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use serde::{Deserialize, Serialize};
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
@@ -62,9 +63,48 @@ struct TerminalPtyOutputEntry {
 
 static TERMINAL_PTY_OUTPUT_STREAMS: OnceLock<Mutex<HashMap<String, TerminalPtyOutputEntry>>> =
     OnceLock::new();
+static TERMINAL_SESSIONS_FLOW: OnceLock<MutableStateFlow<Vec<RuntimeTerminalSessionInfo>>> =
+    OnceLock::new();
 
 fn terminal_pty_output_streams() -> &'static Mutex<HashMap<String, TerminalPtyOutputEntry>> {
     TERMINAL_PTY_OUTPUT_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn terminal_sessions_flow() -> &'static MutableStateFlow<Vec<RuntimeTerminalSessionInfo>> {
+    TERMINAL_SESSIONS_FLOW.get_or_init(|| mutableStateFlow(Vec::new()))
+}
+
+fn runtime_terminal_session_info(session: TerminalSessionListEntry) -> RuntimeTerminalSessionInfo {
+    RuntimeTerminalSessionInfo {
+        sessionId: session.sessionId,
+        sessionName: session.sessionName,
+        terminalType: session.terminalType,
+        sessionKind: session.sessionKind,
+        workingDir: session.workingDir,
+        commandRunning: session.commandRunning,
+    }
+}
+
+fn load_terminal_sessions(
+    terminalHost: &Arc<dyn TerminalHost>,
+) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
+    terminalHost
+        .listSessions()
+        .map_err(|error| error.message)
+        .map(|sessions| {
+            sessions
+                .into_iter()
+                .map(runtime_terminal_session_info)
+                .collect()
+        })
+}
+
+fn publish_terminal_sessions(
+    terminalHost: &Arc<dyn TerminalHost>,
+) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
+    let sessions = load_terminal_sessions(terminalHost)?;
+    terminal_sessions_flow().set_value(sessions.clone());
+    Ok(sessions)
 }
 
 fn close_terminal_pty_output_stream(sessionId: &str) {
@@ -97,6 +137,8 @@ fn start_terminal_pty_output_reader(
 
         match terminalHost.pollPtyExitCode(&sessionId) {
             Ok(Some(_)) => {
+                publish_terminal_sessions(&terminalHost)
+                    .expect("TerminalHost.listSessions must succeed after PTY exit");
                 close_terminal_pty_output_stream(&sessionId);
                 break;
             }
@@ -122,22 +164,15 @@ impl RuntimeTerminalService {
 
     #[allow(non_snake_case)]
     pub fn listTerminalSessions(&self) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
-        self.terminalHost
-            .listSessions()
-            .map_err(|error| error.message)
-            .map(|sessions| {
-                sessions
-                    .into_iter()
-                    .map(|session| RuntimeTerminalSessionInfo {
-                        sessionId: session.sessionId,
-                        sessionName: session.sessionName,
-                        terminalType: session.terminalType,
-                        sessionKind: session.sessionKind,
-                        workingDir: session.workingDir,
-                        commandRunning: session.commandRunning,
-                    })
-                    .collect()
-            })
+        publish_terminal_sessions(&self.terminalHost)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn terminalSessionsFlow(
+        &self,
+    ) -> Result<StateFlow<Vec<RuntimeTerminalSessionInfo>>, String> {
+        publish_terminal_sessions(&self.terminalHost)?;
+        Ok(terminal_sessions_flow().asStateFlow())
     }
 
     #[allow(non_snake_case)]
@@ -148,12 +183,13 @@ impl RuntimeTerminalService {
         rows: i32,
         cols: i32,
     ) -> Result<String, String> {
-        self.terminalHost
+        let sessionId = self
+            .terminalHost
             .startPtySession(&sessionName, &workingDir, rows as u16, cols as u16)
-            .map_err(|error| error.message)
-            .inspect(|sessionId| {
-                self.ensureTerminalPtyOutputStream(sessionId.clone());
-            })
+            .map_err(|error| error.message)?;
+        self.ensureTerminalPtyOutputStream(sessionId.clone());
+        publish_terminal_sessions(&self.terminalHost)?;
+        Ok(sessionId)
     }
 
     #[allow(non_snake_case)]
@@ -191,7 +227,9 @@ impl RuntimeTerminalService {
         close_terminal_pty_output_stream(&sessionId);
         self.terminalHost
             .closePtySession(&sessionId)
-            .map_err(|error| error.message)
+            .map_err(|error| error.message)?;
+        publish_terminal_sessions(&self.terminalHost)?;
+        Ok(())
     }
 
     #[allow(non_snake_case)]

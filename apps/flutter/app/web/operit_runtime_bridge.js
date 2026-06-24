@@ -30,11 +30,8 @@
       async watchSnapshot(request) {
         return (await runtimePromise).watchSnapshot(request);
       },
-      async watchStream(request) {
-        return (await runtimePromise).watchStream(request);
-      },
-      async pollWatchStream(subscriptionId) {
-        return (await runtimePromise).pollWatchStream(subscriptionId);
+      async watchStream(request, onEvent) {
+        return (await runtimePromise).watchStream(request, onEvent);
       },
       async closeWatchStream(subscriptionId) {
         return (await runtimePromise).closeWatchStream(subscriptionId);
@@ -228,7 +225,7 @@
     const sessionId = String(config.sessionId);
     const deviceId = String(config.deviceId);
     const sessionSecret = String(config.sessionSecret);
-    const streamQueues = new Map();
+    const streamCallbacks = new Map();
     const streamChannels = new Map();
     const channels = new Map();
     let hmacKeyPromise = null;
@@ -333,11 +330,11 @@
           while (newlineIndex >= 0) {
             const line = buffer.substring(0, newlineIndex).trim();
             buffer = buffer.substring(newlineIndex + 1);
-          if (line.length > 0) {
+            if (line.length > 0) {
               const event = JSON.parse(line);
-              const queue = streamQueues.get(event.subscriptionId);
-              if (queue) {
-                queue.push(event.event);
+              const callback = streamCallbacks.get(event.subscriptionId);
+              if (callback) {
+                callback(JSON.stringify(event));
               }
             }
             newlineIndex = buffer.indexOf("\n");
@@ -346,26 +343,29 @@
         const tail = buffer.trim();
         if (tail.length > 0) {
           const event = JSON.parse(tail);
-          const queue = streamQueues.get(event.subscriptionId);
-          if (queue) {
-            queue.push(event.event);
+          const callback = streamCallbacks.get(event.subscriptionId);
+          if (callback) {
+            callback(JSON.stringify(event));
           }
         }
       } catch (error) {
         for (const [subscriptionId, channelId] of streamChannels.entries()) {
           if (channelId === channel.channelId) {
-            const queue = streamQueues.get(subscriptionId);
-            if (queue) {
-              queue.push({
-                requestId: null,
-                targetPath: { segments: [] },
-                propertyName: "watch",
-                kind: "Completed",
-                value: {
-                  code: "LINK_WATCH_CHANNEL_ERROR",
-                  message: String(error),
+            const callback = streamCallbacks.get(subscriptionId);
+            if (callback) {
+              callback(JSON.stringify({
+                subscriptionId,
+                event: {
+                  requestId: null,
+                  targetPath: { segments: [] },
+                  propertyName: "watch",
+                  kind: "Completed",
+                  value: {
+                    code: "LINK_WATCH_CHANNEL_ERROR",
+                    message: String(error),
+                  },
                 },
-              });
+              }));
             }
           }
         }
@@ -399,17 +399,21 @@
           request: JSON.parse(request),
         });
       },
-      async watchStream(request) {
+      async watchStream(request, onEvent) {
+        if (typeof onEvent !== "function") {
+          throw new Error("watchStream expects an event callback");
+        }
         const channel = await acquireChannel();
-        const subscriptionId = `watch-${crypto.randomUUID()}`;
-        streamQueues.set(subscriptionId, []);
+        const envelope = JSON.parse(request);
+        const subscriptionId = envelope.subscriptionId;
+        streamCallbacks.set(subscriptionId, onEvent);
         streamChannels.set(subscriptionId, channel.channelId);
         channel.subscriptionCount += 1;
         try {
           const responseText = await postText("/link/watch/channel/open", {
             channelId: channel.channelId,
             subscriptionId,
-            request: JSON.parse(request),
+            request: envelope.request,
           });
           const response = JSON.parse(responseText);
           if (response.subscriptionId !== subscriptionId) {
@@ -418,18 +422,10 @@
           return JSON.stringify({ subscriptionId });
         } catch (error) {
           channel.subscriptionCount -= 1;
-          streamQueues.delete(subscriptionId);
+          streamCallbacks.delete(subscriptionId);
           streamChannels.delete(subscriptionId);
           throw error;
         }
-      },
-      async pollWatchStream(subscriptionId) {
-        const queue = streamQueues.get(subscriptionId);
-        if (!queue) {
-          throw new Error(`link watch stream not found: ${subscriptionId}`);
-        }
-        const events = queue.splice(0, queue.length);
-        return JSON.stringify(events);
       },
       async closeWatchStream(subscriptionId) {
         const channelId = streamChannels.get(subscriptionId);
@@ -442,7 +438,7 @@
           subscriptionId,
         });
         streamChannels.delete(subscriptionId);
-        streamQueues.delete(subscriptionId);
+        streamCallbacks.delete(subscriptionId);
         if (channel) {
           channel.subscriptionCount -= 1;
           if (channel.subscriptionCount === 0) {
@@ -1132,11 +1128,8 @@
     async watchSnapshot(request) {
       return (await bridge()).watchSnapshot(request);
     },
-    async watchStream(request) {
-      return (await bridge()).watchStream(request);
-    },
-    async pollWatchStream(subscriptionId) {
-      return (await bridge()).pollWatchStream(subscriptionId);
+    async watchStream(request, onEvent) {
+      return (await bridge()).watchStream(request, onEvent);
     },
     async closeWatchStream(subscriptionId) {
       return (await bridge()).closeWatchStream(subscriptionId);

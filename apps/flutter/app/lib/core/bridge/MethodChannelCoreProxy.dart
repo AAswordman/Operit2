@@ -1,7 +1,7 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
@@ -67,8 +67,29 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
-    final subscriptionText = await _invokeWatchStream(_channel, request);
+    final watchChannel = _methodChannelWatchChannel(_channel);
+    final subscriptionId = watchChannel.nextSubscriptionId();
+    final events = watchChannel.attach(subscriptionId);
+    final String? subscriptionText;
+    try {
+      subscriptionText = await _invokeWatchStream(
+        _channel,
+        subscriptionId,
+        request,
+      );
+    } catch (error, stackTrace) {
+      await watchChannel.fail(subscriptionId, error, stackTrace);
+      rethrow;
+    }
     if (subscriptionText == null) {
+      await watchChannel.fail(
+        subscriptionId,
+        const CoreLinkError(
+          code: 'EMPTY_RESPONSE',
+          message: 'runtime bridge returned empty stream subscription',
+        ),
+        StackTrace.current,
+      );
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty stream subscription',
@@ -79,33 +100,45 @@ class MethodChannelCoreProxy extends CoreProxy {
     if (subscriptionJson.containsKey('code') &&
         subscriptionJson.containsKey('message')) {
       final error = CoreLinkError.fromJson(subscriptionJson);
+      await watchChannel.fail(subscriptionId, error, StackTrace.current);
       throw error;
     }
-    final subscriptionId = subscriptionJson['subscriptionId'] as String;
-    yield* _methodChannelWatchPump(_channel).attach(subscriptionId);
+    if (subscriptionJson['subscriptionId'] != subscriptionId) {
+      final error = CoreLinkError(
+        code: 'INVALID_RESPONSE',
+        message:
+            'runtime watch subscription id mismatch: ${subscriptionJson['subscriptionId']}',
+      );
+      await watchChannel.fail(subscriptionId, error, StackTrace.current);
+      throw error;
+    }
+    yield* events;
   }
 }
 
-final Map<MethodChannel, _MethodChannelWatchPump> _methodChannelWatchPumps =
-    <MethodChannel, _MethodChannelWatchPump>{};
+final Map<MethodChannel, _MethodChannelWatchChannel>
+    _methodChannelWatchChannels = <MethodChannel, _MethodChannelWatchChannel>{};
 
-_MethodChannelWatchPump _methodChannelWatchPump(MethodChannel channel) {
-  return _methodChannelWatchPumps.putIfAbsent(
+_MethodChannelWatchChannel _methodChannelWatchChannel(MethodChannel channel) {
+  return _methodChannelWatchChannels.putIfAbsent(
     channel,
-    () => _MethodChannelWatchPump(channel),
+    () => _MethodChannelWatchChannel(channel),
   );
 }
 
-class _MethodChannelWatchPump {
-  _MethodChannelWatchPump(this._channel);
-
-  static const Duration interval = Duration(milliseconds: 24);
+class _MethodChannelWatchChannel {
+  _MethodChannelWatchChannel(this._channel) {
+    _channel.setMethodCallHandler(_handleMethodCall);
+  }
 
   final MethodChannel _channel;
   final Map<String, StreamController<CoreEvent>> _controllers =
       <String, StreamController<CoreEvent>>{};
-  Timer? _timer;
-  bool _polling = false;
+  int _nextSubscriptionIndex = 0;
+
+  String nextSubscriptionId() {
+    return 'method-channel-watch-${DateTime.now().microsecondsSinceEpoch}-${_nextSubscriptionIndex++}';
+  }
 
   Stream<CoreEvent> attach(String subscriptionId) {
     final controller = StreamController<CoreEvent>();
@@ -113,99 +146,91 @@ class _MethodChannelWatchPump {
       await _closeSubscription(subscriptionId);
     };
     _controllers[subscriptionId] = controller;
-    _timer ??= Timer.periodic(interval, (_) {
-      unawaited(_poll());
-    });
-    unawaited(_poll());
     return controller.stream;
   }
 
-  Future<void> _poll() async {
-    if (_polling || _controllers.isEmpty) {
+  Future<void> fail(
+    String subscriptionId,
+    Object error,
+    StackTrace stackTrace,
+  ) async {
+    final controller = _controllers.remove(subscriptionId);
+    if (controller == null) {
       return;
     }
-    _polling = true;
-    final subscriptionIds = _controllers.keys.toList(growable: false);
-    try {
-      final eventsText = await _channel.invokeMethod<String>(
-        'pollWatchStreams',
-        jsonEncode(subscriptionIds),
-      );
-      if (eventsText == null) {
-        throw const CoreLinkError(
-          code: 'EMPTY_RESPONSE',
-          message: 'runtime bridge returned empty stream events',
+    controller.onCancel = null;
+    controller.addError(error, stackTrace);
+    await controller.close();
+  }
+
+  Future<Object?> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'watchChannelEvent':
+        final frameText = call.arguments as String;
+        _dispatch(frameText);
+        return null;
+      default:
+        throw MissingPluginException(
+          'No implementation found for method ${call.method} on channel ${_channel.name}',
         );
+    }
+  }
+
+  void _dispatch(String frameText) {
+    try {
+      final frame = jsonDecode(frameText) as Map<String, Object?>;
+      final subscriptionId = frame['subscriptionId'] as String;
+      final controller = _controllers[subscriptionId];
+      if (controller == null) {
+        return;
       }
-      final decodedEvents = jsonDecode(eventsText);
-      if (decodedEvents is Map<String, Object?> &&
-          decodedEvents.containsKey('code') &&
-          decodedEvents.containsKey('message')) {
-        throw CoreLinkError.fromJson(decodedEvents);
-      }
-      final eventsBySubscription = (decodedEvents as Map<String, Object?>)
-          .cast<String, Object?>();
-      for (final subscriptionId in subscriptionIds) {
-        final controller = _controllers[subscriptionId];
-        if (controller == null) {
-          continue;
-        }
-        final eventsJson =
-            eventsBySubscription[subscriptionId] as List<Object?>;
-        for (final eventJson in eventsJson.cast<Map<String, Object?>>()) {
-          final event = CoreEvent.fromJson(eventJson);
-          controller.add(event);
-          if (event.kind == 'Completed') {
-            _controllers.remove(subscriptionId);
-            await _channel.invokeMethod<String>(
-              'closeWatchStream',
-              subscriptionId,
-            );
-            controller.onCancel = null;
-            await controller.close();
-            break;
-          }
-        }
-      }
-      if (_controllers.isEmpty) {
-        _timer?.cancel();
-        _timer = null;
+      final event = CoreEvent.fromJson(frame['event'] as Map<String, Object?>);
+      controller.add(event);
+      if (event.kind == 'Completed') {
+        _controllers.remove(subscriptionId);
+        controller.onCancel = null;
+        unawaited(controller.close());
+        unawaited(_channel.invokeMethod<String>(
+          'closeWatchStream',
+          subscriptionId,
+        ));
       }
     } catch (error, stackTrace) {
-      final entries = _controllers.entries.toList(growable: false);
-      _controllers.clear();
-      _timer?.cancel();
-      _timer = null;
-      for (final entry in entries) {
-        unawaited(_channel.invokeMethod<String>('closeWatchStream', entry.key));
-        final controller = entry.value;
-        controller.addError(error, stackTrace);
-        controller.onCancel = null;
-        await controller.close();
-      }
-    } finally {
-      _polling = false;
+      _failAll(error, stackTrace);
+    }
+  }
+
+  void _failAll(Object error, StackTrace stackTrace) {
+    final entries = _controllers.entries.toList(growable: false);
+    _controllers.clear();
+    for (final entry in entries) {
+      unawaited(_channel.invokeMethod<String>('closeWatchStream', entry.key));
+      final controller = entry.value;
+      controller.addError(error, stackTrace);
+      controller.onCancel = null;
+      unawaited(controller.close());
     }
   }
 
   Future<void> _closeSubscription(String subscriptionId) async {
     _controllers.remove(subscriptionId);
-    if (_controllers.isEmpty) {
-      _timer?.cancel();
-      _timer = null;
-    }
     await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
   }
 }
 
 Future<String?> _invokeWatchStream(
   MethodChannel channel,
+  String subscriptionId,
   CoreWatchRequest request,
 ) async {
   try {
     return await channel.invokeMethod<String>(
       'watchStream',
-      jsonEncode(request.toJson()),
+      jsonEncode(<String, Object?>{
+        'channelId': 'method-channel-watch',
+        'subscriptionId': subscriptionId,
+        'request': request.toJson(),
+      }),
     );
   } on MissingPluginException {
     rethrow;

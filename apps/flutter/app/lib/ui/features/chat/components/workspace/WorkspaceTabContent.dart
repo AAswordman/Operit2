@@ -108,9 +108,8 @@ class WorkspaceTabContent extends StatelessWidget {
         );
       case WorkspaceTabKind.terminal:
         final sessionId = tab.terminalSessionId;
-        final sessionKind = tab.terminalSessionKind;
         final terminalType = tab.terminalType;
-        if (sessionId == null || sessionKind == null || terminalType == null) {
+        if (sessionId == null || terminalType == null) {
           return _WorkspaceSimplePane(
             icon: Icons.terminal,
             title: l10n.terminal,
@@ -119,7 +118,6 @@ class WorkspaceTabContent extends StatelessWidget {
         }
         return WorkspaceTerminalContent(
           sessionId: sessionId,
-          sessionKind: sessionKind,
           terminalType: terminalType,
           workingDir: tab.terminalWorkingDir ?? '',
         );

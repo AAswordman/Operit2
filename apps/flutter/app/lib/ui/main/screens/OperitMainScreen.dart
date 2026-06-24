@@ -316,8 +316,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _navigationModel.routesById[currentRouteEntry.routeId]!.title ??
             currentScreen.title ??
             '';
-        final mediaQuery = MediaQuery.of(context);
-        final useTabletLayout = useTabletLayoutForWidth(mediaQuery.size.width);
+        final screenSize = MediaQuery.sizeOf(context);
+        final useTabletLayout = useTabletLayoutForWidth(screenSize.width);
         final content = AppContent(
           routerState: _routerState,
           currentScreen: currentScreen,
@@ -376,7 +376,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                         navigationEntries: _navigationModel.navigationEntries,
                         pluginSidebarEntries: pluginSidebarEntries,
                         selectedRouteId: currentRouteEntry.routeId,
-                        drawerWidth: mediaQuery.size.width * 0.75,
+                        drawerWidth: screenSize.width * 0.75,
                         drawerOpen: _drawerOpen,
                         enableNavigationAnimation: true,
                         onOpenDrawer: () {

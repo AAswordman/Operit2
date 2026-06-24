@@ -3,6 +3,7 @@
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 import 'OperitWindowArguments.dart';
+import 'OperitWindowPlatform.dart';
 
 class DetachedChatWindowLauncher {
   const DetachedChatWindowLauncher._();
@@ -11,6 +12,11 @@ class DetachedChatWindowLauncher {
     required String chatId,
     required String title,
   }) async {
+    if (!operitSupportsDesktopMultiWindow) {
+      throw UnsupportedError(
+        'Detached chat windows require desktop multi-window support',
+      );
+    }
     final slotId = 'chat_${DateTime.now().microsecondsSinceEpoch}';
     final controller = await WindowController.create(
       WindowConfiguration(

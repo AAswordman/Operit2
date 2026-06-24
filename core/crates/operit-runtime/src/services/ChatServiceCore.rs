@@ -5,12 +5,20 @@ use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::data::model::ActivePrompt::ActivePrompt;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
+use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
+use crate::data::model::ChatHistory::ChatHistory;
+use crate::data::model::ChatMainState::ChatMainState;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::model::ChatTurnOptions::ChatTurnOptions;
+use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::PromptFunctionType::PromptFunctionType;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::repository::ChatHistoryManager::ChatImportResult;
 use crate::data::skill::SkillRepository::SkillRepository;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
@@ -24,7 +32,10 @@ use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use crate::util::OperitPaths;
-use operit_store::PreferencesDataStore::StateFlow;
+use operit_store::PreferencesDataStore::{
+    combine3, combine5, stringPreferencesKey, PreferencesDataStore, StateFlow,
+};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,6 +50,118 @@ pub trait ChatServiceUiBridge {}
 pub struct EmptyChatServiceUiBridge;
 
 impl ChatServiceUiBridge for EmptyChatServiceUiBridge {}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ChatMainFlowInputs {
+    messages: Vec<ChatMessage>,
+    currentChatId: Option<String>,
+    chatHistories: Vec<ChatHistory>,
+    activeStreamingChatIds: HashSet<String>,
+    inputProcessingStateByChatId: HashMap<String, InputProcessingState>,
+}
+
+fn buildChatMainState(
+    inputs: ChatMainFlowInputs,
+    displayWindowState: ChatDisplayWindowState,
+    activePrompt: ActivePrompt,
+    characterCardManager: &CharacterCardManager,
+    userPreferencesDataStore: &PreferencesDataStore,
+    functionalConfigManager: &FunctionalConfigManager,
+    modelConfigManager: &ModelConfigManager,
+) -> ChatMainState {
+    let currentChatMetadata = inputs.currentChatId.as_ref().and_then(|chatId| {
+        inputs
+            .chatHistories
+            .iter()
+            .find(|history| history.id.as_str() == chatId)
+    });
+    let currentChatTitle = currentChatMetadata
+        .map(|history| history.title.clone())
+        .unwrap_or_default();
+    let currentCharacterCardName =
+        currentChatMetadata.and_then(|history| history.characterCardName.clone());
+    let currentWorkspacePath = currentChatMetadata.and_then(|history| history.workspace.clone());
+    let inputProcessingState = match inputs
+        .currentChatId
+        .as_ref()
+        .and_then(|chatId| inputs.inputProcessingStateByChatId.get(chatId))
+    {
+        Some(state) => state.clone(),
+        None => InputProcessingState::Idle,
+    };
+    let isLoading = match inputs.currentChatId.as_ref() {
+        Some(chatId) => inputs.activeStreamingChatIds.contains(chatId),
+        None => false,
+    };
+
+    ChatMainState {
+        currentChatId: inputs.currentChatId,
+        currentChatTitle,
+        currentModelName: currentChatModelName(functionalConfigManager, modelConfigManager),
+        currentCharacterCardAvatarUri: currentCharacterCardName.as_deref().and_then(|name| {
+            characterCardAvatarUriByName(characterCardManager, userPreferencesDataStore, name)
+        }),
+        currentCharacterCardName,
+        currentWorkspacePath,
+        activeCharacterCardName: activeCharacterCardName(characterCardManager, activePrompt),
+        isLoading,
+        inputProcessingState,
+        messages: inputs.messages,
+        hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
+        hasNewerDisplayHistory: displayWindowState.hasNewerDisplayHistory,
+        isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
+    }
+}
+
+fn currentChatModelName(
+    functionalConfigManager: &FunctionalConfigManager,
+    modelConfigManager: &ModelConfigManager,
+) -> String {
+    let binding = functionalConfigManager
+        .getModelBindingForFunction(FunctionType::CHAT)
+        .expect("CHAT model binding must be available");
+    modelConfigManager
+        .getResolvedModelConfig(&binding.providerId, &binding.modelId)
+        .expect("CHAT resolved model config must be available")
+        .modelId
+}
+
+fn activeCharacterCardName(
+    characterCardManager: &CharacterCardManager,
+    activePrompt: ActivePrompt,
+) -> Option<String> {
+    match activePrompt {
+        ActivePrompt::CharacterCard { id } => Some(
+            characterCardManager
+                .getCharacterCard(&id)
+                .expect("CharacterCardManager.getCharacterCard must succeed")
+                .name,
+        ),
+        ActivePrompt::CharacterGroup { .. } => None,
+    }
+}
+
+fn characterCardAvatarUriByName(
+    characterCardManager: &CharacterCardManager,
+    userPreferencesDataStore: &PreferencesDataStore,
+    name: &str,
+) -> Option<String> {
+    let normalizedName = name.trim();
+    if normalizedName.is_empty() {
+        return None;
+    }
+    let card = characterCardManager
+        .findCharacterCardByName(normalizedName)
+        .expect("CharacterCardManager.findCharacterCardByName must succeed")?;
+    userPreferencesDataStore
+        .data()
+        .expect("user preferences data must be readable")
+        .get(&stringPreferencesKey(&format!(
+            "character_card_theme_{}_custom_ai_avatar_uri",
+            card.id
+        )))
+        .cloned()
+}
 
 pub struct ChatServiceCore {
     pub selectionMode: ChatSelectionMode,
@@ -1034,6 +1157,69 @@ impl ChatServiceCore {
         &self,
     ) -> StateFlow<Vec<crate::data::model::ChatHistory::ChatHistory>> {
         self.chatHistoryDelegate.chatHistoriesFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn chatMainStateFlow(&self) -> StateFlow<ChatMainState> {
+        let chatHistoryFlow = self.chatHistoryDelegate.chatHistoryFlow();
+        let currentChatIdFlow = self.chatHistoryDelegate.currentChatIdFlow();
+        let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
+        let activeStreamingChatIdsFlow =
+            self.messageProcessingDelegate.activeStreamingChatIdsFlow();
+        let inputProcessingStateByChatIdFlow = self
+            .messageProcessingDelegate
+            .inputProcessingStateByChatIdFlow();
+        let displayWindowStateFlow = self.chatHistoryDelegate.displayWindowStateFlow();
+        let activePromptFlow = self
+            .chatHistoryDelegate
+            .activePromptManager
+            .activePromptFlow();
+        let inputsFlow = combine5(
+            &chatHistoryFlow,
+            &currentChatIdFlow,
+            &chatHistoriesFlow,
+            &activeStreamingChatIdsFlow,
+            &inputProcessingStateByChatIdFlow,
+            |messages,
+             currentChatId,
+             chatHistories,
+             activeStreamingChatIds,
+             inputProcessingStateByChatId| {
+                ChatMainFlowInputs {
+                    messages,
+                    currentChatId,
+                    chatHistories,
+                    activeStreamingChatIds,
+                    inputProcessingStateByChatId,
+                }
+            },
+        );
+        let characterCardManager = self.chatHistoryDelegate.characterCardManager.clone();
+        let functionalConfigManager = self
+            .messageProcessingDelegate
+            .functionalConfigManager
+            .clone();
+        let modelConfigManager = self.messageProcessingDelegate.modelConfigManager.clone();
+        let userPreferencesDataStore = PreferencesDataStore::new(
+            OperitPaths::userPreferencesPath().expect("user preferences path must be available"),
+        );
+
+        combine3(
+            &inputsFlow,
+            &displayWindowStateFlow,
+            &activePromptFlow,
+            move |inputs, displayWindowState, activePrompt| {
+                buildChatMainState(
+                    inputs,
+                    displayWindowState,
+                    activePrompt,
+                    &characterCardManager,
+                    &userPreferencesDataStore,
+                    &functionalConfigManager,
+                    &modelConfigManager,
+                )
+            },
+        )
     }
 
     pub fn showChatHistorySelector(&self) -> bool {

@@ -1,12 +1,12 @@
 #![allow(non_snake_case)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::ffi::{c_char, CStr, CString};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -25,8 +25,8 @@ use access::{
     RemoteWebAccessConfig,
 };
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
-    CoreRequestId, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
+    CoreLinkError, CoreRequestId, CoreWatchRequest,
 };
 use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
@@ -39,15 +39,18 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
     requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
     requestOwnerToolPermission, requestOwnerTtsPlayback, requestOwnerTtsSynthesis,
-    requestOwnerWebVisit,
-    RuntimeHostInteractionAudioPlayPayload, RuntimeHostInteractionBrowserAutomationPayload,
+    requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
+    RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload,
     RuntimeHostInteractionSystemRecognizeTextPayload, RuntimeHostInteractionToolPermissionPayload,
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
     RuntimeHostInteractionTtsPlaybackPayload, RuntimeHostInteractionTtsSynthesisPayload,
     RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
 };
+use serde::{Deserialize, Serialize};
 
+#[cfg(target_arch = "wasm32")]
+use js_sys::Function;
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
     AndroidAudioPlaybackHost as NativeAudioPlaybackHost,
@@ -62,16 +65,15 @@ use operit_host_android_native::{
 use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxTtsPlaybackHost as NativeTtsPlaybackHost,
-    LinuxTtsSynthesisHost as NativeTtsSynthesisHost,
-};
-#[cfg(target_os = "linux")]
-use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
+};
+#[cfg(target_os = "linux")]
+use operit_host_linux_native::{
+    LinuxTtsPlaybackHost as NativeTtsPlaybackHost, LinuxTtsSynthesisHost as NativeTtsSynthesisHost,
 };
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
@@ -83,11 +85,6 @@ use operit_host_web::{
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
-    WindowsTtsPlaybackHost as NativeTtsPlaybackHost,
-    WindowsTtsSynthesisHost as NativeTtsSynthesisHost,
-};
-#[cfg(windows)]
-use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
     WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
@@ -96,6 +93,11 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost,
 };
+#[cfg(windows)]
+use operit_host_windows_native::{
+    WindowsTtsPlaybackHost as NativeTtsPlaybackHost,
+    WindowsTtsSynthesisHost as NativeTtsSynthesisHost,
+};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -103,8 +105,12 @@ pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
     proxyCore: Arc<ConcurrentLocalCoreProxy>,
-    watchStreams: Mutex<HashMap<String, CoreEventStream>>,
-    nextWatchStreamId: Mutex<u64>,
+    #[cfg(not(target_arch = "wasm32"))]
+    watchChannel: NativeWatchChannel,
+    #[cfg(not(target_arch = "wasm32"))]
+    watchSubscriptions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    #[cfg(target_arch = "wasm32")]
+    watchSubscriptions: Mutex<HashMap<String, Arc<AtomicBool>>>,
     #[cfg(not(target_arch = "wasm32"))]
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -113,6 +119,90 @@ pub struct OperitFlutterBridge {
     mdns: Mutex<Option<mdnss::MdnsHandle>>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     terminalHost: Arc<NativeTerminalHost>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FlutterWatchChannelOpenEnvelope {
+    #[allow(dead_code)]
+    channelId: String,
+    subscriptionId: String,
+    request: CoreWatchRequest,
+}
+
+#[derive(Debug, Serialize)]
+struct FlutterWatchChannelOpenResponse {
+    subscriptionId: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FlutterWatchChannelEvent {
+    subscriptionId: String,
+    event: CoreEvent,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct NativeWatchChannel {
+    sender: mpsc::Sender<NativeWatchChannelMessage>,
+    receiver: Arc<Mutex<mpsc::Receiver<NativeWatchChannelMessage>>>,
+    closed: Arc<AtomicBool>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum NativeWatchChannelMessage {
+    Event(String),
+    Closed,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeWatchChannel {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            sender,
+            receiver: Arc::new(Mutex::new(receiver)),
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn send(&self, frame: String) {
+        if !self.closed.load(Ordering::SeqCst) {
+            let _ = self.sender.send(NativeWatchChannelMessage::Event(frame));
+        }
+    }
+
+    fn close(&self) {
+        if !self.closed.swap(true, Ordering::SeqCst) {
+            let _ = self.sender.send(NativeWatchChannelMessage::Closed);
+        }
+    }
+
+    fn nextEvent(&self) -> Result<String, CoreLinkError> {
+        let receiver = self.receiver.lock().map_err(|error| {
+            CoreLinkError::internal(format!("watch channel lock poisoned: {error}"))
+        })?;
+        match receiver.recv() {
+            Ok(NativeWatchChannelMessage::Event(frame)) => Ok(frame),
+            Ok(NativeWatchChannelMessage::Closed) | Err(_) => Err(CoreLinkError::new(
+                "WATCH_CHANNEL_CLOSED",
+                "watch channel closed",
+            )),
+        }
+    }
+}
+
+impl Drop for OperitFlutterBridge {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.watchChannel.close();
+            if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+                for (_, task) in subscriptions.drain() {
+                    task.abort();
+                }
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -451,8 +541,12 @@ impl OperitFlutterBridge {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
             proxyCore: Arc::new(ConcurrentLocalCoreProxy::new(core)),
-            watchStreams: Mutex::new(HashMap::new()),
-            nextWatchStreamId: Mutex::new(1),
+            #[cfg(not(target_arch = "wasm32"))]
+            watchChannel: NativeWatchChannel::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            watchSubscriptions: Mutex::new(HashMap::new()),
+            #[cfg(target_arch = "wasm32")]
+            watchSubscriptions: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             webAccessTask: Mutex::new(None),
             #[cfg(not(target_arch = "wasm32"))]
@@ -500,75 +594,130 @@ impl OperitFlutterBridge {
         self.runtime.block_on(proxyCore.watchSnapshot(request))
     }
 
-    fn watchStream(&self, request: CoreWatchRequest) -> Result<String, CoreLinkError> {
-        let mut proxyCore = self.proxyCore.lock()?;
-        #[cfg(target_arch = "wasm32")]
-        let receiver = proxyCore.watchSync(request)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let receiver = self.runtime.block_on(proxyCore.watch(request))?;
-        let mut nextWatchStreamId = self.nextWatchStreamId.lock().map_err(|error| {
-            CoreLinkError::internal(format!("watch stream id lock poisoned: {error}"))
-        })?;
-        let subscriptionId = format!(
-            "flutter-watch-{}-{}",
-            operit_host_api::TimeUtils::currentTimeMillisU128(),
-            *nextWatchStreamId
-        );
-        *nextWatchStreamId += 1;
-        self.watchStreams
-            .lock()
-            .map_err(|error| {
-                CoreLinkError::internal(format!("watch stream lock poisoned: {error}"))
-            })?
-            .insert(subscriptionId.clone(), receiver);
-        Ok(subscriptionId)
-    }
-
-    fn pollWatchStream(&self, subscriptionId: &str) -> Result<Vec<CoreEvent>, CoreLinkError> {
-        let mut streams = self.watchStreams.lock().map_err(|error| {
-            CoreLinkError::internal(format!("watch stream lock poisoned: {error}"))
-        })?;
-        let Some(receiver) = streams.get_mut(subscriptionId) else {
-            return Err(CoreLinkError::new(
-                "WATCH_NOT_FOUND",
-                "watch subscription not found",
-            ));
-        };
-        let mut events = Vec::new();
-        while let Ok(event) = receiver.try_recv() {
-            events.push(event);
-        }
-        Ok(events)
-    }
-
-    fn pollWatchStreams(
+    #[cfg(not(target_arch = "wasm32"))]
+    fn watchStream(
         &self,
-        subscriptionIds: &[String],
-    ) -> Result<HashMap<String, Vec<CoreEvent>>, CoreLinkError> {
-        let mut streams = self.watchStreams.lock().map_err(|error| {
-            CoreLinkError::internal(format!("watch stream lock poisoned: {error}"))
-        })?;
-        let mut eventsBySubscription = HashMap::new();
-        for subscriptionId in subscriptionIds {
-            let Some(receiver) = streams.get_mut(subscriptionId) else {
+        subscriptionId: String,
+        request: CoreWatchRequest,
+    ) -> Result<String, CoreLinkError> {
+        {
+            let subscriptions = self.watchSubscriptions.lock().map_err(|error| {
+                CoreLinkError::internal(format!("watch subscription lock poisoned: {error}"))
+            })?;
+            if subscriptions.contains_key(&subscriptionId) {
                 return Err(CoreLinkError::new(
-                    "WATCH_NOT_FOUND",
-                    "watch subscription not found",
+                    "WATCH_ALREADY_EXISTS",
+                    "watch subscription already exists",
                 ));
-            };
-            let mut events = Vec::new();
-            while let Ok(event) = receiver.try_recv() {
-                events.push(event);
             }
-            eventsBySubscription.insert(subscriptionId.clone(), events);
         }
-        Ok(eventsBySubscription)
+        let mut proxyCore = self.proxyCore.lock()?;
+        let receiver = self.runtime.block_on(proxyCore.watch(request))?;
+        drop(proxyCore);
+        let channel = self.watchChannel.clone();
+        let taskSubscriptionId = subscriptionId.clone();
+        let task = self.runtime.spawn(async move {
+            let mut receiver = receiver;
+            while let Some(event) = receiver.recv().await {
+                let completed = event.kind == CoreEventKind::Completed;
+                channel.send(json_string(&FlutterWatchChannelEvent {
+                    subscriptionId: taskSubscriptionId.clone(),
+                    event,
+                }));
+                if completed {
+                    break;
+                }
+            }
+        });
+        let mut subscriptions = self.watchSubscriptions.lock().map_err(|error| {
+            CoreLinkError::internal(format!("watch subscription lock poisoned: {error}"))
+        })?;
+        match subscriptions.entry(subscriptionId.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(task);
+                Ok(subscriptionId)
+            }
+            Entry::Occupied(_) => {
+                task.abort();
+                Err(CoreLinkError::new(
+                    "WATCH_ALREADY_EXISTS",
+                    "watch subscription already exists",
+                ))
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn watchStream(
+        &self,
+        subscriptionId: String,
+        request: CoreWatchRequest,
+        onEvent: Function,
+    ) -> Result<String, CoreLinkError> {
+        let mut subscriptions = self.watchSubscriptions.lock().map_err(|error| {
+            CoreLinkError::internal(format!("watch subscription lock poisoned: {error}"))
+        })?;
+        match subscriptions.entry(subscriptionId.clone()) {
+            Entry::Vacant(entry) => {
+                let cancelled = Arc::new(AtomicBool::new(false));
+                entry.insert(cancelled.clone());
+                drop(subscriptions);
+                let mut proxyCore = self.proxyCore.lock()?;
+                let receiver = match proxyCore.watchSync(request) {
+                    Ok(receiver) => receiver,
+                    Err(error) => {
+                        if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+                            subscriptions.remove(&subscriptionId);
+                        }
+                        return Err(error);
+                    }
+                };
+                drop(proxyCore);
+                let taskSubscriptionId = subscriptionId.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let mut receiver = receiver;
+                    while !cancelled.load(Ordering::SeqCst) {
+                        let Some(event) = receiver.recv().await else {
+                            break;
+                        };
+                        let completed = event.kind == CoreEventKind::Completed;
+                        let frame = json_string(&FlutterWatchChannelEvent {
+                            subscriptionId: taskSubscriptionId.clone(),
+                            event,
+                        });
+                        let _ = onEvent.call1(&JsValue::NULL, &JsValue::from_str(&frame));
+                        if completed {
+                            break;
+                        }
+                    }
+                });
+                Ok(subscriptionId)
+            }
+            Entry::Occupied(_) => Err(CoreLinkError::new(
+                "WATCH_ALREADY_EXISTS",
+                "watch subscription already exists",
+            )),
+        }
     }
 
     fn closeWatchStream(&self, subscriptionId: &str) {
-        if let Ok(mut streams) = self.watchStreams.lock() {
-            streams.remove(subscriptionId);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+            if let Some(task) = subscriptions.remove(subscriptionId) {
+                task.abort();
+            }
         }
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+            if let Some(cancelled) = subscriptions.remove(subscriptionId) {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn nextWatchChannelEvent(&self) -> Result<String, CoreLinkError> {
+        self.watchChannel.nextEvent()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -980,14 +1129,7 @@ fn create_local_core(
                         request.pitch,
                         request.interrupt,
                     ),
-                    None => (
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        1.0,
-                        1.0,
-                        false,
-                    ),
+                    None => (String::new(), String::new(), String::new(), 1.0, 1.0, false),
                 };
                 let response = requestOwnerTtsPlayback(
                     RuntimeHostInteractionTtsPlaybackPayload {
@@ -1215,6 +1357,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_snapshot(
 }
 
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
     handle: *mut OperitFlutterBridge,
     request_ptr: *const u8,
@@ -1238,26 +1381,54 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
     string_to_ptr(bridge_watch_stream_json(&mut *handle, request_bytes))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bridge_watch_stream_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
-    let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
+    let envelope: FlutterWatchChannelOpenEnvelope = match serde_json::from_slice(request_bytes) {
         Ok(request) => request,
         Err(error) => {
             return serde_json::to_string(&CoreLinkError::internal(format!(
-                "invalid core watch request: {error}"
+                "invalid core watch open envelope: {error}"
             )))
             .expect("CoreLinkError must serialize");
         }
     };
-    match handle.watchStream(request) {
-        Ok(subscriptionId) => serde_json::json!({ "subscriptionId": subscriptionId }).to_string(),
+    match handle.watchStream(envelope.subscriptionId, envelope.request) {
+        Ok(subscriptionId) => {
+            serde_json::to_string(&FlutterWatchChannelOpenResponse { subscriptionId })
+                .expect("FlutterWatchChannelOpenResponse must serialize")
+        }
+        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn bridge_watch_stream_json_wasm(
+    handle: &OperitFlutterBridge,
+    request_bytes: &[u8],
+    onEvent: Function,
+) -> String {
+    let envelope: FlutterWatchChannelOpenEnvelope = match serde_json::from_slice(request_bytes) {
+        Ok(request) => request,
+        Err(error) => {
+            return serde_json::to_string(&CoreLinkError::internal(format!(
+                "invalid core watch open envelope: {error}"
+            )))
+            .expect("CoreLinkError must serialize");
+        }
+    };
+    match handle.watchStream(envelope.subscriptionId, envelope.request, onEvent) {
+        Ok(subscriptionId) => {
+            serde_json::to_string(&FlutterWatchChannelOpenResponse { subscriptionId })
+                .expect("FlutterWatchChannelOpenResponse must serialize")
+        }
         Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_poll_watch_stream(
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_next_watch_channel_event(
     handle: *mut OperitFlutterBridge,
-    subscription_ptr: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
         return string_to_ptr(
@@ -1267,82 +1438,9 @@ pub unsafe extern "C" fn operit_flutter_bridge_poll_watch_stream(
             .expect("CoreLinkError must serialize"),
         );
     }
-    if subscription_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "watch subscription pointer is null",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
-    }
-    let subscriptionId = match CStr::from_ptr(subscription_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return string_to_ptr(
-                serde_json::to_string(&CoreLinkError::internal(format!(
-                    "watch subscription id is not valid UTF-8: {error}"
-                )))
-                .expect("CoreLinkError must serialize"),
-            );
-        }
-    };
-    match (*handle).pollWatchStream(subscriptionId) {
-        Ok(events) => json_to_ptr(&events),
-        Err(error) => serde_json::to_string(&error)
-            .map(string_to_ptr)
-            .expect("CoreLinkError must serialize"),
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_poll_watch_streams(
-    handle: *mut OperitFlutterBridge,
-    subscription_ids_ptr: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
-    }
-    if subscription_ids_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "watch subscription id array pointer is null",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
-    }
-    let subscriptionIdsJson = match CStr::from_ptr(subscription_ids_ptr).to_str() {
-        Ok(value) => value,
-        Err(error) => {
-            return string_to_ptr(
-                serde_json::to_string(&CoreLinkError::internal(format!(
-                    "watch subscription id array is not valid UTF-8: {error}"
-                )))
-                .expect("CoreLinkError must serialize"),
-            );
-        }
-    };
-    let subscriptionIds: Vec<String> = match serde_json::from_str(subscriptionIdsJson) {
-        Ok(value) => value,
-        Err(error) => {
-            return string_to_ptr(
-                serde_json::to_string(&CoreLinkError::new(
-                    "INVALID_ARGS",
-                    format!("pollWatchStreams expects a JSON string array: {error}"),
-                ))
-                .expect("CoreLinkError must serialize"),
-            );
-        }
-    };
-    match (*handle).pollWatchStreams(&subscriptionIds) {
-        Ok(events) => json_to_ptr(&events),
-        Err(error) => serde_json::to_string(&error)
-            .map(string_to_ptr)
-            .expect("CoreLinkError must serialize"),
+    match (*handle).nextWatchChannelEvent() {
+        Ok(event) => string_to_ptr(event),
+        Err(_) => std::ptr::null_mut(),
     }
 }
 
@@ -1729,34 +1827,8 @@ impl OperitFlutterBridgeWasm {
     }
 
     #[allow(non_snake_case)]
-    pub fn watchStream(&self, request: &str) -> String {
-        bridge_watch_stream_json(&self.inner, request.as_bytes())
-    }
-
-    #[allow(non_snake_case)]
-    pub fn pollWatchStream(&self, subscriptionId: &str) -> String {
-        match self.inner.pollWatchStream(subscriptionId) {
-            Ok(events) => json_string(&events),
-            Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
-        }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn pollWatchStreams(&self, subscriptionIdsJson: &str) -> String {
-        let subscriptionIds: Vec<String> = match serde_json::from_str(subscriptionIdsJson) {
-            Ok(value) => value,
-            Err(error) => {
-                return serde_json::to_string(&CoreLinkError::new(
-                    "INVALID_ARGS",
-                    format!("pollWatchStreams expects a JSON string array: {error}"),
-                ))
-                .expect("CoreLinkError must serialize");
-            }
-        };
-        match self.inner.pollWatchStreams(&subscriptionIds) {
-            Ok(events) => json_string(&events),
-            Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
-        }
+    pub fn watchStream(&self, request: &str, onEvent: Function) -> String {
+        bridge_watch_stream_json_wasm(&self.inner, request.as_bytes(), onEvent)
     }
 
     #[allow(non_snake_case)]
@@ -1818,6 +1890,22 @@ mod android_jni {
     use jni::objects::{JByteArray, JClass, JObject, JString};
     use jni::sys::{jlong, jstring};
     use jni::JNIEnv;
+
+    fn jni_bool_arg(env: &mut JNIEnv, value: &JString, name: &str) -> Result<bool, String> {
+        let value = env
+            .get_string(value)
+            .map_err(|error| format!("invalid JNI {name}: {error}"))?;
+        let value = value
+            .to_str()
+            .map_err(|error| format!("invalid JNI {name}: {error}"))?;
+        match value {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            other => Err(format!(
+                "invalid JNI {name}: expected true or false, got {other}"
+            )),
+        }
+    }
 
     #[no_mangle]
     pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
@@ -1956,11 +2044,10 @@ mod android_jni {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pollWatchStream(
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_nextWatchChannelEvent(
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
-        subscriptionId: JString,
     ) -> jstring {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_string(
@@ -1971,68 +2058,8 @@ mod android_jni {
                 .expect("CoreLinkError must serialize"),
             );
         };
-        let subscriptionId = match env.get_string(&subscriptionId) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::internal(format!(
-                        "invalid JNI subscription id: {error}"
-                    )))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let response = match bridge.pollWatchStream(&subscriptionId) {
-            Ok(events) => json_string(&events),
-            Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
-        };
-        new_java_string(env, &response)
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pollWatchStreams(
-        mut env: JNIEnv,
-        _class: JClass,
-        handle: jlong,
-        subscriptionIdsJson: JString,
-    ) -> jstring {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(
-                env,
-                &serde_json::to_string(&CoreLinkError::internal(
-                    "runtime bridge is not initialized",
-                ))
-                .expect("CoreLinkError must serialize"),
-            );
-        };
-        let subscriptionIdsJson = match env.get_string(&subscriptionIdsJson) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::internal(format!(
-                        "invalid JNI subscription id array: {error}"
-                    )))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let subscriptionIds: Vec<String> = match serde_json::from_str(&subscriptionIdsJson) {
-            Ok(value) => value,
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("pollWatchStreams expects a JSON string array: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let response = match bridge.pollWatchStreams(&subscriptionIds) {
-            Ok(events) => json_string(&events),
+        let response = match bridge.nextWatchChannelEvent() {
+            Ok(frame) => frame,
             Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
         };
         new_java_string(env, &response)
@@ -2209,13 +2236,25 @@ mod android_jni {
                 );
             }
         };
-        let enableWebAccess = match env.get_string(&enableWebAccess) {
-            Ok(value) => value.to_str() == "true",
-            Err(_) => false,
+        let enableWebAccess = match jni_bool_arg(&mut env, &enableWebAccess, "enableWebAccess") {
+            Ok(value) => value,
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new("INVALID_ARGS", error))
+                        .expect("CoreLinkError must serialize"),
+                );
+            }
         };
-        let enableDiscovery = match env.get_string(&enableDiscovery) {
-            Ok(value) => value.to_str() == "true",
-            Err(_) => false,
+        let enableDiscovery = match jni_bool_arg(&mut env, &enableDiscovery, "enableDiscovery") {
+            Ok(value) => value,
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::to_string(&CoreLinkError::new("INVALID_ARGS", error))
+                        .expect("CoreLinkError must serialize"),
+                );
+            }
         };
         match bridge.startWebAccessServer(
             bindAddress,

@@ -5,30 +5,37 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 
 import 'WorkspacePtyProcess.dart';
 
 class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   _BridgeWorkspacePtyProcess(this._terminal, this._sessionId) {
-    _outputSubscription = _terminal
-        .terminalPtyOutputChanges(sessionId: _sessionId)
-        .listen(_handleOutput, onError: _handleOutputError);
-    _exitTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-      (_) => unawaited(_pollExit()),
-    );
+    _outputSubscription = _terminal.bridge
+        .watchStream(
+          CoreWatchRequest(
+            requestId: 'terminal-pty-${DateTime.now().microsecondsSinceEpoch}',
+            targetPath: _terminal.targetPath,
+            propertyName: 'terminalPtyOutput',
+            args: <String, Object?>{'sessionId': _sessionId},
+          ),
+        )
+        .listen(
+          _handleEvent,
+          onError: _handleOutputError,
+          onDone: _handleOutputDone,
+        );
   }
 
   final GeneratedServicesRuntimeTerminalServiceCoreProxy _terminal;
   final String _sessionId;
   final _output = StreamController<Uint8List>.broadcast();
   final _exitCode = Completer<int>();
-  StreamSubscription<Object?>? _outputSubscription;
-  Timer? _exitTimer;
+  StreamSubscription<CoreEvent>? _outputSubscription;
   Timer? _resizeTimer;
   bool _closed = false;
-  bool _pollingExit = false;
+  bool _finishingExit = false;
   int? _pendingRows;
   int? _pendingColumns;
 
@@ -90,7 +97,6 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
     _closed = true;
     unawaited(_outputSubscription?.cancel());
-    _exitTimer?.cancel();
     _resizeTimer?.cancel();
     unawaited(_output.close());
     if (!_exitCode.isCompleted) {
@@ -98,11 +104,37 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
   }
 
-  void _handleOutput(Object? value) {
+  void _handleEvent(CoreEvent event) {
     if (_closed || _output.isClosed) {
       return;
     }
-    final dataBase64 = value as String;
+    switch (event.kind) {
+      case 'Changed':
+        _handleOutputValue(event.value);
+        return;
+      case 'Completed':
+        unawaited(_finishWithExit());
+        return;
+      default:
+        _handleOutputError(
+          StateError('Unexpected terminal PTY event kind: ${event.kind}'),
+          StackTrace.current,
+        );
+    }
+  }
+
+  void _handleOutputValue(Object? value) {
+    if (_closed || _output.isClosed) {
+      return;
+    }
+    if (value is! String) {
+      _handleOutputError(
+        StateError('Terminal PTY output event is not a string'),
+        StackTrace.current,
+      );
+      return;
+    }
+    final dataBase64 = value;
     if (dataBase64.isNotEmpty) {
       _output.add(base64Decode(dataBase64));
     }
@@ -112,32 +144,41 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     if (!_closed && !_output.isClosed) {
       _output.addError(error, stackTrace);
     }
+    unawaited(_finishWithExit());
   }
 
-  Future<void> _pollExit() async {
-    if (_closed || _pollingExit) {
+  void _handleOutputDone() {
+    unawaited(_finishWithExit());
+  }
+
+  Future<void> _finishWithExit() async {
+    if (_finishingExit) {
       return;
     }
-    _pollingExit = true;
+    _finishingExit = true;
+    _closed = true;
+    _outputSubscription = null;
+    _resizeTimer?.cancel();
     try {
       final code = await _terminal.pollTerminalPtyExit(sessionId: _sessionId);
+      await _terminal.closeTerminalPty(sessionId: _sessionId);
+      await _output.close();
       if (code != null) {
-        await _outputSubscription?.cancel();
-        _outputSubscription = null;
-        _exitTimer?.cancel();
-        _closed = true;
-        await _terminal.closeTerminalPty(sessionId: _sessionId);
-        await _output.close();
         if (!_exitCode.isCompleted) {
           _exitCode.complete(code);
         }
+      } else {
+        if (!_exitCode.isCompleted) {
+          _exitCode.complete(-1);
+        }
       }
     } catch (error, stackTrace) {
+      if (!_output.isClosed) {
+        await _output.close();
+      }
       if (!_exitCode.isCompleted) {
         _exitCode.completeError(error, stackTrace);
       }
-    } finally {
-      _pollingExit = false;
     }
   }
 }

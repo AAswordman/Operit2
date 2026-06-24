@@ -1,4 +1,5 @@
 use crate::data::model::ActivePrompt::ActivePrompt;
+use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
 use crate::data::model::ChatHistory::ChatHistory;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
@@ -62,6 +63,7 @@ pub struct ChatHistoryDelegate {
     pub chatHistory: Vec<ChatMessage>,
     pub chatHistoryFlow: MutableStateFlow<Vec<ChatMessage>>,
     pub currentChatWindow: CurrentChatWindowController,
+    pub displayWindowStateFlow: MutableStateFlow<ChatDisplayWindowState>,
     pub hasOlderDisplayHistory: bool,
     pub hasNewerDisplayHistory: bool,
     pub isLoadingDisplayWindow: bool,
@@ -90,6 +92,7 @@ impl ChatHistoryDelegate {
             chatHistory: Vec::new(),
             chatHistoryFlow: mutableStateFlow(Vec::new()),
             currentChatWindow: CurrentChatWindowController::new(),
+            displayWindowStateFlow: mutableStateFlow(ChatDisplayWindowState::default()),
             hasOlderDisplayHistory: false,
             hasNewerDisplayHistory: false,
             isLoadingDisplayWindow: false,
@@ -119,6 +122,7 @@ impl ChatHistoryDelegate {
             chatHistory: self.chatHistoryFlow.value(),
             chatHistoryFlow: self.chatHistoryFlow.clone(),
             currentChatWindow: self.currentChatWindow.clone(),
+            displayWindowStateFlow: self.displayWindowStateFlow.clone(),
             hasOlderDisplayHistory: self.hasOlderDisplayHistory,
             hasNewerDisplayHistory: self.hasNewerDisplayHistory,
             isLoadingDisplayWindow: self.isLoadingDisplayWindow,
@@ -152,8 +156,28 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    pub fn displayWindowStateFlow(&self) -> StateFlow<ChatDisplayWindowState> {
+        self.displayWindowStateFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    fn currentDisplayWindowState(&self) -> ChatDisplayWindowState {
+        ChatDisplayWindowState {
+            hasOlderDisplayHistory: self.hasOlderDisplayHistory,
+            hasNewerDisplayHistory: self.hasNewerDisplayHistory,
+            isLoadingDisplayWindow: self.isLoadingDisplayWindow,
+        }
+    }
+
+    #[allow(non_snake_case)]
     fn emitChatHistoryState(&mut self) {
         self.chatHistoryFlow.set_value(self.chatHistory.clone());
+    }
+
+    #[allow(non_snake_case)]
+    fn emitDisplayWindowState(&mut self) {
+        self.displayWindowStateFlow
+            .set_value(self.currentDisplayWindowState());
     }
 
     #[allow(non_snake_case)]
@@ -197,6 +221,7 @@ impl ChatHistoryDelegate {
         self.hasOlderDisplayHistory = false;
         self.hasNewerDisplayHistory = false;
         self.isLoadingDisplayWindow = false;
+        self.emitDisplayWindowState();
         self.emitChatHistoryState();
     }
 
@@ -217,6 +242,7 @@ impl ChatHistoryDelegate {
             self.currentChatWindow.hasNewerDisplayHistory = value;
             self.hasNewerDisplayHistory = value;
         }
+        self.emitDisplayWindowState();
     }
 
     #[allow(non_snake_case)]

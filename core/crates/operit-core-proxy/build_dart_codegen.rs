@@ -308,7 +308,11 @@ fn render_dart_struct(
         output.push_str(&format!(
             "      '{}': {},\n",
             field.json_name,
-            dart_encode_expr(&dart_identifier(&field.name), &field_type, serializable_types)
+            dart_encode_expr(
+                &dart_identifier(&field.name),
+                &field_type,
+                serializable_types
+            )
         ));
     }
     output.push_str("    };\n");
@@ -397,7 +401,11 @@ fn render_dart_args_map(
             format!(
                 "'{}': {}",
                 arg.name,
-                dart_encode_expr(&dart_parameter_name(&arg.name), &arg_type, serializable_types)
+                dart_encode_expr(
+                    &dart_parameter_name(&arg.name),
+                    &arg_type,
+                    serializable_types
+                )
             )
         })
         .collect::<Vec<_>>()

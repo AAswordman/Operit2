@@ -7,6 +7,7 @@ use operit_host_api::RuntimeStorageHost;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::PreferencesEncryption::PreferencesEncryption;
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
@@ -19,6 +20,8 @@ pub enum PreferencesDataStoreError {
     Host(#[from] operit_host_api::HostError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("encryption error: {0}")]
+    Encryption(String),
     #[error("sync operation store error: {0}")]
     Sync(#[from] SyncOperationStoreError),
     #[error("{0}")]
@@ -119,6 +122,12 @@ impl FlowSubscription {
     }
 }
 
+impl Drop for FlowSubscription {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
 impl FlowCancellation {
     /// Creates an uncancelled collector lifetime token.
     pub fn new() -> Self {
@@ -166,7 +175,10 @@ impl FlowCancellation {
     /// The returned guard unregisters the hook when dropped. If the token is
     /// already cancelled, the callback is invoked immediately and the guard does
     /// not register anything.
-    pub fn addCancelHook(&self, callback: impl Fn() + Send + Sync + 'static) -> FlowCancellationHook {
+    pub fn addCancelHook(
+        &self,
+        callback: impl Fn() + Send + Sync + 'static,
+    ) -> FlowCancellationHook {
         let callback = Arc::new(callback);
         let mut hooks = self
             .inner
@@ -437,11 +449,9 @@ impl<T> Flow<T> {
         let stateFlow = StateFlow::new(initialValue);
         let cancellation = FlowCancellation::new();
         let stateFlowForSubscription = stateFlow.clone();
-        if let Ok(subscription) =
-            self.subscribeWithCancellation(cancellation, move |value| {
-                stateFlowForSubscription.set_value(value);
-            })
-        {
+        if let Ok(subscription) = self.subscribeWithCancellation(cancellation, move |value| {
+            stateFlowForSubscription.set_value(value);
+        }) {
             stateFlow.setUpstreamSubscription(subscription);
         }
         stateFlow
@@ -483,11 +493,32 @@ struct StateFlowInner<T> {
     changed: Condvar,
     subscribers: Mutex<StateFlowSubscribers<T>>,
     upstreamSubscription: Mutex<Option<FlowSubscription>>,
+    upstreamStateSubscriptions: Mutex<Vec<StateFlowUpstreamSubscription>>,
 }
 
 struct StateFlowSubscribers<T> {
     nextId: usize,
     callbacks: HashMap<usize, Arc<Mutex<dyn FnMut(T) + Send>>>,
+}
+
+struct StateFlowUpstreamSubscription {
+    cancel: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl StateFlowUpstreamSubscription {
+    fn new(cancel: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            cancel: Some(Box::new(cancel)),
+        }
+    }
+}
+
+impl Drop for StateFlowUpstreamSubscription {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel();
+        }
+    }
 }
 
 impl<T> StateFlow<T>
@@ -505,6 +536,7 @@ where
                     callbacks: HashMap::new(),
                 }),
                 upstreamSubscription: Mutex::new(None),
+                upstreamStateSubscriptions: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -517,6 +549,15 @@ where
             .lock()
             .expect("StateFlow upstream subscription mutex must not be poisoned") =
             Some(subscription);
+    }
+
+    #[allow(non_snake_case)]
+    fn addUpstreamStateSubscription(&self, subscription: StateFlowUpstreamSubscription) {
+        self.inner
+            .upstreamStateSubscriptions
+            .lock()
+            .expect("StateFlow upstream state subscription mutex must not be poisoned")
+            .push(subscription);
     }
 
     pub fn value(&self) -> T {
@@ -714,14 +755,538 @@ where
         F: Fn(T) -> U + Send + Sync + 'static,
     {
         let transform = Arc::new(transform);
-        let stateFlow = StateFlow::new(transform(self.value()));
-        let stateFlowForSubscriber = stateFlow.clone();
+        let initialValue = self.value();
+        let latest = Arc::new(Mutex::new(initialValue.clone()));
+        let stateFlow = StateFlow::new(transform(initialValue));
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
         let transformForSubscriber = Arc::clone(&transform);
-        self.subscribe(move |value| {
-            stateFlowForSubscriber.set_value(transformForSubscriber(value));
+        let subscriptionId = self.subscribe(move |value| {
+            let Some(inner) = target.upgrade() else {
+                return;
+            };
+            {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow map latest mutex must not be poisoned");
+                if *latest == value {
+                    return;
+                }
+                *latest = value.clone();
+            }
+            StateFlow { inner }.set_value(transformForSubscriber(value));
         });
+        let source = self.clone();
+        stateFlow.addUpstreamStateSubscription(StateFlowUpstreamSubscription::new(move || {
+            source.unsubscribe(subscriptionId);
+        }));
         stateFlow
     }
+}
+
+fn setCombinedStateFlowValue<T>(target: &Weak<StateFlowInner<T>>, value: T)
+where
+    T: Clone + PartialEq,
+{
+    let Some(inner) = target.upgrade() else {
+        return;
+    };
+    StateFlow { inner }.set_value(value);
+}
+
+fn subscribeCombinedSource<S, R, F>(stateFlow: &StateFlow<R>, source: &StateFlow<S>, subscriber: F)
+where
+    S: Clone + PartialEq + Send + 'static,
+    R: Clone + PartialEq,
+    F: FnMut(S) + Send + 'static,
+{
+    let subscriptionId = source.subscribe(subscriber);
+    let sourceForSubscription = source.clone();
+    stateFlow.addUpstreamStateSubscription(StateFlowUpstreamSubscription::new(move || {
+        sourceForSubscription.unsubscribe(subscriptionId);
+    }));
+}
+
+pub fn combine2<A, B, R, F>(
+    source1: &StateFlow<A>,
+    source2: &StateFlow<B>,
+    transform: F,
+) -> StateFlow<R>
+where
+    A: Clone + PartialEq + Send + 'static,
+    B: Clone + PartialEq + Send + 'static,
+    R: Clone + PartialEq + Send + 'static,
+    F: Fn(A, B) -> R + Send + Sync + 'static,
+{
+    let transform = Arc::new(transform);
+    let latest = Arc::new(Mutex::new((source1.value(), source2.value())));
+    let initialValue = {
+        let latest = latest
+            .lock()
+            .expect("StateFlow combine latest mutex must not be poisoned");
+        transform(latest.0.clone(), latest.1.clone())
+    };
+    let stateFlow = StateFlow::new(initialValue);
+
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source1, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.0 == value {
+                    return;
+                }
+                latest.0 = value;
+                transformForSubscriber(latest.0.clone(), latest.1.clone())
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source2, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.1 == value {
+                    return;
+                }
+                latest.1 = value;
+                transformForSubscriber(latest.0.clone(), latest.1.clone())
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+
+    stateFlow
+}
+
+pub fn combine3<A, B, C, R, F>(
+    source1: &StateFlow<A>,
+    source2: &StateFlow<B>,
+    source3: &StateFlow<C>,
+    transform: F,
+) -> StateFlow<R>
+where
+    A: Clone + PartialEq + Send + 'static,
+    B: Clone + PartialEq + Send + 'static,
+    C: Clone + PartialEq + Send + 'static,
+    R: Clone + PartialEq + Send + 'static,
+    F: Fn(A, B, C) -> R + Send + Sync + 'static,
+{
+    let transform = Arc::new(transform);
+    let latest = Arc::new(Mutex::new((
+        source1.value(),
+        source2.value(),
+        source3.value(),
+    )));
+    let initialValue = {
+        let latest = latest
+            .lock()
+            .expect("StateFlow combine latest mutex must not be poisoned");
+        transform(latest.0.clone(), latest.1.clone(), latest.2.clone())
+    };
+    let stateFlow = StateFlow::new(initialValue);
+
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source1, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.0 == value {
+                    return;
+                }
+                latest.0 = value;
+                transformForSubscriber(latest.0.clone(), latest.1.clone(), latest.2.clone())
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source2, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.1 == value {
+                    return;
+                }
+                latest.1 = value;
+                transformForSubscriber(latest.0.clone(), latest.1.clone(), latest.2.clone())
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source3, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.2 == value {
+                    return;
+                }
+                latest.2 = value;
+                transformForSubscriber(latest.0.clone(), latest.1.clone(), latest.2.clone())
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+
+    stateFlow
+}
+
+pub fn combine4<A, B, C, D, R, F>(
+    source1: &StateFlow<A>,
+    source2: &StateFlow<B>,
+    source3: &StateFlow<C>,
+    source4: &StateFlow<D>,
+    transform: F,
+) -> StateFlow<R>
+where
+    A: Clone + PartialEq + Send + 'static,
+    B: Clone + PartialEq + Send + 'static,
+    C: Clone + PartialEq + Send + 'static,
+    D: Clone + PartialEq + Send + 'static,
+    R: Clone + PartialEq + Send + 'static,
+    F: Fn(A, B, C, D) -> R + Send + Sync + 'static,
+{
+    let transform = Arc::new(transform);
+    let latest = Arc::new(Mutex::new((
+        source1.value(),
+        source2.value(),
+        source3.value(),
+        source4.value(),
+    )));
+    let initialValue = {
+        let latest = latest
+            .lock()
+            .expect("StateFlow combine latest mutex must not be poisoned");
+        transform(
+            latest.0.clone(),
+            latest.1.clone(),
+            latest.2.clone(),
+            latest.3.clone(),
+        )
+    };
+    let stateFlow = StateFlow::new(initialValue);
+
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source1, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.0 == value {
+                    return;
+                }
+                latest.0 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source2, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.1 == value {
+                    return;
+                }
+                latest.1 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source3, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.2 == value {
+                    return;
+                }
+                latest.2 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source4, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.3 == value {
+                    return;
+                }
+                latest.3 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+
+    stateFlow
+}
+
+pub fn combine5<A, B, C, D, E, R, F>(
+    source1: &StateFlow<A>,
+    source2: &StateFlow<B>,
+    source3: &StateFlow<C>,
+    source4: &StateFlow<D>,
+    source5: &StateFlow<E>,
+    transform: F,
+) -> StateFlow<R>
+where
+    A: Clone + PartialEq + Send + 'static,
+    B: Clone + PartialEq + Send + 'static,
+    C: Clone + PartialEq + Send + 'static,
+    D: Clone + PartialEq + Send + 'static,
+    E: Clone + PartialEq + Send + 'static,
+    R: Clone + PartialEq + Send + 'static,
+    F: Fn(A, B, C, D, E) -> R + Send + Sync + 'static,
+{
+    let transform = Arc::new(transform);
+    let latest = Arc::new(Mutex::new((
+        source1.value(),
+        source2.value(),
+        source3.value(),
+        source4.value(),
+        source5.value(),
+    )));
+    let initialValue = {
+        let latest = latest
+            .lock()
+            .expect("StateFlow combine latest mutex must not be poisoned");
+        transform(
+            latest.0.clone(),
+            latest.1.clone(),
+            latest.2.clone(),
+            latest.3.clone(),
+            latest.4.clone(),
+        )
+    };
+    let stateFlow = StateFlow::new(initialValue);
+
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source1, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.0 == value {
+                    return;
+                }
+                latest.0 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                    latest.4.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source2, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.1 == value {
+                    return;
+                }
+                latest.1 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                    latest.4.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source3, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.2 == value {
+                    return;
+                }
+                latest.2 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                    latest.4.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source4, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.3 == value {
+                    return;
+                }
+                latest.3 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                    latest.4.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+    {
+        let target = Arc::downgrade(&stateFlow.inner);
+        let latestForSubscriber = Arc::clone(&latest);
+        let transformForSubscriber = Arc::clone(&transform);
+        subscribeCombinedSource(&stateFlow, source5, move |value| {
+            if target.upgrade().is_none() {
+                return;
+            }
+            let combinedValue = {
+                let mut latest = latestForSubscriber
+                    .lock()
+                    .expect("StateFlow combine latest mutex must not be poisoned");
+                if latest.4 == value {
+                    return;
+                }
+                latest.4 = value;
+                transformForSubscriber(
+                    latest.0.clone(),
+                    latest.1.clone(),
+                    latest.2.clone(),
+                    latest.3.clone(),
+                    latest.4.clone(),
+                )
+            };
+            setCombinedStateFlowValue(&target, combinedValue);
+        });
+    }
+
+    stateFlow
 }
 
 impl<T> FlowLike<T> for StateFlow<T>
@@ -912,6 +1477,7 @@ pub struct PreferencesDataStore {
     path: PathBuf,
     storagePath: String,
     storageHost: Arc<dyn RuntimeStorageHost>,
+    encryption: Option<PreferencesEncryption>,
     syncOperationStore: Option<SyncOperationStore>,
     syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
@@ -994,11 +1560,30 @@ impl PreferencesDataStore {
         Self {
             storagePath: runtimeStoragePath(&path),
             storageHost: defaultRuntimeStorageHost(),
+            encryption: None,
             syncOperationStore: Some(SyncOperationStore::adjacentTo(RuntimeStorePaths::new(
                 rootDir,
             ))),
             syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
             path,
+            changeSignal,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newEncrypted(path: PathBuf) -> Self {
+        let storageHost = defaultRuntimeStorageHost();
+        let storagePath = runtimeStoragePath(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
+            .expect("preferences encryption key must be available");
+        Self {
+            path,
+            storagePath,
+            storageHost,
+            encryption: Some(encryption),
+            syncOperationStore: None,
+            syncDescriptor: None,
             changeSignal,
         }
     }
@@ -1015,6 +1600,28 @@ impl PreferencesDataStore {
             path,
             storagePath,
             storageHost,
+            encryption: None,
+            syncOperationStore: None,
+            syncDescriptor: None,
+            changeSignal,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn newEncryptedWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+    ) -> Self {
+        let storagePath = storagePath.into();
+        let path = PathBuf::from(&storagePath);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
+            .expect("preferences encryption key must be available");
+        Self {
+            path,
+            storagePath,
+            storageHost,
+            encryption: Some(encryption),
             syncOperationStore: None,
             syncDescriptor: None,
             changeSignal,
@@ -1048,7 +1655,12 @@ impl PreferencesDataStore {
         if !self.storageHost.exists(&self.storagePath)? {
             return Ok(emptyPreferences());
         }
-        let content = String::from_utf8(self.storageHost.readBytes(&self.storagePath)?)
+        let storedContent = self.storageHost.readBytes(&self.storagePath)?;
+        let contentBytes = match &self.encryption {
+            Some(encryption) => encryption.decrypt(&self.storagePath, &storedContent)?,
+            None => storedContent,
+        };
+        let content = String::from_utf8(contentBytes)
             .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
         if content.trim().is_empty() {
             return Ok(emptyPreferences());
@@ -1077,9 +1689,9 @@ impl PreferencesDataStore {
                 // watch close wakes it through the cancellation hook above.
                 while *versionGuard == observedVersion && !cancellation.isCancelled() {
                     versionGuard = signal
-                    .changed
+                        .changed
                         .wait(versionGuard)
-                    .expect("PreferencesDataStore version mutex must not be poisoned");
+                        .expect("PreferencesDataStore version mutex must not be poisoned");
                 }
                 !cancellation.isCancelled()
             },
@@ -1106,10 +1718,18 @@ impl PreferencesDataStore {
         Ok(result)
     }
 
+    pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+        self.write(&preferences)
+    }
+
     fn write(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
         let content = serde_json::to_string_pretty(preferences)?;
+        let storedContent = match &self.encryption {
+            Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
+            None => content.into_bytes(),
+        };
         self.storageHost
-            .writeBytes(&self.storagePath, content.as_bytes())?;
+            .writeBytes(&self.storagePath, &storedContent)?;
         self.recordSyncOperation(preferences)?;
         self.notifyChanged();
         Ok(())
@@ -1254,9 +1874,7 @@ fn startPreferencesDataStoreFlowDispatcher(signal: Arc<PreferencesDataStoreChang
 }
 
 #[allow(non_snake_case)]
-fn preferencesDataStoreFlowSubscribersEmpty(
-    signal: &PreferencesDataStoreChangeSignal,
-) -> bool {
+fn preferencesDataStoreFlowSubscribersEmpty(signal: &PreferencesDataStoreChangeSignal) -> bool {
     signal
         .subscribers
         .lock()
@@ -1266,9 +1884,7 @@ fn preferencesDataStoreFlowSubscribersEmpty(
 }
 
 #[allow(non_snake_case)]
-fn preferencesDataStoreFlowDispatcherShouldExit(
-    signal: &PreferencesDataStoreChangeSignal,
-) -> bool {
+fn preferencesDataStoreFlowDispatcherShouldExit(signal: &PreferencesDataStoreChangeSignal) -> bool {
     let subscribers = signal
         .subscribers
         .lock()
@@ -1280,3 +1896,7 @@ fn preferencesDataStoreFlowDispatcherShouldExit(
         false
     }
 }
+
+#[cfg(test)]
+#[path = "tests/PreferencesDataStoreTests.rs"]
+mod PreferencesDataStoreTests;

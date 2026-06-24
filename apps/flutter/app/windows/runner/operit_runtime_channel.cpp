@@ -4,12 +4,13 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <cstdint>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -26,8 +27,7 @@ using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchSnapshot = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgePollWatchStream = char* (*)(BridgeHandle, const char*);
-using BridgePollWatchStreams = char* (*)(BridgeHandle, const char*);
+using BridgeNextWatchChannelEvent = char* (*)(BridgeHandle);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeStartWebAccessServer =
     char* (*)(BridgeHandle, const char*, const char*, const char*, const char*,
@@ -45,6 +45,7 @@ std::vector<std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>>
     g_operit_runtime_channels;
 HWND g_operit_runtime_window = nullptr;
 DWORD g_operit_runtime_platform_thread_id = 0;
+std::atomic_bool g_watch_channel_pump_running{false};
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
 
@@ -119,10 +120,10 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_watch_snapshot"));
       watch_stream_ = reinterpret_cast<BridgeWatchStream>(
           GetProcAddress(library_, "operit_flutter_bridge_watch_stream"));
-      poll_watch_stream_ = reinterpret_cast<BridgePollWatchStream>(
-          GetProcAddress(library_, "operit_flutter_bridge_poll_watch_stream"));
-      poll_watch_streams_ = reinterpret_cast<BridgePollWatchStreams>(
-          GetProcAddress(library_, "operit_flutter_bridge_poll_watch_streams"));
+      next_watch_channel_event_ =
+          reinterpret_cast<BridgeNextWatchChannelEvent>(
+              GetProcAddress(library_,
+                             "operit_flutter_bridge_next_watch_channel_event"));
       close_watch_stream_ = reinterpret_cast<BridgeCloseWatchStream>(
           GetProcAddress(library_, "operit_flutter_bridge_close_watch_stream"));
       discover_devices_ = reinterpret_cast<BridgeDiscoverDevices>(
@@ -140,7 +141,7 @@ class OperitRuntimeLibrary {
       if (create_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
-          poll_watch_stream_ == nullptr || poll_watch_streams_ == nullptr ||
+          next_watch_channel_event_ == nullptr ||
           close_watch_stream_ == nullptr ||
           start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
           remote_pair_start_ == nullptr || remote_pair_finish_ == nullptr ||
@@ -190,21 +191,11 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  bool PollWatchStream(const std::string& subscription, std::string* response,
-                       std::string* error) {
+  bool NextWatchChannelEvent(std::string* response, std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = poll_watch_stream_(handle_, subscription.c_str());
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool PollWatchStreams(const std::string& subscriptions, std::string* response,
-                        std::string* error) {
-    if (!EnsureReadyThreadSafe(error)) {
-      return false;
-    }
-    char* raw_response = poll_watch_streams_(handle_, subscriptions.c_str());
+    char* raw_response = next_watch_channel_event_(handle_);
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -327,8 +318,7 @@ class OperitRuntimeLibrary {
   BridgeCall call_ = nullptr;
   BridgeWatchSnapshot watch_snapshot_ = nullptr;
   BridgeWatchStream watch_stream_ = nullptr;
-  BridgePollWatchStream poll_watch_stream_ = nullptr;
-  BridgePollWatchStreams poll_watch_streams_ = nullptr;
+  BridgeNextWatchChannelEvent next_watch_channel_event_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
   BridgeDiscoverDevices discover_devices_ = nullptr;
@@ -366,6 +356,34 @@ const std::string* StringMapValue(
     return nullptr;
   }
   return std::get_if<std::string>(&item->second);
+}
+
+void DispatchWatchChannelEvent(std::string frame) {
+  PostOperitRuntimePlatformTask([frame = std::move(frame)]() {
+    for (const auto& channel : g_operit_runtime_channels) {
+      channel->InvokeMethod(
+          "watchChannelEvent",
+          std::make_unique<flutter::EncodableValue>(frame));
+    }
+  });
+}
+
+void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeLibrary> library) {
+  bool expected = false;
+  if (!g_watch_channel_pump_running.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  std::thread([library = std::move(library)]() {
+    while (g_watch_channel_pump_running.load()) {
+      std::string frame;
+      std::string error;
+      if (!library->NextWatchChannelEvent(&frame, &error)) {
+        break;
+      }
+      DispatchWatchChannelEvent(std::move(frame));
+    }
+    g_watch_channel_pump_running.store(false);
+  }).detach();
 }
 
 void RespondRuntimeCallAsync(
@@ -460,36 +478,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           }
           if (runtime_library->WatchStream(*request, &response,
                                                     &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("pollWatchStream") == 0) {
-          const std::string* subscription = StringArgument(method_call);
-          if (subscription == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "pollWatchStream expects a subscription id");
-            return;
-          }
-          if (runtime_library->PollWatchStream(
-                  *subscription, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
-          return;
-        }
-        if (method_call.method_name().compare("pollWatchStreams") == 0) {
-          const std::string* subscriptions = StringArgument(method_call);
-          if (subscriptions == nullptr) {
-            result->Error("INVALID_ARGS",
-                          "pollWatchStreams expects a JSON string array");
-            return;
-          }
-          if (runtime_library->PollWatchStreams(
-                  *subscriptions, &response, &error)) {
+            EnsureWatchChannelPump(runtime_library);
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
@@ -633,6 +622,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
 }
 
 void ShutdownOperitRuntimeChannel() {
+  g_watch_channel_pump_running.store(false);
   g_operit_runtime_channels.clear();
   g_operit_runtime_library.reset();
   g_operit_runtime_window = nullptr;

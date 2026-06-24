@@ -2,16 +2,32 @@ package app.operit
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 
-class RuntimeCoreLinkChannel(private val runtimeHost: AndroidRuntimeHost) {
+class RuntimeCoreLinkChannel(
+    private val activity: MainActivity,
+    private val runtimeHost: AndroidRuntimeHost,
+) {
+    private val watchPumpLock = Any()
+    @Volatile
+    private var watchPumpRunning = false
+    @Volatile
+    private var runtimeChannel: MethodChannel? = null
+
+    fun attach(channel: MethodChannel) {
+        runtimeChannel = channel
+    }
+
+    fun clear() {
+        runtimeChannel = null
+    }
+
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "call" -> callRuntime(call, result, OperitRuntimeNative::call)
             "watchSnapshot" -> callRuntime(call, result, OperitRuntimeNative::watchSnapshot)
-            "watchStream" -> callRuntime(call, result, OperitRuntimeNative::watchStream)
-            "pollWatchStream" -> pollWatchStream(call, result)
-            "pollWatchStreams" -> pollWatchStreams(call, result)
+            "watchStream" -> watchStream(call, result)
             "closeWatchStream" -> closeWatchStream(call, result)
             else -> return false
         }
@@ -33,25 +49,21 @@ class RuntimeCoreLinkChannel(private val runtimeHost: AndroidRuntimeHost) {
         }
     }
 
-    private fun pollWatchStream(call: MethodCall, result: MethodChannel.Result) {
-        val subscriptionId = call.arguments as? String
-        if (subscriptionId == null) {
-            result.error("INVALID_ARGS", "pollWatchStream expects a subscription id", null)
+    private fun watchStream(call: MethodCall, result: MethodChannel.Result) {
+        val request = call.arguments as? String
+        if (request == null) {
+            result.error("INVALID_ARGS", "watchStream expects a JSON string", null)
             return
         }
         runtimeHost.runRuntime(result) {
-            OperitRuntimeNative.pollWatchStream(runtimeHost.ensureRuntimeHandle(), subscriptionId)
-        }
-    }
-
-    private fun pollWatchStreams(call: MethodCall, result: MethodChannel.Result) {
-        val subscriptionIdsJson = call.arguments as? String
-        if (subscriptionIdsJson == null) {
-            result.error("INVALID_ARGS", "pollWatchStreams expects a JSON string array", null)
-            return
-        }
-        runtimeHost.runRuntime(result) {
-            OperitRuntimeNative.pollWatchStreams(runtimeHost.ensureRuntimeHandle(), subscriptionIdsJson)
+            val response = OperitRuntimeNative.watchStream(
+                runtimeHost.ensureRuntimeHandle(),
+                request.toByteArray(StandardCharsets.UTF_8),
+            )
+            if (JSONObject(response).has("subscriptionId")) {
+                ensureWatchPump()
+            }
+            response
         }
     }
 
@@ -63,6 +75,41 @@ class RuntimeCoreLinkChannel(private val runtimeHost: AndroidRuntimeHost) {
         }
         runtimeHost.runRuntime(result) {
             OperitRuntimeNative.closeWatchStream(runtimeHost.ensureRuntimeHandle(), subscriptionId)
+        }
+    }
+
+    private fun ensureWatchPump() {
+        synchronized(watchPumpLock) {
+            if (watchPumpRunning) {
+                return
+            }
+            watchPumpRunning = true
+        }
+        runtimeHost.runBackground {
+            try {
+                while (watchPumpRunning) {
+                    val frame = OperitRuntimeNative.nextWatchChannelEvent(
+                        runtimeHost.ensureRuntimeHandle(),
+                    )
+                    val frameJson = JSONObject(frame)
+                    if (frameJson.has("code") && frameJson.has("message")) {
+                        synchronized(watchPumpLock) {
+                            watchPumpRunning = false
+                        }
+                        return@runBackground
+                    }
+                    val channel = runtimeChannel
+                    if (channel != null) {
+                        activity.runOnUiThread {
+                            channel.invokeMethod("watchChannelEvent", frame)
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                synchronized(watchPumpLock) {
+                    watchPumpRunning = false
+                }
+            }
         }
     }
 }

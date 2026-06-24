@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::util::OperitPaths;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +45,7 @@ impl GitHubAuthPreferences {
     pub fn new(root_dir: PathBuf) -> Self {
         let path = root_dir.join(OperitPaths::GITHUB_AUTH_PREFERENCES_PATH);
         Self {
-            dataStore: PreferencesDataStore::new(path),
+            dataStore: PreferencesDataStore::newEncrypted(path),
         }
     }
 
@@ -57,31 +57,12 @@ impl GitHubAuthPreferences {
         userInfo: Option<&GitHubUser>,
         grantedScope: Option<&str>,
     ) -> Result<(), PreferencesDataStoreError> {
-        let userJson = userInfo
-            .map(serde_json::to_string)
-            .transpose()?
-            .unwrap_or_default();
-        self.dataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("is_logged_in"), true.to_string());
-            preferences.set(
-                &stringPreferencesKey("access_token"),
-                accessToken.to_string(),
-            );
-            preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
-            preferences.set(&stringPreferencesKey("user_info"), userJson.clone());
-            preferences.set(
-                &stringPreferencesKey("last_login_time"),
-                currentTimeMillis().to_string(),
-            );
-            preferences.set(
-                &stringPreferencesKey("auth_version"),
-                Self::REQUIRED_AUTH_VERSION.to_string(),
-            );
-            preferences.set(
-                &stringPreferencesKey("granted_scope"),
-                grantedScope.unwrap_or(Self::GITHUB_SCOPE).to_string(),
-            );
-        })
+        self.dataStore.replace(buildAuthPreferences(
+            accessToken,
+            tokenType,
+            userInfo,
+            grantedScope,
+        )?)
     }
 
     #[allow(non_snake_case)]
@@ -91,26 +72,11 @@ impl GitHubAuthPreferences {
         tokenType: &str,
         grantedScope: Option<&str>,
     ) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("is_logged_in"), true.to_string());
-            preferences.set(
-                &stringPreferencesKey("access_token"),
-                accessToken.to_string(),
-            );
-            preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
-            preferences.set(
-                &stringPreferencesKey("auth_version"),
-                Self::REQUIRED_AUTH_VERSION.to_string(),
-            );
-            preferences.set(
-                &stringPreferencesKey("granted_scope"),
-                grantedScope.unwrap_or(Self::GITHUB_SCOPE).to_string(),
-            );
-            preferences.set(
-                &stringPreferencesKey("last_login_time"),
-                currentTimeMillis().to_string(),
-            );
-        })
+        self.dataStore.replace(buildAccessTokenPreferences(
+            accessToken,
+            tokenType,
+            grantedScope,
+        ))
     }
 
     #[allow(non_snake_case)]
@@ -209,4 +175,49 @@ fn parseScopeSet(scope: &str) -> Vec<String> {
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
+}
+
+fn buildAuthPreferences(
+    accessToken: &str,
+    tokenType: &str,
+    userInfo: Option<&GitHubUser>,
+    grantedScope: Option<&str>,
+) -> Result<Preferences, PreferencesDataStoreError> {
+    let mut preferences = buildAccessTokenPreferences(accessToken, tokenType, grantedScope);
+    if let Some(userInfo) = userInfo {
+        preferences.set(
+            &stringPreferencesKey("user_info"),
+            serde_json::to_string(userInfo)?,
+        );
+    }
+    Ok(preferences)
+}
+
+fn buildAccessTokenPreferences(
+    accessToken: &str,
+    tokenType: &str,
+    grantedScope: Option<&str>,
+) -> Preferences {
+    let mut preferences = Preferences::default();
+    preferences.set(&stringPreferencesKey("is_logged_in"), true.to_string());
+    preferences.set(
+        &stringPreferencesKey("access_token"),
+        accessToken.to_string(),
+    );
+    preferences.set(&stringPreferencesKey("token_type"), tokenType.to_string());
+    preferences.set(
+        &stringPreferencesKey("last_login_time"),
+        currentTimeMillis().to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey("auth_version"),
+        GitHubAuthPreferences::REQUIRED_AUTH_VERSION.to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey("granted_scope"),
+        grantedScope
+            .unwrap_or(GitHubAuthPreferences::GITHUB_SCOPE)
+            .to_string(),
+    );
+    preferences
 }

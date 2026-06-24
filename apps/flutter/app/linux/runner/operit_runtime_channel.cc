@@ -4,11 +4,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <utility>
 
 namespace {
 
@@ -19,12 +22,12 @@ using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchSnapshot = char* (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgePollWatchStream = char* (*)(BridgeHandle, const char*);
-using BridgePollWatchStreams = char* (*)(BridgeHandle, const char*);
+using BridgeNextWatchChannelEvent = char* (*)(BridgeHandle);
 using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
 using BridgeFreeString = void (*)(char*);
 
 FlMethodChannel* g_operit_runtime_channel = nullptr;
+std::atomic_bool g_watch_channel_pump_running{false};
 
 std::string json_string(const std::string& value) {
   std::string output = "\"";
@@ -97,10 +100,8 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_watch_snapshot"));
       watch_stream_ = reinterpret_cast<BridgeWatchStream>(
           dlsym(library_, "operit_flutter_bridge_watch_stream"));
-      poll_watch_stream_ = reinterpret_cast<BridgePollWatchStream>(
-          dlsym(library_, "operit_flutter_bridge_poll_watch_stream"));
-      poll_watch_streams_ = reinterpret_cast<BridgePollWatchStreams>(
-          dlsym(library_, "operit_flutter_bridge_poll_watch_streams"));
+      next_watch_channel_event_ = reinterpret_cast<BridgeNextWatchChannelEvent>(
+          dlsym(library_, "operit_flutter_bridge_next_watch_channel_event"));
       close_watch_stream_ = reinterpret_cast<BridgeCloseWatchStream>(
           dlsym(library_, "operit_flutter_bridge_close_watch_stream"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
@@ -108,7 +109,7 @@ class OperitRuntimeLibrary {
       if (create_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
-          poll_watch_stream_ == nullptr || poll_watch_streams_ == nullptr ||
+          next_watch_channel_event_ == nullptr ||
           close_watch_stream_ == nullptr || free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
@@ -155,21 +156,11 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  bool PollWatchStream(const std::string& subscription, std::string* response,
-                       std::string* error) {
+  bool NextWatchChannelEvent(std::string* response, std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = poll_watch_stream_(handle_, subscription.c_str());
-    return TakeBridgeString(raw_response, response, error);
-  }
-
-  bool PollWatchStreams(const std::string& subscriptions, std::string* response,
-                        std::string* error) {
-    if (!EnsureReady(error)) {
-      return false;
-    }
-    char* raw_response = poll_watch_streams_(handle_, subscriptions.c_str());
+    char* raw_response = next_watch_channel_event_(handle_);
     return TakeBridgeString(raw_response, response, error);
   }
 
@@ -228,8 +219,7 @@ class OperitRuntimeLibrary {
   BridgeCall call_ = nullptr;
   BridgeWatchSnapshot watch_snapshot_ = nullptr;
   BridgeWatchStream watch_stream_ = nullptr;
-  BridgePollWatchStream poll_watch_stream_ = nullptr;
-  BridgePollWatchStreams poll_watch_streams_ = nullptr;
+  BridgeNextWatchChannelEvent next_watch_channel_event_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
@@ -249,6 +239,41 @@ void respond_success(FlMethodCall* method_call, const std::string& value) {
   g_autoptr(FlMethodSuccessResponse) response =
       fl_method_success_response_new(result);
   fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
+}
+
+void dispatch_watch_channel_event(std::string frame) {
+  g_main_context_invoke(
+      nullptr,
+      [](gpointer data) -> gboolean {
+        std::unique_ptr<std::string> frame(static_cast<std::string*>(data));
+        if (g_operit_runtime_channel != nullptr) {
+          g_autoptr(FlValue) args = fl_value_new_string(frame->c_str());
+          fl_method_channel_invoke_method(g_operit_runtime_channel,
+                                          "watchChannelEvent", args, nullptr,
+                                          nullptr, nullptr);
+        }
+        return G_SOURCE_REMOVE;
+      },
+      new std::string(std::move(frame)));
+}
+
+void ensure_watch_channel_pump() {
+  bool expected = false;
+  if (!g_watch_channel_pump_running.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  auto library = g_operit_runtime_library;
+  std::thread([library]() {
+    while (g_watch_channel_pump_running.load()) {
+      std::string frame;
+      std::string error;
+      if (!library->NextWatchChannelEvent(&frame, &error)) {
+        break;
+      }
+      dispatch_watch_channel_event(std::move(frame));
+    }
+    g_watch_channel_pump_running.store(false);
+  }).detach();
 }
 
 const gchar* string_map_value(FlValue* map, const char* key) {
@@ -305,38 +330,7 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     }
     const gchar* request = fl_value_get_string(args);
     if (g_operit_runtime_library->WatchStream(request, &response_text, &error)) {
-      respond_success(method_call, response_text);
-    } else {
-      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
-    }
-    return;
-  }
-  if (strcmp(method, "pollWatchStream") == 0) {
-    FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
-      respond_error(method_call, "INVALID_ARGS",
-                    "pollWatchStream expects a subscription id");
-      return;
-    }
-    const gchar* subscription = fl_value_get_string(args);
-    if (g_operit_runtime_library->PollWatchStream(subscription, &response_text,
-                                                 &error)) {
-      respond_success(method_call, response_text);
-    } else {
-      respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
-    }
-    return;
-  }
-  if (strcmp(method, "pollWatchStreams") == 0) {
-    FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
-      respond_error(method_call, "INVALID_ARGS",
-                    "pollWatchStreams expects a JSON string array");
-      return;
-    }
-    const gchar* subscriptions = fl_value_get_string(args);
-    if (g_operit_runtime_library->PollWatchStreams(
-            subscriptions, &response_text, &error)) {
+      ensure_watch_channel_pump();
       respond_success(method_call, response_text);
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
@@ -377,4 +371,3 @@ void register_operit_runtime_channel(FlView* view) {
       g_operit_runtime_channel, operit_runtime_method_call_cb, nullptr,
       nullptr);
 }
-

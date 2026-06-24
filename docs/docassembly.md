@@ -471,6 +471,136 @@ ObjectBox 风格 store
 同步操作记录
 ```
 
+#### 3.6.1 本地存储路径
+
+本地存储由 `RuntimeStorageHost` 承载。runtime 业务层只使用相对路径，平台 host 负责把相对路径映射到真实文件系统、浏览器存储或 Android app 私有目录。
+
+默认 root：
+
+```text
+Windows: %APPDATA%/Operit2
+Linux:   XDG data home 的 operit2 目录；常见形态为 ~/.local/share/operit2
+Android: app host 注入 applicationContext.filesDir
+Web:     浏览器侧 operit2 runtime storage
+CLI:     使用对应 NativeRuntimeStorageHost.defaultRoot()
+```
+
+root 下的主要路径：
+
+```text
+runtime/config/preferences/
+  user_preferences.preferences.json
+  api_settings.json
+  env_preferences.preferences.json
+  github_auth_preferences.json
+  character_cards.preferences.json
+  character_groups.preferences.json
+  prompt_tags.preferences.json
+  shared_memory_stores.preferences.json
+  tts_configs.preferences.json
+  tool_permissions.preferences.json
+  skill_visibility.preferences.json
+  model_configs.preferences.json
+  functional_configs.preferences.json
+  package_manager.preferences.json
+
+runtime/state/current_chat_id.preferences.json
+
+runtime/data/database/operit2.sqlite
+runtime/data/memory/characters/
+runtime/data/memory/shared/
+
+runtime/extensions/skills/
+runtime/extensions/packages/
+runtime/extensions/plugins/configs/
+runtime/extensions/mcp/
+runtime/extensions/mcp/mcp_config.json
+runtime/extensions/mcp/server_status.json
+
+runtime/cache/model_connection_test/
+runtime/cache/toolpkg/
+runtime/cache/tts_audio/
+runtime/cache/toolpkg_resource_exports/
+
+runtime/temp/clean_on_exit/
+runtime/logs/operit.log
+runtime/logs/toolpkg.log
+runtime/exports/
+
+workspaces/
+```
+
+路径约定：
+
+```text
+RuntimeStorageLayout.rs 是 runtime 存储路径常量事实来源
+RuntimeStorePaths.rs 把 root 与相对路径组合成业务路径
+RuntimeStorageHost 只接受相对路径
+workspace 位于 root/workspaces，不属于 runtime/ 子树
+raw snapshot 当前导出 runtime/ 子树
+```
+
+敏感配置：
+
+```text
+GitHub 登录信息使用 PreferencesDataStore::newEncrypted
+密文文件路径：runtime/config/preferences/github_auth_preferences.json
+本机密钥路径：secure/preferences_encryption_key.json
+密钥不在 runtime/ 子树内
+raw snapshot 会带走 GitHub auth 密文文件，但不会带走 secure/ 下的密钥
+换设备或恢复快照后，GitHub 登录态按未登录处理
+```
+
+#### 3.6.2 同步原则
+
+同步是显式接入，不扫描本地目录，也不按文件扩展名猜测同步范围。
+
+通用原则：
+
+```text
+只有接入 SyncOperationStore 或专用 sync store 的数据参与同步
+同步记录以 domain / entityType / entityId / operation / payload 表达业务变更
+每个 device 拥有独立 sequence
+clocks.json 记录已观察到的 device sequence
+operations/{device}.jsonl 记录待交换操作
+compactSyncOperations 会压缩同一实体的可合并 upsert
+delete 操作按业务语义保留
+```
+
+Preferences 同步：
+
+```text
+PreferencesDataStore::new(path)
+  -> 写入 preferences 文件
+  -> 记录 preferences/upsert 同步操作
+
+PreferencesDataStore::newWithStorage(...)
+  -> 仅使用指定 storage host/path
+  -> 不记录 preferences 同步操作
+
+PreferencesDataStore::newEncrypted(path)
+  -> 写入加密 preferences 文件
+  -> 不记录 preferences 同步操作
+```
+
+目前明确不参与同步的数据：
+
+```text
+GitHub 登录 token 与 GitHub 登录态
+本机加密密钥 secure/preferences_encryption_key.json
+cache/temp/log/export 类运行产物
+本机 access session 与 pairing 状态
+```
+
+同步边界：
+
+```text
+同步传输业务 payload，不传输平台绝对路径
+敏感凭据默认留在本机
+跨设备需要授权的数据由目标设备重新登录或重新授权
+本机状态可以影响当前设备体验，但不应成为其他设备的隐式权限
+```
+
 ## 4. Platform Hosts
 
 Host 实现目录：
@@ -1183,6 +1313,23 @@ POST /link/watch/channel/events
 POST /link/watch/channel/open
 POST /link/watch/channel/close
 POST /link/session
+```
+
+Watch channel 语义：
+
+```text
+watchStream 是逻辑订阅。
+多个 watchStream 必须复用到少量物理 watch channel。
+/link/watch/channel/events 打开物理事件通道，HTTP 响应是 application/x-ndjson 长流。
+/link/watch/channel/open 在 channel 上创建 subscription。
+/link/watch/channel/close 关闭 subscription。
+事件 frame 携带 subscriptionId 和 CoreEvent，客户端按 subscriptionId 分发。
+同一个 subscriptionId 内必须保持 CoreEvent 顺序。
+不同 subscriptionId 之间不定义全局顺序。
+CoreEvent.kind == Completed 表示该 subscription 自然结束。
+轮询不是 watchStream 协议语义，不得作为 watch stream 传输接口。
+Android / desktop native bridge 的 watch channel event 应由 native 主动推送到 Dart。
+Dart UI isolate 不应通过固定周期 poll 驱动 watchStream。
 ```
 
 Remote signed headers：

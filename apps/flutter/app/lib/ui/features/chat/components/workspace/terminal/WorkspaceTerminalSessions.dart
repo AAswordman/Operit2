@@ -84,10 +84,18 @@ class WorkspaceTerminalSessions {
       _clients.servicesRuntimeTerminalService;
 
   Future<List<WorkspaceTerminalSessionInfo>> listSessions() async {
-    final sessions = await _terminal.listTerminalSessions();
+    final sessions = await _terminal.terminalSessionsFlowSnapshot();
     return sessions
         .map(WorkspaceTerminalSessionInfo.fromCore)
         .toList(growable: false);
+  }
+
+  Stream<List<WorkspaceTerminalSessionInfo>> watchSessions() {
+    return _terminal.terminalSessionsFlowChanges().map(
+      (sessions) => sessions
+          .map(WorkspaceTerminalSessionInfo.fromCore)
+          .toList(growable: false),
+    );
   }
 
   Future<String> startPtySession({

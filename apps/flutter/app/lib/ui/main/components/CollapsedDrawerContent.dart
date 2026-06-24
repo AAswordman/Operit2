@@ -365,6 +365,7 @@ class ConversationDrawerItem extends StatelessWidget {
     required this.onDelete,
     required this.onLongPress,
     required this.onMoveTo,
+    required this.canDetach,
     required this.onDetach,
     this.nested = false,
   });
@@ -378,6 +379,7 @@ class ConversationDrawerItem extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onLongPress;
   final ValueChanged<core_proxy.ChatHistory> onMoveTo;
+  final bool canDetach;
   final VoidCallback onDetach;
   final bool nested;
 
@@ -459,11 +461,12 @@ class ConversationDrawerItem extends StatelessWidget {
                                     return;
                                   }
                                   final offset = details.offset;
-                                  final outsideWindow = offset.dx < 0 ||
+                                  final outsideWindow =
+                                      offset.dx < 0 ||
                                       offset.dy < 0 ||
                                       offset.dx > windowSize.width ||
                                       offset.dy > windowSize.height;
-                                  if (outsideWindow) {
+                                  if (canDetach && outsideWindow) {
                                     onDetach();
                                   }
                                 },

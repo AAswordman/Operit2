@@ -1,13 +1,9 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead, BufReader, Read, Write};
-#[cfg(target_family = "unix")]
-use std::os::unix::process::CommandExt;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
@@ -32,22 +28,9 @@ pub struct LinuxTerminalHost {
 
 #[derive(Default)]
 struct TerminalState {
-    sessions: BTreeMap<String, TerminalSession>,
     sessionNameToId: BTreeMap<String, String>,
     hiddenExecutorKeyToSessionId: BTreeMap<String, String>,
     ptySessions: BTreeMap<String, PtySession>,
-}
-
-struct TerminalSession {
-    id: String,
-    name: String,
-    terminalType: String,
-    child: Child,
-    stdin: ChildStdin,
-    stdoutRx: Receiver<String>,
-    stderrLines: Arc<Mutex<VecDeque<String>>>,
-    screenLines: VecDeque<String>,
-    commandRunning: bool,
 }
 
 struct PtySession {
@@ -184,7 +167,10 @@ impl TerminalHost for LinuxTerminalHost {
         let mut state = self.lockState()?;
         let removed = state.ptySessions.remove(sessionId);
         match removed {
-            Some(_) => Ok(()),
+            Some(_) => {
+                removeSessionMappings(&mut state, sessionId);
+                Ok(())
+            }
             None => Err(HostError::new(format!(
                 "PTY session does not exist: {sessionId}"
             ))),
@@ -194,16 +180,6 @@ impl TerminalHost for LinuxTerminalHost {
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
         let mut state = self.lockState()?;
         let mut entries = Vec::new();
-        for session in state.sessions.values() {
-            entries.push(TerminalSessionListEntry {
-                sessionId: session.id.clone(),
-                sessionName: session.name.clone(),
-                terminalType: session.terminalType.clone(),
-                sessionKind: "shell".to_string(),
-                workingDir: String::new(),
-                commandRunning: session.commandRunning,
-            });
-        }
         for (sessionId, session) in state.ptySessions.iter_mut() {
             if session.exitCode.is_none() {
                 if let Some(status) = session.child.try_wait()? {
@@ -236,9 +212,7 @@ impl TerminalHost for LinuxTerminalHost {
         {
             let mut state = self.lockState()?;
             if let Some(sessionId) = state.sessionNameToId.get(&sessionKey).cloned() {
-                if state.ptySessions.contains_key(&sessionId)
-                    || state.sessions.contains_key(&sessionId)
-                {
+                if state.ptySessions.contains_key(&sessionId) {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
@@ -278,61 +252,40 @@ impl TerminalHost for LinuxTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let ptyExecution = {
+        let (terminalType, commandOutput) = {
             let mut state = self.lockState()?;
-            if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                session.commandRunning = true;
-                clearPtyCommandOutput(&session.commandOutput)?;
-                let commandInput = format!("{normalizedCommand}\r");
-                let mut writer = session
-                    .writer
-                    .lock()
-                    .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
-                writer.write_all(commandInput.as_bytes())?;
-                writer.flush()?;
-                Some((session.terminalType.clone(), session.commandOutput.clone()))
-            } else {
-                None
-            }
-        };
-
-        if let Some((terminalType, commandOutput)) = ptyExecution {
-            let result = executePtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
-            {
-                let mut state = self.lockState()?;
-                if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                    if result.timedOut {
-                        if let Some(workingDir) = cancelTimedOutPtyCommand(session)? {
-                            session.workingDir = workingDir;
-                        }
-                    } else if let Some(workingDir) = result.workingDir.clone() {
-                        session.workingDir = workingDir;
-                    }
-                    session.commandRunning = false;
-                }
-            }
-            return Ok(TerminalCommandOutput {
-                command: normalizedCommand,
-                output: result.output,
-                exitCode: result.exitCode,
-                sessionId: normalizedSessionId,
-                terminalType,
-                timedOut: result.timedOut,
-            });
-        }
-
-        let mut state = self.lockState()?;
-        let (terminalType, result) = {
             let session = state
-                .sessions
+                .ptySessions
                 .get_mut(&normalizedSessionId)
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
-            let terminalType = session.terminalType.clone();
-            let result = executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?;
-            (terminalType, result)
+            session.commandRunning = true;
+            clearPtyCommandOutput(&session.commandOutput)?;
+            let commandInput = format!("{normalizedCommand}\r");
+            let mut writer = session
+                .writer
+                .lock()
+                .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+            writer.write_all(commandInput.as_bytes())?;
+            writer.flush()?;
+            (session.terminalType.clone(), session.commandOutput.clone())
         };
+
+        let result = executePtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+        {
+            let mut state = self.lockState()?;
+            if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
+                if result.timedOut {
+                    if let Some(workingDir) = cancelTimedOutPtyCommand(session)? {
+                        session.workingDir = workingDir;
+                    }
+                } else if let Some(workingDir) = result.workingDir.clone() {
+                    session.workingDir = workingDir;
+                }
+                session.commandRunning = false;
+            }
+        }
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
@@ -357,53 +310,20 @@ impl TerminalHost for LinuxTerminalHost {
             value => value.to_string(),
         };
         let executorKey = sessionKey(&normalizedTerminalType, &normalizedExecutorKey);
-        let mut state = self.lockState()?;
-        let sessionId = match state
-            .hiddenExecutorKeyToSessionId
-            .get(&executorKey)
-            .cloned()
-        {
-            Some(sessionId) if state.sessions.contains_key(&sessionId) => sessionId,
-            Some(sessionId) => {
-                state.hiddenExecutorKeyToSessionId.remove(&executorKey);
-                let _ = sessionId;
-                let session = createShellSession(
-                    format!("hidden:{normalizedExecutorKey}"),
-                    normalizedTerminalType.clone(),
-                )?;
-                let sessionId = session.id.clone();
-                state
-                    .hiddenExecutorKeyToSessionId
-                    .insert(executorKey.clone(), sessionId.clone());
-                state.sessions.insert(sessionId.clone(), session);
-                sessionId
-            }
-            None => {
-                let session = createShellSession(
-                    format!("hidden:{normalizedExecutorKey}"),
-                    normalizedTerminalType.clone(),
-                )?;
-                let sessionId = session.id.clone();
-                state
-                    .hiddenExecutorKeyToSessionId
-                    .insert(executorKey, sessionId.clone());
-                state.sessions.insert(sessionId.clone(), session);
-                sessionId
-            }
-        };
-        let result = {
-            let session = state.sessions.get_mut(&sessionId).ok_or_else(|| {
-                HostError::new(format!("Hidden terminal session missing: {sessionId}"))
-            })?;
-            executeShellCommandInSession(session, &normalizedCommand, timeoutMs)?
-        };
+        let sessionId = hiddenPtySessionId(
+            self,
+            &executorKey,
+            &normalizedExecutorKey,
+            &normalizedTerminalType,
+        )?;
+        let output = self.executeInSession(&sessionId, &normalizedCommand, timeoutMs)?;
         Ok(HiddenTerminalCommandOutput {
             command: normalizedCommand,
-            output: result.output,
-            exitCode: result.exitCode,
+            output: output.output,
+            exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
             terminalType: normalizedTerminalType,
-            timedOut: result.timedOut,
+            timedOut: output.timedOut,
         })
     }
 
@@ -420,21 +340,14 @@ impl TerminalHost for LinuxTerminalHost {
             ));
         }
         let mut state = self.lockState()?;
-        if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-            let acceptedChars =
-                applyPtyTerminalInput(session, input, control.and_then(normalizeControl))?;
-            return Ok(TerminalInputOutput {
-                sessionId: normalizedSessionId,
-                acceptedChars,
-            });
-        }
         let session = state
-            .sessions
+            .ptySessions
             .get_mut(&normalizedSessionId)
             .ok_or_else(|| {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
             })?;
-        let acceptedChars = applyTerminalInput(session, input, control.and_then(normalizeControl))?;
+        let acceptedChars =
+            applyPtyTerminalInput(session, input, control.and_then(normalizeControl))?;
         Ok(TerminalInputOutput {
             sessionId: normalizedSessionId,
             acceptedChars,
@@ -444,26 +357,12 @@ impl TerminalHost for LinuxTerminalHost {
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let mut state = self.lockState()?;
-        if state.ptySessions.remove(&normalizedSessionId).is_some() {
-            state
-                .sessionNameToId
-                .retain(|_, value| value != &normalizedSessionId);
-            return Ok(TerminalCloseOutput {
-                sessionId: normalizedSessionId.clone(),
-                success: true,
-                message: format!("Terminal session closed: {normalizedSessionId}"),
-            });
+        if state.ptySessions.remove(&normalizedSessionId).is_none() {
+            return Err(HostError::new(format!(
+                "Terminal session does not exist: {sessionId}"
+            )));
         }
-        let mut session = state.sessions.remove(&normalizedSessionId).ok_or_else(|| {
-            HostError::new(format!("Terminal session does not exist: {sessionId}"))
-        })?;
-        let _ = session.child.kill();
-        state
-            .sessionNameToId
-            .retain(|_, value| value != &normalizedSessionId);
-        state
-            .hiddenExecutorKeyToSessionId
-            .retain(|_, value| value != &normalizedSessionId);
+        removeSessionMappings(&mut state, &normalizedSessionId);
         Ok(TerminalCloseOutput {
             sessionId: normalizedSessionId.clone(),
             success: true,
@@ -474,40 +373,16 @@ impl TerminalHost for LinuxTerminalHost {
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let mut state = self.lockState()?;
-        if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-            let content = ptyScreenContent(session)?;
-            let rows = content.lines().count();
-            let cols = content
-                .lines()
-                .map(|line| line.chars().count())
-                .max()
-                .unwrap_or(0);
-            return Ok(TerminalScreenOutput {
-                sessionId: normalizedSessionId,
-                terminalType: session.terminalType.clone(),
-                rows,
-                cols,
-                content,
-                commandRunning: session.commandRunning,
-            });
-        }
         let session = state
-            .sessions
+            .ptySessions
             .get_mut(&normalizedSessionId)
             .ok_or_else(|| {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
             })?;
-        drainLiveShellOutputToScreen(session)?;
-        let content = session
-            .screenLines
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n");
-        let rows = session.screenLines.len();
-        let cols = session
-            .screenLines
-            .iter()
+        let content = ptyScreenContent(session)?;
+        let rows = content.lines().count();
+        let cols = content
+            .lines()
             .map(|line| line.chars().count())
             .max()
             .unwrap_or(0);
@@ -531,64 +406,46 @@ impl LinuxTerminalHost {
     }
 }
 
+#[allow(non_snake_case)]
+fn hiddenPtySessionId(
+    host: &LinuxTerminalHost,
+    executorKey: &str,
+    executorLabel: &str,
+    terminalType: &str,
+) -> HostResult<String> {
+    {
+        let mut state = host.lockState()?;
+        if let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() {
+            if state.ptySessions.contains_key(&sessionId) {
+                return Ok(sessionId);
+            }
+            state.hiddenExecutorKeyToSessionId.remove(executorKey);
+            removeSessionMappings(&mut state, &sessionId);
+        }
+    }
+
+    let workingDir = std::env::current_dir()?.display().to_string();
+    let session = createPtySession(
+        format!("hidden:{executorLabel}"),
+        terminalType.to_string(),
+        workingDir,
+        24,
+        80,
+    )?;
+    let sessionId = nextSessionId();
+    let mut state = host.lockState()?;
+    state
+        .hiddenExecutorKeyToSessionId
+        .insert(executorKey.to_string(), sessionId.clone());
+    state.ptySessions.insert(sessionId.clone(), session);
+    Ok(sessionId)
+}
+
 struct SessionCommandResult {
     output: String,
     exitCode: i32,
     timedOut: bool,
     workingDir: Option<String>,
-}
-
-#[allow(non_snake_case)]
-fn createShellSession(name: String, terminalType: String) -> HostResult<TerminalSession> {
-    let mut command = Command::new("sh");
-    #[cfg(target_family = "unix")]
-    command.process_group(0);
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stdin"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stdout"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| HostError::new("terminal shell has no stderr"))?;
-    let (stdoutTx, stdoutRx) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().flatten() {
-            let _ = stdoutTx.send(line);
-        }
-    });
-    let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
-    let stderrLinesForThread = stderrLines.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().flatten() {
-            if let Ok(mut lines) = stderrLinesForThread.lock() {
-                lines.push_back(line);
-                while lines.len() > 400 {
-                    lines.pop_front();
-                }
-            }
-        }
-    });
-    Ok(TerminalSession {
-        id: nextSessionId(),
-        name,
-        terminalType,
-        child,
-        stdin,
-        stdoutRx,
-        stderrLines,
-        screenLines: VecDeque::new(),
-        commandRunning: false,
-    })
 }
 
 #[allow(non_snake_case)]
@@ -1338,208 +1195,12 @@ fn removeSessionMappings(state: &mut TerminalState, sessionId: &str) {
 }
 
 #[allow(non_snake_case)]
-fn executeShellCommandInSession(
-    session: &mut TerminalSession,
-    command: &str,
-    timeoutMs: u64,
-) -> HostResult<SessionCommandResult> {
-    let commandId = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let marker = format!("__OPERIT_TERMINAL_{commandId}__");
-    let endMarkerPrefix = format!("{marker}_END:");
-    let pidMarkerPrefix = format!("{marker}_PID:");
-    let heredocMarker = format!("__OPERIT_TERMINAL_CMD_{commandId}__");
-    let normalizedCommand = command.replace("\r\n", "\n").replace('\r', "\n");
-    let script = format!(
-        "printf '%s\\n' '{marker}_START'\n__operit_script=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.sh\"\n__operit_cwd=\"${{TMPDIR:-/tmp}}/operit_terminal_{commandId}.cwd\"\ncat >\"$__operit_script\" <<'{heredocMarker}'\n{normalizedCommand}\n__operit_exit_code=$?\nprintf '%s' \"$PWD\" >\"$__OPERIT_CWD_FILE\"\nexit \"$__operit_exit_code\"\n{heredocMarker}\n__OPERIT_CWD_FILE=\"$__operit_cwd\" setsid sh \"$__operit_script\" &\n__operit_command_pid=$!\nprintf '%s%s\\n' '{pidMarkerPrefix}' \"$__operit_command_pid\"\nwait \"$__operit_command_pid\"\n__operit_exit_code=$?\nif [ -s \"$__operit_cwd\" ]; then cd \"$(cat \"$__operit_cwd\")\"; fi\nrm -f \"$__operit_script\" \"$__operit_cwd\"\nprintf '%s%s\\n' '{endMarkerPrefix}' \"$__operit_exit_code\"\n"
-    );
-    session.commandRunning = true;
-    session.stdin.write_all(script.as_bytes())?;
-    session.stdin.flush()?;
-
-    let deadline = Duration::from_millis(timeoutMs);
-    let start = SystemTime::now();
-    let mut outputLines = Vec::new();
-    let mut sawStart = false;
-    let mut commandPid = None;
-    loop {
-        let elapsed = start.elapsed().unwrap_or(Duration::from_millis(timeoutMs));
-        if elapsed >= deadline {
-            cancelShellCommandProcessGroup(commandPid);
-            collectShellCommandAfterCancel(session, &endMarkerPrefix, &mut outputLines)?;
-            session.commandRunning = false;
-            let output = joinOutput(outputLines, drainStderr(session)?);
-            appendScreenLines(session, &output);
-            return Ok(SessionCommandResult {
-                output,
-                exitCode: -1,
-                timedOut: true,
-                workingDir: None,
-            });
-        }
-        let remaining = deadline - elapsed;
-        let wait = remaining.min(Duration::from_millis(100));
-        match session.stdoutRx.recv_timeout(wait) {
-            Ok(line) => {
-                if line == format!("{marker}_START") {
-                    sawStart = true;
-                    continue;
-                }
-                if sawStart {
-                    if let Some(pidText) = line.strip_prefix(&pidMarkerPrefix) {
-                        commandPid = pidText.trim().parse::<u32>().ok();
-                        continue;
-                    }
-                    if let Some(endMarkerIndex) = line.rfind(&endMarkerPrefix) {
-                        let outputBeforeEndMarker = &line[..endMarkerIndex];
-                        if !outputBeforeEndMarker.is_empty() {
-                            outputLines.push(outputBeforeEndMarker.to_string());
-                        }
-                        session.commandRunning = false;
-                        let exitCodeText = line[endMarkerIndex + endMarkerPrefix.len()..].trim();
-                        let exitCode = parseExitCode(exitCodeText)?;
-                        let output = joinOutput(outputLines, drainStderr(session)?);
-                        appendScreenLines(session, &output);
-                        return Ok(SessionCommandResult {
-                            output,
-                            exitCode,
-                            timedOut: false,
-                            workingDir: None,
-                        });
-                    }
-                    outputLines.push(line);
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                session.commandRunning = false;
-                return Err(HostError::new(format!(
-                    "Terminal session '{}' closed while executing command",
-                    session.name
-                )));
-            }
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-fn cancelShellCommandProcessGroup(pid: Option<u32>) {
-    let Some(pid) = pid else {
-        return;
-    };
-    let processGroup = format!("-{pid}");
-    let _ = Command::new("kill")
-        .arg("-TERM")
-        .arg(&processGroup)
-        .status();
-    thread::sleep(Duration::from_millis(100));
-    let _ = Command::new("kill")
-        .arg("-KILL")
-        .arg(&processGroup)
-        .status();
-}
-
-#[allow(non_snake_case)]
-fn collectShellCommandAfterCancel(
-    session: &mut TerminalSession,
-    endMarkerPrefix: &str,
-    outputLines: &mut Vec<String>,
-) -> HostResult<()> {
-    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
-    while Instant::now() < deadline {
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .min(Duration::from_millis(100));
-        match session.stdoutRx.recv_timeout(wait) {
-            Ok(line) => {
-                if let Some(endMarkerIndex) = line.rfind(endMarkerPrefix) {
-                    let outputBeforeEndMarker = &line[..endMarkerIndex];
-                    if !outputBeforeEndMarker.is_empty() {
-                        outputLines.push(outputBeforeEndMarker.to_string());
-                    }
-                    return Ok(());
-                }
-                outputLines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(HostError::new(format!(
-                    "Terminal session '{}' closed while cancelling command",
-                    session.name
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[allow(non_snake_case)]
 fn parseExitCode(exitCodeText: &str) -> HostResult<i32> {
     exitCodeText.trim().parse::<i32>().map_err(|error| {
         HostError::new(format!(
             "Invalid terminal exit code marker '{exitCodeText}': {error}"
         ))
     })
-}
-
-#[allow(non_snake_case)]
-fn drainStderr(session: &TerminalSession) -> HostResult<Vec<String>> {
-    let mut lines = session
-        .stderrLines
-        .lock()
-        .map_err(|_| HostError::new("terminal stderr mutex poisoned"))?;
-    let mut collected = Vec::new();
-    while let Some(line) = lines.pop_front() {
-        collected.push(line);
-    }
-    Ok(collected)
-}
-
-#[allow(non_snake_case)]
-fn drainLiveShellOutputToScreen(session: &mut TerminalSession) -> HostResult<()> {
-    while let Ok(line) = session.stdoutRx.try_recv() {
-        appendScreenLines(session, &line);
-    }
-    let stderrLines = drainStderr(session)?;
-    for line in stderrLines {
-        appendScreenLines(session, &line);
-    }
-    Ok(())
-}
-
-#[allow(non_snake_case)]
-fn joinOutput(mut stdoutLines: Vec<String>, stderrLines: Vec<String>) -> String {
-    stdoutLines.extend(stderrLines);
-    stdoutLines.join("\n")
-}
-
-#[allow(non_snake_case)]
-fn appendScreenLines(session: &mut TerminalSession, output: &str) {
-    for line in output.lines() {
-        session.screenLines.push_back(line.to_string());
-        while session.screenLines.len() > 200 {
-            session.screenLines.pop_front();
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-fn applyTerminalInput(
-    session: &mut TerminalSession,
-    input: Option<&str>,
-    control: Option<&str>,
-) -> HostResult<usize> {
-    let mut acceptedChars = 0;
-    if let Some(input) = input {
-        session.stdin.write_all(input.as_bytes())?;
-        acceptedChars += input.chars().count();
-    }
-    if let Some(control) = control {
-        let sequence = controlToSequence(control, input)?;
-        session.stdin.write_all(sequence.as_bytes())?;
-        acceptedChars += sequence.chars().count();
-    }
-    session.stdin.flush()?;
-    Ok(acceptedChars)
 }
 
 #[allow(non_snake_case)]

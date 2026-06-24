@@ -73,7 +73,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
-  Timer? _terminalSessionRefreshTimer;
+  StreamSubscription<List<WorkspaceTerminalSessionInfo>>?
+  _terminalSessionSubscription;
 
   @override
   void initState() {
@@ -81,12 +82,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _configureBrowserWorkspaceAccess();
     _registerBrowserControls();
     _registerWebVisitControls();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshTerminalSessions();
-    });
-    _terminalSessionRefreshTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => _refreshTerminalSessions(),
+    _terminalSessionSubscription = _terminalSessions.watchSessions().listen(
+      (sessions) {
+        if (!mounted) {
+          return;
+        }
+        _updateTerminalSessionEntries(sessions);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Failed to watch terminal sessions: $error\n$stackTrace');
+      },
     );
   }
 
@@ -118,7 +123,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       }
     }
     _webVisitCompleters.clear();
-    _terminalSessionRefreshTimer?.cancel();
+    unawaited(_terminalSessionSubscription?.cancel());
     _terminalSessionCount.dispose();
     super.dispose();
   }
@@ -325,14 +330,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
-  Future<void> _refreshTerminalSessions() async {
-    final sessions = await _terminalSessions.listSessions();
-    if (!mounted) {
-      return;
-    }
-    _updateTerminalSessionEntries(sessions);
-  }
-
   Future<void> _createAndOpenTerminalSession() async {
     final workingDirectory = await _manualTerminalWorkingDirectory();
     final sessionId = await _terminalSessions.startPtySession(
@@ -365,11 +362,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   String _nextManualTerminalSessionName() {
     final manualCount = _terminalSessionEntries
-        .where(
-          (session) =>
-              session.sessionKind == 'pty' &&
-              session.sessionName.trim().startsWith('手动终端'),
-        )
+        .where((session) => session.sessionName.trim().startsWith('手动终端'))
         .length;
     return '手动终端 ${manualCount + 1}';
   }
@@ -428,7 +421,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                               const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final session = dialogSessions[index];
-                            final canClose = session.sessionKind == 'pty';
                             final isClosing = closingSessionIds.contains(
                               session.sessionId,
                             );
@@ -444,24 +436,20 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              trailing: canClose
-                                  ? IconButton(
-                                      tooltip: '结束进程',
-                                      onPressed: isClosing
-                                          ? null
-                                          : () => closeSession(session),
-                                      icon: isClosing
-                                          ? const SizedBox.square(
-                                              dimension: 18,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.stop_circle_outlined,
-                                            ),
-                                    )
-                                  : null,
+                              trailing: IconButton(
+                                tooltip: '结束进程',
+                                onPressed: isClosing
+                                    ? null
+                                    : () => closeSession(session),
+                                icon: isClosing
+                                    ? const SizedBox.square(
+                                        dimension: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.stop_circle_outlined),
+                              ),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 _openTerminalSessionTab(session);
@@ -588,7 +576,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   String _terminalSessionSubtitle(WorkspaceTerminalSessionInfo session) {
     final workingDir = session.workingDir.trim();
-    final prefix = session.sessionKind == 'shell' ? 'AI' : 'PTY';
+    const prefix = 'PTY';
     if (workingDir.isNotEmpty) {
       return 'UUID · ${session.sessionId}\n$prefix · $workingDir';
     }
@@ -608,7 +596,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       title: session.title,
       icon: Icons.terminal,
       terminalSessionId: session.sessionId,
-      terminalSessionKind: session.sessionKind,
       terminalType: session.terminalType,
       terminalWorkingDir: session.workingDir,
     );
@@ -707,8 +694,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         _selectedIndex -= 1;
       }
     });
-    if (tab.kind == WorkspaceTabKind.terminal &&
-        tab.terminalSessionKind == 'pty') {
+    if (tab.kind == WorkspaceTabKind.terminal) {
       final sessionId = tab.terminalSessionId;
       if (sessionId != null && sessionId.trim().isNotEmpty) {
         unawaited(_closeManualTerminalSession(sessionId));
@@ -776,7 +762,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   Future<void> _closeManualTerminalSession(String sessionId) async {
     await _terminalSessions.closePtySession(sessionId);
-    await _refreshTerminalSessions();
   }
 
   Future<void> _openFileTab(WorkspaceFileEntry entry) async {
