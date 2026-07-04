@@ -11,10 +11,12 @@ class CursorStyleChatMessage extends StatelessWidget {
     super.key,
     required this.message,
     required this.isStreaming,
+    this.currentCharacterCardAvatarUri,
   });
 
   final ChatUiMessage message;
   final bool isStreaming;
+  final String? currentCharacterCardAvatarUri;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +28,7 @@ class CursorStyleChatMessage extends StatelessWidget {
           message: message,
           isStreaming: isStreaming,
           useBubbleStyle: false,
+          avatarImagePath: currentCharacterCardAvatarUri,
         );
       case 'summary':
         return _SummaryMessageComposable(message: message);

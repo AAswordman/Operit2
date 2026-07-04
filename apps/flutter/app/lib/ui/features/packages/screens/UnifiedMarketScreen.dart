@@ -1,16 +1,17 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../main/navigation/AppNavigationModels.dart';
+import '../../../main/screens/OperitScreens.dart';
+import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../main/TopBarController.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
@@ -18,24 +19,25 @@ import '../market/ArtifactMarketSupport.dart';
 import '../market/MarketBrowseControls.dart';
 import '../market/MarketBrowseList.dart';
 import '../market/MarketStatsSupport.dart';
-import 'ArtifactDetailScreen.dart';
-import 'ArtifactProjectNodeTreeDialog.dart';
-import 'MarketIssueDetailScreen.dart';
 import 'ArtifactPublishScreen.dart';
+import 'MarketEntryDetailScreen.dart';
+import 'RepoMarketPublishScreen.dart';
 
-enum MarketHomeTab { artifact, skill, mcp, mine }
-
-const List<String> _artifactMarketTypes = <String>['script', 'package'];
+enum MarketHomeTab { all, categories, mine }
 
 class UnifiedMarketScreen extends StatefulWidget {
   const UnifiedMarketScreen({
     super.key,
-    this.initialTab = MarketHomeTab.artifact,
+    this.initialTab = MarketHomeTab.all,
+    this.categoryId,
+    this.categoryName,
     GeneratedCoreProxyClients? clients,
   }) : clients =
            clients ?? const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   final MarketHomeTab initialTab;
+  final String? categoryId;
+  final String? categoryName;
   final GeneratedCoreProxyClients clients;
 
   @override
@@ -46,14 +48,18 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
     with SingleTickerProviderStateMixin {
   late MarketHomeTab _selectedTab = widget.initialTab;
   late final TabController _tabController;
-  MarketSortOption _sortOption = MarketSortOption.downloads;
+  MarketSortOption _sortOption = MarketSortOption.updated;
+  bool _featuredOnly = true;
+  String? _typeFilter;
   String _searchInput = '';
   String _searchQuery = '';
   bool _searchExpanded = false;
   Timer? _searchDebounce;
   TopBarController? _topBarController;
 
-  bool get _searchEnabled => _selectedTab != MarketHomeTab.mine;
+  bool get _hasCategoryScope => widget.categoryId?.trim().isNotEmpty == true;
+
+  bool get _searchEnabled => _selectedTab == MarketHomeTab.all;
 
   bool get _isSearchActive =>
       _searchEnabled && (_searchExpanded || _searchInput.trim().isNotEmpty);
@@ -101,20 +107,65 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Material(
       color: Colors.transparent,
       child: Column(
         children: <Widget>[
-          OperitGlassSurface(
-            color: colorScheme.surface.withValues(alpha: 0.72),
-            layer: OperitGlassSurfaceLayer.panel,
-            transparentAlpha: 0.035,
-            clip: false,
-            material: true,
-            child: TabBar(
-              controller: _tabController,
-              onTap: (index) {
+          if (_hasCategoryScope)
+            _MarketCategoryScopeHeader(
+              title: widget.categoryName?.trim().isNotEmpty == true
+                  ? widget.categoryName!.trim()
+                  : widget.categoryId!.trim(),
+            ),
+          if (_selectedTab == MarketHomeTab.all)
+            _MarketTypeFilterBar(
+              selectedType: _typeFilter,
+              onChanged: (type) {
+                setState(() {
+                  _typeFilter = type;
+                });
+              },
+            ),
+          Expanded(
+            child: AnimatedLazyIndexedStack(
+              index: _selectedTab.index,
+              itemCount: MarketHomeTab.values.length,
+              itemBuilder: (context, index) {
+                return switch (MarketHomeTab.values[index]) {
+                  MarketHomeTab.all => _MarketListPane(
+                    clients: widget.clients,
+                    type: _typeFilter,
+                    categoryId: widget.categoryId,
+                    sortOption: _sortOption,
+                    featuredOnly: _featuredOnly,
+                    onSortChanged: (sortOption) {
+                      setState(() {
+                        _sortOption = sortOption;
+                      });
+                    },
+                    onFeaturedOnlyChanged: (value) {
+                      setState(() {
+                        _featuredOnly = value;
+                      });
+                    },
+                    searchQuery: _searchQuery,
+                  ),
+                  MarketHomeTab.categories => _MarketCategoriesPane(
+                    clients: widget.clients,
+                  ),
+                  MarketHomeTab.mine => _MarketMinePane(
+                    clients: widget.clients,
+                  ),
+                };
+              },
+            ),
+          ),
+          if (!_hasCategoryScope)
+            NavigationBar(
+              height: 56,
+              selectedIndex: _selectedTab.index,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+              onDestinationSelected: (index) {
                 setState(() {
                   _selectedTab = MarketHomeTab.values[index];
                   _searchInput = '';
@@ -124,53 +175,24 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
                 });
                 _syncTopBar();
               },
-              tabs: const <Widget>[
-                Tab(text: 'Artifact'),
-                Tab(text: 'Skill'),
-                Tab(text: 'MCP'),
-                Tab(text: 'Mine'),
+              destinations: const <NavigationDestination>[
+                NavigationDestination(
+                  icon: Icon(Icons.storefront_outlined),
+                  selectedIcon: Icon(Icons.storefront),
+                  label: '全部',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.category_outlined),
+                  selectedIcon: Icon(Icons.category),
+                  label: '分类',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  selectedIcon: Icon(Icons.person),
+                  label: '我的',
+                ),
               ],
             ),
-          ),
-          MarketBrowseControls(
-            sortOption: _sortOption,
-            enabled: _searchEnabled,
-            onSortChanged: (sortOption) {
-              setState(() {
-                _sortOption = sortOption;
-              });
-            },
-          ),
-          Expanded(
-            child: AnimatedLazyIndexedStack(
-              index: _selectedTab.index,
-              itemCount: MarketHomeTab.values.length,
-              itemBuilder: (context, index) {
-                return switch (MarketHomeTab.values[index]) {
-                  MarketHomeTab.artifact => _ArtifactMarketPane(
-                    clients: widget.clients,
-                    sortOption: _sortOption,
-                    searchQuery: _searchQuery,
-                  ),
-                  MarketHomeTab.skill => _IssueMarketPane(
-                    clients: widget.clients,
-                    type: 'skill',
-                    sortOption: _sortOption,
-                    searchQuery: _searchQuery,
-                  ),
-                  MarketHomeTab.mcp => _IssueMarketPane(
-                    clients: widget.clients,
-                    type: 'mcp',
-                    sortOption: _sortOption,
-                    searchQuery: _searchQuery,
-                  ),
-                  MarketHomeTab.mine => _MarketMinePane(
-                    clients: widget.clients,
-                  ),
-                };
-              },
-            ),
-          ),
         ],
       ),
     );
@@ -247,30 +269,44 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
   }
 }
 
-class _ArtifactMarketPane extends StatefulWidget {
-  const _ArtifactMarketPane({
+class _MarketListPane extends StatefulWidget {
+  const _MarketListPane({
     required this.clients,
+    required this.type,
+    required this.categoryId,
     required this.sortOption,
+    required this.featuredOnly,
+    required this.onSortChanged,
+    required this.onFeaturedOnlyChanged,
     required this.searchQuery,
   });
 
   final GeneratedCoreProxyClients clients;
+  final String? type;
+  final String? categoryId;
   final MarketSortOption sortOption;
+  final bool featuredOnly;
+  final ValueChanged<MarketSortOption> onSortChanged;
+  final ValueChanged<bool> onFeaturedOnlyChanged;
   final String searchQuery;
 
   @override
-  State<_ArtifactMarketPane> createState() => _ArtifactMarketPaneState();
+  State<_MarketListPane> createState() => _MarketListPaneState();
 }
 
-class _ArtifactMarketPaneState extends State<_ArtifactMarketPane> {
+class _MarketListPaneState extends State<_MarketListPane> {
   bool _loading = true;
   bool _loadingMore = false;
   String? _errorMessage;
-  final Map<String, int> _pages = <String, int>{};
-  final Map<String, int> _totalPagesByType = <String, int>{};
-  final Set<String> _busyProjectIds = <String>{};
-  List<core_proxy.ArtifactProjectRankEntryResponse> _items =
-      <core_proxy.ArtifactProjectRankEntryResponse>[];
+  int _page = 1;
+  int _totalPages = 1;
+  final Set<String> _busyEntryIds = <String>{};
+  List<core_proxy.MarketEntrySummary> _items = <core_proxy.MarketEntrySummary>[];
+  List<core_proxy.MarketEntrySummary> _searchItems =
+      <core_proxy.MarketEntrySummary>[];
+  List<core_proxy.MarketEntrySummary>? _searchCorpus;
+  bool _searchLoading = false;
+  int _searchGeneration = 0;
 
   GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.apiMarketStatsApiService;
@@ -282,50 +318,47 @@ class _ArtifactMarketPaneState extends State<_ArtifactMarketPane> {
   }
 
   @override
-  void didUpdateWidget(covariant _ArtifactMarketPane oldWidget) {
+  void didUpdateWidget(covariant _MarketListPane oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.sortOption != widget.sortOption) {
-      _loadFirstPage();
+    if (oldWidget.searchQuery != widget.searchQuery) {
+      _loadSearchResults();
+    }
+    if (oldWidget.sortOption != widget.sortOption ||
+        oldWidget.type != widget.type ||
+        oldWidget.categoryId != widget.categoryId) {
+      _searchCorpus = null;
+      _loadFirstPage(clearExisting: true);
     }
   }
 
-  Future<void> _loadFirstPage() async {
+  Future<void> _loadFirstPage({bool clearExisting = false}) async {
     setState(() {
       _loading = true;
       _errorMessage = null;
+      if (clearExisting) {
+        _items = <core_proxy.MarketEntrySummary>[];
+        _searchItems = <core_proxy.MarketEntrySummary>[];
+        _searchCorpus = null;
+        _page = 1;
+        _totalPages = 1;
+      }
     });
     try {
-      final pages = await Future.wait(
-        _artifactMarketTypes.map(
-          (type) =>
-              _market.getArtifactRankPage(type: type, metric: _metric, page: 1),
-        ),
-      );
+      final page = await _loadPage(1);
       if (!mounted) {
         return;
       }
-      final nextPages = <String, int>{};
-      final nextTotalPages = <String, int>{};
-      final nextItems = <core_proxy.ArtifactProjectRankEntryResponse>[];
-      for (var index = 0; index < pages.length; index += 1) {
-        final type = _artifactMarketTypes[index];
-        final page = pages[index];
-        nextPages[type] = page.page;
-        nextTotalPages[type] = page.totalPages < 1 ? 1 : page.totalPages;
-        nextItems.addAll(page.items);
-      }
       setState(() {
-        _items = _sortArtifactItems(nextItems);
-        _pages
-          ..clear()
-          ..addAll(nextPages);
-        _totalPagesByType
-          ..clear()
-          ..addAll(nextTotalPages);
+        _items = page.items;
+        _searchItems = <core_proxy.MarketEntrySummary>[];
+        _searchCorpus = null;
+        _page = page.page;
+        _totalPages = _pageCount(page.total, page.pageSize);
         _loading = false;
       });
+      await _loadSearchResults();
     } catch (error, stackTrace) {
-      debugPrint('Failed to load artifact market: $error\n$stackTrace');
+      debugPrint('Failed to load market: $error\n$stackTrace');
       if (!mounted) {
         return;
       }
@@ -344,41 +377,21 @@ class _ArtifactMarketPaneState extends State<_ArtifactMarketPane> {
       _loadingMore = true;
     });
     try {
-      final requests = _artifactMarketTypes
-          .where((type) {
-            final currentPage = _pages[type] ?? 0;
-            final totalPages = _totalPagesByType[type] ?? 1;
-            return currentPage < totalPages;
-          })
-          .toList(growable: false);
-      final pages = await Future.wait(
-        requests.map(
-          (type) => _market.getArtifactRankPage(
-            type: type,
-            metric: _metric,
-            page: (_pages[type] ?? 0) + 1,
-          ),
-        ),
-      );
+      final page = await _loadPage(_page + 1);
       if (!mounted) {
         return;
       }
-      final nextItems = <core_proxy.ArtifactProjectRankEntryResponse>[
-        ..._items,
-      ];
-      for (var index = 0; index < pages.length; index += 1) {
-        final type = requests[index];
-        final page = pages[index];
-        _pages[type] = page.page;
-        _totalPagesByType[type] = page.totalPages < 1 ? 1 : page.totalPages;
-        nextItems.addAll(page.items);
-      }
       setState(() {
-        _items = _sortArtifactItems(nextItems);
+        _items = <core_proxy.MarketEntrySummary>[
+          ..._items,
+          ...page.items,
+        ];
+        _page = page.page;
+        _totalPages = _pageCount(page.total, page.pageSize);
         _loadingMore = false;
       });
     } catch (error, stackTrace) {
-      debugPrint('Failed to load more artifact market: $error\n$stackTrace');
+      debugPrint('Failed to load more market: $error\n$stackTrace');
       if (!mounted) {
         return;
       }
@@ -394,40 +407,100 @@ class _ArtifactMarketPaneState extends State<_ArtifactMarketPane> {
     }
   }
 
-  String get _metric => switch (widget.sortOption) {
-    MarketSortOption.downloads => 'downloads',
-    MarketSortOption.updated => 'updated',
-  };
-
-  bool get _hasMore => _artifactMarketTypes.any((type) {
-    final currentPage = _pages[type] ?? 0;
-    final totalPages = _totalPagesByType[type] ?? 1;
-    return currentPage < totalPages;
-  });
-
-  List<core_proxy.ArtifactProjectRankEntryResponse> _sortArtifactItems(
-    List<core_proxy.ArtifactProjectRankEntryResponse> items,
-  ) {
-    final sorted = items.toList(growable: false);
-    sorted.sort((left, right) {
-      if (widget.sortOption == MarketSortOption.updated) {
-        return (right.latestPublishedAt ?? '').compareTo(
-          left.latestPublishedAt ?? '',
-        );
+  Future<void> _loadSearchResults() async {
+    final query = widget.searchQuery.trim();
+    final generation = ++_searchGeneration;
+    if (query.isEmpty) {
+      if (!mounted) {
+        return;
       }
-      return right.downloads.compareTo(left.downloads);
+      setState(() {
+        _searchItems = <core_proxy.MarketEntrySummary>[];
+        _searchLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _searchLoading = true;
     });
-    return sorted;
+    try {
+      final corpus = _searchCorpus ?? await _loadAllPagesForLocalSearch();
+      if (!mounted || generation != _searchGeneration) {
+        return;
+      }
+      _searchCorpus = corpus;
+      setState(() {
+        _searchItems = corpus;
+        _searchLoading = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load local market search corpus: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _searchLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<List<core_proxy.MarketEntrySummary>>
+  _loadAllPagesForLocalSearch() async {
+    final firstPage = await _loadPage(1);
+    final totalPages = _pageCount(firstPage.total, firstPage.pageSize);
+    final entries = <core_proxy.MarketEntrySummary>[...firstPage.items];
+    for (var page = 2; page <= totalPages; page += 1) {
+      final nextPage = await _loadPage(page);
+      entries.addAll(nextPage.items);
+    }
+    return entries;
+  }
+
+  String get _metric => marketSortMetric(widget.sortOption);
+
+  bool get _hasMore => _page < _totalPages;
+
+  Future<core_proxy.MarketListPage> _loadPage(int page) {
+    final type = widget.type?.trim();
+    final categoryId = widget.categoryId?.trim();
+    if (type != null &&
+        type.isNotEmpty &&
+        categoryId != null &&
+        categoryId.isNotEmpty) {
+      return _market.getTypeCategoryPage(
+        type: type,
+        categoryId: categoryId,
+        sort: _metric,
+        page: page,
+      );
+    }
+    if (type != null && type.isNotEmpty) {
+      return _market.getTypePage(type: type, sort: _metric, page: page);
+    }
+    if (categoryId != null && categoryId.isNotEmpty) {
+      return _market.getCategoryPage(
+        categoryId: categoryId,
+        sort: _metric,
+        page: page,
+      );
+    }
+    return _market.getListPage(sort: _metric, page: page);
   }
 
   @override
   Widget build(BuildContext context) {
     final error = _errorMessage;
+    Widget content;
     if (_loading && _items.isEmpty) {
-      return const M3LoadingPane();
-    }
-    if (error != null && _items.isEmpty) {
-      return EmptyState(
+      content = const M3LoadingPane();
+    } else if (error != null && _items.isEmpty) {
+      content = EmptyState(
         icon: Icons.error_outline,
         title: '加载失败',
         message: error,
@@ -437,197 +510,164 @@ class _ArtifactMarketPaneState extends State<_ArtifactMarketPane> {
           label: const Text('刷新'),
         ),
       );
+    } else {
+      final rawQuery = widget.searchQuery.trim();
+      final query = rawQuery.toLowerCase();
+      final sourceItems = rawQuery.isEmpty ? _items : _searchItems;
+      final displayed = sourceItems
+          .where((item) => !widget.featuredOnly || item.featured)
+          .where(
+            (item) =>
+                query.isEmpty ||
+                item.title.toLowerCase().contains(query) ||
+                item.description.toLowerCase().contains(query) ||
+                item.detail.toLowerCase().contains(query) ||
+                item.id.toLowerCase().contains(query) ||
+                item.type.toLowerCase().contains(query) ||
+                (item.categoryId ?? '').toLowerCase().contains(query) ||
+                (item.publisher?.login ?? item.author?.login ?? '')
+                    .toLowerCase()
+                    .contains(query),
+          )
+          .toList(growable: false);
+      content = MarketBrowseList(
+        isLoading: _loading || _searchLoading,
+        isLoadingMore: _loadingMore,
+        hasMore: _hasMore && rawQuery.isEmpty,
+        isEmpty: displayed.isEmpty,
+        emptyTitle: rawQuery.isEmpty ? '暂无项目' : '没有匹配结果',
+        onRefresh: _loadFirstPage,
+        onLoadMore: _loadMore,
+        items: displayed,
+        groupByUpdatedDate: widget.sortOption == MarketSortOption.updated,
+        updatedAt: (item) => item.publishedAt ?? item.updatedAt,
+        itemBuilder: (item) => MarketGridCard(
+          title: item.title,
+          description: item.description,
+          author: item.publisher?.login ?? item.author?.login ?? '',
+          downloads: _entryDownloads(item),
+          likes: _reactionTotal(item, '+1'),
+          hearts: _reactionTotal(item, 'heart'),
+          actionLabel: _actionLabel(item),
+          actionIcon: Icons.download_outlined,
+          actionBusy: _busyEntryIds.contains(item.id),
+          onAction: () => _installEntry(item),
+          onTap: () => _openDetails(item),
+        ),
+      );
     }
-    final query = widget.searchQuery.toLowerCase();
-    final displayed = _items
-        .where(
-          (item) =>
-              query.isEmpty ||
-              item.projectDisplayName.toLowerCase().contains(query) ||
-              item.projectDescription.toLowerCase().contains(query) ||
-              item.rootPublisherLogin.toLowerCase().contains(query),
-        )
-        .toList(growable: false);
-    return MarketBrowseList(
-      isLoading: _loading,
-      isLoadingMore: _loadingMore,
-      hasMore: _hasMore && widget.searchQuery.trim().isEmpty,
-      isEmpty: displayed.isEmpty,
-      emptyTitle: widget.searchQuery.trim().isEmpty ? '暂无 Artifact' : '没有匹配结果',
-      onRefresh: _loadFirstPage,
-      onLoadMore: _loadMore,
-      items: displayed,
-      groupByUpdatedDate: widget.sortOption == MarketSortOption.updated,
-      updatedAt: (item) => item.latestPublishedAt ?? '',
-      itemBuilder: (item) => MarketGridCard(
-        title: item.projectDisplayName,
-        description: item.projectDescription,
-        author: item.rootPublisherLogin,
-        downloads: item.downloads,
-        likes: item.likes,
-        hearts: 0,
-        actionLabel: '下载',
-        actionIcon: Icons.download_outlined,
-        actionBusy: _busyProjectIds.contains(item.projectId),
-        onAction: () => _downloadArtifact(item),
-        onTap: () => _openArtifactProject(item.projectId),
-      ),
+    return Column(
+      children: <Widget>[
+        MarketBrowseControls(
+          sortOption: widget.sortOption,
+          enabled: true,
+          featuredOnly: widget.featuredOnly,
+          onSortChanged: widget.onSortChanged,
+          onFeaturedOnlyChanged: widget.onFeaturedOnlyChanged,
+        ),
+        Expanded(child: content),
+      ],
     );
   }
 
-  Future<void> _downloadArtifact(
-    core_proxy.ArtifactProjectRankEntryResponse item,
-  ) async {
-    setState(() {
-      _busyProjectIds.add(item.projectId);
-    });
-    try {
-      final project = await _loadArtifactProject(item.projectId);
-      final node = _selectArtifactInstallNode(
-        project,
-        requestedNodeId: item.defaultNode?.nodeId,
-      );
-      final result = await _installArtifactNode(project, node);
-      if (!mounted) {
-        return;
-      }
-      if (result == null) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
-      );
-    } catch (error, stackTrace) {
-      debugPrint('Failed to install artifact: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _busyProjectIds.remove(item.projectId);
-        });
-      }
-    }
-  }
-
-  Future<void> _openArtifactProject(String projectId) async {
-    setState(() {
-      _busyProjectIds.add(projectId);
-    });
-    try {
-      final project = await _loadArtifactProject(projectId);
-      if (!mounted) {
-        return;
-      }
-      if (project.nodes.length == 1) {
-        _showArtifactNodeDetails(project, project.nodes.single);
-      } else {
-        _showArtifactNodeTree(project);
-      }
-    } catch (error, stackTrace) {
-      debugPrint('Failed to load artifact project: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _busyProjectIds.remove(projectId);
-        });
-      }
-    }
-  }
-
-  Future<core_proxy.ArtifactProjectDetailResponse> _loadArtifactProject(
-    String projectId,
-  ) {
-    return _market.getArtifactProject(projectId: projectId);
-  }
-
-  void _showArtifactNodeTree(core_proxy.ArtifactProjectDetailResponse project) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => ArtifactProjectNodeTreeDialog(
-        project: project,
-        onSelectNode: (node) {
-          Navigator.of(context).pop();
-          _showArtifactNodeDetails(project, node);
-        },
-      ),
-    );
-  }
-
-  void _showArtifactNodeDetails(
-    core_proxy.ArtifactProjectDetailResponse project,
-    core_proxy.ArtifactProjectNodeResponse node,
-  ) {
+  void _openDetails(core_proxy.MarketEntrySummary item) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => ArtifactNodeDetailsScreen(
+        builder: (context) => MarketEntryDetailScreen(
           clients: widget.clients,
-          project: project,
-          node: node,
+          entry: item,
         ),
       ),
     );
   }
 
-  core_proxy.ArtifactProjectNodeResponse _selectArtifactInstallNode(
-    core_proxy.ArtifactProjectDetailResponse project, {
-    String? requestedNodeId,
-  }) {
-    final nodeIds = <String>[
-      if (requestedNodeId != null && requestedNodeId.trim().isNotEmpty)
-        requestedNodeId.trim(),
-      if (project.defaultNodeId.trim().isNotEmpty) project.defaultNodeId.trim(),
-      if (project.latestOpenNodeId.trim().isNotEmpty)
-        project.latestOpenNodeId.trim(),
-      if (project.latestNodeId.trim().isNotEmpty) project.latestNodeId.trim(),
-    ];
-    for (final nodeId in nodeIds) {
-      for (final node in project.nodes) {
-        if (node.nodeId == nodeId) {
-          return node;
+  Future<void> _installEntry(core_proxy.MarketEntrySummary item) async {
+    setState(() {
+      _busyEntryIds.add(item.id);
+    });
+    try {
+      if (item.type == 'skill') {
+        await _installSkill(item);
+      } else if (item.type == 'mcp') {
+        await _installMcp(item);
+      } else {
+        final result = await runCoreMarketInstall(
+          clients: widget.clients,
+          type: item.type,
+          entryId: item.id,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
+          );
         }
       }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to install market entry: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyEntryIds.remove(item.id);
+        });
+      }
     }
-    throw StateError('Default artifact node not found');
   }
 
-  Future<String?> _installArtifactNode(
-    core_proxy.ArtifactProjectDetailResponse project,
-    core_proxy.ArtifactProjectNodeResponse node,
-  ) async {
-    final confirmed = await confirmArtifactNodeCompatibility(
-      context: context,
-      project: project,
-      node: node,
-    );
-    if (!confirmed) {
-      return null;
+  Future<void> _installSkill(core_proxy.MarketEntrySummary item) async {
+    final repoUrl = item.source?.url.trim() ?? '';
+    if (repoUrl.isEmpty) {
+      throw StateError('技能缺少仓库地址');
     }
-    return runCoreMarketInstall(
-      clients: widget.clients,
-      type: node.type,
-      projectId: project.projectId,
-      nodeId: node.nodeId,
+    final result = await widget.clients.skillRepository
+        .importSkillFromGitHubRepo(repoUrl: repoUrl);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _installMcp(core_proxy.MarketEntrySummary item) async {
+    final repoUrl = item.source?.url.trim() ?? '';
+    if (repoUrl.isEmpty) {
+      throw StateError('MCP 缺少仓库地址');
+    }
+    final result = await widget.clients.mcpRepository
+        .installMcpServerWithObjectForFlutter(
+          pluginId: _safePackageId(item.title),
+          repoUrl: repoUrl,
+          name: item.title,
+          description: item.description,
+          mcpConfig: item.repoVersion?.installConfig ?? item.latestVersion?.installConfig ?? '',
+        );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
     );
   }
 }
 
+String _actionLabel(core_proxy.MarketEntrySummary item) {
+  return (item.type == 'script' || item.type == 'package') ? '下载' : '安装';
+}
+
+int _reactionTotal(core_proxy.MarketEntrySummary item, String reaction) {
+  return item.reactions
+      .where((count) => count.reaction == reaction)
+      .fold<int>(0, (sum, count) => sum + count.total);
+}
 class _ArtifactManageScreen extends StatefulWidget {
   const _ArtifactManageScreen({required this.clients});
 
@@ -640,835 +680,9 @@ class _ArtifactManageScreen extends StatefulWidget {
 class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   bool _loading = true;
   String? _errorMessage;
-  List<_ManagedArtifactIssue> _issues = <_ManagedArtifactIssue>[];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadIssues();
-  }
-
-  Future<void> _loadIssues() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
-    try {
-      final auth = widget.clients.preferencesGitHubAuthPreferences;
-      final user = await auth.getCurrentUserInfo();
-      if (user == null) {
-        throw StateError('Unable to read GitHub user info');
-      }
-      final items = await _loadManagedArtifactIssues(
-        clients: widget.clients,
-        creatorLogin: user.login,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _issues = items;
-        _loading = false;
-      });
-    } catch (error, stackTrace) {
-      debugPrint('Failed to load managed artifacts: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _errorMessage = error.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _setIssueState(_ManagedArtifactIssue item, String state) async {
-    try {
-      final updated = await _updateArtifactIssueState(
-        clients: widget.clients,
-        item: item,
-        state: state,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _issues = _issues
-            .map(
-              (existing) => existing.issue.id == item.issue.id
-                  ? existing.copyWith(issue: updated)
-                  : existing,
-            )
-            .toList(growable: false);
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(state == 'closed' ? '移除请求已提交' : '重新上架请求已提交'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (error, stackTrace) {
-      debugPrint('Failed to update artifact state: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  Future<void> _editIssue(_ManagedArtifactIssue item) async {
-    final updated = await showDialog<core_proxy.GitHubIssue>(
-      context: context,
-      builder: (context) =>
-          _ArtifactIssueEditDialog(clients: widget.clients, item: item),
-    );
-    if (updated == null || !mounted) {
-      return;
-    }
-    setState(() {
-      _issues = _issues
-          .map(
-            (existing) => existing.issue.id == item.issue.id
-                ? _ManagedArtifactIssue.fromIssue(item.type, updated)
-                : existing,
-          )
-          .toList(growable: false);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final error = _errorMessage;
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Text('管理 Artifact'),
-        actions: <Widget>[
-          IconButton(
-            onPressed: _loading ? null : _loadIssues,
-            icon: const Icon(Icons.refresh),
-            tooltip: '刷新',
-          ),
-        ],
-      ),
-      body: Builder(
-        builder: (context) {
-          if (_loading && _issues.isEmpty) {
-            return const M3LoadingPane();
-          }
-          if (error != null && _issues.isEmpty) {
-            return EmptyState(
-              icon: Icons.error_outline,
-              title: '加载失败',
-              message: error,
-              action: TextButton.icon(
-                onPressed: _loadIssues,
-                icon: const Icon(Icons.refresh),
-                label: const Text('刷新'),
-              ),
-            );
-          }
-          if (_issues.isEmpty) {
-            return EmptyState(
-              icon: Icons.store_outlined,
-              title: '还没有发布 Artifact',
-              message: '从发布入口提交第一个 Artifact 后会显示在这里。',
-              scrollable: false,
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: _loadIssues,
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
-              itemCount: _issues.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final item = _issues[index];
-                return _ManagedArtifactCard(
-                  item: item,
-                  onEdit: () => _editIssue(item),
-                  onClose: () => _setIssueState(item, 'closed'),
-                  onOpen: () => _setIssueState(item, 'open'),
-                );
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ManagedArtifactCard extends StatelessWidget {
-  const _ManagedArtifactCard({
-    required this.item,
-    required this.onEdit,
-    required this.onClose,
-    required this.onOpen,
-  });
-
-  final _ManagedArtifactIssue item;
-  final VoidCallback onEdit;
-  final VoidCallback onClose;
-  final VoidCallback onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final issue = item.issue;
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final title = item.displayName;
-    return OperitGlassSurface(
-      color: colorScheme.surfaceContainerLow,
-      layer: OperitGlassSurfaceLayer.card,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(
-        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        item.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _SmallChip(text: issue.state == 'open' ? '已上架' : '已下架'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: <Widget>[
-                _SmallChip(text: artifactTypeLabel(item.type)),
-                _SmallChip(text: '#${issue.number}'),
-                _SmallChip(text: item.version),
-                _SmallChip(text: formatMarketDate(issue.updatedAt)),
-                if (item.runtimePackageId.isNotEmpty)
-                  _SmallChip(text: item.runtimePackageId),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: <Widget>[
-                TextButton.icon(
-                  onPressed: onEdit,
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  label: const Text('编辑'),
-                ),
-                const Spacer(),
-                if (issue.state == 'open')
-                  TextButton.icon(
-                    onPressed: onClose,
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('移除'),
-                  )
-                else
-                  FilledButton.tonalIcon(
-                    onPressed: onOpen,
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('重新上架'),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ArtifactIssueEditDialog extends StatefulWidget {
-  const _ArtifactIssueEditDialog({required this.clients, required this.item});
-
-  final GeneratedCoreProxyClients clients;
-  final _ManagedArtifactIssue item;
-
-  @override
-  State<_ArtifactIssueEditDialog> createState() =>
-      _ArtifactIssueEditDialogState();
-}
-
-class _ArtifactIssueEditDialogState extends State<_ArtifactIssueEditDialog> {
-  late final TextEditingController _displayNameController =
-      TextEditingController(text: widget.item.displayName);
-  late final TextEditingController _descriptionController =
-      TextEditingController(text: widget.item.description);
-  late final TextEditingController _minVersionController =
-      TextEditingController(text: widget.item.minSupportedAppVersion);
-  late final TextEditingController _maxVersionController =
-      TextEditingController(text: widget.item.maxSupportedAppVersion);
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _displayNameController.dispose();
-    _descriptionController.dispose();
-    _minVersionController.dispose();
-    _maxVersionController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_saving) {
-      return;
-    }
-    setState(() {
-      _saving = true;
-    });
-    try {
-      final updated = await _updateArtifactIssueContent(
-        clients: widget.clients,
-        item: widget.item,
-        displayName: _displayNameController.text,
-        description: _descriptionController.text,
-        minSupportedAppVersion: _minVersionController.text,
-        maxSupportedAppVersion: _maxVersionController.text,
-      );
-      if (!mounted) {
-        return;
-      }
-      Navigator.of(context).pop(updated);
-    } catch (error, stackTrace) {
-      debugPrint('Failed to edit artifact issue: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _saving = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      icon: const Icon(Icons.edit_outlined),
-      title: const Text('编辑作品信息'),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: _displayNameController,
-                enabled: !_saving,
-                decoration: const InputDecoration(
-                  labelText: '显示名称',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _descriptionController,
-                enabled: !_saving,
-                minLines: 3,
-                maxLines: 6,
-                decoration: const InputDecoration(
-                  labelText: '简介',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _minVersionController,
-                enabled: !_saving,
-                decoration: const InputDecoration(
-                  labelText: '最低支持版本',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _maxVersionController,
-                enabled: !_saving,
-                decoration: const InputDecoration(
-                  labelText: '最高支持版本',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton.icon(
-          onPressed: _saving ? null : _save,
-          icon: _saving
-              ? M3LoadingIndicator(
-                  size: 18,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                )
-              : const Icon(Icons.save_outlined),
-          label: const Text('保存'),
-        ),
-      ],
-    );
-  }
-}
-
-class _ManagedArtifactIssue {
-  const _ManagedArtifactIssue({
-    required this.type,
-    required this.issue,
-    required this.metadata,
-  });
-
-  factory _ManagedArtifactIssue.fromIssue(
-    String type,
-    core_proxy.GitHubIssue issue,
-  ) {
-    return _ManagedArtifactIssue(
-      type: type,
-      issue: issue,
-      metadata: _artifactIssueMetadata(issue),
-    );
-  }
-
-  final String type;
-  final core_proxy.GitHubIssue issue;
-  final Map<String, Object?> metadata;
-
-  String get displayName =>
-      _artifactMetadataString(metadata, 'displayName').isEmpty
-      ? issue.title
-      : _artifactMetadataString(metadata, 'displayName');
-
-  String get description =>
-      _artifactMetadataString(metadata, 'description').isEmpty
-      ? (issue.body ?? '')
-      : _artifactMetadataString(metadata, 'description');
-
-  String get version => _artifactMetadataString(metadata, 'version').isEmpty
-      ? '-'
-      : _artifactMetadataString(metadata, 'version');
-
-  String get runtimePackageId =>
-      _artifactMetadataString(metadata, 'runtimePackageId');
-
-  String get minSupportedAppVersion =>
-      _artifactMetadataString(metadata, 'minSupportedAppVersion');
-
-  String get maxSupportedAppVersion =>
-      _artifactMetadataString(metadata, 'maxSupportedAppVersion');
-
-  _ManagedArtifactIssue copyWith({core_proxy.GitHubIssue? issue}) {
-    return _ManagedArtifactIssue.fromIssue(type, issue ?? this.issue);
-  }
-}
-
-Future<List<_ManagedArtifactIssue>> _loadManagedArtifactIssues({
-  required GeneratedCoreProxyClients clients,
-  required String creatorLogin,
-}) async {
-  final items = <_ManagedArtifactIssue>[];
-  for (final definition in _artifactIssueRepositories()) {
-    final issues = await _githubSearchIssues(
-      clients: clients,
-      query:
-          'repo:${definition.owner}/${definition.repo} is:issue author:$creatorLogin label:"${definition.label}"',
-    );
-    items.addAll(
-      issues.map(
-        (issue) => _ManagedArtifactIssue.fromIssue(definition.type, issue),
-      ),
-    );
-  }
-  items.sort(
-    (left, right) => right.issue.updatedAt.compareTo(left.issue.updatedAt),
-  );
-  return items;
-}
-
-Future<core_proxy.GitHubIssue> _updateArtifactIssueState({
-  required GeneratedCoreProxyClients clients,
-  required _ManagedArtifactIssue item,
-  required String state,
-}) async {
-  final repo = artifactIssueRepository(item.type);
-  final value = await _githubJsonRequest(
-    clients: clients,
-    method: 'PATCH',
-    uri: Uri.https(
-      'api.github.com',
-      '/repos/${repo.owner}/${repo.repo}/issues/${item.issue.number}',
-    ),
-    body: <String, Object?>{'state': state},
-  );
-  return core_proxy.GitHubIssue.fromJson(value as Map<String, Object?>);
-}
-
-Future<core_proxy.GitHubIssue> _updateArtifactIssueContent({
-  required GeneratedCoreProxyClients clients,
-  required _ManagedArtifactIssue item,
-  required String displayName,
-  required String description,
-  required String minSupportedAppVersion,
-  required String maxSupportedAppVersion,
-}) async {
-  final trimmedDisplayName = displayName.trim();
-  final trimmedDescription = description.trim();
-  if (trimmedDisplayName.isEmpty) {
-    throw StateError('插件名称不能为空');
-  }
-  if (trimmedDescription.isEmpty) {
-    throw StateError('简介不能为空');
-  }
-  await _ensureArtifactDisplayNameAvailable(
-    clients: clients,
-    displayName: trimmedDisplayName,
-    currentIssueId: item.issue.id,
-  );
-  final repo = artifactIssueRepository(item.type);
-  final body = _buildUpdatedArtifactIssueBody(
-    item: item,
-    displayName: trimmedDisplayName,
-    description: trimmedDescription,
-    minSupportedAppVersion: minSupportedAppVersion.trim(),
-    maxSupportedAppVersion: maxSupportedAppVersion.trim(),
-  );
-  final value = await _githubJsonRequest(
-    clients: clients,
-    method: 'PATCH',
-    uri: Uri.https(
-      'api.github.com',
-      '/repos/${repo.owner}/${repo.repo}/issues/${item.issue.number}',
-    ),
-    body: <String, Object?>{'title': trimmedDisplayName, 'body': body},
-  );
-  return core_proxy.GitHubIssue.fromJson(value as Map<String, Object?>);
-}
-
-Future<void> _ensureArtifactDisplayNameAvailable({
-  required GeneratedCoreProxyClients clients,
-  required String displayName,
-  required int currentIssueId,
-}) async {
-  final normalizedTitle = displayName
-      .trim()
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .toLowerCase();
-  for (final definition in _artifactIssueRepositories()) {
-    final issues = await _githubSearchIssues(
-      clients: clients,
-      query:
-          'repo:${definition.owner}/${definition.repo} is:issue is:open in:title "$displayName"',
-    );
-    final conflict = issues.any(
-      (issue) =>
-          issue.id != currentIssueId &&
-          issue.title.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase() ==
-              normalizedTitle,
-    );
-    if (conflict) {
-      throw StateError('市场里已经有同名已发布插件「$displayName」，请换一个名称。');
-    }
-  }
-}
-
-Future<List<core_proxy.GitHubIssue>> _githubSearchIssues({
-  required GeneratedCoreProxyClients clients,
-  required String query,
-}) async {
-  final issues = <core_proxy.GitHubIssue>[];
-  var page = 1;
-  while (true) {
-    final value = await _githubJsonRequest(
-      clients: clients,
-      method: 'GET',
-      uri: Uri.https('api.github.com', '/search/issues', <String, String>{
-        'q': query,
-        'sort': 'updated',
-        'order': 'desc',
-        'page': page.toString(),
-        'per_page': '100',
-      }),
-    );
-    final items = (value as Map<String, Object?>)['items'] as List<Object?>;
-    issues.addAll(
-      items.map(
-        (item) => core_proxy.GitHubIssue.fromJson(item as Map<String, Object?>),
-      ),
-    );
-    if (items.length < 100) {
-      break;
-    }
-    page += 1;
-  }
-  return issues;
-}
-
-Future<Object?> _githubJsonRequest({
-  required GeneratedCoreProxyClients clients,
-  required String method,
-  required Uri uri,
-  Object? body,
-}) async {
-  final token = await clients.preferencesGitHubAuthPreferences
-      .getCurrentAccessToken();
-  if (token == null || token.trim().isEmpty) {
-    throw StateError('GitHub login required');
-  }
-  final headers = <String, String>{
-    'Accept':
-        'application/vnd.github+json, application/vnd.github.squirrel-girl-preview+json',
-    'Authorization': 'Bearer ${token.trim()}',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-  final response = switch (method) {
-    'GET' => await http.get(uri, headers: headers),
-    'PATCH' => await http.patch(
-      uri,
-      headers: <String, String>{...headers, 'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    ),
-    final value => throw StateError('Unsupported GitHub method: $value'),
-  };
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw StateError(
-      'HTTP ${response.statusCode}: ${_summarizeHttpBody(response.body)}',
-    );
-  }
-  if (response.body.trim().isEmpty) {
-    return null;
-  }
-  return jsonDecode(response.body);
-}
-
-String _buildUpdatedArtifactIssueBody({
-  required _ManagedArtifactIssue item,
-  required String displayName,
-  required String description,
-  required String minSupportedAppVersion,
-  required String maxSupportedAppVersion,
-}) {
-  final metadata = Map<String, Object?>.from(item.metadata);
-  final nodeId = _requiredArtifactMetadata(metadata, 'nodeId');
-  final rootNodeId = _requiredArtifactMetadata(metadata, 'rootNodeId');
-  final isRootNode = rootNodeId == nodeId;
-  metadata['displayName'] = displayName;
-  metadata['description'] = description;
-  metadata['minSupportedAppVersion'] = minSupportedAppVersion.isEmpty
-      ? null
-      : minSupportedAppVersion;
-  metadata['maxSupportedAppVersion'] = maxSupportedAppVersion.isEmpty
-      ? null
-      : maxSupportedAppVersion;
-  if (isRootNode) {
-    metadata['projectDisplayName'] = displayName;
-    metadata['projectDescription'] = description;
-  }
-  final parentNodeIds = _artifactMetadataStringList(metadata, 'parentNodeIds');
-  final timestamp = DateTime.now()
-      .toIso8601String()
-      .replaceFirst('T', ' ')
-      .substring(0, 19);
-  final supportedVersions = _formatSupportedAppVersions(
-    metadata['minSupportedAppVersion']?.toString(),
-    metadata['maxSupportedAppVersion']?.toString(),
-  );
-  final parentNodeText = parentNodeIds.isEmpty ? '-' : parentNodeIds.join(', ');
-  return '''
-<!-- operit-market-json: ${jsonEncode(metadata)} -->
-<!-- operit-parser-version: forge-v3 -->
-
-## ${artifactTypeLabel(item.type)}
-
-$description
-
-## Project Cluster
-
-- Project ID: `${_requiredArtifactMetadata(metadata, 'projectId')}`
-- Runtime package ID: `${_requiredArtifactMetadata(metadata, 'runtimePackageId')}`
-- Node ID: `$nodeId`
-- Root node ID: `$rootNodeId`
-- Parent node IDs: `$parentNodeText`
-- Project display name: `${_requiredArtifactMetadata(metadata, 'projectDisplayName')}`
-- Project description: ${_requiredArtifactMetadata(metadata, 'projectDescription')}
-
-## Artifact
-
-- Publisher: `${_requiredArtifactMetadata(metadata, 'publisherLogin')}`
-- Forge repo: `${_requiredArtifactMetadata(metadata, 'forgeRepo')}`
-- Release tag: `${_requiredArtifactMetadata(metadata, 'releaseTag')}`
-- Asset: `${_requiredArtifactMetadata(metadata, 'assetName')}`
-- SHA-256: `${_requiredArtifactMetadata(metadata, 'sha256')}`
-- Download: ${_requiredArtifactMetadata(metadata, 'downloadUrl')}
-
-## Metadata
-
-| Field | Value |
-| --- | --- |
-| Type | ${_requiredArtifactMetadata(metadata, 'type')} |
-| Project ID | ${_requiredArtifactMetadata(metadata, 'projectId')} |
-| Runtime package ID | ${_requiredArtifactMetadata(metadata, 'runtimePackageId')} |
-| Node ID | $nodeId |
-| Root node ID | $rootNodeId |
-| Parent node IDs | $parentNodeText |
-| Version | ${_requiredArtifactMetadata(metadata, 'version')} |
-| Supported app versions | $supportedVersions |
-| Source file | ${_requiredArtifactMetadata(metadata, 'sourceFileName')} |
-| Updated at | $timestamp |
-''';
-}
-
-Map<String, Object?> _artifactIssueMetadata(core_proxy.GitHubIssue issue) {
-  final body = issue.body ?? '';
-  const prefix = '<!-- operit-market-json: ';
-  final start = body.indexOf(prefix);
-  if (start < 0) {
-    throw StateError('Invalid artifact metadata');
-  }
-  final jsonStart = start + prefix.length;
-  final end = body.indexOf(' -->', jsonStart);
-  if (end <= jsonStart) {
-    throw StateError('Invalid artifact metadata');
-  }
-  final decoded = jsonDecode(body.substring(jsonStart, end));
-  if (decoded is! Map) {
-    throw StateError('Invalid artifact metadata');
-  }
-  return decoded.map((key, value) => MapEntry(key.toString(), value));
-}
-
-String _artifactMetadataString(Map<String, Object?> metadata, String key) {
-  return metadata[key]?.toString().trim() ?? '';
-}
-
-String _requiredArtifactMetadata(Map<String, Object?> metadata, String key) {
-  final value = _artifactMetadataString(metadata, key);
-  if (value.isEmpty) {
-    throw StateError('Invalid artifact metadata: $key');
-  }
-  return value;
-}
-
-List<String> _artifactMetadataStringList(
-  Map<String, Object?> metadata,
-  String key,
-) {
-  final value = metadata[key];
-  if (value is List<Object?>) {
-    return value
-        .map((item) => item.toString().trim())
-        .where((item) => item.isNotEmpty)
-        .toList(growable: false);
-  }
-  return const <String>[];
-}
-
-String _formatSupportedAppVersions(String? minVersion, String? maxVersion) {
-  final minValue = minVersion?.trim() ?? '';
-  final maxValue = maxVersion?.trim() ?? '';
-  if (minValue.isNotEmpty && maxValue.isNotEmpty) {
-    return '$minValue - $maxValue';
-  }
-  if (minValue.isNotEmpty) {
-    return '>= $minValue';
-  }
-  if (maxValue.isNotEmpty) {
-    return '<= $maxValue';
-  }
-  return '未声明';
-}
-
-String _summarizeHttpBody(String body) {
-  final trimmed = body.trim();
-  if (trimmed.isEmpty) {
-    return '';
-  }
-  if (trimmed.contains('<html') || trimmed.contains('<!DOCTYPE html')) {
-    return '[html body omitted]';
-  }
-  return trimmed.split('\n').first.trim();
-}
-
-List<ArtifactIssueRepository> _artifactIssueRepositories() {
-  return const <ArtifactIssueRepository>[
-    ArtifactIssueRepository(
-      type: 'script',
-      owner: 'AAswordman',
-      repo: 'OperitScriptMarket',
-      label: 'script-artifact',
-    ),
-    ArtifactIssueRepository(
-      type: 'package',
-      owner: 'AAswordman',
-      repo: 'OperitPackageMarket',
-      label: 'package-artifact',
-    ),
-  ];
-}
-
-class _IssueMarketPane extends StatefulWidget {
-  const _IssueMarketPane({
-    required this.clients,
-    required this.type,
-    required this.sortOption,
-    required this.searchQuery,
-  });
-
-  final GeneratedCoreProxyClients clients;
-  final String type;
-  final MarketSortOption sortOption;
-  final String searchQuery;
-
-  @override
-  State<_IssueMarketPane> createState() => _IssueMarketPaneState();
-}
-
-class _IssueMarketPaneState extends State<_IssueMarketPane> {
-  bool _loading = true;
-  bool _loadingMore = false;
-  String? _errorMessage;
-  int _page = 1;
-  int _totalPages = 1;
-  final Set<String> _busyIssueIds = <String>{};
-  List<core_proxy.MarketRankIssueEntryResponse> _items =
-      <core_proxy.MarketRankIssueEntryResponse>[];
+  String? _openingEntryId;
+  List<core_proxy.MarketPublisherEntrySummary> _entries = <core_proxy.MarketPublisherEntrySummary>[];
+  List<core_proxy.MarketNotification> _notifications = <core_proxy.MarketNotification>[];
 
   GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.apiMarketStatsApiService;
@@ -1476,43 +690,30 @@ class _IssueMarketPaneState extends State<_IssueMarketPane> {
   @override
   void initState() {
     super.initState();
-    _loadFirstPage();
+    _loadMine();
   }
 
-  @override
-  void didUpdateWidget(covariant _IssueMarketPane oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.sortOption != widget.sortOption ||
-        oldWidget.type != widget.type) {
-      _loadFirstPage();
-    }
-  }
-
-  Future<void> _loadFirstPage() async {
+  Future<void> _loadMine() async {
     setState(() {
       _loading = true;
       _errorMessage = null;
     });
     try {
-      final page = await _market.getRankPage(
-        type: widget.type,
-        metric: _metric,
-        page: 1,
+      final mine = await _market.getMyEntries();
+      final notifications = await _market.getNotifications(
+        limit: 50,
+        offset: 0,
+        since: null,
       );
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
-        _items = page.items;
-        _page = page.page;
-        _totalPages = page.totalPages;
+        _entries = mine.entries;
+        _notifications = notifications.items;
         _loading = false;
       });
     } catch (error, stackTrace) {
-      debugPrint('Failed to load ${widget.type} market: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
+      debugPrint('Failed to load market account data: $error\n$stackTrace');
+      if (!mounted) return;
       setState(() {
         _errorMessage = error.toString();
         _loading = false;
@@ -1520,140 +721,30 @@ class _IssueMarketPaneState extends State<_IssueMarketPane> {
     }
   }
 
-  Future<void> _loadMore() async {
-    if (_loadingMore || _page >= _totalPages) {
+  Future<void> _openManagedEntry(
+    core_proxy.MarketPublisherEntrySummary entry,
+  ) async {
+    if (entry.stateCode != 'approved') {
+      _showPrivateEntrySummary(entry);
       return;
     }
     setState(() {
-      _loadingMore = true;
+      _openingEntryId = entry.id;
     });
     try {
-      final page = await _market.getRankPage(
-        type: widget.type,
-        metric: _metric,
-        page: _page + 1,
+      final detail = await _market.getEntryById(entryId: entry.id);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => MarketEntryDetailScreen(
+            clients: widget.clients,
+            entry: detail,
+          ),
+        ),
       );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _items = <core_proxy.MarketRankIssueEntryResponse>[
-          ..._items,
-          ...page.items,
-        ];
-        _page = page.page;
-        _totalPages = page.totalPages;
-        _loadingMore = false;
-      });
     } catch (error, stackTrace) {
-      debugPrint(
-        'Failed to load more ${widget.type} market: $error\n$stackTrace',
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _loadingMore = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  String get _metric => switch (widget.sortOption) {
-    MarketSortOption.downloads => 'downloads',
-    MarketSortOption.updated => 'updated',
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final error = _errorMessage;
-    if (_loading && _items.isEmpty) {
-      return const M3LoadingPane();
-    }
-    if (error != null && _items.isEmpty) {
-      return EmptyState(
-        icon: Icons.error_outline,
-        title: '加载失败',
-        message: error,
-        action: TextButton.icon(
-          onPressed: _loadFirstPage,
-          icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
-        ),
-      );
-    }
-    final query = widget.searchQuery.toLowerCase();
-    final displayed = _items
-        .where(
-          (item) =>
-              query.isEmpty ||
-              item.displayTitle.toLowerCase().contains(query) ||
-              item.summaryDescription.toLowerCase().contains(query) ||
-              item.authorLogin.toLowerCase().contains(query),
-        )
-        .toList(growable: false);
-    return MarketBrowseList(
-      isLoading: _loading,
-      isLoadingMore: _loadingMore,
-      hasMore: _page < _totalPages && widget.searchQuery.trim().isEmpty,
-      isEmpty: displayed.isEmpty,
-      emptyTitle: widget.searchQuery.trim().isEmpty ? '暂无项目' : '没有匹配结果',
-      onRefresh: _loadFirstPage,
-      onLoadMore: _loadMore,
-      items: displayed,
-      groupByUpdatedDate: widget.sortOption == MarketSortOption.updated,
-      updatedAt: (item) => item.updatedAt ?? '',
-      itemBuilder: (item) => MarketGridCard(
-        title: item.displayTitle,
-        description: item.summaryDescription,
-        author: item.authorLogin,
-        downloads: item.downloads,
-        likes: item.issue.reactions?.thumbsUp ?? 0,
-        hearts: item.issue.reactions?.heart ?? 0,
-        actionLabel: widget.type == 'skill' ? '安装' : '安装',
-        actionIcon: Icons.download_outlined,
-        actionBusy: _busyIssueIds.contains(item.id),
-        onAction: () => _installIssueItem(item),
-        onTap: () => _showDetails(item),
-      ),
-    );
-  }
-
-  void _showDetails(core_proxy.MarketRankIssueEntryResponse item) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => MarketIssueDetailScreen(
-          clients: widget.clients,
-          type: widget.type,
-          item: item,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _installIssueItem(
-    core_proxy.MarketRankIssueEntryResponse item,
-  ) async {
-    setState(() {
-      _busyIssueIds.add(item.id);
-    });
-    try {
-      final metadata = _marketIssueMetadata(item.issue, widget.type);
-      if (widget.type == 'skill') {
-        await _installSkill(item, metadata);
-      } else {
-        await _installMcp(item, metadata);
-      }
-    } catch (error, stackTrace) {
-      debugPrint('Failed to install ${widget.type}: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
+      debugPrint('Failed to open managed market entry: $error\n$stackTrace');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(error.toString()),
@@ -1663,123 +754,386 @@ class _IssueMarketPaneState extends State<_IssueMarketPane> {
     } finally {
       if (mounted) {
         setState(() {
-          _busyIssueIds.remove(item.id);
+          _openingEntryId = null;
         });
       }
     }
   }
 
-  Future<void> _installSkill(
-    core_proxy.MarketRankIssueEntryResponse item,
-    Map<String, String> metadata,
+  Future<void> _publishManagedVersion(
+    core_proxy.MarketPublisherEntrySummary entry,
   ) async {
-    final repoUrl = metadata['repositoryUrl']?.trim() ?? '';
-    if (repoUrl.isEmpty) {
-      throw StateError('技能缺少 repositoryUrl');
-    }
-    final result = await widget.clients.skillRepository
-        .importSkillFromGitHubRepo(repoUrl: repoUrl);
-    await _market.trackDownload(type: 'skill', id: item.id, targetUrl: repoUrl);
-    if (!mounted) {
+    if (entry.stateCode != 'approved') {
+      _showPrivateEntrySummary(entry);
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
-    );
+    setState(() {
+      _openingEntryId = entry.id;
+    });
+    try {
+      final detail = await _market.getEntryById(entryId: entry.id);
+      if (!mounted) return;
+      final canEditEntry = entry.relation == 'owner';
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) {
+            if (detail.type == 'skill' || detail.type == 'mcp') {
+              return RepoMarketPublishScreen(
+                clients: widget.clients,
+                type: detail.type,
+                publishContext: RepoMarketPublishContext(
+                  entry: detail,
+                  canEditEntry: canEditEntry,
+                ),
+              );
+            }
+            final artifact = detail.artifact;
+            return ArtifactPublishScreen(
+              clients: widget.clients,
+              publishContext: ArtifactPublishClusterContext(
+                entryId: detail.id,
+                projectId: artifact?.projectId ?? '',
+                runtimePackageId: artifact?.runtimePackageId ??
+                    detail.latestVersion?.runtimePackageId ??
+                    '',
+                lockedDisplayName: detail.title,
+                canEditEntry: canEditEntry,
+              ),
+            );
+          },
+        ),
+      );
+      if (mounted) {
+        await _loadMine();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to open managed version publish: $error\n$stackTrace');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _openingEntryId = null;
+        });
+      }
+    }
   }
 
-  Future<void> _installMcp(
-    core_proxy.MarketRankIssueEntryResponse item,
-    Map<String, String> metadata,
-  ) async {
-    final repoUrl = metadata['repositoryUrl']?.trim() ?? '';
-    final installConfig = metadata['installConfig']?.trim() ?? '';
-    if (repoUrl.isEmpty) {
-      throw StateError('MCP 缺少 repositoryUrl');
-    }
-    if (installConfig.isEmpty) {
-      throw StateError('MCP 缺少 installConfig');
-    }
-    final result = await widget.clients.mcpRepository
-        .installMcpServerWithObjectForFlutter(
-          pluginId: _safePackageId(item.displayTitle),
-          repoUrl: repoUrl,
-          name: item.displayTitle,
-          description: item.summaryDescription,
-          mcpConfig: installConfig,
+  void _showPrivateEntrySummary(core_proxy.MarketPublisherEntrySummary entry) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        final reasons = entry.reasonCodes
+            .map(_marketReasonLabel)
+            .where((reason) => reason.trim().isNotEmpty)
+            .join('\n');
+        return AlertDialog(
+          title: Text(entry.title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('状态：${_marketStateLabel(entry.stateCode)}'),
+              const SizedBox(height: 8),
+              Text('关系：${_marketRelationLabel(entry.relation)}'),
+              if ((entry.categoryId ?? '').trim().isNotEmpty) ...<Widget>[
+                const SizedBox(height: 8),
+                Text('分类：${entry.categoryId}'),
+              ],
+              if (reasons.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  '审核原因',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(reasons),
+              ],
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
         );
-    await _market.trackDownload(type: 'mcp', id: item.id, targetUrl: repoUrl);
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
+      },
     );
   }
-}
-
-class _SmallChip extends StatelessWidget {
-  const _SmallChip({required this.text});
-
-  final String text;
 
   @override
   Widget build(BuildContext context) {
-    if (text.trim().isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
+    final error = _errorMessage;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: const Text('我的市场'),
+        actions: <Widget>[
+          IconButton(
+            onPressed: _loading ? null : _loadMine,
+            icon: const Icon(Icons.refresh),
+            tooltip: '刷新',
+          ),
+        ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Text(
-          text,
-          style: Theme.of(
-            context,
-          ).textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
-        ),
+      body: Builder(
+        builder: (context) {
+          if (_loading && _entries.isEmpty && _notifications.isEmpty) {
+            return const M3LoadingPane();
+          }
+          if (error != null && _entries.isEmpty && _notifications.isEmpty) {
+            return EmptyState(
+              icon: Icons.error_outline,
+              title: '加载失败',
+              message: error,
+              action: TextButton.icon(
+                onPressed: _loadMine,
+                icon: const Icon(Icons.refresh),
+                label: const Text('刷新'),
+              ),
+            );
+          }
+          return RefreshIndicator(
+            onRefresh: _loadMine,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
+              children: <Widget>[
+                Text(
+                  '我的发布',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 10),
+                if (_entries.isEmpty)
+                  const Text('暂无发布记录')
+                else
+                  for (final entry in _entries) ...<Widget>[
+                    _MarketManageEntryTile(
+                      entry: entry,
+                      opening: _openingEntryId == entry.id,
+                      onOpen: () => _openManagedEntry(entry),
+                      onPublishVersion: () => _publishManagedVersion(entry),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                const SizedBox(height: 24),
+                Text(
+                  '通知',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 10),
+                if (_notifications.isEmpty)
+                  const Text('暂无通知')
+                else
+                  for (final notice in _notifications) ...<Widget>[
+                    _MarketNotificationTile(notice: notice),
+                    const SizedBox(height: 10),
+                  ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-Map<String, String> _marketIssueMetadata(
-  core_proxy.GitHubIssue issue,
-  String type,
-) {
-  final body = issue.body ?? '';
-  final prefix = type == 'skill'
-      ? '<!-- operit-skill-json: '
-      : '<!-- operit-mcp-json: ';
-  final start = body.indexOf(prefix);
-  if (start < 0) {
-    return <String, String>{};
+class _MarketManageEntryTile extends StatelessWidget {
+  const _MarketManageEntryTile({
+    required this.entry,
+    required this.opening,
+    required this.onOpen,
+    required this.onPublishVersion,
+  });
+
+  final core_proxy.MarketPublisherEntrySummary entry;
+  final bool opening;
+  final VoidCallback onOpen;
+  final VoidCallback onPublishVersion;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final reasons = entry.reasonCodes
+        .map(_marketReasonLabel)
+        .where((reason) => reason.trim().isNotEmpty)
+        .toList(growable: false);
+    final canPublishVersion = entry.stateCode == 'approved';
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      child: ListTile(
+        onTap: opening ? null : onOpen,
+        leading: Icon(_marketTypeIcon(entry.type)),
+        title: Text(entry.title),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '${_marketTypeLabel(entry.type)} · ${_marketStateLabel(entry.stateCode)} · ${_marketRelationLabel(entry.relation)}',
+              ),
+              if (reasons.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 4),
+                Text(
+                  reasons.join('、'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text('更新于 ${formatMarketDate(entry.updatedAt)}'),
+            ],
+          ),
+        ),
+        trailing: opening
+            ? const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : TextButton(
+                onPressed: canPublishVersion ? onPublishVersion : onOpen,
+                child: Text(canPublishVersion ? '发布新版本' : '查看状态'),
+              ),
+      ),
+    );
   }
-  final jsonStart = start + prefix.length;
-  final end = body.indexOf(' -->', jsonStart);
-  if (end <= jsonStart) {
-    return <String, String>{};
+}
+
+class _MarketNotificationTile extends StatelessWidget {
+  const _MarketNotificationTile({required this.notice});
+
+  final core_proxy.MarketNotification notice;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      child: ListTile(
+        leading: Icon(_marketNotificationIcon(notice.kind)),
+        title: Text(_marketNotificationTitle(notice)),
+        subtitle: Text(_marketNotificationBody(notice)),
+        trailing: Text(formatMarketDate(notice.createdAt)),
+      ),
+    );
   }
-  final decoded = jsonDecode(body.substring(jsonStart, end));
-  if (decoded is! Map) {
-    return <String, String>{};
-  }
-  final metadata = decoded.map(
-    (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-  );
-  if ((metadata['repositoryUrl'] ?? '').isEmpty &&
-      (metadata['repoUrl'] ?? '').isNotEmpty) {
-    metadata['repositoryUrl'] = metadata['repoUrl']!;
-  }
-  if ((metadata['installConfig'] ?? '').isEmpty &&
-      (metadata['installCommand'] ?? '').isNotEmpty) {
-    metadata['installConfig'] = metadata['installCommand']!;
-  }
-  return metadata;
+}
+
+String _marketTypeLabel(String type) => switch (type) {
+      'script' => '脚本',
+      'package' => '包',
+      'skill' => 'Skill',
+      'mcp' => 'MCP',
+      _ => type,
+    };
+
+IconData _marketTypeIcon(String type) => switch (type) {
+      'script' => Icons.code_outlined,
+      'package' => Icons.inventory_2_outlined,
+      'skill' => Icons.psychology_outlined,
+      'mcp' => Icons.hub_outlined,
+      _ => Icons.extension_outlined,
+    };
+
+String _marketStateLabel(String stateCode) => switch (stateCode) {
+      'pending' => '待审核',
+      'approved' => '已发布',
+      'changes_requested' => '需修改',
+      'rejected' => '已拒绝',
+      'withdrawn' => '已撤回',
+      _ => stateCode,
+    };
+
+String _marketRelationLabel(String relation) => switch (relation) {
+      'owner' => '归属者',
+      'contributor' => '贡献者',
+      _ => relation,
+    };
+
+String _marketReasonLabel(String reasonCode) => switch (reasonCode) {
+      'metadata-incomplete' => '元信息不完整',
+      'repository-unreachable' => '仓库无法访问',
+      'invalid-artifact' => '资源文件无效',
+      'invalid-version' => '版本信息无效',
+      'malware-risk' => '存在安全风险',
+      'policy-violation' => '不符合市场规范',
+      'duplicate-entry' => '重复条目',
+      _ => reasonCode,
+    };
+
+IconData _marketNotificationIcon(String kind) => switch (kind) {
+      'comment_new' => Icons.comment_outlined,
+      'comment_reply' => Icons.reply_outlined,
+      'review_approved' => Icons.verified_outlined,
+      'review_rejected' => Icons.block_outlined,
+      'review_changes' => Icons.rate_review_outlined,
+      'entry_curated' => Icons.star_outline,
+      _ => Icons.notifications_outlined,
+    };
+
+String _marketNotificationTitle(core_proxy.MarketNotification notice) {
+  final entrySuffix = notice.entryId == null ? '' : ' · ${notice.entryId}';
+  return switch (notice.kind) {
+    'comment_new' => '收到新评论$entrySuffix',
+    'comment_reply' => '评论有新回复$entrySuffix',
+    'review_approved' => '审核已通过$entrySuffix',
+    'review_rejected' => '审核已拒绝$entrySuffix',
+    'review_changes' => '审核要求修改$entrySuffix',
+    'entry_curated' => '精选状态已更新$entrySuffix',
+    _ => notice.title.isEmpty ? notice.kind : notice.title,
+  };
+}
+
+String _marketNotificationBody(core_proxy.MarketNotification notice) {
+  final body = notice.body.trim();
+  return switch (notice.kind) {
+    'comment_new' => body.isEmpty ? '有人在你的条目下发表了评论。' : body,
+    'comment_reply' => body.isEmpty ? '有人回复了你的评论。' : body,
+    'review_approved' => '你的提交已通过审核。',
+    'review_rejected' => '你的提交未通过审核。',
+    'review_changes' => '审核员要求你修改后重新提交。',
+    'entry_curated' => '条目的精选状态发生变化。',
+    _ => body.isEmpty ? '你有一条新的市场通知。' : body,
+  };
+}
+
+String marketSortMetric(MarketSortOption option) => switch (option) {
+  MarketSortOption.updated => 'updated',
+  MarketSortOption.likes => 'likes',
+  MarketSortOption.downloads => 'downloads',
+};
+
+int _entryDownloads(core_proxy.MarketEntrySummary entry) {
+  return entry.downloadCount > entry.downloads ? entry.downloadCount : entry.downloads;
+}
+
+int _pageCount(int total, int pageSize) {
+  final size = pageSize <= 0 ? 50 : pageSize;
+  return ((total + size - 1) ~/ size).clamp(1, 1 << 30);
 }
 
 String _safePackageId(String raw) {
@@ -1791,6 +1145,349 @@ String _safePackageId(String raw) {
   return normalized.isEmpty ? 'market_item' : normalized;
 }
 
+class _MarketCategoryScopeHeader extends StatelessWidget {
+  const _MarketCategoryScopeHeader({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return OperitGlassSurface(
+      color: colorScheme.surface.withValues(alpha: 0.72),
+      layer: OperitGlassSurfaceLayer.panel,
+      transparentAlpha: 0.035,
+      clip: false,
+      material: true,
+      child: ListTile(
+        dense: true,
+        leading: const Icon(Icons.category_outlined),
+        title: Text('分类：$title'),
+        subtitle: const Text('可按类型、排序和精选继续筛选'),
+      ),
+    );
+  }
+}
+
+class _MarketTypeFilterBar extends StatelessWidget {
+  const _MarketTypeFilterBar({
+    required this.selectedType,
+    required this.onChanged,
+  });
+
+  final String? selectedType;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedIndex = _marketTypeTabIndex(selectedType);
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: colorScheme.outlineVariant),
+        ),
+      ),
+      child: DefaultTabController(
+        key: ValueKey<String>(selectedType ?? 'all'),
+        length: _marketTypeTabs.length,
+        initialIndex: selectedIndex,
+        child: TabBar(
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          dividerColor: Colors.transparent,
+          indicatorColor: colorScheme.primary,
+          indicatorWeight: 2,
+          indicatorSize: TabBarIndicatorSize.tab,
+          labelColor: colorScheme.primary,
+          unselectedLabelColor: colorScheme.onSurfaceVariant,
+          labelStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+          unselectedLabelStyle: Theme.of(context).textTheme.bodySmall,
+          onTap: (index) => onChanged(_marketTypeTabs[index].type),
+          tabs: <Widget>[
+            for (final tab in _marketTypeTabs)
+              SizedBox(
+                height: 48,
+                child: Tab(
+                  child: Text(
+                    tab.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+const List<_MarketTypeTabSpec> _marketTypeTabs = <_MarketTypeTabSpec>[
+  _MarketTypeTabSpec(type: null, label: '全部'),
+  _MarketTypeTabSpec(type: 'script', label: '脚本'),
+  _MarketTypeTabSpec(type: 'package', label: '包'),
+  _MarketTypeTabSpec(type: 'skill', label: '技能'),
+  _MarketTypeTabSpec(type: 'mcp', label: 'MCP'),
+];
+
+int _marketTypeTabIndex(String? type) {
+  for (var index = 0; index < _marketTypeTabs.length; index += 1) {
+    if (_marketTypeTabs[index].type == type) {
+      return index;
+    }
+  }
+  throw StateError('Unknown market type tab: $type');
+}
+
+class _MarketTypeTabSpec {
+  const _MarketTypeTabSpec({
+    required this.type,
+    required this.label,
+  });
+
+  final String? type;
+  final String label;
+}
+
+class _MarketCategoriesPane extends StatefulWidget {
+  const _MarketCategoriesPane({required this.clients});
+
+  final GeneratedCoreProxyClients clients;
+
+  @override
+  State<_MarketCategoriesPane> createState() => _MarketCategoriesPaneState();
+}
+
+class _MarketCategoriesPaneState extends State<_MarketCategoriesPane> {
+  bool _loading = true;
+  String? _errorMessage;
+  List<core_proxy.MarketCategoryInfo> _categories = <core_proxy.MarketCategoryInfo>[];
+
+  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.apiMarketStatsApiService;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    try {
+      final manifest = await _market.getManifest();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _categories = manifest.categories;
+        _loading = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load market categories: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _errorMessage;
+    if (_loading && _categories.isEmpty) {
+      return const M3LoadingPane();
+    }
+    if (error != null && _categories.isEmpty) {
+      return EmptyState(
+        icon: Icons.error_outline,
+        title: '加载失败',
+        message: error,
+        action: TextButton.icon(
+          onPressed: _loadCategories,
+          icon: const Icon(Icons.refresh),
+          label: const Text('刷新'),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _loadCategories,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: <Widget>[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            sliver: _MarketCategoryGridSliver(
+              categories: _categories,
+              onOpenCategory: _openCategory,
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
+        ],
+      ),
+    );
+  }
+
+  void _openCategory(core_proxy.MarketCategoryInfo category) {
+    final entry = ScreenRouteRegistry.toEntry(
+      screen: MarketScreenRoute(
+        initialTab: MarketHomeTab.all,
+        categoryId: category.id,
+        categoryName: category.name,
+      ),
+    );
+    AppRouterGateway.navigate(
+      routeId: entry.routeId,
+      args: entry.args,
+      source: entry.source,
+    );
+  }
+}
+
+class _MarketCategoryGridSliver extends StatelessWidget {
+  const _MarketCategoryGridSliver({
+    required this.categories,
+    required this.onOpenCategory,
+  });
+
+  final List<core_proxy.MarketCategoryInfo> categories;
+  final ValueChanged<core_proxy.MarketCategoryInfo> onOpenCategory;
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final columnCount = constraints.crossAxisExtent >= 1280
+            ? 3
+            : constraints.crossAxisExtent >= 760
+            ? 2
+            : 1;
+        return SliverGrid.builder(
+          itemCount: categories.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columnCount,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 8,
+            mainAxisExtent: 128,
+          ),
+          itemBuilder: (context, index) {
+            final category = categories[index];
+            return _MarketCategoryGridCard(
+              category: category,
+              onTap: () => onOpenCategory(category),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _MarketCategoryGridCard extends StatelessWidget {
+  const _MarketCategoryGridCard({
+    required this.category,
+    required this.onTap,
+  });
+
+  final core_proxy.MarketCategoryInfo category;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final borderRadius = BorderRadius.circular(16);
+    final description = category.description?.trim();
+    return OperitGlassSurface(
+      color: colorScheme.surface,
+      layer: OperitGlassSurfaceLayer.card,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.16),
+      ),
+      material: true,
+      child: InkWell(
+        borderRadius: borderRadius,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  Icons.category_outlined,
+                  color: colorScheme.onPrimaryContainer,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      category.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (description != null && description.isNotEmpty)
+                      Text(
+                        description,
+                        maxLines: 2,
+                        softWrap: true,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Text(
+                      category.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: colorScheme.outline,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: colorScheme.outline,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 class _MarketMinePane extends StatefulWidget {
   const _MarketMinePane({required this.clients});
 
@@ -1850,9 +1547,6 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
     try {
       await _githubAuth.logout();
       await _loadAuthState();
-      if (!mounted) {
-        return;
-      }
     } catch (error, stackTrace) {
       debugPrint('Failed to logout GitHub: $error\n$stackTrace');
       if (!mounted) {
@@ -1885,56 +1579,34 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
         _MineSectionTitle(text: '管理'),
         _MineActionCard(
           icon: Icons.settings_outlined,
-          title: '管理 Artifact',
-          subtitle: '查看已发布的 Artifact 项目。',
+          title: '我的市场',
+          subtitle: '查看发布记录、通知和审核状态。',
           onTap: () => _openArtifactManage(context),
-        ),
-        const SizedBox(height: 8),
-        _MineActionCard(
-          icon: Icons.settings_outlined,
-          title: '管理 Skill',
-          subtitle: '查看已发布的技能。',
-          onTap: () => _handleMineAction(context, '管理 Skill'),
-        ),
-        const SizedBox(height: 8),
-        _MineActionCard(
-          icon: Icons.settings_outlined,
-          title: '管理 MCP',
-          subtitle: '查看已发布的 MCP 服务。',
-          onTap: () => _handleMineAction(context, '管理 MCP'),
         ),
         const SizedBox(height: 16),
         _MineSectionTitle(text: '发布'),
         _MineActionCard(
           icon: Icons.add,
           title: '发布 Artifact',
-          subtitle: '发布工具包、工作流或运行时资源。',
+          subtitle: '发布脚本、包或运行时资源。',
           onTap: () => _openArtifactPublish(context),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         _MineActionCard(
-          icon: Icons.add,
+          icon: Icons.psychology_outlined,
           title: '发布 Skill',
-          subtitle: '分享一个技能仓库。',
-          onTap: () => _handleMineAction(context, '发布 Skill'),
+          subtitle: '发布 GitHub 仓库形式的技能。',
+          onTap: () => _openRepoPublish(context, 'skill'),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         _MineActionCard(
-          icon: Icons.add,
+          icon: Icons.hub_outlined,
           title: '发布 MCP',
-          subtitle: '分享一个 MCP 服务配置。',
-          onTap: () => _handleMineAction(context, '发布 MCP'),
+          subtitle: '发布 GitHub 仓库形式的 MCP 服务。',
+          onTap: () => _openRepoPublish(context, 'mcp'),
         ),
       ],
     );
-  }
-
-  void _handleMineAction(BuildContext context, String label) {
-    if (!_loggedIn) {
-      _showGitHubTokenDialog(context);
-      return;
-    }
-    _showMineMessage(context, label);
   }
 
   void _openArtifactManage(BuildContext context) {
@@ -1961,11 +1633,17 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
     );
   }
 
-  void _showMineMessage(BuildContext context, String label) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$label 页面尚未迁移到 Flutter'),
-        behavior: SnackBarBehavior.floating,
+  void _openRepoPublish(BuildContext context, String type) {
+    if (!_loggedIn) {
+      _showGitHubTokenDialog(context);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => RepoMarketPublishScreen(
+          clients: widget.clients,
+          type: type,
+        ),
       ),
     );
   }
@@ -1993,7 +1671,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
                 grantedScope: null,
               );
               final apiUser = await widget.clients.apiMarketStatsApiService
-                  .getCurrentUser();
+                  .getCurrentGithubUser();
               await _githubAuth.saveAuthInfo(
                 accessToken: token,
                 tokenType: 'bearer',

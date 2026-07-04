@@ -106,6 +106,40 @@ fn render_schema_types(serializable_types: &HashMap<String, SerializableType>) -
                     variants_json
                 )
             }
+            SerializableTypeKind::TaggedEnum {
+                variants,
+                ..
+            } => {
+                let variants_json = variants
+                    .iter()
+                    .map(|variant| {
+                        let fields_json = variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                format!(
+                                    "{{\"name\":{},\"type\":{}}}",
+                                    json_string(&field.name),
+                                    json_string(&field.ty)
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        format!(
+                            "{{\"name\":{},\"jsonName\":{},\"fields\":[{}]}}",
+                            json_string(&variant.name),
+                            json_string(&variant.json_name),
+                            fields_json
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{}:{{\"kind\":\"taggedEnum\",\"variants\":[{}]}}",
+                    json_string(&ty.full_type),
+                    variants_json
+                )
+            }
         })
         .collect::<Vec<_>>()
         .join(",");

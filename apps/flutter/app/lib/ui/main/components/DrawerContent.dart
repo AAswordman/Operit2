@@ -327,39 +327,24 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<_ChatBindingForCreate> _activePromptBindingForCreate() async {
-    final activePrompt = await widget.bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse('preferences.activePromptManager'),
-        methodName: 'getActivePrompt',
-        args: const <String, Object?>{},
-      ),
-    );
-    final prompt = activePrompt as Map<String, Object?>;
-    final characterGroup = prompt['CharacterGroup'] as Map<String, Object?>?;
-    if (characterGroup != null) {
+    final clients = GeneratedCoreProxyClients(widget.bridge);
+    final prompt = await clients.preferencesActivePromptManager.getActivePrompt();
+    if (prompt.tag == 'CharacterGroup' && prompt.id.trim().isNotEmpty) {
       return _ChatBindingForCreate(
         characterCardName: null,
-        characterGroupId: characterGroup['id'] as String,
+        characterGroupId: prompt.id.trim(),
       );
     }
-    final characterCard = prompt['CharacterCard'] as Map<String, Object?>?;
-    if (characterCard != null) {
-      final id = characterCard['id'] as String;
-      final card = await widget.bridge.call(
-        CoreCallRequest(
-          requestId: _requestId(),
-          targetPath: CoreObjectPath.parse('preferences.characterCardManager'),
-          methodName: 'getCharacterCard',
-          args: <String, Object?>{'id': id},
-        ),
-      );
+    if (prompt.tag == 'CharacterCard' && prompt.id.trim().isNotEmpty) {
+      final id = prompt.id.trim();
+      final clients = GeneratedCoreProxyClients(widget.bridge);
+      final card = await clients.preferencesCharacterCardManager.getCharacterCard(id: id);
       return _ChatBindingForCreate(
-        characterCardName: (card as Map<String, Object?>)['name'] as String,
+        characterCardName: card.name,
         characterGroupId: null,
       );
     }
-    throw StateError('Unknown active prompt payload: $prompt');
+    throw StateError('Unknown active prompt: $prompt');
   }
 
   Future<void> _switchConversation(core_proxy.ChatHistory history) async {

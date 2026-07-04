@@ -61,12 +61,14 @@ class WorkspacePathBar extends StatelessWidget {
     return _WorkspacePathStrip(
       onRefresh: onRefresh,
       leading: leading,
+      compactActions: editing,
       scrollable: !editing,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           _WorkspacePathIconButton(
             tooltip: editing ? l10n.ok : l10n.edit,
+            compact: editing,
             onPressed: editing
                 ? () => onSubmitted?.call(controller?.text ?? path)
                 : onEditToggle,
@@ -75,19 +77,18 @@ class WorkspacePathBar extends StatelessWidget {
         ],
       ),
       child: editing
-          ? TextField(
-              controller: controller,
-              autofocus: true,
-              maxLines: 1,
-              textInputAction: TextInputAction.done,
-              onSubmitted: onSubmitted,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+          ? SizedBox(
+              height: 36,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: 1,
+                textInputAction: TextInputAction.done,
+                onSubmitted: onSubmitted,
+                decoration: const InputDecoration(),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
               ),
             )
           : GestureDetector(
@@ -113,6 +114,7 @@ class _WorkspacePathStrip extends StatelessWidget {
     this.onRefresh,
     this.leading,
     this.trailing,
+    this.compactActions = false,
   });
 
   final Widget child;
@@ -120,6 +122,7 @@ class _WorkspacePathStrip extends StatelessWidget {
   final VoidCallback? onRefresh;
   final Widget? leading;
   final Widget? trailing;
+  final bool compactActions;
 
   @override
   Widget build(BuildContext context) {
@@ -141,6 +144,7 @@ class _WorkspacePathStrip extends StatelessWidget {
             if (onRefresh != null)
               _WorkspacePathIconButton(
                 tooltip: l10n.refresh,
+                compact: compactActions,
                 onPressed: onRefresh,
                 icon: Icons.refresh,
               ),
@@ -166,17 +170,20 @@ class WorkspacePathIconButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     this.onPressed,
+    this.compact = false,
   });
 
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return _WorkspacePathIconButton(
       tooltip: tooltip,
       icon: icon,
+      compact: compact,
       onPressed: onPressed,
     );
   }
@@ -187,21 +194,24 @@ class _WorkspacePathIconButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     this.onPressed,
+    this.compact = false,
   });
 
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final size = 36.0;
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
       icon: Icon(icon, size: 20),
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      constraints: BoxConstraints.tightFor(width: size, height: size),
     );
   }
 }

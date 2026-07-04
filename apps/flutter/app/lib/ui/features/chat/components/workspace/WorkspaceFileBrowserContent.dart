@@ -15,6 +15,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
     required this.rootRelativePath,
     required this.onListWorkspaceFiles,
     required this.onOpenFile,
+    this.onSelectCurrentDirectory,
   });
 
   final String rootLabel;
@@ -22,6 +23,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
+  final Future<void> Function(String path)? onSelectCurrentDirectory;
 
   @override
   State<WorkspaceFileBrowserContent> createState() =>
@@ -35,6 +37,8 @@ class _WorkspaceFileBrowserContentState
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _pathController = TextEditingController();
   bool _editingPath = false;
+  bool _selectingCurrentDirectory = false;
+  String? _selectionError;
   Future<List<WorkspaceFileEntry>>? _entriesFuture;
 
   @override
@@ -162,9 +166,13 @@ class _WorkspaceFileBrowserContentState
             },
           ),
         ),
+        if (_directorySelectionEnabled) _buildDirectorySelectionBar(context),
       ],
     );
   }
+
+  bool get _directorySelectionEnabled =>
+      widget.onSelectCurrentDirectory != null;
 
   void _loadCurrentPath() {
     _entriesFuture = widget.onListWorkspaceFiles(_currentPath);
@@ -174,6 +182,7 @@ class _WorkspaceFileBrowserContentState
     setState(() {
       _history.add(_currentPath);
       _currentPath = path;
+      _selectionError = null;
       _loadCurrentPath();
     });
   }
@@ -182,6 +191,7 @@ class _WorkspaceFileBrowserContentState
     setState(() {
       _currentPath = _history.removeLast();
       _editingPath = false;
+      _selectionError = null;
       _loadCurrentPath();
     });
   }
@@ -202,11 +212,15 @@ class _WorkspaceFileBrowserContentState
       _history.add(_currentPath);
       _currentPath = normalizedPath;
       _editingPath = false;
+      _selectionError = null;
       _loadCurrentPath();
     });
   }
 
   String _displayPath() {
+    if (_directorySelectionEnabled) {
+      return _currentPath;
+    }
     if (_currentPath.isEmpty) {
       return widget.rootLabel;
     }
@@ -215,6 +229,9 @@ class _WorkspaceFileBrowserContentState
 
   String _relativePathFromDisplay(String value) {
     final normalizedValue = value.trim().replaceAll('\\', '/');
+    if (_directorySelectionEnabled) {
+      return normalizedValue;
+    }
     final normalizedRoot = widget.rootLabel.trim().replaceAll('\\', '/');
     if (normalizedValue == normalizedRoot) {
       return '';
@@ -223,6 +240,93 @@ class _WorkspaceFileBrowserContentState
       return normalizedValue.substring(normalizedRoot.length + 1);
     }
     return normalizedValue.replaceFirst(RegExp(r'^/+'), '');
+  }
+
+  Widget _buildDirectorySelectionBar(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    _displayPath(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _selectingCurrentDirectory
+                      ? null
+                      : _selectCurrentDirectory,
+                  icon: _selectingCurrentDirectory
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check),
+                  label: Text(l10n.workspaceBindExistingTitle),
+                ),
+              ],
+            ),
+            if (_selectionError != null) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(
+                _selectionError!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selectCurrentDirectory() async {
+    final onSelect = widget.onSelectCurrentDirectory;
+    if (onSelect == null || _selectingCurrentDirectory) {
+      return;
+    }
+    setState(() {
+      _selectingCurrentDirectory = true;
+      _selectionError = null;
+    });
+    try {
+      await onSelect(_currentPath);
+    } catch (error, stackTrace) {
+      debugPrint('Workspace directory selection failed: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectionError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _selectingCurrentDirectory = false;
+        });
+      }
+    }
   }
 
   String _previewLabel(AppLocalizations l10n, WorkspaceFilePreviewKind kind) {

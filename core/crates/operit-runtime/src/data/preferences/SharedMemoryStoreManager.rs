@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
@@ -82,13 +82,15 @@ impl SharedMemoryStoreManager {
             updatedAt: now,
         };
         self.dataStore
-            .edit(|preferences| {
+            .try_edit_result(|preferences| {
+                assertStoreNameUnique(preferences, trimmedName, None)?;
                 let mut list = readStoreList(preferences);
                 list.push(id.clone());
                 list.sort();
                 list.dedup();
                 writeStoreList(preferences, &list);
                 writeSharedMemoryStore(preferences, &store);
+                Ok::<(), PreferencesDataStoreError>(())
             })
             .map_err(|error| error.to_string())?;
         Ok(store)
@@ -108,16 +110,18 @@ impl SharedMemoryStoreManager {
         let now = currentTimeMillis();
         let mut exists = false;
         self.dataStore
-            .edit(|preferences| {
+            .try_edit_result(|preferences| {
                 let list = readStoreList(preferences);
                 exists = list.iter().any(|entry| entry == id);
                 if !exists {
-                    return;
+                    return Ok::<(), PreferencesDataStoreError>(());
                 }
+                assertStoreNameUnique(preferences, trimmedName, Some(id))?;
                 let mut store = readSharedMemoryStore(preferences, id);
                 store.name = trimmedName.to_string();
                 store.updatedAt = now;
                 writeSharedMemoryStore(preferences, &store);
+                Ok::<(), PreferencesDataStoreError>(())
             })
             .map_err(|error| error.to_string())?;
         if !exists {
@@ -156,6 +160,26 @@ impl SharedMemoryStoreManager {
     }
 }
 
+fn assertStoreNameUnique(
+    preferences: &Preferences,
+    name: &str,
+    currentStoreId: Option<&str>,
+) -> Result<(), PreferencesDataStoreError> {
+    let normalizedName = name.trim();
+    let storeIds = readStoreList(preferences);
+    for storeId in storeIds {
+        if currentStoreId == Some(storeId.as_str()) {
+            continue;
+        }
+        let existing = readSharedMemoryStore(preferences, &storeId);
+        if existing.name.trim() == normalizedName {
+            return Err(PreferencesDataStoreError::Message(format!(
+                "shared memory store name already exists: {normalizedName}"
+            )));
+        }
+    }
+    Ok(())
+}
 fn readStoreList(preferences: &Preferences) -> Vec<String> {
     preferences
         .get(&SharedMemoryStoreManager::SHARED_MEMORY_STORE_LIST())

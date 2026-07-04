@@ -24,7 +24,10 @@ pub(crate) use provider_edit::FormState;
 pub(crate) enum ConfigState {
     ProviderList,
     ProviderForm(FormState),
-    ModelList { provider_index: usize, provider_id: String },
+    ModelList {
+        provider_index: usize,
+        provider_id: String,
+    },
     ModelEditor(EditorState),
 }
 
@@ -59,13 +62,19 @@ pub(crate) struct ConfigUi {
     pub(crate) add_model_search: String,
     pub(crate) add_model_filtered: Vec<usize>,
     pub(crate) add_model_index: usize,
-    pub(crate) available_models: Vec<operit_runtime::data::model::ModelConfigData::AvailableProviderModel>,
+    pub(crate) available_models:
+        Vec<operit_runtime::data::model::ModelConfigData::AvailableProviderModel>,
 }
 
 pub(crate) enum ConfirmAction {
     None,
-    DeleteModel { provider_id: String, model_id: String },
-    DeleteProvider { provider_id: String },
+    DeleteModel {
+        provider_id: String,
+        model_id: String,
+    },
+    DeleteProvider {
+        provider_id: String,
+    },
 }
 
 impl ConfigUi {
@@ -325,7 +334,8 @@ impl ConfigUi {
                     return ListItem::new(Line::from(Span::styled("?", Style::default())));
                 };
 
-                let is_active = self.chat_provider_id == self.editing_provider_id.as_deref().unwrap_or("")
+                let is_active = self.chat_provider_id
+                    == self.editing_provider_id.as_deref().unwrap_or("")
                     && self.chat_model_id == model.id;
 
                 let marker = if is_active { "★ " } else { "  " };
@@ -337,10 +347,18 @@ impl ConfigUi {
                 // Show capabilities summary from the model profile if available
                 if let Some(caps) = &model.capabilitiesOverride {
                     let mut tags = Vec::new();
-                    if caps.toolCall { tags.push("⚒"); }
-                    if caps.directImage { tags.push("🖼"); }
-                    if caps.directAudio { tags.push("🎤"); }
-                    if caps.directVideo { tags.push("🎬"); }
+                    if caps.toolCall {
+                        tags.push("⚒");
+                    }
+                    if caps.directImage {
+                        tags.push("🖼");
+                    }
+                    if caps.directAudio {
+                        tags.push("🎤");
+                    }
+                    if caps.directVideo {
+                        tags.push("🎬");
+                    }
                     if !tags.is_empty() {
                         line1.push(Span::raw("  "));
                         line1.push(Span::styled(
@@ -351,9 +369,10 @@ impl ConfigUi {
                 }
 
                 // Context length from override
-                let ctx_info = model.contextOverride.as_ref().map(|c| {
-                    format!("{}k", c.maxContextLength)
-                });
+                let ctx_info = model
+                    .contextOverride
+                    .as_ref()
+                    .map(|c| format!("{}k", c.maxContextLength));
                 if let Some(ctx) = ctx_info {
                     line1.push(Span::raw("  "));
                     line1.push(Span::styled(ctx, Style::default().fg(theme::TEXT_SUBTLE)));
@@ -403,58 +422,71 @@ impl ConfigUi {
             ConfigState::ProviderList => {
                 let count = self.filtered_indices.len();
                 let total = self.providers.len();
-                vec![
-                    Line::from(Span::styled(
-                        text.config_provider_list_footer(count, total),
-                        Style::default().fg(theme::TEXT_SUBTLE),
-                    )),
-                ]
+                vec![Line::from(Span::styled(
+                    text.config_provider_list_footer(count, total),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ))]
             }
             ConfigState::ModelList { .. } => {
                 let count = self.filtered_indices.len();
-                let total = self.current_model_provider().map(|p| p.models.len()).unwrap_or(0);
-                vec![
-                    Line::from(Span::styled(
-                        text.config_model_list_footer(count, total),
-                        Style::default().fg(theme::TEXT_SUBTLE),
-                    )),
-                ]
+                let total = self
+                    .current_model_provider()
+                    .map(|p| p.models.len())
+                    .unwrap_or(0);
+                vec![Line::from(Span::styled(
+                    text.config_model_list_footer(count, total),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ))]
             }
             ConfigState::ProviderForm(form) => {
                 if form.show_type_selector {
-                    vec![
-                        Line::from(Span::styled(text.config_type_selector_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                    ]
+                    vec![Line::from(Span::styled(
+                        text.config_type_selector_footer(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))]
                 } else if form.editing_field {
-                    vec![
-                        Line::from(Span::styled(text.config_form_editing_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                    ]
+                    vec![Line::from(Span::styled(
+                        text.config_form_editing_footer(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))]
                 } else if form.advanced {
                     vec![
-                        Line::from(Span::styled(text.config_form_nav_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                        Line::from(Span::styled(text.config_form_advanced_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
+                        Line::from(Span::styled(
+                            text.config_form_nav_footer(),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        )),
+                        Line::from(Span::styled(
+                            text.config_form_advanced_footer(),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        )),
                     ]
                 } else {
                     vec![
-                        Line::from(Span::styled(text.config_form_nav_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                        Line::from(Span::styled(text.config_form_simple_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
+                        Line::from(Span::styled(
+                            text.config_form_nav_footer(),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        )),
+                        Line::from(Span::styled(
+                            text.config_form_simple_footer(),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        )),
                     ]
                 }
             }
-            ConfigState::ModelEditor(editor) => {
-                match editor.level {
-                    model_editor::EditorLevel::Main => {
-                        vec![
-                            Line::from(Span::styled(text.config_editor_main_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                        ]
-                    }
-                    model_editor::EditorLevel::Summary => {
-                        vec![
-                            Line::from(Span::styled(text.config_editor_summary_footer(), Style::default().fg(theme::TEXT_SUBTLE))),
-                        ]
-                    }
+            ConfigState::ModelEditor(editor) => match editor.level {
+                model_editor::EditorLevel::Main => {
+                    vec![Line::from(Span::styled(
+                        text.config_editor_main_footer(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))]
                 }
-            }
+                model_editor::EditorLevel::Summary => {
+                    vec![Line::from(Span::styled(
+                        text.config_editor_summary_footer(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))]
+                }
+            },
         };
         ratatui::text::Text::from(lines)
     }
@@ -464,7 +496,12 @@ impl ConfigUi {
         let h = 6.min(parent.height);
         let x = parent.x + (parent.width.saturating_sub(w)) / 2;
         let y = parent.y + (parent.height.saturating_sub(h)) / 2;
-        let popup = Rect { x, y, width: w, height: h };
+        let popup = Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        };
         frame.render_widget(Clear, popup);
         let block = Block::default()
             .title(self.confirm_title.as_str())
@@ -488,7 +525,12 @@ impl ConfigUi {
         let h = 20.min(parent.height);
         let x = parent.x + (parent.width.saturating_sub(w)) / 2;
         let y = parent.y + (parent.height.saturating_sub(h)) / 2;
-        let popup = Rect { x, y, width: w, height: h };
+        let popup = Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        };
         frame.render_widget(Clear, popup);
         let block = Block::default()
             .title(text.config_add_model_title())
@@ -526,7 +568,9 @@ impl ConfigUi {
                 Paragraph::new(vec![
                     Line::from(Span::styled(
                         text.config_custom_model_title(),
-                        Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme::ACCENT_STRONG)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Line::from(value),
                 ]),
@@ -559,10 +603,7 @@ impl ConfigUi {
             .map(|&i| {
                 let model = self.available_models.get(i);
                 let name = model.map(|m| m.modelId.as_str()).unwrap_or("?");
-                ListItem::new(Line::from(Span::styled(
-                    name,
-                    Style::default(),
-                )))
+                ListItem::new(Line::from(Span::styled(name, Style::default())))
             })
             .collect();
 
@@ -570,7 +611,9 @@ impl ConfigUi {
         items.push(ListItem::new(vec![
             Line::from(Span::styled(
                 text.config_custom_model_title(),
-                Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
                 text.config_custom_model_id_hint(),
@@ -579,7 +622,9 @@ impl ConfigUi {
         ]));
 
         let mut state = ListState::default();
-        state.select(Some(self.add_model_index.min(items.len().saturating_sub(1))));
+        state.select(Some(
+            self.add_model_index.min(items.len().saturating_sub(1)),
+        ));
         frame.render_stateful_widget(
             List::new(items)
                 .highlight_style(
@@ -618,9 +663,7 @@ impl ConfigUi {
                 }
             }
             (ConfigState::ProviderList, KC::Char('n')) => {
-                self.state = ConfigState::ProviderForm(
-                    provider_edit::FormState::new_create(),
-                );
+                self.state = ConfigState::ProviderForm(provider_edit::FormState::new_create());
             }
             (ConfigState::ProviderList, KC::Enter) => {
                 if let Some(provider) = self.selected_provider().cloned() {
@@ -637,9 +680,8 @@ impl ConfigUi {
             }
             (ConfigState::ProviderList, KC::Char('e')) => {
                 if let Some(provider) = self.selected_provider().cloned() {
-                    self.state = ConfigState::ProviderForm(
-                        provider_edit::FormState::new_edit(&provider),
-                    );
+                    self.state =
+                        ConfigState::ProviderForm(provider_edit::FormState::new_edit(&provider));
                 }
             }
             (ConfigState::ProviderList, KC::Char('d')) => {
@@ -647,10 +689,9 @@ impl ConfigUi {
                     self.show_confirm_dialog = true;
                     self.confirm_title = text.config_delete_provider().to_string();
                     self.confirm_message = text.config_delete_provider_msg(&provider.name);
-                    self.confirm_action =
-                        ConfirmAction::DeleteProvider {
-                            provider_id: provider.id.clone(),
-                        };
+                    self.confirm_action = ConfirmAction::DeleteProvider {
+                        provider_id: provider.id.clone(),
+                    };
                 }
             }
             (ConfigState::ProviderList, KC::Char(c)) => {
@@ -687,7 +728,8 @@ impl ConfigUi {
                         ConfigState::ModelList { provider_id, .. } => provider_id.clone(),
                         _ => return Ok(false),
                     };
-                    let provider_name = self.current_model_provider()
+                    let provider_name = self
+                        .current_model_provider()
                         .map(|p| p.name.clone())
                         .unwrap_or_default();
                     if let Ok(config) = core
@@ -695,11 +737,12 @@ impl ConfigUi {
                         .getResolvedModelConfig(&pid, &model.id)
                         .await
                     {
-                        self.state = ConfigState::ModelEditor(
-                            model_editor::EditorState::new(
-                                pid, provider_name, model.id.clone(), &config,
-                            ),
-                        );
+                        self.state = ConfigState::ModelEditor(model_editor::EditorState::new(
+                            pid,
+                            provider_name,
+                            model.id.clone(),
+                            &config,
+                        ));
                     }
                 }
             }
@@ -737,11 +780,11 @@ impl ConfigUi {
                         Ok(report) => {
                             let success_count = report.items.iter().filter(|i| i.success).count();
                             let total = report.items.len();
-                            self.status_message = Some(text.config_test_result(success_count, total));
+                            self.status_message =
+                                Some(text.config_test_result(success_count, total));
                         }
                         Err(e) => {
-                            self.status_message =
-                                Some(text.config_test_failed(e.to_string()));
+                            self.status_message = Some(text.config_test_failed(e.to_string()));
                         }
                     }
                 }
@@ -751,18 +794,37 @@ impl ConfigUi {
                     ConfigState::ModelList { provider_id, .. } => provider_id.clone(),
                     _ => return Ok(false),
                 };
-                if let Ok(available) = core
+                let existing_model_ids = self
+                    .current_model_provider()
+                    .map(|provider| {
+                        provider
+                            .models
+                            .iter()
+                            .map(|model| model.id.to_ascii_lowercase())
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .unwrap_or_default();
+                match core
                     .preferences_model_config_manager()
                     .getAvailableProviderModels(&pid)
                     .await
                 {
-                    self.available_models = available;
-                    self.show_add_model_popup = true;
-                    self.add_model_custom_mode = false;
-                    self.add_model_search.clear();
-                    self.add_model_index = 0;
-                    self.add_model_filtered =
-                        (0..self.available_models.len()).collect();
+                    Ok(available) => {
+                        self.available_models = available
+                            .into_iter()
+                            .filter(|model| {
+                                !existing_model_ids.contains(&model.modelId.to_ascii_lowercase())
+                            })
+                            .collect();
+                        self.show_add_model_popup = true;
+                        self.add_model_custom_mode = false;
+                        self.add_model_search.clear();
+                        self.add_model_index = 0;
+                        self.add_model_filtered = (0..self.available_models.len()).collect();
+                    }
+                    Err(error) => {
+                        self.error_message = Some(error.to_string());
+                    }
                 }
             }
             (ConfigState::ModelList { .. }, KC::Char('d')) => {
@@ -774,11 +836,10 @@ impl ConfigUi {
                     self.show_confirm_dialog = true;
                     self.confirm_title = text.config_delete_model().to_string();
                     self.confirm_message = text.config_delete_model_msg(&model.id);
-                    self.confirm_action =
-                        ConfirmAction::DeleteModel {
-                            provider_id: pid,
-                            model_id: model.id.clone(),
-                        };
+                    self.confirm_action = ConfirmAction::DeleteModel {
+                        provider_id: pid,
+                        model_id: model.id.clone(),
+                    };
                 }
             }
             (ConfigState::ModelList { .. }, KC::Char(c)) => {
@@ -839,7 +900,8 @@ impl ConfigUi {
                 }
             }
             (ConfigState::ProviderForm(form), KC::Char(c))
-                if key.modifiers.is_empty() || key.modifiers == crossterm::event::KeyModifiers::SHIFT =>
+                if key.modifiers.is_empty()
+                    || key.modifiers == crossterm::event::KeyModifiers::SHIFT =>
             {
                 if form.show_type_selector {
                     form.type_selector_filter.push(c);
@@ -851,8 +913,7 @@ impl ConfigUi {
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::Backspace) =>
-            {
+            (ConfigState::ProviderForm(form), KC::Backspace) => {
                 if form.show_type_selector {
                     form.type_selector_filter.pop();
                     form.update_type_filter();
@@ -865,8 +926,7 @@ impl ConfigUi {
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::Delete) =>
-            {
+            (ConfigState::ProviderForm(form), KC::Delete) => {
                 if form.editing_field {
                     if let Some(field) = form.fields.get_mut(form.focus_index) {
                         if field.cursor < field.value.len() {
@@ -875,8 +935,7 @@ impl ConfigUi {
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::Left) =>
-            {
+            (ConfigState::ProviderForm(form), KC::Left) => {
                 if form.editing_field {
                     if let Some(field) = form.fields.get_mut(form.focus_index) {
                         if field.cursor > 0 {
@@ -885,8 +944,7 @@ impl ConfigUi {
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::Right) =>
-            {
+            (ConfigState::ProviderForm(form), KC::Right) => {
                 if form.editing_field {
                     if let Some(field) = form.fields.get_mut(form.focus_index) {
                         if field.cursor < field.value.len() {
@@ -895,16 +953,14 @@ impl ConfigUi {
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::Home) =>
-            {
+            (ConfigState::ProviderForm(form), KC::Home) => {
                 if form.editing_field {
                     if let Some(field) = form.fields.get_mut(form.focus_index) {
                         field.cursor = 0;
                     }
                 }
             }
-            (ConfigState::ProviderForm(form), KC::End) =>
-            {
+            (ConfigState::ProviderForm(form), KC::End) => {
                 if form.editing_field {
                     if let Some(field) = form.fields.get_mut(form.focus_index) {
                         field.cursor = field.value.len();
@@ -972,53 +1028,71 @@ impl ConfigUi {
             (ConfigState::ModelEditor(editor), KC::Enter) => {
                 editor.clamp_focus();
                 match editor.level {
-                    model_editor::EditorLevel::Main => {
-                        match editor.focused_main_item() {
-                            Some(model_editor::MainFocus::ToolCall) => editor.tool_call = !editor.tool_call,
-                            Some(model_editor::MainFocus::DirectImage) => editor.direct_image = !editor.direct_image,
-                            Some(model_editor::MainFocus::DirectAudio) => editor.direct_audio = !editor.direct_audio,
-                            Some(model_editor::MainFocus::DirectVideo) => editor.direct_video = !editor.direct_video,
-                            Some(model_editor::MainFocus::MaxContextLength) => editor.editing_field = !editor.editing_field,
-                            Some(model_editor::MainFocus::MaxContextMode) => editor.enable_max_context_mode = !editor.enable_max_context_mode,
-                            Some(model_editor::MainFocus::EnableSummary) => {
-                                editor.enable_summary = !editor.enable_summary;
-                                editor.clamp_focus();
-                            }
-                            Some(model_editor::MainFocus::SummaryDetails) => {
-                                editor.level = model_editor::EditorLevel::Summary;
-                                editor.focus_index = 0;
-                            }
-                            Some(model_editor::MainFocus::StructuredTools) => editor.supports_structured_tools = !editor.supports_structured_tools,
-                            Some(model_editor::MainFocus::BuiltinTool(index)) => {
-                                if let Some(tool) = editor.builtin_tools.get_mut(index) {
-                                    tool.enabled = !tool.enabled;
-                                }
-                            }
-                            None => {}
+                    model_editor::EditorLevel::Main => match editor.focused_main_item() {
+                        Some(model_editor::MainFocus::ToolCall) => {
+                            editor.tool_call = !editor.tool_call
                         }
-                    }
-                    model_editor::EditorLevel::Summary => {
-                        match editor.focused_summary_item() {
-                            Some(model_editor::SummaryFocus::EnableSummary) => {
-                                editor.enable_summary = !editor.enable_summary;
-                                editor.clamp_focus();
-                            }
-                            Some(model_editor::SummaryFocus::TokenThreshold) => editor.editing_field = !editor.editing_field,
-                            Some(model_editor::SummaryFocus::ByMessageCount) => {
-                                editor.enable_summary_by_message_count = !editor.enable_summary_by_message_count;
-                                editor.clamp_focus();
-                            }
-                            Some(model_editor::SummaryFocus::MessageCountThreshold) => editor.editing_field = !editor.editing_field,
-                            None => {}
+                        Some(model_editor::MainFocus::DirectImage) => {
+                            editor.direct_image = !editor.direct_image
                         }
-                    }
+                        Some(model_editor::MainFocus::DirectAudio) => {
+                            editor.direct_audio = !editor.direct_audio
+                        }
+                        Some(model_editor::MainFocus::DirectVideo) => {
+                            editor.direct_video = !editor.direct_video
+                        }
+                        Some(model_editor::MainFocus::MaxContextLength) => {
+                            editor.editing_field = !editor.editing_field
+                        }
+                        Some(model_editor::MainFocus::MaxContextMode) => {
+                            editor.enable_max_context_mode = !editor.enable_max_context_mode
+                        }
+                        Some(model_editor::MainFocus::EnableSummary) => {
+                            editor.enable_summary = !editor.enable_summary;
+                            editor.clamp_focus();
+                        }
+                        Some(model_editor::MainFocus::SummaryDetails) => {
+                            editor.level = model_editor::EditorLevel::Summary;
+                            editor.focus_index = 0;
+                        }
+                        Some(model_editor::MainFocus::StructuredTools) => {
+                            editor.supports_structured_tools = !editor.supports_structured_tools
+                        }
+                        Some(model_editor::MainFocus::BuiltinTool(index)) => {
+                            if let Some(tool) = editor.builtin_tools.get_mut(index) {
+                                tool.enabled = !tool.enabled;
+                            }
+                        }
+                        None => {}
+                    },
+                    model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
+                        Some(model_editor::SummaryFocus::EnableSummary) => {
+                            editor.enable_summary = !editor.enable_summary;
+                            editor.clamp_focus();
+                        }
+                        Some(model_editor::SummaryFocus::TokenThreshold) => {
+                            editor.editing_field = !editor.editing_field
+                        }
+                        Some(model_editor::SummaryFocus::ByMessageCount) => {
+                            editor.enable_summary_by_message_count =
+                                !editor.enable_summary_by_message_count;
+                            editor.clamp_focus();
+                        }
+                        Some(model_editor::SummaryFocus::MessageCountThreshold) => {
+                            editor.editing_field = !editor.editing_field
+                        }
+                        None => {}
+                    },
                 }
             }
             (ConfigState::ModelEditor(editor), KC::Char(c))
                 if key.modifiers.is_empty() && editor.editing_field =>
             {
                 match editor.level {
-                    model_editor::EditorLevel::Main if editor.focused_main_item() == Some(model_editor::MainFocus::MaxContextLength) => {
+                    model_editor::EditorLevel::Main
+                        if editor.focused_main_item()
+                            == Some(model_editor::MainFocus::MaxContextLength) =>
+                    {
                         if c.is_ascii_digit() || c == '.' {
                             editor.max_context_length.push(c);
                         }
@@ -1026,8 +1100,12 @@ impl ConfigUi {
                     model_editor::EditorLevel::Summary => {
                         if c.is_ascii_digit() || c == '.' {
                             match editor.focused_summary_item() {
-                                Some(model_editor::SummaryFocus::TokenThreshold) => editor.summary_token_threshold.push(c),
-                                Some(model_editor::SummaryFocus::MessageCountThreshold) => editor.summary_message_count_threshold.push(c),
+                                Some(model_editor::SummaryFocus::TokenThreshold) => {
+                                    editor.summary_token_threshold.push(c)
+                                }
+                                Some(model_editor::SummaryFocus::MessageCountThreshold) => {
+                                    editor.summary_message_count_threshold.push(c)
+                                }
                                 _ => {}
                             }
                         }
@@ -1035,20 +1113,24 @@ impl ConfigUi {
                     _ => {}
                 }
             }
-            (ConfigState::ModelEditor(editor), KC::Backspace) =>
-            {
+            (ConfigState::ModelEditor(editor), KC::Backspace) => {
                 if editor.editing_field {
                     match editor.level {
-                        model_editor::EditorLevel::Main if editor.focused_main_item() == Some(model_editor::MainFocus::MaxContextLength) => {
+                        model_editor::EditorLevel::Main
+                            if editor.focused_main_item()
+                                == Some(model_editor::MainFocus::MaxContextLength) =>
+                        {
                             editor.max_context_length.pop();
                         }
-                        model_editor::EditorLevel::Summary => {
-                            match editor.focused_summary_item() {
-                                Some(model_editor::SummaryFocus::TokenThreshold) => { editor.summary_token_threshold.pop(); }
-                                Some(model_editor::SummaryFocus::MessageCountThreshold) => { editor.summary_message_count_threshold.pop(); }
-                                _ => {}
+                        model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
+                            Some(model_editor::SummaryFocus::TokenThreshold) => {
+                                editor.summary_token_threshold.pop();
                             }
-                        }
+                            Some(model_editor::SummaryFocus::MessageCountThreshold) => {
+                                editor.summary_message_count_threshold.pop();
+                            }
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -1080,11 +1162,11 @@ impl ConfigUi {
                         Ok(report) => {
                             let success_count = report.items.iter().filter(|i| i.success).count();
                             let total = report.items.len();
-                            editor.test_result = Some(text.config_test_result(success_count, total));
+                            editor.test_result =
+                                Some(text.config_test_result(success_count, total));
                         }
                         Err(e) => {
-                            self.status_message =
-                                Some(text.config_test_failed(e.to_string()));
+                            self.status_message = Some(text.config_test_failed(e.to_string()));
                         }
                     }
                     editor.testing = false;
@@ -1095,49 +1177,46 @@ impl ConfigUi {
                     self.show_confirm_dialog = true;
                     self.confirm_title = text.config_delete_model().to_string();
                     self.confirm_message = text.config_delete_model_msg(&editor.model_id);
-                    self.confirm_action =
-                        ConfirmAction::DeleteModel {
-                            provider_id: editor.provider_id.clone(),
-                            model_id: editor.model_id.clone(),
-                        };
+                    self.confirm_action = ConfirmAction::DeleteModel {
+                        provider_id: editor.provider_id.clone(),
+                        model_id: editor.model_id.clone(),
+                    };
                 }
             }
 
             // Confirm dialog
-            _ if self.show_confirm_dialog => {
-                match key.code {
-                    KC::Enter => {
-                        let action = std::mem::replace(
-                            &mut self.confirm_action,
-                            ConfirmAction::None,
-                        );
-                        self.show_confirm_dialog = false;
-                        match action {
-                            ConfirmAction::DeleteModel { provider_id, model_id } => {
-                                let _ = core
-                                    .preferences_model_config_manager()
-                                    .deleteModel(&provider_id, &model_id)
-                                    .await;
-                                self.refresh_providers(core).await;
-                                self.state = ConfigState::ProviderList;
-                            }
-                            ConfirmAction::DeleteProvider { provider_id } => {
-                                let _ = core
-                                    .preferences_model_config_manager()
-                                    .deleteProvider(&provider_id)
-                                    .await;
-                                self.refresh_providers(core).await;
-                            }
-                            ConfirmAction::None => {}
+            _ if self.show_confirm_dialog => match key.code {
+                KC::Enter => {
+                    let action = std::mem::replace(&mut self.confirm_action, ConfirmAction::None);
+                    self.show_confirm_dialog = false;
+                    match action {
+                        ConfirmAction::DeleteModel {
+                            provider_id,
+                            model_id,
+                        } => {
+                            let _ = core
+                                .preferences_model_config_manager()
+                                .deleteModel(&provider_id, &model_id)
+                                .await;
+                            self.refresh_providers(core).await;
+                            self.state = ConfigState::ProviderList;
                         }
+                        ConfirmAction::DeleteProvider { provider_id } => {
+                            let _ = core
+                                .preferences_model_config_manager()
+                                .deleteProvider(&provider_id)
+                                .await;
+                            self.refresh_providers(core).await;
+                        }
+                        ConfirmAction::None => {}
                     }
-                    KC::Esc => {
-                        self.show_confirm_dialog = false;
-                        self.confirm_action = ConfirmAction::None;
-                    }
-                    _ => {}
                 }
-            }
+                KC::Esc => {
+                    self.show_confirm_dialog = false;
+                    self.confirm_action = ConfirmAction::None;
+                }
+                _ => {}
+            },
 
             // Add model popup
             _ if self.show_add_model_popup => {
@@ -1164,25 +1243,39 @@ impl ConfigUi {
                         if self.add_model_custom_mode {
                             let model_id = self.add_model_search.trim().to_string();
                             if !model_id.is_empty() {
-                                let _ = core
+                                match core
                                     .preferences_model_config_manager()
                                     .createProviderModel(&pid, model_id)
-                                    .await;
-                                self.show_add_model_popup = false;
-                                self.add_model_custom_mode = false;
-                                self.refresh_providers(core).await;
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        self.show_add_model_popup = false;
+                                        self.add_model_custom_mode = false;
+                                        self.refresh_providers(core).await;
+                                    }
+                                    Err(error) => {
+                                        self.error_message = Some(error.to_string());
+                                    }
+                                }
                             }
                         } else if self.add_model_index == self.add_model_filtered.len() {
                             self.add_model_custom_mode = true;
                             self.add_model_search.clear();
                         } else if let Some(&i) = self.add_model_filtered.get(self.add_model_index) {
                             if let Some(model) = self.available_models.get(i) {
-                                let _ = core
+                                match core
                                     .preferences_model_config_manager()
                                     .addProviderModelFromAvailable(&pid, model.modelId.clone())
-                                    .await;
-                                self.show_add_model_popup = false;
-                                self.refresh_providers(core).await;
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        self.show_add_model_popup = false;
+                                        self.refresh_providers(core).await;
+                                    }
+                                    Err(error) => {
+                                        self.error_message = Some(error.to_string());
+                                    }
+                                }
                             }
                         }
                     }
@@ -1195,7 +1288,10 @@ impl ConfigUi {
                             self.show_add_model_popup = false;
                         }
                     }
-                    KC::Char(c) if key.modifiers.is_empty() || key.modifiers == crossterm::event::KeyModifiers::SHIFT => {
+                    KC::Char(c)
+                        if key.modifiers.is_empty()
+                            || key.modifiers == crossterm::event::KeyModifiers::SHIFT =>
+                    {
                         self.add_model_search.push(c);
                         if !self.add_model_custom_mode {
                             self.update_add_model_filter();
@@ -1224,9 +1320,21 @@ impl ConfigUi {
         let provider_type_id = form.fields[1].value.clone();
         let endpoint = form.fields[2].value.clone();
         let api_key = form.fields[3].value.clone();
-        let custom_headers = form.fields.get(4).map(|f| f.value.clone()).unwrap_or_else(|| "{}".to_string());
-        let req_limit = form.fields.get(5).and_then(|f| f.value.parse().ok()).unwrap_or(0);
-        let max_concurrent = form.fields.get(6).and_then(|f| f.value.parse().ok()).unwrap_or(0);
+        let custom_headers = form
+            .fields
+            .get(4)
+            .map(|f| f.value.clone())
+            .unwrap_or_else(|| "{}".to_string());
+        let req_limit = form
+            .fields
+            .get(5)
+            .and_then(|f| f.value.parse().ok())
+            .unwrap_or(0);
+        let max_concurrent = form
+            .fields
+            .get(6)
+            .and_then(|f| f.value.parse().ok())
+            .unwrap_or(0);
 
         match &form.editing_provider_id {
             None => {
@@ -1236,7 +1344,11 @@ impl ConfigUi {
                     .await
                 {
                     Ok(provider_id) => {
-                        if !api_key.is_empty() || !custom_headers.is_empty() || req_limit > 0 || max_concurrent > 0 {
+                        if !api_key.is_empty()
+                            || !custom_headers.is_empty()
+                            || req_limit > 0
+                            || max_concurrent > 0
+                        {
                             if let Ok(profile) = core
                                 .preferences_model_config_manager()
                                 .getProviderProfile(&provider_id)

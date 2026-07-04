@@ -297,176 +297,27 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
-            if (themeController.hasActiveThemeTarget) ...<Widget>[
-              _InfoLine(
-                label: l10n.settingsAppearanceUserAvatar,
-                value: _avatarImageLabel(l10n, snapshot.customUserAvatarUri),
-              ),
-              _AvatarActionRow(
-                chooseLabel: l10n.settingsAppearanceChooseUserAvatar,
-                clearLabel: l10n.settingsAppearanceClearUserAvatar,
-                clearEnabled:
-                    snapshot.customUserAvatarUri != null &&
-                    snapshot.customUserAvatarUri!.isNotEmpty,
-                onChoose: () {
-                  unawaited(_pickAvatarImage(themeController, isUser: true));
-                },
-                onClear: () {
-                  unawaited(
-                    themeController.saveActiveThemeAvatarSettings(
-                      customUserAvatarUri: '',
-                    ),
-                  );
-                },
-              ),
-              _InfoLine(
-                label: l10n.settingsAppearanceAiAvatar,
-                value: _avatarImageLabel(l10n, snapshot.customAiAvatarUri),
-              ),
-              _AvatarActionRow(
-                chooseLabel: l10n.settingsAppearanceChooseAiAvatar,
-                clearLabel: l10n.settingsAppearanceClearAiAvatar,
-                clearEnabled:
-                    snapshot.customAiAvatarUri != null &&
-                    snapshot.customAiAvatarUri!.isNotEmpty,
-                onChoose: () {
-                  unawaited(_pickAvatarImage(themeController, isUser: false));
-                },
-                onClear: () {
-                  unawaited(
-                    themeController.saveActiveThemeAvatarSettings(
-                      customAiAvatarUri: '',
-                    ),
-                  );
-                },
-              ),
-            ],
-          ],
-        ),
-        _SectionCard(
-          title: l10n.settingsAppearanceChatDisplaySection,
-          children: <Widget>[
             _InfoLine(
-              label: l10n.settingsAppearanceMessageStyle,
-              value: _messageStyleLabel(l10n, snapshot.chatStyle),
-            ),
-            _MessageStyleSelector(
-              value: snapshot.chatStyle,
-              onChanged: (value) {
-                unawaited(themeController.saveThemeSettings(chatStyle: value));
-              },
-            ),
-            _InfoLine(
-              label: l10n.settingsAppearanceMessageColors,
-              value: _messageColorPresetLabel(l10n, snapshot),
-            ),
-            _MessageColorPresetSelector(
-              value: _messageColorPresetFromSnapshot(snapshot),
-              onChanged: (value) {
-                unawaited(_applyMessageColorPreset(themeController, value));
-              },
-              onCustomTap: () {
-                unawaited(
-                  _showMessageColorDialog(context, themeController, snapshot),
-                );
-              },
-            ),
-            _InfoLine(
-              label: l10n.settingsAppearanceUserBubbleFont,
-              value: _bubbleFontLabel(l10n, snapshot, isUser: true),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  unawaited(
-                    _showBubbleFontDialog(
-                      context,
-                      themeController,
-                      snapshot,
-                      isUser: true,
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.text_fields_outlined),
-                label: Text(l10n.settingsAppearanceAdjustUserBubbleFont),
-              ),
-            ),
-            _InfoLine(
-              label: l10n.settingsAppearanceAiBubbleFont,
-              value: _bubbleFontLabel(l10n, snapshot, isUser: false),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  unawaited(
-                    _showBubbleFontDialog(
-                      context,
-                      themeController,
-                      snapshot,
-                      isUser: false,
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.text_fields_outlined),
-                label: Text(l10n.settingsAppearanceAdjustAiBubbleFont),
-              ),
-            ),
-            _InfoLine(
-              label: l10n.settingsAppearanceUserBubbleImage,
-              value: _fileNameOrNoneLabel(
-                l10n,
-                snapshot.bubbleUserImageUri,
-                snapshot.bubbleUserUseImage,
-              ),
+              label: l10n.settingsAppearanceUserAvatar,
+              value: _avatarImageLabel(l10n, snapshot.customUserAvatarUri),
             ),
             _AvatarActionRow(
-              chooseLabel: l10n.settingsAppearanceChooseUserBubbleImage,
-              clearLabel: l10n.settingsAppearanceClearUserBubbleImage,
+              chooseLabel: l10n.settingsAppearanceChooseUserAvatar,
+              clearLabel: l10n.settingsAppearanceClearUserAvatar,
               clearEnabled:
-                  snapshot.bubbleUserUseImage &&
-                  snapshot.bubbleUserImageUri != null &&
-                  snapshot.bubbleUserImageUri!.isNotEmpty,
+                  snapshot.customUserAvatarUri != null &&
+                  snapshot.customUserAvatarUri!.isNotEmpty,
               onChoose: () {
-                unawaited(
-                  _pickBubbleImage(
-                    themeController,
-                    snapshot: snapshot,
-                    isUser: true,
-                  ),
-                );
+                unawaited(_pickUserAvatarImage(themeController));
               },
               onClear: () {
                 unawaited(
-                  themeController.saveThemeSettings(
-                    bubbleUserUseImage: false,
-                    bubbleUserImageUri: '',
+                  themeController.saveActiveThemeUserAvatarSettings(
+                    customUserAvatarUri: '',
                   ),
                 );
               },
             ),
-            if (snapshot.bubbleUserUseImage &&
-                snapshot.bubbleUserImageUri != null &&
-                snapshot.bubbleUserImageUri!.isNotEmpty) ...<Widget>[
-              _InfoLine(
-                label: l10n.settingsAppearanceBubbleImageRenderMode,
-                value: _bubbleImageRenderModeLabel(
-                  l10n,
-                  snapshot.bubbleUserImageRenderMode,
-                ),
-              ),
-              _BubbleImageRenderModeSelector(
-                value: snapshot.bubbleUserImageRenderMode,
-                onChanged: (value) {
-                  unawaited(
-                    themeController.saveThemeSettings(
-                      bubbleUserImageRenderMode: value,
-                    ),
-                  );
-                },
-              ),
-            ],
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
@@ -758,10 +609,7 @@ Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
   );
 }
 
-Future<void> _pickAvatarImage(
-  OperitThemeController themeController, {
-  required bool isUser,
-}) async {
+Future<void> _pickUserAvatarImage(OperitThemeController themeController) async {
   const imageGroup = XTypeGroup(
     label: 'image',
     extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
@@ -770,9 +618,8 @@ Future<void> _pickAvatarImage(
   if (file == null) {
     return;
   }
-  await themeController.saveActiveThemeAvatarSettings(
-    customUserAvatarUri: isUser ? file.path : null,
-    customAiAvatarUri: isUser ? null : file.path,
+  await themeController.saveActiveThemeUserAvatarSettings(
+    customUserAvatarUri: file.path,
   );
 }
 

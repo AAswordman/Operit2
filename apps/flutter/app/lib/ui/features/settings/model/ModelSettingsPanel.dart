@@ -255,14 +255,22 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final models = await widget.clients.preferencesModelConfigManager
+      final availableModels = await widget.clients.preferencesModelConfigManager
           .getAvailableProviderModels(providerId: provider.id);
+      final existingModelIds = provider.models
+          .map((model) => model.id.toLowerCase())
+          .toSet();
+      final selectableModels = availableModels
+          .where(
+            (model) => !existingModelIds.contains(model.modelId.toLowerCase()),
+          )
+          .toList(growable: false);
       if (!mounted) {
         return;
       }
       final selection = await _AvailableModelDialog.show(
         context: context,
-        models: models,
+        models: selectableModels,
       );
       if (selection == null) {
         return;

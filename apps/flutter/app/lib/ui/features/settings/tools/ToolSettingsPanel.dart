@@ -90,7 +90,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
     core_proxy.PermissionLevel level,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final toolName = await _ToolSelectorDialog.show(
+    final toolNames = await _ToolSelectorDialog.show(
       context: context,
       title: level == core_proxy.PermissionLevel.allow
           ? l10n.settingsToolsAddAllowTool
@@ -98,10 +98,16 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
       tools: data.toolNames,
       selectedTools: data.toolsForLevel(level),
     );
-    if (toolName == null) {
+    if (toolNames == null || toolNames.isEmpty) {
       return;
     }
-    await _saveToolPermission(toolName, level);
+    for (final toolName in toolNames) {
+      await widget.clients.permissionsToolPermissionSystem.saveToolPermission(
+        toolName: toolName,
+        level: level,
+      );
+    }
+    _reload();
   }
 
   Future<void> _editMcpStartupTimeout(_ToolSettingsData data) async {
@@ -429,13 +435,13 @@ class _ToolSelectorDialog extends StatefulWidget {
   final List<String> tools;
   final List<String> selectedTools;
 
-  static Future<String?> show({
+  static Future<List<String>?> show({
     required BuildContext context,
     required String title,
     required List<String> tools,
     required List<String> selectedTools,
   }) {
-    return showDialog<String>(
+    return showDialog<List<String>>(
       context: context,
       builder: (context) => _ToolSelectorDialog(
         title: title,
@@ -451,6 +457,7 @@ class _ToolSelectorDialog extends StatefulWidget {
 
 class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
   final TextEditingController _searchController = TextEditingController();
+  final Set<String> _pendingTools = <String>{};
 
   @override
   void dispose() {
@@ -489,20 +496,26 @@ class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
                 itemBuilder: (context, index) {
                   final toolName = tools[index];
                   final isSelected = selected.contains(toolName);
-                  return ListTile(
+                  final pending = _pendingTools.contains(toolName);
+                  return CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     visualDensity: VisualDensity.compact,
-                    leading: Icon(
-                      isSelected
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
-                    ),
+                    value: isSelected || pending,
                     title: Text(toolName),
+                    controlAffinity: ListTileControlAffinity.leading,
                     enabled: !isSelected,
-                    onTap: isSelected
+                    onChanged: isSelected
                         ? null
-                        : () => Navigator.of(context).pop(toolName),
+                        : (value) {
+                            setState(() {
+                              if (value == true) {
+                                _pendingTools.add(toolName);
+                              } else {
+                                _pendingTools.remove(toolName);
+                              }
+                            });
+                          },
                   );
                 },
               ),
@@ -514,6 +527,12 @@ class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: _pendingTools.isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_pendingTools.toList()),
+          child: Text(l10n.ok),
         ),
       ],
     );

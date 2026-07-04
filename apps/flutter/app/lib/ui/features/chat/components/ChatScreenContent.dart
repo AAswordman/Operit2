@@ -27,7 +27,6 @@ class ChatScreenContent extends StatelessWidget {
     required this.inputFocusNode,
     required this.scrollController,
     required this.inputProcessingState,
-    required this.modelLabelListenable,
     required this.viewModel,
     required this.currentChatId,
     required this.currentCharacterCardAvatarUri,
@@ -78,7 +77,6 @@ class ChatScreenContent extends StatelessWidget {
     required this.onAttachPackage,
     required this.onRemoveAttachment,
     required this.onInsertAttachment,
-    required this.onModelChanged,
     required this.toastMessageListenable,
     required this.onDismissToast,
     required this.isMultiSelectMode,
@@ -93,7 +91,6 @@ class ChatScreenContent extends StatelessWidget {
   final FocusNode inputFocusNode;
   final ScrollController scrollController;
   final ChatInputProcessingState inputProcessingState;
-  final ValueListenable<String> modelLabelListenable;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? currentCharacterCardAvatarUri;
@@ -144,7 +141,6 @@ class ChatScreenContent extends StatelessWidget {
   final ValueChanged<String> onAttachPackage;
   final ValueChanged<String> onRemoveAttachment;
   final ValueChanged<AttachmentInfo> onInsertAttachment;
-  final ValueChanged<String> onModelChanged;
   final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
@@ -199,42 +195,34 @@ class ChatScreenContent extends StatelessWidget {
                       : () => _confirmDeleteSelected(context),
                 )
               else
-                ValueListenableBuilder<String>(
-                  valueListenable: modelLabelListenable,
-                  builder: (context, modelLabel, _) {
-                    return AgentChatInputSection(
-                      controller: messageController,
-                      focusNode: inputFocusNode,
-                      isLoading: loading,
-                      inputState: inputProcessingState,
-                      modelLabel: modelLabel,
-                      viewModel: viewModel,
-                      currentChatId: currentChatId,
-                      onSendMessage: onSendMessage,
-                      onQueueMessage: onQueueMessage,
-                      onCancelMessage: onCancelMessage,
-                      pendingQueueMessages: pendingQueueMessages,
-                      isPendingQueueExpanded: isPendingQueueExpanded,
-                      onPendingQueueExpandedChange:
-                          onPendingQueueExpandedChange,
-                      onDeletePendingQueueMessage: onDeletePendingQueueMessage,
-                      onEditPendingQueueMessage: onEditPendingQueueMessage,
-                      onSendPendingQueueMessage: onSendPendingQueueMessage,
-                      attachments: attachments,
-                      onAttachImage: onAttachImage,
-                      onTakePhoto: onTakePhoto,
-                      onAttachMemory: onAttachMemory,
-                      onAttachFile: onAttachFile,
-                      onAttachFiles: onAttachFiles,
-                      onAttachScreenContent: onAttachScreenContent,
-                      onAttachNotifications: onAttachNotifications,
-                      onAttachLocation: onAttachLocation,
-                      onAttachPackage: onAttachPackage,
-                      onRemoveAttachment: onRemoveAttachment,
-                      onInsertAttachment: onInsertAttachment,
-                      onModelChanged: onModelChanged,
-                    );
-                  },
+                AgentChatInputSection(
+                  controller: messageController,
+                  focusNode: inputFocusNode,
+                  isLoading: loading,
+                  inputState: inputProcessingState,
+                  viewModel: viewModel,
+                  currentChatId: currentChatId,
+                  onSendMessage: onSendMessage,
+                  onQueueMessage: onQueueMessage,
+                  onCancelMessage: onCancelMessage,
+                  pendingQueueMessages: pendingQueueMessages,
+                  isPendingQueueExpanded: isPendingQueueExpanded,
+                  onPendingQueueExpandedChange: onPendingQueueExpandedChange,
+                  onDeletePendingQueueMessage: onDeletePendingQueueMessage,
+                  onEditPendingQueueMessage: onEditPendingQueueMessage,
+                  onSendPendingQueueMessage: onSendPendingQueueMessage,
+                  attachments: attachments,
+                  onAttachImage: onAttachImage,
+                  onTakePhoto: onTakePhoto,
+                  onAttachMemory: onAttachMemory,
+                  onAttachFile: onAttachFile,
+                  onAttachFiles: onAttachFiles,
+                  onAttachScreenContent: onAttachScreenContent,
+                  onAttachNotifications: onAttachNotifications,
+                  onAttachLocation: onAttachLocation,
+                  onAttachPackage: onAttachPackage,
+                  onRemoveAttachment: onRemoveAttachment,
+                  onInsertAttachment: onInsertAttachment,
                 ),
             ],
           ],

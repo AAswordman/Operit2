@@ -320,6 +320,14 @@ class ChatViewModel {
     return entries.map(WorkspaceFileEntry.fromProxy).toList(growable: false);
   }
 
+  Future<List<WorkspaceFileEntry>> listWorkspaceBindingDirectories(
+    String path,
+  ) async {
+    final entries = await clients.repositoryWorkspaceService
+        .listWorkspaceBindingDirectories(path: path);
+    return entries.map(WorkspaceFileEntry.fromProxy).toList(growable: false);
+  }
+
   Future<String> readWorkspaceTextFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
     return clients.repositoryWorkspaceService.readWorkspaceTextFile(

@@ -133,17 +133,16 @@ impl TtsConfigManager {
             updatedAt: now,
             ..config
         })?;
-        let mut list = self
-            .ttsConfigListFlow()
-            .first()
-            .map_err(|error| error.to_string())?;
-        list.push(id.clone());
-        list.sort();
-        list.dedup();
         self.dataStore
-            .edit(|preferences| {
+            .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
+                assertTtsConfigVoiceDoesNotExist(preferences, &config, None)?;
+                let mut list = readConfigList(preferences)?;
+                list.push(id.clone());
+                list.sort();
+                list.dedup();
                 writeConfigList(preferences, &list);
                 writeTtsConfig(preferences, &config);
+                Ok(())
             })
             .map_err(|error| error.to_string())?;
         Ok(config)
@@ -242,7 +241,8 @@ impl TtsConfigManager {
             ..config
         })?;
         self.dataStore
-            .edit(|preferences| {
+            .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
+                assertTtsConfigVoiceDoesNotExist(preferences, &config, Some(id.as_str()))?;
                 writeTtsConfig(
                     preferences,
                     &TtsConfig {
@@ -250,6 +250,7 @@ impl TtsConfigManager {
                         ..config.clone()
                     },
                 );
+                Ok(())
             })
             .map_err(|error| error.to_string())?;
         self.getTtsConfig(&id)
@@ -389,6 +390,30 @@ fn readExistingTtsConfig(
     })?;
     let config = serde_json::from_str::<TtsConfig>(raw).map_err(PreferencesDataStoreError::from)?;
     normalizeConfig(config).map_err(PreferencesDataStoreError::Message)
+}
+
+fn assertTtsConfigVoiceDoesNotExist(
+    preferences: &Preferences,
+    config: &TtsConfig,
+    currentId: Option<&str>,
+) -> Result<(), PreferencesDataStoreError> {
+    for id in readConfigList(preferences)? {
+        if currentId.is_some_and(|currentId| currentId == id) {
+            continue;
+        }
+        let existing = readExistingTtsConfig(preferences, &id)?;
+        if existing.providerType == config.providerType
+            && existing.endpoint == config.endpoint
+            && existing.model == config.model
+            && existing.voice == config.voice
+        {
+            return Err(PreferencesDataStoreError::Message(format!(
+                "tts voice already exists: providerType={} endpoint={} model={} voice={}",
+                config.providerType, config.endpoint, config.model, config.voice
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn writeTtsConfig(preferences: &mut Preferences, config: &TtsConfig) {

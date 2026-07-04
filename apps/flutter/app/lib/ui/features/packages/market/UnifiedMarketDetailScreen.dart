@@ -75,6 +75,9 @@ class UnifiedMarketDetailCommentsState {
     required this.isPosting,
     required this.onRequestPost,
     this.postHint,
+    this.canManageComment,
+    this.onRequestEditComment,
+    this.onRequestDeleteComment,
   });
 
   final String title;
@@ -83,11 +86,14 @@ class UnifiedMarketDetailCommentsState {
   final String? errorMessage;
   final VoidCallback onRetry;
   final List<Widget> reactions;
-  final List<core_proxy.GitHubComment> comments;
+  final List<core_proxy.MarketComment> comments;
   final bool canPost;
   final bool isPosting;
   final VoidCallback onRequestPost;
   final String? postHint;
+  final bool Function(core_proxy.MarketComment comment)? canManageComment;
+  final void Function(core_proxy.MarketComment comment)? onRequestEditComment;
+  final void Function(core_proxy.MarketComment comment)? onRequestDeleteComment;
 }
 
 class UnifiedMarketDetailScreen extends StatefulWidget {
@@ -214,7 +220,9 @@ class UnifiedMarketDetailHeaderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final participants = header.participants.take(2).toList(growable: false);
+    final participants = header.participants
+        .where((participant) => participant.name.trim().isNotEmpty)
+        .toList(growable: false);
     final metrics = header.metrics.take(4).toList(growable: false);
     return OperitGlassSurface(
       color: colorScheme.surface,
@@ -263,25 +271,29 @@ class UnifiedMarketDetailHeaderCard extends StatelessWidget {
             ),
             if (participants.isNotEmpty) ...<Widget>[
               const SizedBox(height: 14),
-              Row(
-                children: <Widget>[
-                  for (
-                    var index = 0;
-                    index < participants.length;
-                    index += 1
-                  ) ...[
-                    if (index > 0) const SizedBox(width: 16),
-                    Expanded(
-                      child: _ArtifactDetailPerson(
-                        label: participants[index].roleLabel,
-                        name: participants[index].name,
-                        avatarUrl: participants[index].avatarUrl,
-                        fallbackAvatarText:
-                            participants[index].fallbackAvatarText,
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: <Widget>[
+                    for (
+                      var index = 0;
+                      index < participants.length;
+                      index += 1
+                    ) ...[
+                      if (index > 0) const SizedBox(width: 12),
+                      SizedBox(
+                        width: 184,
+                        child: _ArtifactDetailPerson(
+                          label: participants[index].roleLabel,
+                          name: participants[index].name,
+                          avatarUrl: participants[index].avatarUrl,
+                          fallbackAvatarText:
+                              participants[index].fallbackAvatarText,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ],
             if (metrics.isNotEmpty) ...<Widget>[
@@ -624,9 +636,18 @@ class UnifiedMarketDetailCommentsSection extends StatelessWidget {
               child: Center(child: CircularProgressIndicator()),
             )
           else if (state.errorMessage != null)
-            ArtifactErrorPanel(
-              message: state.errorMessage!,
-              onRetry: state.onRetry,
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: <Widget>[
+                  Expanded(child: Text(state.errorMessage!)),
+                  TextButton.icon(
+                    onPressed: state.onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              ),
             )
           else ...<Widget>[
             Wrap(spacing: 8, runSpacing: 8, children: state.reactions),
@@ -676,7 +697,16 @@ class UnifiedMarketDetailCommentsSection extends StatelessWidget {
               )
             else
               for (final comment in state.comments)
-                ArtifactCommentTile(comment: comment),
+                ArtifactCommentTile(
+                  comment: comment,
+                  canManage: state.canManageComment?.call(comment) ?? false,
+                  onRequestEdit: state.onRequestEditComment == null
+                      ? null
+                      : () => state.onRequestEditComment!(comment),
+                  onRequestDelete: state.onRequestDeleteComment == null
+                      ? null
+                      : () => state.onRequestDeleteComment!(comment),
+                ),
           ],
         ],
       ),
@@ -826,9 +856,18 @@ class ArtifactInfoTable extends StatelessWidget {
 }
 
 class ArtifactCommentTile extends StatelessWidget {
-  const ArtifactCommentTile({super.key, required this.comment});
+  const ArtifactCommentTile({
+    super.key,
+    required this.comment,
+    this.canManage = false,
+    this.onRequestEdit,
+    this.onRequestDelete,
+  });
 
-  final core_proxy.GitHubComment comment;
+  final core_proxy.MarketComment comment;
+  final bool canManage;
+  final VoidCallback? onRequestEdit;
+  final VoidCallback? onRequestDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -852,17 +891,17 @@ class ArtifactCommentTile extends StatelessWidget {
                 children: <Widget>[
                   CircleAvatar(
                     radius: 13,
-                    backgroundImage: comment.user.avatarUrl.trim().isEmpty
+                    backgroundImage: comment.author.avatar.trim().isEmpty
                         ? null
-                        : NetworkImage(comment.user.avatarUrl),
-                    child: comment.user.avatarUrl.trim().isEmpty
-                        ? Text(_firstDisplayCharacter(comment.user.login))
+                        : NetworkImage(comment.author.avatar),
+                    child: comment.author.avatar.trim().isEmpty
+                        ? Text(_firstDisplayCharacter(comment.author.login))
                         : null,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      comment.user.login,
+                      comment.author.login,
                       style: textTheme.labelLarge?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -874,6 +913,32 @@ class ArtifactCommentTile extends StatelessWidget {
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  if (canManage)
+                    SizedBox(
+                      width: 36,
+                      height: 32,
+                      child: PopupMenuButton<String>(
+                        tooltip: '评论操作',
+                        padding: EdgeInsets.zero,
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            onRequestEdit?.call();
+                          } else if (value == 'delete') {
+                            onRequestDelete?.call();
+                          }
+                        },
+                        itemBuilder: (context) => <PopupMenuEntry<String>>[
+                          const PopupMenuItem<String>(
+                            value: 'edit',
+                            child: Text('编辑评论'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'delete',
+                            child: Text('删除评论'),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -881,91 +946,6 @@ class ArtifactCommentTile extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class ArtifactCompatibilityBanner extends StatelessWidget {
-  const ArtifactCompatibilityBanner({
-    super.key,
-    required this.project,
-    required this.node,
-  });
-
-  final core_proxy.ArtifactProjectDetailResponse project;
-  final core_proxy.ArtifactProjectNodeResponse node;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Icon(
-              Icons.warning_amber_outlined,
-              color: colorScheme.onErrorContainer,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    '当前软件版本可能不兼容',
-                    style: textTheme.titleSmall?.copyWith(
-                      color: colorScheme.onErrorContainer,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    unsupportedArtifactVersionMessage(project, node),
-                    style: textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onErrorContainer,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class ArtifactErrorPanel extends StatelessWidget {
-  const ArtifactErrorPanel({
-    super.key,
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: <Widget>[
-          Expanded(child: Text(message)),
-          TextButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('重试'),
-          ),
-        ],
       ),
     );
   }

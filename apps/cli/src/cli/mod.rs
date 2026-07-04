@@ -9,17 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
+use operit_link::CoreLinkError;
 use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
 use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
-use operit_runtime::data::api::MarketStatsApiService::{
-    mcpMetadataFromEntry, normalizeMarketArtifactId, parseArtifactMarketMetadata,
-    parseMcpMarketMetadata, parseSkillMarketMetadata, resolveMarketEntryId,
-    skillRepositoryUrlFromEntry, ArtifactProjectDetailResponse, ArtifactProjectNodeResponse,
-    GitHubIssue, MarketRankIssueEntryResponse,
-};
+use operit_runtime::data::api::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
 use operit_runtime::data::model::ActivePrompt::ActivePrompt;
 use operit_runtime::data::model::ApiKeyInfo::ApiKeyInfo;
 use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
@@ -35,7 +31,7 @@ use operit_runtime::data::model::ModelConfigData::ApiProviderType;
 use operit_runtime::data::model::ModelParameter::ModelParameter;
 use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::model::PromptTag::TagType;
-use operit_runtime::data::model::TtsConfig::{TtsConfig, TtsProviderType};
+use operit_runtime::data::model::TtsConfig::TtsConfig;
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -51,7 +47,6 @@ use operit_runtime::util::stream::Stream::Stream;
 use operit_runtime::util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
-use operit_link::CoreLinkError;
 use sha2::{Digest, Sha256};
 use tar::Archive;
 use zip::ZipArchive;
@@ -70,6 +65,8 @@ use host_ops::{schedule_cli_uninstall, schedule_cli_update};
 use link::{load_link_session, run_link_command};
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web_access::run_web_access_command;
+
+const CLI_DEFAULT_TTS_PROVIDER_TYPE: &str = "OPENAI_COMPATIBLE";
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -203,10 +200,19 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
         Some("list") if args.len() == 1 => {
             let currentConfigId = manager.getCurrentTtsConfigId()?;
             for config in manager.getAllTtsConfigs()? {
-                let currentMark = if config.id == currentConfigId { " current=true" } else { "" };
+                let currentMark = if config.id == currentConfigId {
+                    " current=true"
+                } else {
+                    ""
+                };
                 println!(
                     "id={} name={} providerType={} model={} voice={}{}",
-                    config.id, config.name, config.providerType, config.model, config.voice, currentMark
+                    config.id,
+                    config.name,
+                    config.providerType,
+                    config.model,
+                    config.voice,
+                    currentMark
                 );
             }
             Ok(())
@@ -238,7 +244,7 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
             let config = manager.createTtsConfig(TtsConfig {
                 id: String::new(),
                 name: args[1].clone(),
-                providerType: TtsProviderType::OPENAI_COMPATIBLE.to_string(),
+                providerType: CLI_DEFAULT_TTS_PROVIDER_TYPE.to_string(),
                 endpoint: args[2].clone(),
                 apiKey: args[3].clone(),
                 model: args[4].clone(),
@@ -265,7 +271,9 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
                 "model" => config.model = args[3].clone(),
                 "voice" => config.voice = args[3].clone(),
                 "response-format" => config.responseFormat = args[3].clone(),
-                "speed" => config.speed = args[3].parse::<f64>().map_err(|error| error.to_string())?,
+                "speed" => {
+                    config.speed = args[3].parse::<f64>().map_err(|error| error.to_string())?
+                }
                 "http-method" => config.httpMethod = args[3].clone(),
                 "request-body" => config.requestBody = args[3].clone(),
                 "content-type" => config.contentType = args[3].clone(),
@@ -313,8 +321,9 @@ fn run_tts_synthesize_cli_command(args: &[String]) -> Result<(), String> {
     }
     let characterId = characterId.ok_or_else(|| "--character is required".to_string())?;
     let text = text.ok_or_else(|| "--text is required".to_string())?;
-    let result = TtsSynthesisService::new(operit_store::RuntimeStorePaths::RuntimeStorePaths::default())
-        .synthesizeForCharacter(&characterId, &text)?;
+    let result =
+        TtsSynthesisService::new(operit_store::RuntimeStorePaths::RuntimeStorePaths::default())
+            .synthesizeForCharacter(&characterId, &text)?;
     for path in result.audioPaths {
         println!("audioPath={path}");
     }
@@ -1261,7 +1270,7 @@ fn print_cli_usage() {
     println!("operit2 cli approval <status|list|allow|ask|forbid|tool>");
     println!("operit2 cli tool <list|show|exec>");
     println!(
-        "operit2 cli market <auth|stats|rank|search|show|install|comments|comment|reactions|react>"
+        "operit2 cli market <auth|rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>"
     );
     println!("operit2 cli update [check|target]");
     println!("operit2 cli install [--source <path>]");
@@ -1450,16 +1459,25 @@ fn print_tool_usage() {
 }
 
 fn print_market_usage() {
-    println!("operit2 cli market auth <status|token|logout|whoami>");
-    println!("operit2 cli market stats <skill|mcp|package|script>");
-    println!("operit2 cli market rank <skill|mcp|package|script> [updated|downloads|likes] [page]");
-    println!("operit2 cli market search <skill|mcp|package|script> <query> [page]");
-    println!("operit2 cli market show <skill|mcp|package|script> <id-or-number>");
-    println!("operit2 cli market install <skill|mcp|package|script> <id-or-url> [node-id]");
-    println!("operit2 cli market comments <skill|mcp|package|script> <number> [page]");
-    println!("operit2 cli market comment <skill|mcp|package|script> <number> <body-or-@file>");
-    println!("operit2 cli market reactions <skill|mcp|package|script> <number>");
-    println!("operit2 cli market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>");
+    println!("operit2 cli market auth <token|login>");
+    println!("operit2 cli market rank [updated|likes|downloads] [page]");
+    println!("operit2 cli market list [updated|likes|downloads] [type|-] [category|-] [page]");
+    println!("operit2 cli market search <query> [updated|likes|downloads] [type|-] [category|-]");
+    println!("operit2 cli market show <entryId>");
+    println!("operit2 cli market install <entryId> [versionId]");
+    println!("operit2 cli market comments <entryId> [page]");
+    println!("operit2 cli market comment <entryId> <body-or-@file>");
+    println!("operit2 cli market comment edit <commentId> <body-or-@file>");
+    println!("operit2 cli market comment delete <commentId>");
+    println!("operit2 cli market like <entryId>");
+    println!("operit2 cli market notifications [limit] [offset]");
+    println!("operit2 cli market my");
+    println!("operit2 cli market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>");
+    println!("operit2 cli market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->");
+    println!("operit2 cli market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
+    println!("operit2 cli market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
+    println!("operit2 cli market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->");
+    println!("operit2 cli market download <assetId>");
 }
 
 fn print_update_usage() {

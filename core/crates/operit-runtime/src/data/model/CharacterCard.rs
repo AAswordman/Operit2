@@ -56,6 +56,7 @@ pub struct CharacterCard {
     pub openingStatement: String,
     pub otherContentChat: String,
     pub otherContentVoice: String,
+    pub avatarUri: Option<String>,
     pub attachedTagIds: Vec<String>,
     pub advancedCustomPrompt: String,
     pub marks: String,
@@ -185,6 +186,7 @@ pub struct OperitCharacterCardPayload {
     pub otherContentChat: String,
     #[serde(default)]
     pub otherContentVoice: String,
+    pub avatarUri: Option<String>,
     #[serde(default)]
     pub attachedTagIds: Vec<String>,
     #[serde(default)]

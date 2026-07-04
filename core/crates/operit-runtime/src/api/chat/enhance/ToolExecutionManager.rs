@@ -13,8 +13,10 @@ use crate::core::tools::ToolResultDataClasses::stringResultData;
 use crate::data::preferences::CharacterCardToolAccessResolver::{
     CharacterCardToolAccessResolver, ResolvedCharacterCardToolAccess,
 };
+use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
+const TAG: &str = "ToolExecutionManager";
 const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
 const CLI_PROXY_TOOL_NAME: &str = PROXY_TOOL_NAME;
 const CLI_SEARCH_TOOL_NAME: &str = SEARCH_TOOL_NAME;
@@ -97,6 +99,20 @@ impl ToolExecutionManager {
                 responseLocation: (tool_match.start, tool_match.end),
             });
         }
+        let toolNames = invocations
+            .iter()
+            .map(|invocation| invocation.tool.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.parse.complete responseChars={} toolCount={} tools=[{}]",
+                response.len(),
+                invocations.len(),
+                toolNames
+            ),
+        );
         invocations
     }
 
@@ -216,6 +232,23 @@ impl ToolExecutionManager {
     ) -> (Vec<String>, Vec<ToolResult>) {
         let mut emitted = Vec::new();
         let mut results = Vec::new();
+        let requestedToolNames = invocations
+            .iter()
+            .map(|invocation| invocation.tool.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.execution.batch_start requestedCount={} tools=[{}] callerNameSet={} callerChatIdSet={} callerCardIdSet={} exposure={:?}",
+                invocations.len(),
+                requestedToolNames,
+                callerName.is_some(),
+                callerChatId.is_some(),
+                callerCardId.is_some(),
+                toolExposureMode
+            ),
+        );
         toolHandler.registerDefaultTools();
         let roleCardToolAccess = CharacterCardToolAccessResolver::getInstance().resolve(
             callerCardId.as_deref(),
@@ -249,6 +282,16 @@ impl ToolExecutionManager {
             .collect::<Vec<_>>();
 
         for invocation in injectedInvocations {
+            let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "tool.execution.start tool={} params={} rawChars={}",
+                    displayToolName,
+                    invocation.tool.parameters.len(),
+                    invocation.rawText.len()
+                ),
+            );
             if let Some(deniedResult) =
                 Self::buildToolExposureDeniedResult(&invocation, toolExposureMode.clone())
             {
@@ -257,6 +300,13 @@ impl ToolExecutionManager {
                     &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
                 ));
                 results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=exposure",
+                        displayToolName
+                    ),
+                );
                 continue;
             }
 
@@ -274,6 +324,13 @@ impl ToolExecutionManager {
                     &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
                 ));
                 results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=role_card",
+                        displayToolName
+                    ),
+                );
                 continue;
             }
 
@@ -291,10 +348,16 @@ impl ToolExecutionManager {
                     ));
                     results.push(deniedResult);
                 }
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=permission",
+                        displayToolName
+                    ),
+                );
                 continue;
             }
 
-            let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
             if !toolHandler.getToolExecutorOrActivate(&invocation.tool.name) {
                 let errorMessage = Self::buildToolNotAvailableErrorMessage(&invocation.tool.name);
                 let content = ConversationMarkupManager::createToolNotAvailableError(
@@ -302,7 +365,7 @@ impl ToolExecutionManager {
                     Some(&errorMessage),
                 );
                 let deniedResult = ToolResult {
-                    toolName: displayToolName,
+                    toolName: displayToolName.clone(),
                     success: false,
                     result: stringResultData(""),
                     error: Some(errorMessage),
@@ -310,6 +373,13 @@ impl ToolExecutionManager {
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
                 emitted.push(ensureEndsWithNewline(&content));
                 results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=unavailable",
+                        displayToolName
+                    ),
+                );
                 continue;
             }
             toolHandler.notifyToolExecutionStarted(&invocation.tool);
@@ -317,8 +387,20 @@ impl ToolExecutionManager {
                 toolHandler.executeToolSafelyWithResolvedExecutor(&invocation.tool)
             else {
                 toolHandler.notifyToolExecutionFinished(&invocation.tool);
+                AppLogger::w(
+                    TAG,
+                    &format!("tool.execution.no_executor_result tool={}", displayToolName),
+                );
                 continue;
             };
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "tool.execution.raw_results tool={} rawResultCount={}",
+                    displayToolName,
+                    collected.len()
+                ),
+            );
             for result in &collected {
                 toolHandler.notifyToolExecutionResult(&invocation.tool, result);
                 emitted.push(ensureEndsWithNewline(
@@ -327,13 +409,17 @@ impl ToolExecutionManager {
             }
             if collected.is_empty() {
                 let emptyResult = ToolResult {
-                    toolName: displayToolName,
+                    toolName: displayToolName.clone(),
                     success: false,
                     result: stringResultData(""),
                     error: Some("The tool execution returned no results.".to_string()),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &emptyResult);
                 results.push(emptyResult);
+                AppLogger::w(
+                    TAG,
+                    &format!("tool.execution.empty_result tool={}", displayToolName),
+                );
             } else {
                 let last = collected.last().expect("collected not empty");
                 let combinedResultString = collected
@@ -355,12 +441,22 @@ impl ToolExecutionManager {
                     .trim()
                     .to_string();
                 let finalResult = ToolResult {
-                    toolName: displayToolName,
+                    toolName: displayToolName.clone(),
                     success: last.success,
                     result: stringResultData(combinedResultString),
                     error: last.error.clone(),
                 };
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &finalResult);
+                AppLogger::d(
+                    TAG,
+                    &format!(
+                        "tool.execution.complete tool={} success={} rawResultCount={} combinedChars={}",
+                        displayToolName,
+                        finalResult.success,
+                        collected.len(),
+                        finalResult.result.toString().len()
+                    ),
+                );
                 results.push(finalResult);
             }
             toolHandler.notifyToolExecutionFinished(&invocation.tool);
@@ -369,6 +465,17 @@ impl ToolExecutionManager {
         TOOL_RUNTIME_CONTEXT.with(|value| {
             *value.borrow_mut() = previousRuntimeContext;
         });
+        let emittedChars = emitted.iter().map(|content| content.len()).sum::<usize>();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.execution.batch_complete requestedCount={} emittedMessages={} emittedChars={} resultCount={}",
+                invocations.len(),
+                emitted.len(),
+                emittedChars,
+                results.len()
+            ),
+        );
         (emitted, results)
     }
 

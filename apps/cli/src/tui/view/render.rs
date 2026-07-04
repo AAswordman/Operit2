@@ -439,10 +439,7 @@ impl OperitTui {
                 Style::default().fg(theme::TEXT_SUBTLE),
             )
         } else {
-            Span::styled(
-                &self.model_chooser_search,
-                Style::default(),
-            )
+            Span::styled(&self.model_chooser_search, Style::default())
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -506,10 +503,10 @@ impl OperitTui {
             .highlight_symbol(">> ");
         let mut state = ListState::default();
         if !self.model_chooser_filtered_indices.is_empty() {
-            state.select(Some(
-                self.selected_model_choice_index
-                    .min(self.model_chooser_filtered_indices.len().saturating_sub(1)),
-            ));
+            state
+                .select(Some(self.selected_model_choice_index.min(
+                    self.model_chooser_filtered_indices.len().saturating_sub(1),
+                )));
         }
         frame.render_stateful_widget(list, areas[2], &mut state);
     }
@@ -540,10 +537,7 @@ impl OperitTui {
                 Style::default().fg(theme::TEXT_SUBTLE),
             )
         } else {
-            Span::styled(
-                &self.list_popup_search,
-                Style::default(),
-            )
+            Span::styled(&self.list_popup_search, Style::default())
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![

@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
@@ -149,6 +149,12 @@ impl CharacterCardManager {
                 )))
                 .cloned()
                 .unwrap_or_default(),
+            avatarUri: preferences
+                .get(&stringPreferencesKey(&format!(
+                    "character_card_{id}_avatar_uri"
+                )))
+                .cloned()
+                .filter(|value| !value.trim().is_empty()),
             attachedTagIds: readJsonVec(
                 preferences,
                 &format!("character_card_{id}_attached_tag_ids"),
@@ -227,7 +233,8 @@ impl CharacterCardManager {
             card.id.clone()
         };
         let now = currentTimeMillis();
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertCardNameUnique(preferences, &card.name, Some(&id))?;
             let mut currentList = Self::readCardList(preferences);
             if !currentList.contains(&id) {
                 currentList.push(id.clone());
@@ -239,6 +246,7 @@ impl CharacterCardManager {
             if card.isDefault || preferences.get(&Self::ACTIVE_CHARACTER_CARD_ID()).is_none() {
                 preferences.set(&Self::ACTIVE_CHARACTER_CARD_ID(), id.clone());
             }
+            Ok::<(), PreferencesDataStoreError>(())
         })?;
         Ok(id)
     }
@@ -249,8 +257,10 @@ impl CharacterCardManager {
         card: CharacterCard,
     ) -> Result<(), PreferencesDataStoreError> {
         let now = currentTimeMillis();
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertCardNameUnique(preferences, &card.name, Some(&card.id))?;
             self.writeCard(preferences, &card, &card.id, now);
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
@@ -582,6 +592,10 @@ impl CharacterCardManager {
                 otherContent: card.otherContentChat.clone(),
                 otherContentChat: card.otherContentChat.clone(),
                 otherContentVoice: card.otherContentVoice.clone(),
+                avatarUri: card
+                    .avatarUri
+                    .clone()
+                    .filter(|value| !value.trim().is_empty()),
                 attachedTagIds: card.attachedTagIds.clone(),
                 attachedTags: attachedTags
                     .iter()
@@ -625,7 +639,7 @@ impl CharacterCardManager {
                 description: card.description,
                 personality: String::new(),
                 first_mes: card.openingStatement,
-                avatar: String::new(),
+                avatar: card.avatarUri.unwrap_or_default(),
                 mes_example: card.otherContentChat,
                 scenario: String::new(),
                 creator_notes: card.marks,
@@ -664,6 +678,10 @@ impl CharacterCardManager {
                 payload.otherContentChat.clone()
             },
             otherContentVoice: payload.otherContentVoice.clone(),
+            avatarUri: payload
+                .avatarUri
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
             attachedTagIds,
             advancedCustomPrompt: payload.advancedCustomPrompt.clone(),
             marks: payload.marks.clone(),
@@ -813,6 +831,7 @@ impl CharacterCardManager {
             openingStatement: data.first_mes.clone(),
             otherContentChat,
             otherContentVoice: String::new(),
+            avatarUri: Some(data.avatar.clone()).filter(|value| !value.trim().is_empty()),
             attachedTagIds: Vec::new(),
             advancedCustomPrompt,
             marks: marks.trim().to_string(),
@@ -951,6 +970,21 @@ impl CharacterCardManager {
             &stringPreferencesKey(&format!("character_card_{id}_other_content_voice")),
             card.otherContentVoice.clone(),
         );
+        if let Some(value) = card
+            .avatarUri
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            preferences.set(
+                &stringPreferencesKey(&format!("character_card_{id}_avatar_uri")),
+                value,
+            );
+        } else {
+            preferences.remove(&stringPreferencesKey(&format!(
+                "character_card_{id}_avatar_uri"
+            )));
+        }
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_attached_tag_ids")),
             serde_json::to_string(&card.attachedTagIds).expect("attached tag ids must serialize"),
@@ -1059,6 +1093,9 @@ impl CharacterCardManager {
             &stringPreferencesKey(&format!("character_card_{id}_other_content_voice")),
             CharacterCardBilingualData::getDefaultOtherContentVoice(false),
         );
+        preferences.remove(&stringPreferencesKey(&format!(
+            "character_card_{id}_avatar_uri"
+        )));
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_attached_tag_ids")),
             serde_json::to_string(&Vec::<String>::new()).expect("attached tag ids must serialize"),
@@ -1119,6 +1156,7 @@ impl CharacterCardManager {
             "opening_statement",
             "other_content_chat",
             "other_content_voice",
+            "avatar_uri",
             "attached_tag_ids",
             "advanced_custom_prompt",
             "marks",
@@ -1147,7 +1185,8 @@ impl CharacterCardManager {
         if id.trim().is_empty() {
             return Ok(());
         }
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertCardNameUnique(preferences, &card.name, Some(&id))?;
             let mut currentList = Self::readCardList(preferences);
             if !currentList.contains(&id) {
                 currentList.push(id.clone());
@@ -1162,11 +1201,38 @@ impl CharacterCardManager {
                     Self::DEFAULT_CHARACTER_CARD_ID.to_string(),
                 );
             }
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
     #[allow(non_snake_case)]
     #[allow(non_snake_case)]
+
+    fn assertCardNameUnique(
+        preferences: &Preferences,
+        name: &str,
+        currentCardId: Option<&str>,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedName = name.trim();
+        let cardIds = Self::readCardList(preferences);
+        for cardId in cardIds {
+            if currentCardId == Some(cardId.as_str()) {
+                continue;
+            }
+            let existingName = preferences
+                .get(&stringPreferencesKey(&format!(
+                    "character_card_{cardId}_name"
+                )))
+                .cloned()
+                .unwrap_or_default();
+            if existingName.trim() == normalizedName {
+                return Err(PreferencesDataStoreError::Message(format!(
+                    "character card name already exists: {normalizedName}"
+                )));
+            }
+        }
+        Ok(())
+    }
     fn readCardList(preferences: &Preferences) -> Vec<String> {
         preferences
             .get(&Self::CHARACTER_CARD_LIST())

@@ -108,7 +108,8 @@ impl RuntimeStorePaths {
     }
 
     pub fn model_connection_test_cache_dir(&self) -> PathBuf {
-        self.root_dir.join(RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH)
+        self.root_dir
+            .join(RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH)
     }
 
     pub fn toolpkg_cache_dir(&self) -> PathBuf {

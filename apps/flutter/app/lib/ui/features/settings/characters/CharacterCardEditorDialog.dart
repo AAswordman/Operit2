@@ -117,6 +117,7 @@ class _CharacterCardEditorDialogState
   late final TextEditingController _otherContentVoiceController;
   late final TextEditingController _advancedPromptController;
   late final TextEditingController _marksController;
+  String? _avatarUri;
   late String _chatModelBindingMode;
   String? _chatModelId;
   late bool _ttsBindingEnabled;
@@ -157,6 +158,7 @@ class _CharacterCardEditorDialogState
       text: card.advancedCustomPrompt,
     );
     _marksController = TextEditingController(text: card.marks);
+    _avatarUri = card.avatarUri;
     _chatModelBindingMode = _normalizeChatModelBindingMode(
       card.chatModelBindingMode,
     );
@@ -238,6 +240,7 @@ class _CharacterCardEditorDialogState
           openingStatement: _openingStatementController.text,
           otherContentChat: _otherContentChatController.text,
           otherContentVoice: _otherContentVoiceController.text,
+          avatarUri: _normalizedAvatarUri(_avatarUri),
           attachedTagIds: List<String>.from(_attachedTagIds),
           advancedCustomPrompt: _advancedPromptController.text,
           marks: _marksController.text,
@@ -519,6 +522,20 @@ class _CharacterCardEditorDialogState
     });
   }
 
+  Future<void> _pickAvatarImage() async {
+    const imageGroup = XTypeGroup(
+      label: 'image',
+      extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
+    );
+    final file = await openFile(acceptedTypeGroups: <XTypeGroup>[imageGroup]);
+    if (file == null) {
+      return;
+    }
+    setState(() {
+      _avatarUri = file.path;
+    });
+  }
+
   Future<void> _exportCard() async {
     final action = await _CharacterCardExportDialog.show(context: context);
     if (!mounted || action == null) {
@@ -594,6 +611,15 @@ class _CharacterCardEditorDialogState
                         _DialogTextField(
                           controller: _descriptionController,
                           label: l10n.settingsCharactersDescription,
+                        ),
+                        _CharacterAvatarEditorField(
+                          avatarUri: _avatarUri,
+                          onChoose: _pickAvatarImage,
+                          onClear: () {
+                            setState(() {
+                              _avatarUri = null;
+                            });
+                          },
                         ),
                         _DialogExpandableTextField(
                           controller: _characterSettingController,
@@ -824,6 +850,70 @@ class _CharacterCardEditorTabBody extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: children,
+      ),
+    );
+  }
+}
+
+String? _normalizedAvatarUri(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+class _CharacterAvatarEditorField extends StatelessWidget {
+  const _CharacterAvatarEditorField({
+    required this.avatarUri,
+    required this.onChoose,
+    required this.onClear,
+  });
+
+  final String? avatarUri;
+  final VoidCallback onChoose;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final path = _normalizedAvatarUri(avatarUri);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InputDecorator(
+        decoration: const InputDecoration(labelText: '角色头像'),
+        child: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 44,
+              height: 44,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  shape: BoxShape.circle,
+                ),
+                child: ClipOval(
+                  child: path == null
+                      ? Icon(
+                          Icons.person_outline,
+                          color: colorScheme.onSurfaceVariant,
+                        )
+                      : Image.file(File(path), fit: BoxFit.cover),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                path ?? '未设置',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(onPressed: onChoose, child: const Text('选择')),
+            if (path != null)
+              TextButton(onPressed: onClear, child: const Text('清除')),
+          ],
+        ),
       ),
     );
   }
@@ -1741,4 +1831,3 @@ class _CharacterTagManagerRow extends StatelessWidget {
     );
   }
 }
-

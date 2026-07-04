@@ -207,12 +207,21 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     try {
       final voices = await widget.clients.preferencesTtsConfigManager
           .getAvailableTtsVoices(providerConfigId: providerConfig.id);
+      final existingVoiceKeys = group.configs
+          .map((config) => _ttsVoiceKey(config.model, config.voice))
+          .toSet();
+      final selectableVoices = voices
+          .where(
+            (voice) =>
+                !existingVoiceKeys.contains(_ttsVoiceKey(voice.model, voice.voice)),
+          )
+          .toList(growable: false);
       if (!mounted) {
         return;
       }
       final selection = await _AvailableTtsVoiceDialog.show(
         context: context,
-        voices: voices,
+        voices: selectableVoices,
       );
       if (selection == null) {
         return;
@@ -235,6 +244,10 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     } catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('$error')));
     }
+  }
+
+  String _ttsVoiceKey(String model, String voice) {
+    return '${model.trim()}\u0000${voice.trim()}';
   }
 
   Future<void> _createCustomTtsVoice(core_proxy.TtsConfig providerConfig) async {

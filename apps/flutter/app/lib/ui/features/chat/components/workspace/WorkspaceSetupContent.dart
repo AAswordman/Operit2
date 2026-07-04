@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
-import 'package:file_selector/file_selector.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
@@ -10,11 +9,11 @@ class WorkspaceSetupContent extends StatefulWidget {
   const WorkspaceSetupContent({
     super.key,
     required this.onCreateDefaultWorkspace,
-    required this.onBindWorkspace,
+    required this.onChooseExistingWorkspace,
   });
 
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
-  final Future<void> Function(String workspace) onBindWorkspace;
+  final VoidCallback onChooseExistingWorkspace;
 
   @override
   State<WorkspaceSetupContent> createState() => _WorkspaceSetupContentState();
@@ -71,7 +70,7 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
                     icon: Icons.folder_open,
                     title: l10n.workspaceBindExistingTitle,
                     description: l10n.workspaceBindExistingDescription,
-                    onTap: _pickAndBindWorkspace,
+                    onTap: _openExistingWorkspacePicker,
                   ),
                 ],
               ),
@@ -192,20 +191,14 @@ class _WorkspaceSetupContentState extends State<WorkspaceSetupContent> {
     );
   }
 
-  Future<void> _pickAndBindWorkspace() async {
+  void _openExistingWorkspacePicker() {
     if (_busy) {
       return;
     }
     setState(() {
       _errorMessage = null;
     });
-    final selectedPath = await getDirectoryPath(canCreateDirectories: false);
-    if (selectedPath == null) {
-      return;
-    }
-    await _runWorkspaceAction(() {
-      return widget.onBindWorkspace(selectedPath);
-    });
+    widget.onChooseExistingWorkspace();
   }
 }
 

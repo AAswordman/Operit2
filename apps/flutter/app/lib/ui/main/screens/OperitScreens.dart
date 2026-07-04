@@ -83,24 +83,37 @@ class PackageManagerScreenRoute extends OperitScreen {
 }
 
 class MarketScreenRoute extends OperitScreen {
-  const MarketScreenRoute({this.initialTab = MarketHomeTab.artifact})
-    : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
+  const MarketScreenRoute({
+    this.initialTab = MarketHomeTab.all,
+    this.categoryId,
+    this.categoryName,
+  }) : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
 
   final MarketHomeTab initialTab;
+  final String? categoryId;
+  final String? categoryName;
 
   @override
   Map<String, Object?> routeArgs() {
-    return <String, Object?>{'initialTab': initialTab.name};
+    return <String, Object?>{
+      'initialTab': initialTab.name,
+      if (categoryId != null) 'categoryId': categoryId,
+      if (categoryName != null) 'categoryName': categoryName,
+    };
   }
 
   @override
   String? stableScreenKey() {
-    return 'Market:${initialTab.name}';
+    return 'Market:${initialTab.name}:${categoryId ?? 'root'}';
   }
 
   @override
   Widget build(BuildContext context) {
-    return UnifiedMarketScreen(initialTab: initialTab);
+    return UnifiedMarketScreen(
+      initialTab: initialTab,
+      categoryId: categoryId,
+      categoryName: categoryName,
+    );
   }
 }
 

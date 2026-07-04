@@ -24,6 +24,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.hasBoundWorkspace,
     required this.workspacePath,
     required this.onListWorkspaceFiles,
+    required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
     required this.onWriteWorkspaceFileBytes,
@@ -37,6 +38,8 @@ class WorkspacePanel extends StatefulWidget {
   final String? workspacePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final Future<List<WorkspaceFileEntry>> Function(String path)
+  onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
   final Future<void> Function(String path, Uint8List bytes)
@@ -136,6 +139,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       layer: OperitGlassSurfaceLayer.panel,
       transparentAlpha: 0.035,
       borderRadius: BorderRadius.zero,
+      material: true,
       clip: false,
       child: SizedBox.expand(
         child: DecoratedBox(
@@ -312,6 +316,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       terminalSessionCountListenable: _terminalSessionCount,
       browserSessionRegistry: _browserSessionRegistry,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
+      onListWorkspaceBindingDirectories:
+          widget.onListWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
       onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
@@ -327,6 +333,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onCloseCurrentTab: () => _closeWorkspaceTab(tab),
       onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
       onBindWorkspace: widget.onBindWorkspace,
+      onChooseExistingWorkspace: _openWorkspaceBindingPickerTab,
     );
   }
 
@@ -634,16 +641,35 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
-  void _replaceSetupTabWithFilesTab() {
-    final setupIndex = _tabs.indexWhere(
-      (tab) => tab.kind == WorkspaceTabKind.setup,
+  void _openWorkspaceBindingPickerTab() {
+    _openSingletonTab(
+      const WorkspaceTab(
+        kind: WorkspaceTabKind.workspacePicker,
+        title: '',
+        icon: Icons.folder_open_outlined,
+      ),
     );
-    if (setupIndex < 0) {
+  }
+
+  void _replaceSetupTabWithFilesTab() {
+    final targetIndex = _tabs.indexWhere(
+      (tab) =>
+          tab.kind == WorkspaceTabKind.setup ||
+          tab.kind == WorkspaceTabKind.workspacePicker,
+    );
+    if (targetIndex < 0) {
       return;
     }
     final selectedTab = _tabs[_selectedIndex];
+    final selectedWasTarget =
+        selectedTab.kind == WorkspaceTabKind.setup ||
+        selectedTab.kind == WorkspaceTabKind.workspacePicker;
     setState(() {
-      _tabs.removeWhere((tab) => tab.kind == WorkspaceTabKind.setup);
+      _tabs.removeWhere(
+        (tab) =>
+            tab.kind == WorkspaceTabKind.setup ||
+            tab.kind == WorkspaceTabKind.workspacePicker,
+      );
       var filesIndex = _tabs.indexWhere(
         (tab) => tab.kind == WorkspaceTabKind.files,
       );
@@ -657,7 +683,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         );
         filesIndex = _tabs.length - 1;
       }
-      if (selectedTab.kind == WorkspaceTabKind.setup) {
+      if (selectedWasTarget) {
         _selectedIndex = filesIndex;
         return;
       }

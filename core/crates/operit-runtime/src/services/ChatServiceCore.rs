@@ -1,7 +1,7 @@
+use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
 use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
 use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::files::PathMapper::PathMapper;
 use crate::core::tools::AIToolHandler::AIToolHandler;
@@ -32,9 +32,7 @@ use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use crate::util::OperitPaths;
-use operit_store::PreferencesDataStore::{
-    combine3, combine5, stringPreferencesKey, PreferencesDataStore, StateFlow,
-};
+use operit_store::PreferencesDataStore::{StateFlow, combine3, combine5};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,8 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
-const OCR_INLINE_INSTRUCTION: &str =
-    "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
+const OCR_INLINE_INSTRUCTION: &str = "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
 
 pub trait ChatServiceUiBridge {}
 
@@ -65,7 +62,6 @@ fn buildChatMainState(
     displayWindowState: ChatDisplayWindowState,
     activePrompt: ActivePrompt,
     characterCardManager: &CharacterCardManager,
-    userPreferencesDataStore: &PreferencesDataStore,
     functionalConfigManager: &FunctionalConfigManager,
     modelConfigManager: &ModelConfigManager,
 ) -> ChatMainState {
@@ -98,9 +94,9 @@ fn buildChatMainState(
         currentChatId: inputs.currentChatId,
         currentChatTitle,
         currentModelName: currentChatModelName(functionalConfigManager, modelConfigManager),
-        currentCharacterCardAvatarUri: currentCharacterCardName.as_deref().and_then(|name| {
-            characterCardAvatarUriByName(characterCardManager, userPreferencesDataStore, name)
-        }),
+        currentCharacterCardAvatarUri: currentCharacterCardName
+            .as_deref()
+            .and_then(|name| characterCardAvatarUriByName(characterCardManager, name)),
         currentCharacterCardName,
         currentWorkspacePath,
         activeCharacterCardName: activeCharacterCardName(characterCardManager, activePrompt),
@@ -143,7 +139,6 @@ fn activeCharacterCardName(
 
 fn characterCardAvatarUriByName(
     characterCardManager: &CharacterCardManager,
-    userPreferencesDataStore: &PreferencesDataStore,
     name: &str,
 ) -> Option<String> {
     let normalizedName = name.trim();
@@ -153,14 +148,10 @@ fn characterCardAvatarUriByName(
     let card = characterCardManager
         .findCharacterCardByName(normalizedName)
         .expect("CharacterCardManager.findCharacterCardByName must succeed")?;
-    userPreferencesDataStore
-        .data()
-        .expect("user preferences data must be readable")
-        .get(&stringPreferencesKey(&format!(
-            "character_card_theme_{}_custom_ai_avatar_uri",
-            card.id
-        )))
-        .cloned()
+    card.avatarUri.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
 }
 
 pub struct ChatServiceCore {
@@ -583,12 +574,11 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) {
-        let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace).expect(
-            "ChatServiceCore.bindChatToWorkspace requires a workspace path that maps to VFS",
-        );
+    pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) -> Result<(), String> {
+        let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace)?;
         self.chatHistoryDelegate
             .bindChatToWorkspace(chatId, workspace);
+        Ok(())
     }
 
     #[allow(non_snake_case)]
@@ -1200,10 +1190,6 @@ impl ChatServiceCore {
             .functionalConfigManager
             .clone();
         let modelConfigManager = self.messageProcessingDelegate.modelConfigManager.clone();
-        let userPreferencesDataStore = PreferencesDataStore::new(
-            OperitPaths::userPreferencesPath().expect("user preferences path must be available"),
-        );
-
         combine3(
             &inputsFlow,
             &displayWindowStateFlow,
@@ -1214,7 +1200,6 @@ impl ChatServiceCore {
                     displayWindowState,
                     activePrompt,
                     &characterCardManager,
-                    &userPreferencesDataStore,
                     &functionalConfigManager,
                     &modelConfigManager,
                 )

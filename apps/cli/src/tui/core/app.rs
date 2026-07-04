@@ -34,12 +34,12 @@ use operit_runtime::util::GithubReleaseUtil::{
 };
 
 use super::approval::TuiApprovalBridge;
+use super::config;
+use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
 use super::i18n::{TuiLanguage, TuiText};
 use super::link_proxy_rs::TuiCore;
 use super::pending_queue::PendingQueueMessage;
-use super::config;
-use super::config::ConfigUi;
 use super::selection::{
     mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
     TranscriptSelectionState,
@@ -822,7 +822,8 @@ impl OperitTui {
                 self.status_message.clear();
                 self.status_message_expires_at = None;
                 self.transient_status_message = None;
-                if self.selected_model_choice_index + 1 < self.model_chooser_filtered_indices.len() {
+                if self.selected_model_choice_index + 1 < self.model_chooser_filtered_indices.len()
+                {
                     self.selected_model_choice_index += 1;
                 }
             }
@@ -1668,7 +1669,10 @@ impl OperitTui {
                     choice.model_id.to_ascii_lowercase().contains(&search)
                         || choice.provider_name.to_ascii_lowercase().contains(&search)
                         || choice.provider_id.to_ascii_lowercase().contains(&search)
-                        || choice.provider_type_id.to_ascii_lowercase().contains(&search)
+                        || choice
+                            .provider_type_id
+                            .to_ascii_lowercase()
+                            .contains(&search)
                 })
                 .map(|(index, _)| index)
                 .collect();
@@ -2532,7 +2536,9 @@ impl OperitTui {
         self.config_ui.update_filter();
 
         // Fetch current chat binding
-        if let Ok(binding) = self.core.preferences_functional_config_manager()
+        if let Ok(binding) = self
+            .core
+            .preferences_functional_config_manager()
             .getModelBindingForFunction(FunctionType::CHAT)
             .await
         {

@@ -1308,6 +1308,7 @@ dependencies = [
 name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
+ "operit-host-api",
  "operit-runtime",
  "operit-store",
  "reqwest",
@@ -1358,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.2"
+version = "2.0.0-preview.3"
 dependencies = [
  "aes",
  "async-trait",

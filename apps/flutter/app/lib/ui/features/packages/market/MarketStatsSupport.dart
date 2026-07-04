@@ -1,3 +1,3 @@
 // ignore_for_file: file_names
 
-enum MarketSortOption { downloads, updated }
+enum MarketSortOption { updated, likes, downloads }

@@ -61,7 +61,6 @@ class ThemePreferenceSnapshot {
     required this.bubbleAiContentPaddingLeft,
     required this.bubbleAiContentPaddingRight,
     required this.customUserAvatarUri,
-    required this.customAiAvatarUri,
     required this.avatarShape,
     required this.avatarCornerRadius,
     required this.useCustomFont,
@@ -143,7 +142,6 @@ class ThemePreferenceSnapshot {
   final double bubbleAiContentPaddingLeft;
   final double bubbleAiContentPaddingRight;
   final String? customUserAvatarUri;
-  final String? customAiAvatarUri;
   final String avatarShape;
   final double avatarCornerRadius;
   final bool useCustomFont;
@@ -276,7 +274,6 @@ class UserPreferencesManager {
         bubbleAiContentPaddingLeft: 12,
         bubbleAiContentPaddingRight: 12,
         customUserAvatarUri: null,
-        customAiAvatarUri: null,
         avatarShape: AVATAR_SHAPE_CIRCLE,
         avatarCornerRadius: 8,
         useCustomFont: false,
@@ -411,7 +408,6 @@ class UserPreferencesManager {
       'show_message_timing_stats';
   static const String _KEY_SHOW_MESSAGE_TIMESTAMP = 'show_message_timestamp';
   static const String _KEY_CUSTOM_USER_AVATAR_URI = 'custom_user_avatar_uri';
-  static const String _KEY_CUSTOM_AI_AVATAR_URI = 'custom_ai_avatar_uri';
   static const String _KEY_AVATAR_SHAPE = 'avatar_shape';
   static const String _KEY_AVATAR_CORNER_RADIUS = 'avatar_corner_radius';
   static const String _KEY_SHOW_INPUT_PROCESSING_STATUS =
@@ -436,11 +432,6 @@ class UserPreferencesManager {
     _BUBBLE_AI_IMAGE_URI,
     _BUBBLE_USER_IMAGE_RENDER_MODE,
     _BUBBLE_AI_IMAGE_RENDER_MODE,
-  ];
-
-  static const List<String> _avatarThemeKeys = <String>[
-    _KEY_CUSTOM_USER_AVATAR_URI,
-    _KEY_CUSTOM_AI_AVATAR_URI,
   ];
 
   static const List<String> _booleanThemeKeys = <String>[
@@ -520,7 +511,7 @@ class UserPreferencesManager {
 
   static const List<String> _targetThemeKeys = <String>[
     ..._themeKeys,
-    ..._avatarThemeKeys,
+    _KEY_CUSTOM_USER_AVATAR_URI,
   ];
 
   Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot({
@@ -531,7 +522,7 @@ class UserPreferencesManager {
       characterCardId: characterCardId,
       characterGroupId: characterGroupId,
     );
-    final keys = _prefixedTargetThemeKeys(prefix);
+    final keys = [..._prefixedTargetThemeKeys(prefix), _KEY_CUSTOM_USER_AVATAR_URI];
     final preferences = await _getStrings(keys);
     final toolCollapseMode = await _clients.preferencesPreferenceStorageManager
         .getPreference(
@@ -541,10 +532,6 @@ class UserPreferencesManager {
 
     String? stringValue(String key, {String? defaultValue}) {
       return preferences[_keyWithPrefix(key, prefix)] ?? defaultValue;
-    }
-
-    String? targetStringValue(String key) {
-      return preferences[_keyWithPrefix(key, prefix)];
     }
 
     bool booleanValue(String key, bool defaultValue) {
@@ -660,8 +647,7 @@ class UserPreferencesManager {
         _BUBBLE_AI_CONTENT_PADDING_RIGHT,
         12,
       ),
-      customUserAvatarUri: targetStringValue(_KEY_CUSTOM_USER_AVATAR_URI),
-      customAiAvatarUri: targetStringValue(_KEY_CUSTOM_AI_AVATAR_URI),
+      customUserAvatarUri: preferences[_KEY_CUSTOM_USER_AVATAR_URI],
       avatarShape: stringValue(_KEY_AVATAR_SHAPE) ?? AVATAR_SHAPE_CIRCLE,
       avatarCornerRadius: doubleValue(_KEY_AVATAR_CORNER_RADIUS, 8),
       useCustomFont: booleanValue(_USE_CUSTOM_FONT, false),
@@ -928,18 +914,6 @@ class UserPreferencesManager {
     return _hasThemePrefix(_characterCardThemePrefix(characterCardId));
   }
 
-  Future<void> saveThemeAvatarSettingsForCharacterCard(
-    String characterCardId, {
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
-  }) {
-    return _saveThemeAvatarSettingsWithPrefix(
-      _characterCardThemePrefix(characterCardId),
-      customUserAvatarUri: customUserAvatarUri,
-      customAiAvatarUri: customAiAvatarUri,
-    );
-  }
-
   Future<void> cloneThemeBetweenCharacterGroups(
     String sourceCharacterGroupId,
     String targetCharacterGroupId,
@@ -956,18 +930,6 @@ class UserPreferencesManager {
 
   Future<bool> hasCharacterGroupTheme(String characterGroupId) {
     return _hasThemePrefix(_characterGroupThemePrefix(characterGroupId));
-  }
-
-  Future<void> saveThemeAvatarSettingsForCharacterGroup(
-    String characterGroupId, {
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
-  }) {
-    return _saveThemeAvatarSettingsWithPrefix(
-      _characterGroupThemePrefix(characterGroupId),
-      customUserAvatarUri: customUserAvatarUri,
-      customAiAvatarUri: customAiAvatarUri,
-    );
   }
 
   Future<void> _cloneThemeBetweenPrefixes(
@@ -1008,24 +970,12 @@ class UserPreferencesManager {
       prefix,
     );
   }
-
-  Future<void> _saveThemeAvatarSettingsWithPrefix(
-    String prefix, {
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
+  Future<void> saveGlobalUserAvatarSettings({
+    required String customUserAvatarUri,
   }) async {
     final values = <String, String>{};
-    void setIfPresent(String key, String? value) {
-      if (value != null) {
-        values['$prefix$key'] = value;
-      }
-    }
-
-    setIfPresent(_KEY_CUSTOM_USER_AVATAR_URI, customUserAvatarUri);
-    setIfPresent(_KEY_CUSTOM_AI_AVATAR_URI, customAiAvatarUri);
-    if (values.isNotEmpty) {
-      await _setStrings(values);
-    }
+    values[_KEY_CUSTOM_USER_AVATAR_URI] = customUserAvatarUri;
+    await _setStrings(values);
   }
 
   Future<Map<String, String>> _getStrings(List<String> keys) {

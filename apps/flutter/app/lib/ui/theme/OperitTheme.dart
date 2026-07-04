@@ -11,6 +11,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/errors/UnhandledErrorReporter.dart';
+import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
@@ -377,27 +378,12 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
-  Future<void> saveActiveThemeAvatarSettings({
-    String? customUserAvatarUri,
-    String? customAiAvatarUri,
+  Future<void> saveActiveThemeUserAvatarSettings({
+    required String customUserAvatarUri,
   }) async {
-    final groupId = _activeCharacterGroupId;
-    final cardId = _activeCharacterCardId;
-    if (groupId != null) {
-      await _preferencesManager.saveThemeAvatarSettingsForCharacterGroup(
-        groupId,
-        customUserAvatarUri: customUserAvatarUri,
-        customAiAvatarUri: customAiAvatarUri,
-      );
-    } else if (cardId != null) {
-      await _preferencesManager.saveThemeAvatarSettingsForCharacterCard(
-        cardId,
-        customUserAvatarUri: customUserAvatarUri,
-        customAiAvatarUri: customAiAvatarUri,
-      );
-    } else {
-      throw StateError('No active theme target for avatar settings');
-    }
+    await _preferencesManager.saveGlobalUserAvatarSettings(
+      customUserAvatarUri: customUserAvatarUri,
+    );
     await _reloadThemePreferenceSnapshot();
   }
 
@@ -426,7 +412,7 @@ class OperitThemeController {
     );
   }
 
-  Future<void> _handleActivePromptChange(Object? activePrompt) async {
+  Future<void> _handleActivePromptChange(core_proxy.ActivePrompt? activePrompt) async {
     if (_applyActivePrompt(activePrompt)) {
       await _loadActiveThemeTargetName();
       await _reloadThemePreferenceSnapshot();
@@ -499,23 +485,14 @@ class OperitThemeController {
     }
   }
 
-  bool _applyActivePrompt(Object? activePrompt) {
+  bool _applyActivePrompt(core_proxy.ActivePrompt? activePrompt) {
     String? nextCardId;
     String? nextGroupId;
-    if (activePrompt is Map) {
-      final characterGroup = activePrompt['CharacterGroup'];
-      if (characterGroup is Map) {
-        final id = characterGroup['id'];
-        if (id is String && id.trim().isNotEmpty) {
-          nextGroupId = id.trim();
-        }
-      }
-      final characterCard = activePrompt['CharacterCard'];
-      if (characterCard is Map) {
-        final id = characterCard['id'];
-        if (id is String && id.trim().isNotEmpty) {
-          nextCardId = id.trim();
-        }
+    if (activePrompt != null) {
+      if (activePrompt.tag == 'CharacterCard' && activePrompt.id.trim().isNotEmpty) {
+        nextCardId = activePrompt.id.trim();
+      } else if (activePrompt.tag == 'CharacterGroup' && activePrompt.id.trim().isNotEmpty) {
+        nextGroupId = activePrompt.id.trim();
       }
     }
     if (_activeCharacterCardId == nextCardId &&
@@ -601,7 +578,6 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
     bubbleAiContentPaddingLeft: snapshot.bubbleAiContentPaddingLeft,
     bubbleAiContentPaddingRight: snapshot.bubbleAiContentPaddingRight,
     customUserAvatarUri: snapshot.customUserAvatarUri,
-    customAiAvatarUri: snapshot.customAiAvatarUri,
     avatarShape: snapshot.avatarShape,
     avatarCornerRadius: snapshot.avatarCornerRadius,
     useCustomFont: snapshot.useCustomFont,
@@ -740,7 +716,7 @@ InputDecorationTheme _inputDecorationTheme(
     filled: true,
     fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
     isDense: true,
-    contentPadding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
     border: baseBorder,
     enabledBorder: baseBorder,
     disabledBorder: disabledBorder,

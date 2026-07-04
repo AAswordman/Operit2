@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
 use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -27,8 +27,8 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::util::stream::Stream::Stream;
 use crate::util::ChainLogger::{self, SEND_CHAIN};
+use crate::util::stream::Stream::Stream;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {
@@ -1425,6 +1425,13 @@ impl MessageCoordinationDelegate {
         if currentMessages.is_empty() {
             self.isSummarizing = false;
             self.summarizingChatId = None;
+            if let Some(currentChatId) = currentChatId {
+                self.messageProcessingDelegate
+                    .setSuppressIdleCompletedStateForChat(currentChatId.clone(), false);
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
+            }
+            self.messageProcessingDelegate.refreshGlobalLoadingState();
             return false;
         }
         let insertPosition = self
@@ -1467,6 +1474,17 @@ impl MessageCoordinationDelegate {
         self.isSummarizing = false;
         if self.summarizingChatId == currentChatId {
             self.summarizingChatId = None;
+        }
+        if let Some(currentChatIdForState) = currentChatId.clone() {
+            if !summarySuccess || !autoContinue {
+                self.messageProcessingDelegate
+                    .setSuppressIdleCompletedStateForChat(currentChatIdForState.clone(), false);
+                self.messageProcessingDelegate
+                    .setInputProcessingStateForChat(
+                        currentChatIdForState,
+                        InputProcessingState::Idle,
+                    );
+            }
         }
         self.messageProcessingDelegate.refreshGlobalLoadingState();
         if summarySuccess && autoContinue {

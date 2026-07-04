@@ -6,8 +6,8 @@ use ratatui::Frame;
 
 use operit_runtime::data::model::FunctionType::FunctionType;
 use operit_runtime::data::model::ModelConfigData::{
-    ModelBuiltinTool, ModelCapabilities, ModelContextSpec, ModelRequestSpec,
-    ModelSummarySettings, ResolvedModelConfig,
+    ModelBuiltinTool, ModelCapabilities, ModelContextSpec, ModelRequestSpec, ModelSummarySettings,
+    ResolvedModelConfig,
 };
 
 use super::super::i18n::TuiText;
@@ -181,10 +181,7 @@ impl EditorState {
             },
             summary: ModelSummarySettings {
                 enableSummary: self.enable_summary,
-                summaryTokenThreshold: self
-                    .summary_token_threshold
-                    .parse()
-                    .unwrap_or(4096.0),
+                summaryTokenThreshold: self.summary_token_threshold.parse().unwrap_or(4096.0),
                 enableSummaryByMessageCount: self.enable_summary_by_message_count,
                 summaryMessageCountThreshold: self
                     .summary_message_count_threshold
@@ -204,10 +201,7 @@ impl EditorState {
 
     fn render_main(&self, area: Rect, frame: &mut Frame, text: TuiText) {
         let items = self.build_main_items(text);
-        frame.render_widget(
-            List::new(items),
-            area,
-        );
+        frame.render_widget(List::new(items), area);
     }
 
     fn build_main_items(&self, text: TuiText) -> Vec<ListItem<'static>> {
@@ -227,10 +221,34 @@ impl EditorState {
             Style::default().fg(theme::ACCENT_DIM),
         ))]));
 
-        self.push_toggle_item(&mut items, MainFocus::ToolCall, text.config_editor_tool_call(), self.tool_call, text);
-        self.push_toggle_item(&mut items, MainFocus::DirectImage, text.config_editor_direct_image(), self.direct_image, text);
-        self.push_toggle_item(&mut items, MainFocus::DirectAudio, text.config_editor_direct_audio(), self.direct_audio, text);
-        self.push_toggle_item(&mut items, MainFocus::DirectVideo, text.config_editor_direct_video(), self.direct_video, text);
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::ToolCall,
+            text.config_editor_tool_call(),
+            self.tool_call,
+            text,
+        );
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::DirectImage,
+            text.config_editor_direct_image(),
+            self.direct_image,
+            text,
+        );
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::DirectAudio,
+            text.config_editor_direct_audio(),
+            self.direct_audio,
+            text,
+        );
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::DirectVideo,
+            text.config_editor_direct_video(),
+            self.direct_video,
+            text,
+        );
 
         // --- Context ---
         items.push(ListItem::new(vec![Line::from(Span::styled(
@@ -238,8 +256,19 @@ impl EditorState {
             Style::default().fg(theme::ACCENT_DIM),
         ))]));
 
-        self.push_edit_item(&mut items, MainFocus::MaxContextLength, text.config_editor_max_context_length(), &self.max_context_length);
-        self.push_toggle_item(&mut items, MainFocus::MaxContextMode, text.config_editor_max_context_mode(), self.enable_max_context_mode, text);
+        self.push_edit_item(
+            &mut items,
+            MainFocus::MaxContextLength,
+            text.config_editor_max_context_length(),
+            &self.max_context_length,
+        );
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::MaxContextMode,
+            text.config_editor_max_context_mode(),
+            self.enable_max_context_mode,
+            text,
+        );
 
         // --- Summary ---
         items.push(ListItem::new(vec![Line::from(Span::styled(
@@ -247,7 +276,13 @@ impl EditorState {
             Style::default().fg(theme::ACCENT_DIM),
         ))]));
 
-        self.push_toggle_item(&mut items, MainFocus::EnableSummary, text.config_editor_enable_summary(), self.enable_summary, text);
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::EnableSummary,
+            text.config_editor_enable_summary(),
+            self.enable_summary,
+            text,
+        );
         if self.enable_summary {
             self.push_nav_item(
                 &mut items,
@@ -263,7 +298,13 @@ impl EditorState {
             Style::default().fg(theme::ACCENT_DIM),
         ))]));
 
-        self.push_toggle_item(&mut items, MainFocus::StructuredTools, text.config_editor_structured_tools(), self.supports_structured_tools, text);
+        self.push_toggle_item(
+            &mut items,
+            MainFocus::StructuredTools,
+            text.config_editor_structured_tools(),
+            self.supports_structured_tools,
+            text,
+        );
 
         if !self.builtin_tools.is_empty() {
             items.push(ListItem::new(vec![Line::from(Span::styled(
@@ -272,7 +313,11 @@ impl EditorState {
             ))]));
 
             for (i, tool) in self.builtin_tools.iter().enumerate() {
-                let value = if tool.enabled { text.config_enabled() } else { text.config_disabled() };
+                let value = if tool.enabled {
+                    text.config_enabled()
+                } else {
+                    text.config_disabled()
+                };
                 let desc = format!("{} ({})", tool.displayName, value);
                 let is_focused = self.focused_main_item() == Some(MainFocus::BuiltinTool(i));
                 if is_focused {
@@ -314,7 +359,11 @@ impl EditorState {
         text: TuiText,
     ) {
         let is_focused = self.focused_main_item() == Some(focus);
-        let val_str = if value { text.config_yes() } else { text.config_no() };
+        let val_str = if value {
+            text.config_yes()
+        } else {
+            text.config_no()
+        };
         if is_focused {
             items.push(ListItem::new(vec![Line::from(Span::styled(
                 format!("{}: {}", label, val_str),
@@ -387,15 +436,13 @@ impl EditorState {
     ) {
         let is_focused = self.focused_main_item() == Some(focus);
         if is_focused {
-            items.push(ListItem::new(vec![
-                Line::from(Span::styled(
-                    format!("{}  [{}]", label, hint),
-                    Style::default()
-                        .bg(theme::ACCENT_BG)
-                        .fg(theme::TEXT)
-                        .add_modifier(Modifier::BOLD),
-                )),
-            ]));
+            items.push(ListItem::new(vec![Line::from(Span::styled(
+                format!("{}  [{}]", label, hint),
+                Style::default()
+                    .bg(theme::ACCENT_BG)
+                    .fg(theme::TEXT)
+                    .add_modifier(Modifier::BOLD),
+            ))]));
         } else {
             items.push(ListItem::new(vec![Line::from(Span::styled(
                 label,
@@ -406,10 +453,7 @@ impl EditorState {
 
     fn render_summary(&self, area: Rect, frame: &mut Frame, text: TuiText) {
         let items = self.build_summary_items(text);
-        frame.render_widget(
-            List::new(items),
-            area,
-        );
+        frame.render_widget(List::new(items), area);
     }
 
     fn build_summary_items(&self, text: TuiText) -> Vec<ListItem<'static>> {
@@ -424,7 +468,15 @@ impl EditorState {
         let is_focused = self.focused_summary_item() == Some(SummaryFocus::EnableSummary);
         if is_focused {
             items.push(ListItem::new(vec![Line::from(Span::styled(
-                format!("{}: {}", text.config_editor_enable_summary(), if self.enable_summary { text.config_yes() } else { text.config_no() }),
+                format!(
+                    "{}: {}",
+                    text.config_editor_enable_summary(),
+                    if self.enable_summary {
+                        text.config_yes()
+                    } else {
+                        text.config_no()
+                    }
+                ),
                 Style::default()
                     .bg(theme::ACCENT_BG)
                     .fg(theme::TEXT)
@@ -432,7 +484,15 @@ impl EditorState {
             ))]));
         } else {
             items.push(ListItem::new(vec![Line::from(Span::styled(
-                format!("{}: {}", text.config_editor_enable_summary(), if self.enable_summary { text.config_yes() } else { text.config_no() }),
+                format!(
+                    "{}: {}",
+                    text.config_editor_enable_summary(),
+                    if self.enable_summary {
+                        text.config_yes()
+                    } else {
+                        text.config_no()
+                    }
+                ),
                 if self.enable_summary {
                     Style::default().fg(theme::TEXT)
                 } else {
@@ -452,7 +512,11 @@ impl EditorState {
                     )]));
                 } else {
                     items.push(ListItem::new(vec![Line::from(Span::styled(
-                        format!("{}: {}", text.config_editor_token_threshold(), self.summary_token_threshold),
+                        format!(
+                            "{}: {}",
+                            text.config_editor_token_threshold(),
+                            self.summary_token_threshold
+                        ),
                         Style::default()
                             .bg(theme::ACCENT_BG)
                             .fg(theme::TEXT)
@@ -461,7 +525,11 @@ impl EditorState {
                 }
             } else {
                 items.push(ListItem::new(vec![Line::from(Span::styled(
-                    format!("{}: {}", text.config_editor_token_threshold(), self.summary_token_threshold),
+                    format!(
+                        "{}: {}",
+                        text.config_editor_token_threshold(),
+                        self.summary_token_threshold
+                    ),
                     Style::default().fg(theme::TEXT_MUTED),
                 ))]));
             }
@@ -470,7 +538,15 @@ impl EditorState {
             let is_focused = self.focused_summary_item() == Some(SummaryFocus::ByMessageCount);
             if is_focused {
                 items.push(ListItem::new(vec![Line::from(Span::styled(
-                    format!("{}: {}", text.config_editor_by_message_count(), if self.enable_summary_by_message_count { text.config_yes() } else { text.config_no() }),
+                    format!(
+                        "{}: {}",
+                        text.config_editor_by_message_count(),
+                        if self.enable_summary_by_message_count {
+                            text.config_yes()
+                        } else {
+                            text.config_no()
+                        }
+                    ),
                     Style::default()
                         .bg(theme::ACCENT_BG)
                         .fg(theme::TEXT)
@@ -478,7 +554,15 @@ impl EditorState {
                 ))]));
             } else {
                 items.push(ListItem::new(vec![Line::from(Span::styled(
-                    format!("{}: {}", text.config_editor_by_message_count(), if self.enable_summary_by_message_count { text.config_yes() } else { text.config_no() }),
+                    format!(
+                        "{}: {}",
+                        text.config_editor_by_message_count(),
+                        if self.enable_summary_by_message_count {
+                            text.config_yes()
+                        } else {
+                            text.config_no()
+                        }
+                    ),
                     if self.enable_summary_by_message_count {
                         Style::default().fg(theme::TEXT)
                     } else {
@@ -488,7 +572,8 @@ impl EditorState {
             }
 
             if self.enable_summary_by_message_count {
-                let is_focused = self.focused_summary_item() == Some(SummaryFocus::MessageCountThreshold);
+                let is_focused =
+                    self.focused_summary_item() == Some(SummaryFocus::MessageCountThreshold);
                 if is_focused {
                     if self.editing_field {
                         items.push(ListItem::new(vec![Self::editing_value_line(
@@ -497,7 +582,11 @@ impl EditorState {
                         )]));
                     } else {
                         items.push(ListItem::new(vec![Line::from(Span::styled(
-                            format!("{}: {}", text.config_editor_message_count_threshold(), self.summary_message_count_threshold),
+                            format!(
+                                "{}: {}",
+                                text.config_editor_message_count_threshold(),
+                                self.summary_message_count_threshold
+                            ),
                             Style::default()
                                 .bg(theme::ACCENT_BG)
                                 .fg(theme::TEXT)
@@ -506,7 +595,11 @@ impl EditorState {
                     }
                 } else {
                     items.push(ListItem::new(vec![Line::from(Span::styled(
-                        format!("{}: {}", text.config_editor_message_count_threshold(), self.summary_message_count_threshold),
+                        format!(
+                            "{}: {}",
+                            text.config_editor_message_count_threshold(),
+                            self.summary_message_count_threshold
+                        ),
                         Style::default().fg(theme::TEXT_MUTED),
                     ))]));
                 }

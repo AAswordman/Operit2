@@ -444,10 +444,10 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
 
   Widget _buildFloatingActions(BuildContext context) {
     final marketTab = switch (_selectedTab) {
-      PackageTab.plugins => MarketHomeTab.artifact,
-      PackageTab.packages => MarketHomeTab.artifact,
-      PackageTab.skills => MarketHomeTab.skill,
-      PackageTab.mcp => MarketHomeTab.mcp,
+      PackageTab.plugins => MarketHomeTab.all,
+      PackageTab.packages => MarketHomeTab.all,
+      PackageTab.skills => MarketHomeTab.all,
+      PackageTab.mcp => MarketHomeTab.all,
     };
     final marketTooltip = switch (_selectedTab) {
       PackageTab.plugins => '打开 Artifact 市场',

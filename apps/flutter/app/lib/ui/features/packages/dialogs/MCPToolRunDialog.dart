@@ -152,7 +152,7 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
             core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
               toolName: '${widget.serverId}:${widget.tool.name}',
               success: false,
-              result: '',
+              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData,
               error: '缺少必填参数：${missing.join(", ")}',
             );
       });
@@ -200,7 +200,7 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
             core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
               toolName: '${widget.serverId}:${widget.tool.name}',
               success: false,
-              result: '',
+              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData,
               error: error.toString(),
             );
       });
@@ -253,13 +253,7 @@ String _toolResultText(
     return result.error ?? '';
   }
   final value = result.result;
-  if (value == null) {
-    return '';
-  }
-  if (value is String) {
-    return value;
-  }
-  return const JsonEncoder.withIndent('  ').convert(value);
+  return value.value;
 }
 
 class _MCPToolParameter {

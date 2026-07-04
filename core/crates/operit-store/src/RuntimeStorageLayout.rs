@@ -24,8 +24,7 @@ pub const RUNTIME_WEBSESSION_USERSCRIPTS_STATE_PATH: &str =
     "runtime/websession/userscripts/userscripts.json";
 pub const RUNTIME_WEBSESSION_BROWSER_BOOKMARKS_PATH: &str =
     "runtime/websession/browser/bookmarks.json";
-pub const RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH: &str =
-    "runtime/websession/browser/history.json";
+pub const RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH: &str = "runtime/websession/browser/history.json";
 pub const RUNTIME_WEBSESSION_BROWSER_DOWNLOADS_PATH: &str =
     "runtime/websession/browser/downloads.json";
 pub const RUNTIME_WEBSESSION_BROWSER_DOWNLOAD_FILES_DIR_PATH: &str =
@@ -36,9 +35,11 @@ pub const WORKSPACE_DIR_PATH: &str = "workspaces";
 pub const OPERIT_LOG_PATH: &str = "runtime/logs/operit.log";
 pub const TOOLPKG_LOG_PATH: &str = "runtime/logs/toolpkg.log";
 
-pub const USER_PREFERENCES_PATH: &str = "runtime/config/preferences/user_preferences.preferences.json";
+pub const USER_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/user_preferences.preferences.json";
 pub const API_PREFERENCES_PATH: &str = "runtime/config/preferences/api_settings.json";
-pub const ENV_PREFERENCES_PATH: &str = "runtime/config/preferences/env_preferences.preferences.json";
+pub const ENV_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/env_preferences.preferences.json";
 pub const GITHUB_AUTH_PREFERENCES_PATH: &str =
     "runtime/config/preferences/github_auth_preferences.json";
 pub const CHARACTER_CARDS_PREFERENCES_PATH: &str =
@@ -61,8 +62,7 @@ pub const FUNCTIONAL_CONFIGS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/functional_configs.preferences.json";
 pub const PACKAGE_MANAGER_PREFERENCES_PATH: &str =
     "runtime/config/preferences/package_manager.preferences.json";
-pub const CURRENT_CHAT_ID_PREFERENCES_PATH: &str =
-    "runtime/state/current_chat_id.preferences.json";
+pub const CURRENT_CHAT_ID_PREFERENCES_PATH: &str = "runtime/state/current_chat_id.preferences.json";
 pub const SQLITE_DATABASE_PATH: &str = "runtime/data/database/operit2.sqlite";
 pub const MCP_CONFIG_PATH: &str = "runtime/extensions/mcp/mcp_config.json";
 pub const MCP_SERVER_STATUS_PATH: &str = "runtime/extensions/mcp/server_status.json";

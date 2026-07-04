@@ -97,7 +97,6 @@ class _AIChatScreenState extends State<AIChatScreen>
   List<AttachmentInfo> _attachments = const <AttachmentInfo>[];
   late final ValueNotifier<_ChatContentData> _chatContentDataNotifier;
   late final ValueNotifier<bool> _autoScrollToBottomNotifier;
-  late final ValueNotifier<String> _modelLabelNotifier;
   late final ValueNotifier<String?> _toastMessageNotifier;
 
   bool _loading = true;
@@ -108,7 +107,6 @@ class _AIChatScreenState extends State<AIChatScreen>
         progress: 0,
         toolName: '',
       );
-  String _modelLabel = 'Model';
   String? _errorMessage;
   StreamSubscription<ChatViewModelSnapshot>? _mainStateSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
@@ -157,7 +155,6 @@ class _AIChatScreenState extends State<AIChatScreen>
       _currentChatContentData(),
     );
     _autoScrollToBottomNotifier = ValueNotifier<bool>(_autoScrollToBottom);
-    _modelLabelNotifier = ValueNotifier<String>(_modelLabel);
     _toastMessageNotifier = ValueNotifier<String?>(_toastMessage);
     WidgetsBinding.instance.addObserver(this);
     _workspaceOpen = _chatWorkspaceOpen;
@@ -206,7 +203,6 @@ class _AIChatScreenState extends State<AIChatScreen>
     _scrollController.dispose();
     _chatContentDataNotifier.dispose();
     _autoScrollToBottomNotifier.dispose();
-    _modelLabelNotifier.dispose();
     _toastMessageNotifier.dispose();
     _mainStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
@@ -646,10 +642,6 @@ class _AIChatScreenState extends State<AIChatScreen>
         ..addAll(snapshot.messages);
       _loading = snapshot.isLoading;
       _inputProcessingState = snapshot.inputProcessingState;
-      _modelLabel = _resolveModelLabel(
-        snapshot.messages,
-        snapshot.currentModelName,
-      );
       _currentChatId = snapshot.currentChatId;
       _currentWorkspacePath = snapshot.currentWorkspacePath;
       _currentChatTitle = snapshot.currentChatTitle;
@@ -1035,32 +1027,6 @@ class _AIChatScreenState extends State<AIChatScreen>
     await _viewModel.showLatestMessagesForCurrentChat();
   }
 
-  String _resolveModelLabel(
-    List<ChatUiMessage> messages,
-    String currentModelName,
-  ) {
-    for (final message in messages.reversed) {
-      if (message.modelName.isNotEmpty) {
-        return message.modelName.length > 26
-            ? '${message.modelName.substring(0, 26)}...'
-            : message.modelName;
-      }
-    }
-    if (currentModelName.isNotEmpty) {
-      return currentModelName.length > 26
-          ? '${currentModelName.substring(0, 26)}...'
-          : currentModelName;
-    }
-    return AppLocalizations.of(context)!.model;
-  }
-
-  void _setModelLabel(String modelName) {
-    _modelLabel = modelName.length > 26
-        ? '${modelName.substring(0, 26)}...'
-        : modelName;
-    _modelLabelNotifier.value = _modelLabel;
-  }
-
   void _updateTopBarTitle() {
     final controller = _topBarController;
     if (controller == null || !_isCurrentMainScreen) {
@@ -1150,6 +1116,8 @@ class _AIChatScreenState extends State<AIChatScreen>
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
       workspacePath: _currentWorkspacePath,
       onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
+      onListWorkspaceBindingDirectories:
+          _viewModel.listWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
       onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
@@ -1172,7 +1140,6 @@ class _AIChatScreenState extends State<AIChatScreen>
           inputFocusNode: _inputFocusNode,
           scrollController: _scrollController,
           inputProcessingState: data.inputProcessingState,
-          modelLabelListenable: _modelLabelNotifier,
           viewModel: _viewModel,
           currentChatId: data.currentChatId,
           currentCharacterCardAvatarUri: data.currentCharacterCardAvatarUri,
@@ -1292,7 +1259,6 @@ class _AIChatScreenState extends State<AIChatScreen>
             });
           },
           onInsertAttachment: _insertAttachmentReference,
-          onModelChanged: _setModelLabel,
           toastMessageListenable: _toastMessageNotifier,
           onDismissToast: _dismissToast,
         );
@@ -1310,6 +1276,8 @@ class _AIChatScreenState extends State<AIChatScreen>
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
       workspacePath: _currentWorkspacePath,
       onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
+      onListWorkspaceBindingDirectories:
+          _viewModel.listWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
       onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,

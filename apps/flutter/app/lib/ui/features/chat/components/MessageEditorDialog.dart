@@ -364,35 +364,34 @@ class _TextPartEditorState extends State<_TextPartEditor> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: <Widget>[
-        TextField(
-          controller: _controller,
-          enabled: widget.enabled,
-          minLines: 1,
-          maxLines: 12,
-          decoration: InputDecoration(
-            labelText: '文本',
-            hintText: '输入文本内容',
-            filled: true,
-            fillColor: Theme.of(
-              context,
-            ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            contentPadding: const EdgeInsets.fromLTRB(12, 14, 44, 12),
-          ),
-          onChanged: widget.onChanged,
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return TextField(
+      controller: _controller,
+      enabled: widget.enabled,
+      minLines: 1,
+      maxLines: 12,
+      style: theme.textTheme.bodyMedium,
+      decoration: InputDecoration(
+        labelText: '文本',
+        hintText: '输入文本内容',
+        filled: true,
+        fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        suffixIconConstraints: const BoxConstraints.tightFor(
+          width: 40,
+          height: 40,
         ),
-        Positioned(
-          right: 4,
-          top: 4,
-          child: IconButton(
-            onPressed: widget.enabled ? widget.onDelete : null,
-            icon: const Icon(Icons.delete, size: 16),
-            tooltip: '删除',
-          ),
+        suffixIcon: IconButton(
+          onPressed: widget.enabled ? widget.onDelete : null,
+          icon: const Icon(Icons.delete, size: 16),
+          tooltip: '删除',
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
         ),
-      ],
+      ),
+      onChanged: widget.onChanged,
     );
   }
 }

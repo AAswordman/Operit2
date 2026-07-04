@@ -153,25 +153,55 @@ fn serializable_struct_type(
 }
 
 fn serializable_enum_type(full_type: String, item_enum: &ItemEnum) -> SerializableType {
-    let unit_only = item_enum
+    let mapped: Vec<SerializableEnumVariant> = item_enum
         .variants
         .iter()
-        .all(|variant| matches!(variant.fields, Fields::Unit));
+        .map(|variant| {
+            let name = variant.ident.to_string();
+            let fields = match &variant.fields {
+                Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .filter_map(|field| {
+                        let field_name = field.ident.as_ref()?.to_string();
+                        Some(SerializableField {
+                            name: field_name.clone(),
+                            json_name: serde_rename(&field.attrs)
+                                .unwrap_or_else(|| field_name.trim_start_matches("r#").to_string()),
+                            ty: normalize_type(&field.ty, &TypeResolver::default_from(
+                                &[variant],
+                                &full_type,
+                            )),
+                        })
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            SerializableEnumVariant {
+                json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
+                fields,
+                name,
+            }
+        })
+        .collect();
+    let unit_only = mapped
+        .iter()
+        .all(|variant| variant.fields.is_empty());
+    if unit_only {
+        return SerializableType {
+            full_type: full_type.clone(),
+            kind: SerializableTypeKind::Enum {
+                variants: mapped,
+                unit_only,
+            },
+        };
+    }
+    let tag_name = full_type.rsplit("::").next().unwrap_or("type").to_string();
     SerializableType {
         full_type,
-        kind: SerializableTypeKind::Enum {
-            variants: item_enum
-                .variants
-                .iter()
-                .map(|variant| {
-                    let name = variant.ident.to_string();
-                    SerializableEnumVariant {
-                        json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
-                        name,
-                    }
-                })
-                .collect(),
-            unit_only,
+        kind: SerializableTypeKind::TaggedEnum {
+            tag_name,
+            variants: mapped,
         },
     }
 }
@@ -247,6 +277,17 @@ impl TypeResolver {
             names,
             serializable_types,
             type_registry,
+        }
+    }
+
+    pub(crate) fn default_from(
+        _variants: &[&syn::Variant],
+        _full_type: &str,
+    ) -> Self {
+        Self {
+            names: HashMap::new(),
+            serializable_types: HashSet::new(),
+            type_registry: TypeRegistry::default(),
         }
     }
 }

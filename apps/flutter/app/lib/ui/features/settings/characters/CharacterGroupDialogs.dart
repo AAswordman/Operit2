@@ -1011,6 +1011,7 @@ core_proxy.CharacterCard _characterCardWith(
     openingStatement: card.openingStatement,
     otherContentChat: card.otherContentChat,
     otherContentVoice: card.otherContentVoice,
+    avatarUri: card.avatarUri,
     attachedTagIds: attachedTagIds ?? card.attachedTagIds,
     advancedCustomPrompt: card.advancedCustomPrompt,
     marks: card.marks,

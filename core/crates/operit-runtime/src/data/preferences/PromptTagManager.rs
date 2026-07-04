@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
@@ -108,7 +108,8 @@ impl PromptTagManager {
     ) -> Result<String, PreferencesDataStoreError> {
         let id = Uuid::new_v4().to_string();
         let now = currentTimeMillis();
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertTagNameUnique(preferences, &name, None)?;
             let mut currentList = Self::readTagList(preferences);
             currentList.push(id.clone());
             currentList.sort();
@@ -138,6 +139,7 @@ impl PromptTagManager {
                 &stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")),
                 now.to_string(),
             );
+            Ok::<(), PreferencesDataStoreError>(())
         })?;
         Ok(id)
     }
@@ -152,8 +154,9 @@ impl PromptTagManager {
         tagType: Option<TagType>,
     ) -> Result<(), PreferencesDataStoreError> {
         let now = currentTimeMillis();
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
             if let Some(name) = name {
+                Self::assertTagNameUnique(preferences, &name, Some(id))?;
                 preferences.set(
                     &stringPreferencesKey(&format!("prompt_tag_{id}_name")),
                     name,
@@ -181,16 +184,18 @@ impl PromptTagManager {
                 &stringPreferencesKey(&format!("prompt_tag_{id}_updated_at")),
                 now.to_string(),
             );
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
     #[allow(non_snake_case)]
     pub fn deletePromptTag(&self, id: &str) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
             let mut currentList = Self::readTagList(preferences);
             currentList.retain(|item| item != id);
             Self::writeTagList(preferences, currentList);
             self.removeTagPreferenceKeys(preferences, id);
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
@@ -239,7 +244,7 @@ impl PromptTagManager {
 
     #[allow(non_snake_case)]
     pub fn removeLegacyBuiltInTags(&self) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
             let mut currentList = Self::readTagList(preferences);
             let idsToRemove = currentList
                 .iter()
@@ -259,10 +264,35 @@ impl PromptTagManager {
             for id in idsToRemove {
                 self.removeTagPreferenceKeys(preferences, &id);
             }
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
     #[allow(non_snake_case)]
+
+    fn assertTagNameUnique(
+        preferences: &Preferences,
+        name: &str,
+        currentTagId: Option<&str>,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedName = name.trim();
+        let tagIds = Self::readTagList(preferences);
+        for tagId in tagIds {
+            if currentTagId == Some(tagId.as_str()) {
+                continue;
+            }
+            let existingName = preferences
+                .get(&stringPreferencesKey(&format!("prompt_tag_{tagId}_name")))
+                .cloned()
+                .unwrap_or_default();
+            if existingName.trim() == normalizedName {
+                return Err(PreferencesDataStoreError::Message(format!(
+                    "prompt tag name already exists: {normalizedName}"
+                )));
+            }
+        }
+        Ok(())
+    }
     fn readTagList(preferences: &Preferences) -> Vec<String> {
         preferences
             .get(&Self::PROMPT_TAG_LIST())

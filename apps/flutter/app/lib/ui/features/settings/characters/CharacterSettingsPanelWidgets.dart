@@ -107,8 +107,6 @@ class _CharacterSettingsData {
   const _CharacterSettingsData({
     required this.cards,
     required this.groups,
-    required this.cardAvatarUris,
-    required this.groupAvatarUris,
     required this.sharedMemoryStores,
     required this.tags,
     required this.modelSummaries,
@@ -125,8 +123,6 @@ class _CharacterSettingsData {
 
   final List<core_proxy.CharacterCard> cards;
   final List<core_proxy.CharacterGroupCard> groups;
-  final Map<String, String> cardAvatarUris;
-  final Map<String, String> groupAvatarUris;
   final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<core_proxy.PromptTag> tags;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
@@ -148,23 +144,14 @@ class _ActivePromptSelection {
   final String? groupId;
 }
 
-_ActivePromptSelection _activePromptSelection(Object? activePrompt) {
+_ActivePromptSelection _activePromptSelection(core_proxy.ActivePrompt? activePrompt) {
   String? cardId;
   String? groupId;
-  if (activePrompt is Map) {
-    final characterGroup = activePrompt['CharacterGroup'];
-    if (characterGroup is Map) {
-      final id = characterGroup['id'];
-      if (id is String && id.trim().isNotEmpty) {
-        groupId = id.trim();
-      }
-    }
-    final characterCard = activePrompt['CharacterCard'];
-    if (characterCard is Map) {
-      final id = characterCard['id'];
-      if (id is String && id.trim().isNotEmpty) {
-        cardId = id.trim();
-      }
+  if (activePrompt != null) {
+    if (activePrompt.tag == 'CharacterCard' && activePrompt.id.trim().isNotEmpty) {
+      cardId = activePrompt.id.trim();
+    } else if (activePrompt.tag == 'CharacterGroup' && activePrompt.id.trim().isNotEmpty) {
+      groupId = activePrompt.id.trim();
     }
   }
   return _ActivePromptSelection(cardId: cardId, groupId: groupId);
@@ -830,4 +817,3 @@ class _UserMarkdownEditorDialogState extends State<_UserMarkdownEditorDialog> {
     );
   }
 }
-

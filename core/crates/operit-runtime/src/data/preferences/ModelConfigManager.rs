@@ -8,15 +8,15 @@ use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
 use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use crate::data::model::ModelCatalog::ModelCatalog;
 use crate::data::model::ModelConfigData::{
-    default_deepseek_provider, ApiProviderType, AvailableProviderModel,
-    AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
-    ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
-    ProviderProfile, ResolvedModelConfig,
+    ApiProviderType, AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities,
+    ModelCatalogKey, ModelConfigDefaults, ModelContextSpec, ModelProfile, ModelRequestSpec,
+    ModelSummarySettings, ProviderModelSummary, ProviderProfile, ResolvedModelConfig,
+    default_deepseek_provider,
 };
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -28,8 +28,12 @@ pub enum ModelConfigError {
     Store(#[from] PreferencesDataStoreError),
     #[error("provider not found: {0}")]
     ProviderNotFound(String),
+    #[error("provider name already exists: {0}")]
+    ProviderNameAlreadyExists(String),
     #[error("model not found: {0}")]
     ModelNotFound(String),
+    #[error("model already exists: {providerId}:{modelId}")]
+    ModelAlreadyExists { providerId: String, modelId: String },
     #[error("catalog model not found: {providerTypeId}:{modelId}")]
     CatalogModelNotFound {
         providerTypeId: String,
@@ -80,13 +84,15 @@ impl ModelConfigManager {
     }
 
     pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
-        let providerIds = self.providerListFlow()?.first()?;
-        if providerIds.is_empty() {
-            let provider = default_deepseek_provider();
-            self.saveProviderToDataStore(&provider)?;
-            self.saveProviderList(vec![provider.id.clone()])?;
-        }
-        Ok(())
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let providerIds = Self::readProviderList(preferences)?;
+            if providerIds.is_empty() {
+                let provider = default_deepseek_provider();
+                Self::writeProvider(preferences, &provider)?;
+                Self::writeProviderList(preferences, &[provider.id.clone()])?;
+            }
+            Ok::<(), ModelConfigError>(())
+        })
     }
 
     pub fn providerListFlow(&self) -> Result<Flow<Vec<String>>, ModelConfigError> {
@@ -160,10 +166,14 @@ impl ModelConfigManager {
             .ok_or_else(|| ModelConfigError::InvalidProviderType(providerTypeId.clone()))?;
         let providerId = self.createProviderId();
         let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
-        let mut providerIds = self.getProviderIds()?;
-        providerIds.push(providerId.clone());
-        self.saveProviderToDataStore(&provider)?;
-        self.saveProviderList(providerIds)?;
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            Self::assertProviderNameUniqueInPreferences(preferences, &provider.name, None)?;
+            let mut providerIds = Self::readProviderList(preferences)?;
+            providerIds.push(providerId.clone());
+            Self::writeProvider(preferences, &provider)?;
+            Self::writeProviderList(preferences, &providerIds)?;
+            Ok::<(), ModelConfigError>(())
+        })?;
         Ok(providerId)
     }
 
@@ -171,20 +181,28 @@ impl ModelConfigManager {
         &self,
         provider: ProviderProfile,
     ) -> Result<ProviderProfile, ModelConfigError> {
-        self.assertProviderExists(&provider.id)?;
-        self.saveProviderToDataStore(&provider)?;
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            self.assertProviderExistsInPreferences(preferences, &provider.id)?;
+            Self::assertProviderNameUniqueInPreferences(
+                preferences,
+                &provider.name,
+                Some(&provider.id),
+            )?;
+            Self::writeProvider(preferences, &provider)?;
+            Ok::<(), ModelConfigError>(())
+        })?;
         Ok(provider)
     }
 
     pub fn deleteProvider(&self, providerId: &str) -> Result<(), ModelConfigError> {
-        self.assertProviderExists(providerId)?;
-        let mut providerIds = self.getProviderIds()?;
-        providerIds.retain(|id| id != providerId);
         let providerKey = self.providerKey(providerId);
-        let encodedProviderIds = serde_json::to_string(&providerIds)?;
-        self.modelConfigDataStore.edit(|preferences| {
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            self.assertProviderExistsInPreferences(preferences, providerId)?;
+            let mut providerIds = Self::readProviderList(preferences)?;
+            providerIds.retain(|id| id != providerId);
             preferences.remove(&providerKey);
-            preferences.set(&Self::PROVIDER_LIST_KEY(), encodedProviderIds);
+            Self::writeProviderList(preferences, &providerIds)?;
+            Ok::<(), ModelConfigError>(())
         })?;
         Ok(())
     }
@@ -194,10 +212,11 @@ impl ModelConfigManager {
         providerId: &str,
         modelId: String,
     ) -> Result<String, ModelConfigError> {
-        self.updateProviderInternal(providerId, |mut provider| {
+        self.updateProviderInternalResult(providerId, |mut provider| {
+            Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let model = Self::newModelProfileWithResolvedSpecs(&provider, modelId.clone());
             provider.models.push(model);
-            provider
+            Ok(provider)
         })?;
         Ok(modelId)
     }
@@ -243,7 +262,8 @@ impl ModelConfigManager {
     ) -> Result<String, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
         let availableModel = self.findAvailableProviderModel(&provider, &modelId)?;
-        self.updateProviderInternal(providerId, |mut provider| {
+        self.updateProviderInternalResult(providerId, |mut provider| {
+            Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let mut model = ModelProfile::new(modelId.clone());
             match availableModel.source {
                 AvailableProviderModelSource::Catalog => {
@@ -263,7 +283,7 @@ impl ModelConfigManager {
                 }
             }
             provider.models.push(model);
-            provider
+            Ok(provider)
         })?;
         Ok(modelId)
     }
@@ -498,20 +518,17 @@ impl ModelConfigManager {
     }
 
     fn saveProviderToDataStore(&self, provider: &ProviderProfile) -> Result<(), ModelConfigError> {
-        let providerKey = self.providerKey(&provider.id);
-        let encodedProvider = serde_json::to_string(provider)?;
-        self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&providerKey, encodedProvider);
-        })?;
-        Ok(())
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            Self::writeProvider(preferences, provider)?;
+            Ok::<(), ModelConfigError>(())
+        })
     }
 
     fn saveProviderList(&self, providerIds: Vec<String>) -> Result<(), ModelConfigError> {
-        let encoded = serde_json::to_string(&providerIds)?;
-        self.modelConfigDataStore.edit(|preferences| {
-            preferences.set(&Self::PROVIDER_LIST_KEY(), encoded);
-        })?;
-        Ok(())
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            Self::writeProviderList(preferences, &providerIds)?;
+            Ok::<(), ModelConfigError>(())
+        })
     }
 
     fn updateProviderInternal<F>(
@@ -522,10 +539,105 @@ impl ModelConfigManager {
     where
         F: FnOnce(ProviderProfile) -> ProviderProfile,
     {
-        let provider = self.loadProviderFromDataStore(providerId)?;
-        let updated = transform(provider);
-        self.saveProviderToDataStore(&updated)?;
-        Ok(updated)
+        self.updateProviderInternalResult(providerId, |provider| Ok(transform(provider)))
+    }
+
+    fn updateProviderInternalResult<F>(
+        &self,
+        providerId: &str,
+        transform: F,
+    ) -> Result<ProviderProfile, ModelConfigError>
+    where
+        F: FnOnce(ProviderProfile) -> Result<ProviderProfile, ModelConfigError>,
+    {
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let provider = self.readProviderFromPreferences(preferences, providerId)?;
+            let updated = transform(provider)?;
+            Self::writeProvider(preferences, &updated)?;
+            Ok(updated)
+        })
+    }
+
+    fn assertProviderModelDoesNotExist(
+        provider: &ProviderProfile,
+        modelId: &str,
+    ) -> Result<(), ModelConfigError> {
+        if provider.models.iter().any(|model| model.id == modelId) {
+            Err(ModelConfigError::ModelAlreadyExists {
+                providerId: provider.id.clone(),
+                modelId: modelId.to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn assertProviderExistsInPreferences(
+        &self,
+        preferences: &Preferences,
+        providerId: &str,
+    ) -> Result<(), ModelConfigError> {
+        let providerIds = Self::readProviderList(preferences)?;
+        if providerIds.iter().any(|id| id == providerId) {
+            Ok(())
+        } else {
+            Err(ModelConfigError::ProviderNotFound(providerId.to_string()))
+        }
+    }
+
+    fn readProviderFromPreferences(
+        &self,
+        preferences: &Preferences,
+        providerId: &str,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        let providerKey = self.providerKey(providerId);
+        let providerJson = preferences
+            .get(&providerKey)
+            .ok_or_else(|| ModelConfigError::ProviderNotFound(providerId.to_string()))?;
+        Ok(serde_json::from_str(providerJson)?)
+    }
+
+    fn writeProvider(
+        preferences: &mut Preferences,
+        provider: &ProviderProfile,
+    ) -> Result<(), ModelConfigError> {
+        let providerKey = stringPreferencesKey(&format!("provider_{}", provider.id));
+        let encodedProvider = serde_json::to_string(provider)?;
+        preferences.set(&providerKey, encodedProvider);
+        Ok(())
+    }
+
+    fn assertProviderNameUniqueInPreferences(
+        preferences: &Preferences,
+        name: &str,
+        currentProviderId: Option<&str>,
+    ) -> Result<(), ModelConfigError> {
+        let normalizedName = name.trim();
+        let providerIds = Self::readProviderList(preferences)?;
+        for providerId in providerIds {
+            if currentProviderId == Some(providerId.as_str()) {
+                continue;
+            }
+            let providerKey = stringPreferencesKey(&format!("provider_{}", providerId));
+            let Some(providerJson) = preferences.get(&providerKey) else {
+                continue;
+            };
+            let provider: ProviderProfile = serde_json::from_str(providerJson)?;
+            if provider.name.trim() == normalizedName {
+                return Err(ModelConfigError::ProviderNameAlreadyExists(
+                    normalizedName.to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+    fn writeProviderList(
+        preferences: &mut Preferences,
+        providerIds: &[String],
+    ) -> Result<(), ModelConfigError> {
+        let encoded = serde_json::to_string(providerIds)?;
+        preferences.set(&Self::PROVIDER_LIST_KEY(), encoded);
+        Ok(())
     }
 
     fn findAvailableProviderModel(
@@ -670,8 +782,15 @@ impl ModelConfigManager {
 
 #[cfg(test)]
 mod tests {
-    use super::ModelConfigManager;
+    use super::{ModelConfigError, ModelConfigManager};
     use crate::data::model::ModelConfigData::ModelConfigDefaults;
+    use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+    use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+    use operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot;
+    use std::fs;
+    use std::path::{Component, Path, PathBuf};
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn default_ids_are_model_ids() {
@@ -679,5 +798,198 @@ mod tests {
             ModelConfigManager::DEFAULT_MODEL_ID,
             ModelConfigDefaults::DEFAULT_MODEL_ID
         );
+    }
+
+    #[test]
+    fn provider_model_update_keeps_existing_api_key() {
+        let root = unique_test_root("provider_internal_update_keeps_latest_api_key");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::new(root.clone());
+        manager
+            .initializeIfNeeded()
+            .expect("initialize model config");
+
+        let mut provider = manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .expect("default provider");
+        provider.apiKey = "sk-latest".to_string();
+        manager
+            .updateProviderProfile(provider)
+            .expect("update api key");
+
+        manager
+            .createProviderModel(
+                ModelConfigManager::DEFAULT_PROVIDER_ID,
+                "provider-model-update-test".to_string(),
+            )
+            .expect("create provider model");
+
+        let provider = manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .expect("provider after model update");
+        assert_eq!(provider.apiKey, "sk-latest");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_provider_model_rejects_existing_model_id() {
+        let root = unique_test_root("create_provider_model_rejects_existing_model_id");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::new(root.clone());
+        manager
+            .initializeIfNeeded()
+            .expect("initialize model config");
+
+        let error = manager
+            .createProviderModel(
+                ModelConfigManager::DEFAULT_PROVIDER_ID,
+                ModelConfigManager::DEFAULT_MODEL_ID.to_string(),
+            )
+            .expect_err("duplicate model id should be rejected");
+        assert!(matches!(error, ModelConfigError::ModelAlreadyExists { .. }));
+
+        let provider = manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .expect("default provider");
+        let count = provider
+            .models
+            .iter()
+            .filter(|model| model.id == ModelConfigManager::DEFAULT_MODEL_ID)
+            .count();
+        assert_eq!(count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn add_provider_model_from_available_rejects_existing_model_id() {
+        let root = unique_test_root("add_provider_model_from_available_rejects_existing_model_id");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::new(root.clone());
+        manager
+            .initializeIfNeeded()
+            .expect("initialize model config");
+
+        let error = manager
+            .addProviderModelFromAvailable(
+                ModelConfigManager::DEFAULT_PROVIDER_ID,
+                ModelConfigManager::DEFAULT_MODEL_ID.to_string(),
+            )
+            .expect_err("duplicate available model id should be rejected");
+        assert!(matches!(error, ModelConfigError::ModelAlreadyExists { .. }));
+
+        let provider = manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .expect("default provider");
+        let count = provider
+            .models
+            .iter()
+            .filter(|model| model.id == ModelConfigManager::DEFAULT_MODEL_ID)
+            .count();
+        assert_eq!(count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unique_test_root(name: &str) -> std::path::PathBuf {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("operit_model_config_test_{name}_{now}"))
+    }
+
+    fn setup_test_runtime(root: PathBuf) {
+        setDefaultRuntimeStoreRoot(root.clone());
+        setDefaultRuntimeStorageHost(Arc::new(TestRuntimeStorageHost { root }));
+    }
+
+    struct TestRuntimeStorageHost {
+        root: PathBuf,
+    }
+
+    impl TestRuntimeStorageHost {
+        fn resolve(&self, path: &str) -> HostResult<PathBuf> {
+            let path = Path::new(path);
+            if path.is_absolute() {
+                return Err(HostError::new(format!(
+                    "runtime storage path must be relative: {}",
+                    path.display()
+                )));
+            }
+            let mut resolved = self.root.clone();
+            for component in path.components() {
+                match component {
+                    Component::Normal(segment) => resolved.push(segment),
+                    Component::CurDir => {}
+                    _ => {
+                        return Err(HostError::new(format!(
+                            "invalid runtime storage path: {}",
+                            path.display()
+                        )));
+                    }
+                }
+            }
+            Ok(resolved)
+        }
+    }
+
+    impl RuntimeStorageHost for TestRuntimeStorageHost {
+        fn rootDir(&self) -> Option<PathBuf> {
+            Some(self.root.clone())
+        }
+
+        fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+            Ok(fs::read(self.resolve(path)?)?)
+        }
+
+        fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+            let path = self.resolve(path)?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, content)?;
+            Ok(())
+        }
+
+        fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
+            let path = self.resolve(path)?;
+            if !path.exists() {
+                return Ok(());
+            }
+            if path.is_dir() {
+                if recursive {
+                    fs::remove_dir_all(path)?;
+                } else {
+                    fs::remove_dir(path)?;
+                }
+            } else {
+                fs::remove_file(path)?;
+            }
+            Ok(())
+        }
+
+        fn exists(&self, path: &str) -> HostResult<bool> {
+            Ok(self.resolve(path)?.exists())
+        }
+
+        fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+            let root = self.resolve(prefix)?;
+            if !root.exists() {
+                return Ok(Vec::new());
+            }
+            let mut entries = Vec::new();
+            for entry in fs::read_dir(root)? {
+                let entry = entry?;
+                let metadata = entry.metadata()?;
+                entries.push(RuntimeStorageEntry {
+                    path: entry.path().to_string_lossy().replace('\\', "/"),
+                    isDirectory: metadata.is_dir(),
+                    size: metadata.len() as i64,
+                });
+            }
+            Ok(entries)
+        }
     }
 }

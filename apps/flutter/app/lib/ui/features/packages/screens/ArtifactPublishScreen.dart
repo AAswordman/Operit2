@@ -14,9 +14,8 @@ import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
-const String _marketOwner = 'AAswordman';
 const String _forgeRepoName = 'OperitForge';
-const String _metadataPrefix = '<!-- operit-market-json: ';
+const List<String> _artifactMarketTypes = <String>['script', 'package'];
 
 class ArtifactPublishScreen extends StatefulWidget {
   const ArtifactPublishScreen({
@@ -34,40 +33,38 @@ class ArtifactPublishScreen extends StatefulWidget {
 
 class ArtifactPublishClusterContext {
   const ArtifactPublishClusterContext({
+    required this.entryId,
     required this.projectId,
-    required this.rootNodeId,
     required this.runtimePackageId,
-    required this.parentNodeIds,
     required this.lockedDisplayName,
-    required this.projectDisplayName,
-    required this.projectDescription,
+    this.canEditEntry = false,
   });
 
+  final String entryId;
   final String projectId;
-  final String rootNodeId;
   final String runtimePackageId;
-  final List<String> parentNodeIds;
   final String lockedDisplayName;
-  final String projectDisplayName;
-  final String projectDescription;
+  final bool canEditEntry;
 }
 
 class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _detailController = TextEditingController();
   final TextEditingController _versionController = TextEditingController();
   final TextEditingController _minVersionController = TextEditingController();
   final TextEditingController _maxVersionController = TextEditingController();
 
   bool _loading = true;
   bool _publishing = false;
-  bool _selectionProjectLoading = false;
   bool _retryingMarketRegistration = false;
+  bool _allowPublicUpdates = true;
   String? _errorMessage;
   String? _progressMessage;
-  String? _selectionLoadError;
   ArtifactPublishClusterContext? _publishContext;
   _PendingMarketRegistration? _pendingMarketRegistration;
+  List<core_proxy.MarketCategoryInfo> _categories = <core_proxy.MarketCategoryInfo>[];
+  String? _selectedCategoryId;
   List<core_proxy.PublishablePackageSource> _sources =
       <core_proxy.PublishablePackageSource>[];
   core_proxy.PublishablePackageSource? _selectedSource;
@@ -83,6 +80,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   void dispose() {
     _displayNameController.dispose();
     _descriptionController.dispose();
+    _detailController.dispose();
     _versionController.dispose();
     _minVersionController.dispose();
     _maxVersionController.dispose();
@@ -95,6 +93,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       _errorMessage = null;
     });
     try {
+      final manifest = await widget.clients.apiMarketStatsApiService.getManifest();
       final loadedSources = await _loadPublishablePackageSources(
         widget.clients,
       );
@@ -113,6 +112,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         return;
       }
       setState(() {
+        _categories = manifest.categories;
+        _selectedCategoryId = _selectedCategoryId ?? _defaultCategoryId(manifest.categories);
         _sources = sources;
         if (sources.isEmpty) {
           _selectedSource = null;
@@ -142,6 +143,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
           ? lockedDisplayName!
           : source.displayName;
       _descriptionController.text = source.description;
+      if (_detailController.text.trim().isEmpty) {
+        _detailController.text = source.description;
+      }
       _versionController.text =
           source.inferredVersion?.trim().isNotEmpty == true
           ? source.inferredVersion!.trim()
@@ -166,6 +170,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         source: source,
         displayName: _displayNameController.text,
         description: _descriptionController.text,
+        detail: _detailController.text,
+        categoryId: _selectedCategoryId ?? '',
+        allowPublicUpdates: _allowPublicUpdates,
         version: _versionController.text,
         minSupportedAppVersion: _minVersionController.text,
         maxSupportedAppVersion: _maxVersionController.text,
@@ -193,8 +200,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
           title: const Text('发布完成'),
           content: SelectableText(
             '已发布「${result.displayName}」\n'
-            '项目簇: ${result.projectId}\n'
-            '节点: ${result.nodeId}\n'
+            '项目 ID: ${result.projectId}\n'
+            'Entry ID: ${result.entryId}\n'
+            'Version ID: ${result.versionId}\n'
             'Release: ${result.releaseTag}\n\n'
             '公共市场需要排期发布，请等待排期完成后查看。',
           ),
@@ -276,11 +284,12 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       _progressMessage = '正在重新登记市场';
     });
     try {
-      await _createMarketIssue(
+      final response = await _registerMarketEntry(
         clients: widget.clients,
         type: pending.type,
         title: pending.title,
-        body: _buildArtifactMarketIssueBody(pending.payload),
+        publishContext: _publishContext,
+        payload: pending.payload,
       );
       if (!mounted) {
         return;
@@ -297,8 +306,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
           title: const Text('发布完成'),
           content: SelectableText(
             '已登记「${pending.result.displayName}」\n'
-            '项目簇: ${pending.result.projectId}\n'
-            '节点: ${pending.result.nodeId}\n'
+            '项目 ID: ${pending.result.projectId}\n'
+            'Entry ID: ${response.entryId}\n'
+            'Version ID: ${response.versionId}\n'
             'Release: ${pending.result.releaseTag}\n\n'
             '公共市场需要排期发布，请等待排期完成后查看。',
           ),
@@ -319,66 +329,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         _retryingMarketRegistration = false;
         _progressMessage = null;
         _errorMessage = error.toString();
-      });
-    }
-  }
-
-  Future<void> _openParentSelectionEditor() async {
-    final publishContext = _publishContext;
-    if (publishContext == null || _selectionProjectLoading) {
-      return;
-    }
-    setState(() {
-      _selectionProjectLoading = true;
-      _selectionLoadError = null;
-    });
-    try {
-      final project = await widget.clients.apiMarketStatsApiService
-          .getArtifactProject(projectId: publishContext.projectId);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _selectionProjectLoading = false;
-      });
-      final selected = await showDialog<Set<String>>(
-        context: context,
-        builder: (context) => _ArtifactParentSelectionDialog(
-          project: project,
-          selectedNodeIds: publishContext.parentNodeIds.toSet(),
-        ),
-      );
-      if (selected == null || selected.isEmpty || !mounted) {
-        return;
-      }
-      final orderedSelected = project.nodes
-          .map((node) => node.nodeId)
-          .where(selected.contains)
-          .toList(growable: false);
-      if (orderedSelected.isEmpty) {
-        return;
-      }
-      setState(() {
-        _publishContext = ArtifactPublishClusterContext(
-          projectId: publishContext.projectId,
-          rootNodeId: publishContext.rootNodeId,
-          runtimePackageId: publishContext.runtimePackageId,
-          parentNodeIds: orderedSelected,
-          lockedDisplayName: publishContext.lockedDisplayName,
-          projectDisplayName: publishContext.projectDisplayName,
-          projectDescription: publishContext.projectDescription,
-        );
-      });
-    } catch (error, stackTrace) {
-      debugPrint(
-        'Failed to load artifact parent selection: $error\n$stackTrace',
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _selectionProjectLoading = false;
-        _selectionLoadError = error.toString();
       });
     }
   }
@@ -436,12 +386,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
             children: <Widget>[
               if (publishContext != null) ...<Widget>[
-                _PublishContinuationPanel(
-                  contextInfo: publishContext,
-                  isLoading: _selectionProjectLoading,
-                  errorMessage: _selectionLoadError,
-                  onChangeSelection: _openParentSelectionEditor,
-                ),
+                _PublishContinuationPanel(contextInfo: publishContext),
                 const SizedBox(height: 12),
               ],
               DropdownButtonFormField<String>(
@@ -488,12 +433,61 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
               TextField(
                 controller: _descriptionController,
                 enabled: !_publishing,
-                minLines: 3,
-                maxLines: 6,
+                minLines: 2,
+                maxLines: 4,
                 decoration: const InputDecoration(
                   labelText: '简介',
                   border: OutlineInputBorder(),
                 ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _detailController,
+                enabled: !_publishing,
+                minLines: 5,
+                maxLines: 12,
+                decoration: const InputDecoration(
+                  labelText: '详情',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedCategoryId,
+                style: OperitFormStyles.dropdownTextStyle(context),
+                decoration: const InputDecoration(
+                  labelText: '分类',
+                  border: OutlineInputBorder(),
+                ),
+                items: _categories
+                    .map(
+                      (category) => DropdownMenuItem<String>(
+                        value: category.id,
+                        child: Text(category.name),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: _publishing
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _selectedCategoryId = value;
+                        });
+                      },
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _allowPublicUpdates,
+                onChanged: _publishing
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _allowPublicUpdates = value;
+                        });
+                      },
+                title: const Text('允许所有人发布新版本'),
+                subtitle: const Text('开启后，登录用户可为该插件提交新版本。'),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -575,25 +569,14 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
 }
 
 class _PublishContinuationPanel extends StatelessWidget {
-  const _PublishContinuationPanel({
-    required this.contextInfo,
-    required this.isLoading,
-    required this.errorMessage,
-    required this.onChangeSelection,
-  });
+  const _PublishContinuationPanel({required this.contextInfo});
 
   final ArtifactPublishClusterContext contextInfo;
-  final bool isLoading;
-  final String? errorMessage;
-  final VoidCallback onChangeSelection;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final parentCount = contextInfo.parentNodeIds
-        .where((nodeId) => nodeId.trim().isNotEmpty)
-        .length;
     return OperitGlassSurface(
       color: colorScheme.secondaryContainer.withValues(alpha: 0.32),
       layer: OperitGlassSurfaceLayer.card,
@@ -604,124 +587,25 @@ class _PublishContinuationPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    '选中$parentCount个版本',
-                    style: textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: isLoading ? null : onChangeSelection,
-                  child: Text(isLoading ? '加载中' : '更改'),
-                ),
-              ],
+            Text(
+              '为现有 Artifact 发布新版本',
+              style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
-            if (errorMessage?.trim().isNotEmpty == true) ...<Widget>[
-              const SizedBox(height: 6),
-              Text(
-                errorMessage!.trim(),
-                style: textTheme.bodySmall?.copyWith(color: colorScheme.error),
-              ),
-            ],
             const SizedBox(height: 6),
-            if (contextInfo.lockedDisplayName.trim().isNotEmpty)
+            Text(
+              'Entry ID: ${contextInfo.entryId}',
+              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+            if (contextInfo.lockedDisplayName.trim().isNotEmpty) ...<Widget>[
+              const SizedBox(height: 4),
               Text(
                 '插件名字将沿用 ${contextInfo.lockedDisplayName.trim()}',
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
               ),
-            Text(
-              '包名和发布名称会自动沿用。',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
+            ],
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ArtifactParentSelectionDialog extends StatefulWidget {
-  const _ArtifactParentSelectionDialog({
-    required this.project,
-    required this.selectedNodeIds,
-  });
-
-  final core_proxy.ArtifactProjectDetailResponse project;
-  final Set<String> selectedNodeIds;
-
-  @override
-  State<_ArtifactParentSelectionDialog> createState() =>
-      _ArtifactParentSelectionDialogState();
-}
-
-class _ArtifactParentSelectionDialogState
-    extends State<_ArtifactParentSelectionDialog> {
-  late final Set<String> _selectedNodeIds = Set<String>.from(
-    widget.selectedNodeIds,
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    final viewport = MediaQuery.sizeOf(context);
-    return AlertDialog(
-      title: const Text('选择基础版本'),
-      content: SizedBox(
-        width: min(680.0, viewport.width * 0.9),
-        height: min(520.0, viewport.height * 0.68),
-        child: ListView.separated(
-          itemCount: widget.project.nodes.length,
-          separatorBuilder: (context, index) => const Divider(height: 1),
-          itemBuilder: (context, index) {
-            final node = widget.project.nodes[index];
-            final selected = _selectedNodeIds.contains(node.nodeId);
-            return CheckboxListTile(
-              value: selected,
-              onChanged: (value) {
-                setState(() {
-                  if (value == true) {
-                    _selectedNodeIds.add(node.nodeId);
-                  } else {
-                    _selectedNodeIds.remove(node.nodeId);
-                  }
-                });
-              },
-              title: Text(
-                node.displayName.trim().isEmpty
-                    ? node.nodeId
-                    : node.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                '${node.version} · ${node.publisherLogin} · ${node.state}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              controlAffinity: ListTileControlAffinity.leading,
-            );
-          },
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _selectedNodeIds.isEmpty
-              ? null
-              : () => Navigator.of(context).pop(_selectedNodeIds),
-          child: const Text('确定'),
-        ),
-      ],
     );
   }
 }
@@ -799,13 +683,15 @@ class _PublishResult {
   const _PublishResult({
     required this.displayName,
     required this.projectId,
-    required this.nodeId,
+    required this.entryId,
+    required this.versionId,
     required this.releaseTag,
   });
 
   final String displayName;
   final String projectId;
-  final String nodeId;
+  final String entryId;
+  final String versionId;
   final String releaseTag;
 }
 
@@ -856,6 +742,9 @@ Future<_PublishResult> _publishArtifact({
   required core_proxy.PublishablePackageSource source,
   required String displayName,
   required String description,
+  required String detail,
+  required String categoryId,
+  required bool allowPublicUpdates,
   required String version,
   required String minSupportedAppVersion,
   required String maxSupportedAppVersion,
@@ -865,11 +754,19 @@ Future<_PublishResult> _publishArtifact({
 }) async {
   final trimmedDisplayName = displayName.trim();
   final trimmedDescription = description.trim();
+  final trimmedDetail = detail.trim();
+  final trimmedCategoryId = categoryId.trim();
   if (trimmedDisplayName.isEmpty) {
     throw StateError('插件名称不能为空');
   }
   if (trimmedDescription.isEmpty) {
     throw StateError('简介不能为空');
+  }
+  if (trimmedDetail.isEmpty) {
+    throw StateError('详情不能为空');
+  }
+  if (trimmedCategoryId.isEmpty) {
+    throw StateError('分类不能为空');
   }
   final cleanVersion = _normalizeArtifactVersion(version);
   final normalizedMinVersion = _normalizeAppVersionOrNull(
@@ -881,7 +778,7 @@ Future<_PublishResult> _publishArtifact({
   _validateAppVersionRange(normalizedMinVersion, normalizedMaxVersion);
 
   onProgress('正在读取 GitHub 账号');
-  final currentUser = await clients.apiMarketStatsApiService.getCurrentUser();
+  final currentUser = await clients.apiMarketStatsApiService.getCurrentGithubUser();
   final normalizedRuntimePackageId = _normalizeMarketArtifactId(
     source.packageName,
   );
@@ -905,11 +802,7 @@ Future<_PublishResult> _publishArtifact({
         "Continuation publish must keep runtime package id '$contextRuntimePackageId'",
       );
     }
-    await _validateContinuationAuthorDeclaration(
-      clients: clients,
-      source: source,
-      publishContext: publishContext,
-    );
+
   }
 
   onProgress('正在准备 OperitForge');
@@ -919,46 +812,26 @@ Future<_PublishResult> _publishArtifact({
     allowCreateForgeRepo: allowCreateForgeRepo,
   );
 
-  final nodeId = _uuidV4();
+  final releaseNonce = _uuidV4().substring(0, 8);
   final resolvedDisplayName =
       publishContext?.lockedDisplayName.trim().isNotEmpty == true
       ? publishContext!.lockedDisplayName.trim()
       : trimmedDisplayName;
-  final rootNodeId = publishContext?.rootNodeId.trim().isNotEmpty == true
-      ? publishContext!.rootNodeId.trim()
-      : nodeId;
-  final parentNodeIds =
-      publishContext?.parentNodeIds
-          .map((nodeId) => nodeId.trim())
-          .where((nodeId) => nodeId.isNotEmpty)
-          .toList(growable: false) ??
-      const <String>[];
   final projectId = publishContext?.projectId.trim().isNotEmpty == true
       ? _normalizeMarketArtifactId(publishContext!.projectId)
       : normalizedRuntimePackageId;
-  final projectDisplayName =
-      publishContext?.projectDisplayName.trim().isNotEmpty == true
-      ? publishContext!.projectDisplayName.trim()
-      : resolvedDisplayName;
-  final projectDescription =
-      publishContext?.projectDescription.trim().isNotEmpty == true
-      ? publishContext!.projectDescription.trim()
-      : trimmedDescription;
   final extension = source.fileExtension.trim().isEmpty
       ? 'bin'
       : source.fileExtension.trim();
   final assetName =
-      '$normalizedRuntimePackageId-v$cleanVersion-${nodeId.substring(0, 8)}.$extension';
+      '$normalizedRuntimePackageId-v$cleanVersion-$releaseNonce.$extension';
   final releaseTag =
-      '${_artifactReleaseTagPrefix(source.type)}-$normalizedRuntimePackageId-v$cleanVersion-${nodeId.substring(0, 8)}';
+      '${_artifactReleaseTagPrefix(source.type)}-$normalizedRuntimePackageId-v$cleanVersion-$releaseNonce';
   final releaseName = '$resolvedDisplayName v$cleanVersion';
   final releaseBody = _buildReleaseBody(
     type: source.type,
     projectId: projectId,
     runtimePackageId: source.packageName,
-    nodeId: nodeId,
-    rootNodeId: rootNodeId,
-    parentNodeIds: parentNodeIds,
     displayName: resolvedDisplayName,
     version: cleanVersion,
     minSupportedAppVersion: normalizedMinVersion,
@@ -990,12 +863,10 @@ Future<_PublishResult> _publishArtifact({
   final payload = <String, Object?>{
     'type': source.type,
     'projectId': projectId,
-    'projectDisplayName': projectDisplayName,
-    'projectDescription': projectDescription,
+    'detail': trimmedDetail,
+    'categoryId': trimmedCategoryId,
+    'allowPublicUpdates': allowPublicUpdates,
     'runtimePackageId': source.packageName,
-    'nodeId': nodeId,
-    'rootNodeId': rootNodeId,
-    'parentNodeIds': parentNodeIds,
     'publisherLogin': currentUser.login,
     'releaseTag': releaseTag,
     'assetName': asset.name,
@@ -1015,15 +886,24 @@ Future<_PublishResult> _publishArtifact({
   final result = _PublishResult(
     displayName: resolvedDisplayName,
     projectId: projectId,
-    nodeId: nodeId,
+    entryId: '',
+    versionId: '',
     releaseTag: releaseTag,
   );
   try {
-    await _createMarketIssue(
+    final response = await _registerMarketEntry(
       clients: clients,
       type: source.type,
       title: resolvedDisplayName,
-      body: _buildArtifactMarketIssueBody(payload),
+      publishContext: publishContext,
+      payload: payload,
+    );
+    return _PublishResult(
+      displayName: resolvedDisplayName,
+      projectId: projectId,
+      entryId: response.entryId,
+      versionId: response.versionId,
+      releaseTag: releaseTag,
     );
   } catch (error) {
     throw _RegistrationRetryRequired(
@@ -1034,7 +914,6 @@ Future<_PublishResult> _publishArtifact({
       errorMessage: error.toString(),
     );
   }
-  return result;
 }
 
 Future<_ForgeRepoInfo> _ensureForgeRepository({
@@ -1215,61 +1094,81 @@ Future<_GitHubReleaseAssetInfo> _uploadReleaseAsset({
   );
 }
 
-Future<void> _createMarketIssue({
+Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   required GeneratedCoreProxyClients clients,
   required String type,
   required String title,
-  required String body,
+  required ArtifactPublishClusterContext? publishContext,
+  required Map<String, Object?> payload,
 }) async {
-  await _githubJsonRequest(
-    clients: clients,
-    method: 'POST',
-    uri: Uri.https(
-      'api.github.com',
-      '/repos/$_marketOwner/${_artifactMarketRepo(type)}/issues',
-    ),
-    body: <String, Object?>{
-      'title': title,
-      'body': body,
-      'labels': <String>[_artifactMarketLabel(type)],
-    },
+  final owner = payload['publisherLogin']?.toString() ?? '';
+  final repo = payload['forgeRepo']?.toString() ?? '';
+  final releaseTag = payload['releaseTag']?.toString() ?? '';
+  final assetName = payload['assetName']?.toString() ?? '';
+  final sha256 = payload['sha256']?.toString() ?? '';
+  await clients.apiMarketStatsApiService.publishProof(
+    owner: owner,
+    repo: repo,
+    releaseTag: releaseTag,
+    assetName: assetName,
+    sha256: sha256,
   );
-}
-
-Future<void> _validateContinuationAuthorDeclaration({
-  required GeneratedCoreProxyClients clients,
-  required core_proxy.PublishablePackageSource source,
-  required ArtifactPublishClusterContext publishContext,
-}) async {
-  final parentNodeIds = publishContext.parentNodeIds
-      .map((nodeId) => nodeId.trim())
-      .where((nodeId) => nodeId.isNotEmpty)
-      .toList(growable: false);
-  if (parentNodeIds.isEmpty) {
-    return;
-  }
-  final authorDeclaration = await clients.apiArtifactAuthorValidation
-      .inspectLocalArtifactAuthorDeclaration(source: source);
-  if (!authorDeclaration.hasAuthorField) {
-    return;
-  }
-  final project = await clients.apiMarketStatsApiService.getArtifactProject(
-    projectId: publishContext.projectId,
-  );
-  final publisherLogins = await clients.apiArtifactAuthorValidation
-      .collectArtifactPredecessorPublisherLogins(
-        project: project,
-        parentNodeIds: parentNodeIds,
-      );
-  final predecessorPublisherCount = publisherLogins.length;
-  if (predecessorPublisherCount > 0 &&
-      authorDeclaration.declaredAuthorSlotCount < predecessorPublisherCount) {
-    throw StateError(
-      '当前作品已声明 author，但数量不足。当前直接前驱节点的 GitHub 发布者共有 '
-      '$predecessorPublisherCount 个；author 要么不写，要么至少提供 '
-      '$predecessorPublisherCount 个位置。',
+  final description = payload['description']?.toString() ?? '';
+  final detail = payload['detail']?.toString() ?? '';
+  final categoryId = payload['categoryId']?.toString() ?? '';
+  final version = payload['version']?.toString() ?? '';
+  final minAppVer = payload['minSupportedAppVersion']?.toString() ?? '';
+  final maxAppVer = _emptyToNull(payload['maxSupportedAppVersion']?.toString());
+  final projectId = payload['projectId']?.toString() ?? '';
+  final runtimePackageId = payload['runtimePackageId']?.toString() ?? '';
+  final assetUrl = payload['downloadUrl']?.toString() ?? '';
+  if (publishContext != null) {
+    final canPatchEntry = publishContext.canEditEntry;
+    return clients.apiMarketStatsApiService.publishArtifactVersion(
+      entryId: publishContext.entryId,
+      version: version,
+      formatVer: 'forge-v3',
+      minAppVer: minAppVer,
+      maxAppVer: maxAppVer,
+      changelog: null,
+      projectId: projectId,
+      runtimePackageId: runtimePackageId,
+      assetKind: type,
+      assetUrl: assetUrl,
+      ghOwner: owner,
+      ghRepo: repo,
+      ghReleaseTag: releaseTag,
+      assetName: assetName,
+      sha256: sha256,
+      entryTitle: null,
+      entryDescription: canPatchEntry ? description : null,
+      entryDetail: canPatchEntry ? detail : null,
+      entryCategoryId: canPatchEntry ? categoryId : null,
+      entryAllowPublicUpdates: canPatchEntry ? payload['allowPublicUpdates'] == true : null,
     );
   }
+  return clients.apiMarketStatsApiService.publishArtifact(
+    type: type,
+    title: title,
+    description: description,
+    detail: detail,
+    categoryId: categoryId,
+    allowPublicUpdates: payload['allowPublicUpdates'] == true,
+    version: version,
+    formatVer: 'forge-v3',
+    minAppVer: minAppVer,
+    maxAppVer: maxAppVer,
+    changelog: null,
+    projectId: projectId,
+    runtimePackageId: runtimePackageId,
+    assetKind: type,
+    assetUrl: assetUrl,
+    ghOwner: owner,
+    ghRepo: repo,
+    ghReleaseTag: releaseTag,
+    assetName: assetName,
+    sha256: sha256,
+  );
 }
 
 Future<void> _ensureFreshPublishIdentityAvailable({
@@ -1279,31 +1178,17 @@ Future<void> _ensureFreshPublishIdentityAvailable({
   required String normalizedRuntimePackageId,
 }) async {
   final normalizedTitle = _normalizePublishTitle(displayName);
-  for (final definition in _artifactDefinitions()) {
-    final titleIssues = await _githubSearchIssues(
-      clients: clients,
-      query:
-          'repo:$_marketOwner/${definition.repo} is:issue in:title "$displayName"',
-    );
-    final titleConflict = titleIssues.any(
-      (issue) =>
-          _normalizePublishTitle(issue['title'] as String) == normalizedTitle,
+  for (final type in _artifactMarketTypes) {
+    final entries = await _loadPublishedEntriesByType(clients, type);
+    final titleConflict = entries.any(
+      (entry) => _normalizePublishTitle(entry.title) == normalizedTitle,
     );
     if (titleConflict) {
       throw StateError('名字「$displayName」已存在。');
     }
-    final runtimeIssues = await _githubSearchIssues(
-      clients: clients,
-      query:
-          'repo:$_marketOwner/${definition.repo} is:issue "$runtimePackageId"',
-    );
-    final runtimeConflict = runtimeIssues.any((issue) {
-      final metadata = _artifactMetadataFromBody(
-        issue['body'] as String? ?? '',
-      );
-      final existingRuntimePackageId =
-          metadata['runtimePackageId']?.toString() ?? '';
-      final existingProjectId = metadata['projectId']?.toString() ?? '';
+    final runtimeConflict = entries.any((entry) {
+      final existingRuntimePackageId = entry.artifact?.runtimePackageId ?? '';
+      final existingProjectId = entry.artifact?.projectId ?? entry.id;
       return _sameArtifactRuntimePackageId(
             existingRuntimePackageId,
             runtimePackageId,
@@ -1317,26 +1202,41 @@ Future<void> _ensureFreshPublishIdentityAvailable({
   }
 }
 
-Future<List<Map<String, Object?>>> _githubSearchIssues({
-  required GeneratedCoreProxyClients clients,
-  required String query,
-}) async {
-  final response =
-      await _githubJsonRequest(
-            clients: clients,
-            method: 'GET',
-            uri: Uri.https('api.github.com', '/search/issues', <String, String>{
-              'q': query,
-              'sort': 'updated',
-              'order': 'desc',
-              'page': '1',
-              'per_page': '100',
-            }),
-          )
-          as Map<String, Object?>;
-  return (response['items'] as List<Object?>)
-      .map((item) => item as Map<String, Object?>)
-      .toList(growable: false);
+Future<List<core_proxy.MarketEntrySummary>> _loadPublishedEntriesByType(
+  GeneratedCoreProxyClients clients,
+  String type,
+) async {
+  final market = clients.apiMarketStatsApiService;
+  final entries = <core_proxy.MarketEntrySummary>[];
+  var page = 1;
+  while (true) {
+    final list = await market.getTypePage(
+      type: type,
+      sort: 'updated',
+      page: page,
+    );
+    entries.addAll(list.items);
+    if (page >= _marketPageCount(list.total, list.pageSize)) {
+      break;
+    }
+    page += 1;
+  }
+  return entries;
+}
+
+int _marketPageCount(int total, int pageSize) {
+  final size = pageSize <= 0 ? 100 : pageSize;
+  final count = (total + size - 1) ~/ size;
+  return count <= 0 ? 1 : count;
+}
+
+String? _defaultCategoryId(List<core_proxy.MarketCategoryInfo> categories) {
+  return categories.isEmpty ? null : categories.first.id;
+}
+
+String? _emptyToNull(String? value) {
+  final trimmed = value?.trim() ?? '';
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 Future<Object?> _githubJsonRequest({
@@ -1410,95 +1310,20 @@ String _buildReleaseBody({
   required String type,
   required String projectId,
   required String runtimePackageId,
-  required String nodeId,
-  required String rootNodeId,
-  required List<String> parentNodeIds,
   required String displayName,
   required String version,
   required String? minSupportedAppVersion,
   required String? maxSupportedAppVersion,
 }) {
-  final parentNodeText = parentNodeIds.isEmpty ? '-' : parentNodeIds.join(', ');
   return '''
 ${_artifactTitleLabel(type)} artifact published by OperitForge.
 
 Project ID: $projectId
 Runtime package ID: $runtimePackageId
-Node ID: $nodeId
-Root node ID: $rootNodeId
-Parent node IDs: $parentNodeText
 Display name: $displayName
 Version: $version
 Supported app versions: ${_formatSupportedAppVersions(minSupportedAppVersion, maxSupportedAppVersion)}
 ''';
-}
-
-String _buildArtifactMarketIssueBody(Map<String, Object?> payload) {
-  final parentNodeIds = payload['parentNodeIds'] as List<String>;
-  final parentNodeText = parentNodeIds.isEmpty ? '-' : parentNodeIds.join(', ');
-  final timestamp = DateTime.now()
-      .toIso8601String()
-      .replaceFirst('T', ' ')
-      .substring(0, 19);
-  return '''
-$_metadataPrefix${jsonEncode(payload)} -->
-<!-- operit-parser-version: forge-v3 -->
-
-## ${_artifactTitleLabel(payload['type'] as String)}
-
-${payload['description']}
-
-## Project Cluster
-
-- Project ID: `${payload['projectId']}`
-- Runtime package ID: `${payload['runtimePackageId']}`
-- Node ID: `${payload['nodeId']}`
-- Root node ID: `${payload['rootNodeId']}`
-- Parent node IDs: `$parentNodeText`
-- Project display name: `${payload['projectDisplayName']}`
-- Project description: ${payload['projectDescription']}
-
-## Artifact
-
-- Publisher: `${payload['publisherLogin']}`
-- Forge repo: `${payload['forgeRepo']}`
-- Release tag: `${payload['releaseTag']}`
-- Asset: `${payload['assetName']}`
-- SHA-256: `${payload['sha256']}`
-- Download: ${payload['downloadUrl']}
-
-## Metadata
-
-| Field | Value |
-| --- | --- |
-| Type | ${payload['type']} |
-| Project ID | ${payload['projectId']} |
-| Runtime package ID | ${payload['runtimePackageId']} |
-| Node ID | ${payload['nodeId']} |
-| Root node ID | ${payload['rootNodeId']} |
-| Parent node IDs | $parentNodeText |
-| Version | ${payload['version']} |
-| Supported app versions | ${_formatSupportedAppVersions(payload['minSupportedAppVersion']?.toString(), payload['maxSupportedAppVersion']?.toString())} |
-| Source file | ${payload['sourceFileName']} |
-| Updated at | $timestamp |
-''';
-}
-
-Map<String, Object?> _artifactMetadataFromBody(String body) {
-  final start = body.indexOf(_metadataPrefix);
-  if (start < 0) {
-    return const <String, Object?>{};
-  }
-  final jsonStart = start + _metadataPrefix.length;
-  final end = body.indexOf(' -->', jsonStart);
-  if (end <= jsonStart) {
-    return const <String, Object?>{};
-  }
-  final decoded = jsonDecode(body.substring(jsonStart, end));
-  if (decoded is Map) {
-    return decoded.map((key, value) => MapEntry(key.toString(), value));
-  }
-  return const <String, Object?>{};
 }
 
 String _normalizeArtifactVersion(String value) {
@@ -1633,14 +1458,6 @@ String _artifactReleaseTagPrefix(String type) {
   return type == 'package' ? 'package' : 'script';
 }
 
-String _artifactMarketRepo(String type) {
-  return type == 'package' ? 'OperitPackageMarket' : 'OperitScriptMarket';
-}
-
-String _artifactMarketLabel(String type) {
-  return type == 'package' ? 'package-artifact' : 'script-artifact';
-}
-
 String _artifactContentType(String type, String extension) {
   if (type == 'package') {
     return 'application/zip';
@@ -1666,17 +1483,4 @@ String _formatSupportedAppVersions(String? minVersion, String? maxVersion) {
     return '<= $maxValue';
   }
   return '未声明';
-}
-
-List<_ArtifactDefinition> _artifactDefinitions() {
-  return const <_ArtifactDefinition>[
-    _ArtifactDefinition(repo: 'OperitScriptMarket'),
-    _ArtifactDefinition(repo: 'OperitPackageMarket'),
-  ];
-}
-
-class _ArtifactDefinition {
-  const _ArtifactDefinition({required this.repo});
-
-  final String repo;
 }

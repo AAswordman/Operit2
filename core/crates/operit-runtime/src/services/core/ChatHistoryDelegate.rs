@@ -8,7 +8,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
 use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
 
@@ -280,11 +280,7 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     pub fn currentDisplayPageCount(&self) -> i32 {
-        if self.chatHistory.is_empty() {
-            1
-        } else {
-            1
-        }
+        if self.chatHistory.is_empty() { 1 } else { 1 }
     }
 
     #[allow(non_snake_case)]
@@ -1403,33 +1399,25 @@ impl ChatHistoryDelegate {
         let Some(chatId) = chatIdOverride.or_else(|| self.currentChatId.clone()) else {
             return;
         };
-        let summaryFallbackPosition = self
-            .chatHistories
-            .iter()
-            .find(|chat| chat.id == chatId)
-            .map(|chat| self.findProperSummaryPosition(chat.messages.clone()));
+        let isCurrentChat = self.currentChatId.as_ref() == Some(&chatId);
+        let persistedSummaryMessage = self
+            .chatHistoryManager
+            .addSummaryMessageBetweenSliceNeighbors(
+                chatId.clone(),
+                summaryMessage,
+                beforeTimestamp,
+                afterTimestamp,
+            )
+            .expect("ChatHistoryManager.addSummaryMessageBetweenSliceNeighbors must succeed");
+        let Some(persistedSummaryMessage) = persistedSummaryMessage else {
+            return;
+        };
+
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
-            let insertPosition = chat
-                .messages
-                .iter()
-                .position(|message| {
-                    afterTimestamp
-                        .map(|ts| message.timestamp == ts)
-                        .unwrap_or(false)
-                })
-                .or_else(|| {
-                    beforeTimestamp.and_then(|ts| {
-                        chat.messages
-                            .iter()
-                            .position(|message| message.timestamp == ts)
-                            .map(|index| index + 1)
-                    })
-                })
-                .or(summaryFallbackPosition)
-                .unwrap_or(0);
-            chat.messages.insert(insertPosition, summaryMessage);
+            chat.messages.push(persistedSummaryMessage);
+            chat.messages.sort_by_key(|message| message.timestamp);
         }
-        if self.currentChatId.as_ref() == Some(&chatId) {
+        if isCurrentChat {
             self.reloadCurrentChatDisplayHistory(chatId);
         }
     }

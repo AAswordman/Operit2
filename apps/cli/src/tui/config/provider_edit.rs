@@ -88,13 +88,41 @@ impl FormState {
     pub(crate) fn new_create() -> Self {
         Self {
             fields: vec![
-                FormField { label: "Name", value: String::new(), cursor: 0 },
-                FormField { label: "Provider Type", value: String::new(), cursor: 0 },
-                FormField { label: "Endpoint", value: String::new(), cursor: 0 },
-                FormField { label: "API Key", value: String::new(), cursor: 0 },
-                FormField { label: "Custom Headers (JSON)", value: "{}".to_string(), cursor: 2 },
-                FormField { label: "Request Limit / min", value: "0".to_string(), cursor: 1 },
-                FormField { label: "Max Concurrent Requests", value: "0".to_string(), cursor: 1 },
+                FormField {
+                    label: "Name",
+                    value: String::new(),
+                    cursor: 0,
+                },
+                FormField {
+                    label: "Provider Type",
+                    value: String::new(),
+                    cursor: 0,
+                },
+                FormField {
+                    label: "Endpoint",
+                    value: String::new(),
+                    cursor: 0,
+                },
+                FormField {
+                    label: "API Key",
+                    value: String::new(),
+                    cursor: 0,
+                },
+                FormField {
+                    label: "Custom Headers (JSON)",
+                    value: "{}".to_string(),
+                    cursor: 2,
+                },
+                FormField {
+                    label: "Request Limit / min",
+                    value: "0".to_string(),
+                    cursor: 1,
+                },
+                FormField {
+                    label: "Max Concurrent Requests",
+                    value: "0".to_string(),
+                    cursor: 1,
+                },
             ],
             focus_index: 0,
             editing_field: false,
@@ -107,16 +135,50 @@ impl FormState {
         }
     }
 
-    pub(crate) fn new_edit(profile: &operit_runtime::data::model::ModelConfigData::ProviderProfile) -> Self {
+    pub(crate) fn new_edit(
+        profile: &operit_runtime::data::model::ModelConfigData::ProviderProfile,
+    ) -> Self {
         Self {
             fields: vec![
-                FormField { label: "Name", value: profile.name.clone(), cursor: profile.name.len() },
-                FormField { label: "Provider Type", value: profile.providerTypeId.clone(), cursor: profile.providerTypeId.len() },
-                FormField { label: "Endpoint", value: profile.endpoint.clone(), cursor: profile.endpoint.len() },
-                FormField { label: "API Key", value: profile.apiKey.clone(), cursor: profile.apiKey.len() },
-                FormField { label: "Custom Headers (JSON)", value: if profile.customHeaders.is_empty() || profile.customHeaders == "{}" { "{}".to_string() } else { profile.customHeaders.clone() }, cursor: 0 },
-                FormField { label: "Request Limit / min", value: profile.requestLimitPerMinute.to_string(), cursor: 0 },
-                FormField { label: "Max Concurrent Requests", value: profile.maxConcurrentRequests.to_string(), cursor: 0 },
+                FormField {
+                    label: "Name",
+                    value: profile.name.clone(),
+                    cursor: profile.name.len(),
+                },
+                FormField {
+                    label: "Provider Type",
+                    value: profile.providerTypeId.clone(),
+                    cursor: profile.providerTypeId.len(),
+                },
+                FormField {
+                    label: "Endpoint",
+                    value: profile.endpoint.clone(),
+                    cursor: profile.endpoint.len(),
+                },
+                FormField {
+                    label: "API Key",
+                    value: profile.apiKey.clone(),
+                    cursor: profile.apiKey.len(),
+                },
+                FormField {
+                    label: "Custom Headers (JSON)",
+                    value: if profile.customHeaders.is_empty() || profile.customHeaders == "{}" {
+                        "{}".to_string()
+                    } else {
+                        profile.customHeaders.clone()
+                    },
+                    cursor: 0,
+                },
+                FormField {
+                    label: "Request Limit / min",
+                    value: profile.requestLimitPerMinute.to_string(),
+                    cursor: 0,
+                },
+                FormField {
+                    label: "Max Concurrent Requests",
+                    value: profile.maxConcurrentRequests.to_string(),
+                    cursor: 0,
+                },
             ],
             focus_index: 0,
             editing_field: false,
@@ -135,7 +197,10 @@ impl FormState {
         let names = all_provider_type_names();
         // Find the current value in the list to pre-select it
         let current = &self.fields[1].value.to_ascii_uppercase();
-        self.type_selector_index = names.iter().position(|n| n.to_ascii_uppercase() == *current).unwrap_or(0);
+        self.type_selector_index = names
+            .iter()
+            .position(|n| n.to_ascii_uppercase() == *current)
+            .unwrap_or(0);
         self.update_type_filter();
     }
 
@@ -181,7 +246,9 @@ impl FormState {
             .map(|(i, field)| {
                 let is_focused = i == self.focus_index;
                 let label_style = if is_focused {
-                    Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(theme::ACCENT)
                 };
@@ -206,18 +273,27 @@ impl FormState {
                                 let at = field.value[cursor..cursor + 1].to_string();
                                 let after = field.value[cursor + 1..].to_string();
                                 Line::from(vec![
-                                    Span::styled(before, Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        before,
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                     Span::styled(
                                         at,
                                         Style::default()
                                             .bg(theme::SELECTION_BG)
                                             .fg(theme::SELECTION_TEXT),
                                     ),
-                                    Span::styled(after, Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        after,
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                 ])
                             } else {
                                 Line::from(vec![
-                                    Span::styled(field.value.clone(), Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        field.value.clone(),
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                     Span::styled(" ", Style::default().bg(theme::SELECTION_BG)),
                                 ])
                             }
@@ -248,24 +324,34 @@ impl FormState {
                             let visible_sub = &field.value[byte_offset..];
                             let visible_str = truncate_to_width(visible_sub, max_visible);
 
-                            let cursor_in_visible = cursor.saturating_sub(byte_offset).min(visible_str.len());
+                            let cursor_in_visible =
+                                cursor.saturating_sub(byte_offset).min(visible_str.len());
                             if cursor_in_visible < visible_str.len() {
                                 let cv = &visible_str[..cursor_in_visible];
                                 let cc = &visible_str[cursor_in_visible..cursor_in_visible + 1];
                                 let cr = &visible_str[cursor_in_visible + 1..];
                                 Line::from(vec![
-                                    Span::styled(cv.to_string(), Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        cv.to_string(),
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                     Span::styled(
                                         cc.to_string(),
                                         Style::default()
                                             .bg(theme::SELECTION_BG)
                                             .fg(theme::SELECTION_TEXT),
                                     ),
-                                    Span::styled(cr.to_string(), Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        cr.to_string(),
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                 ])
                             } else {
                                 Line::from(vec![
-                                    Span::styled(visible_str, Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT)),
+                                    Span::styled(
+                                        visible_str,
+                                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT),
+                                    ),
                                     Span::styled(" ", Style::default().bg(theme::SELECTION_BG)),
                                 ])
                             }
@@ -281,12 +367,21 @@ impl FormState {
                     // Provider Type: show with accent bg, hint to press Enter
                     Line::from(Span::styled(
                         &field.value,
-                        Style::default().bg(theme::ACCENT_BG).fg(theme::TEXT).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .bg(theme::ACCENT_BG)
+                            .fg(theme::TEXT)
+                            .add_modifier(Modifier::BOLD),
                     ))
                 } else if field.value.is_empty() {
-                    Line::from(Span::styled("(empty)", Style::default().fg(theme::TEXT_SUBTLE)))
+                    Line::from(Span::styled(
+                        "(empty)",
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))
                 } else {
-                    Line::from(Span::styled(&field.value, Style::default().fg(theme::TEXT_MUTED)))
+                    Line::from(Span::styled(
+                        &field.value,
+                        Style::default().fg(theme::TEXT_MUTED),
+                    ))
                 };
 
                 ListItem::new(vec![
@@ -298,11 +393,7 @@ impl FormState {
 
         let mut state = ListState::default();
         state.select(Some(self.focus_index.min(visible_count.saturating_sub(1))));
-        frame.render_stateful_widget(
-            List::new(items),
-            area,
-            &mut state,
-        );
+        frame.render_stateful_widget(List::new(items), area, &mut state);
     }
 
     fn render_type_selector(&self, area: Rect, frame: &mut Frame) {

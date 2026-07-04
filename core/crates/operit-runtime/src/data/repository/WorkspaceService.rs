@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use operit_host_api::FileSystemHost;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
@@ -106,6 +106,34 @@ impl WorkspaceService {
                 .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
         });
         Ok(workspaceEntries)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn listWorkspaceBindingDirectories(
+        &self,
+        path: String,
+    ) -> Result<Vec<WorkspaceFileEntry>, String> {
+        let directoryPath = PathMapper::normalizeVfsPath(&path)?;
+        let vfs = self.vfsForWorkspace(&directoryPath);
+        let entries = vfs.listFiles(&directoryPath)?;
+        let mut directoryEntries = Vec::new();
+        for entry in entries {
+            if !entry.isDirectory {
+                continue;
+            }
+            let childPath = PathMapper::joinVfsPath(&directoryPath, &entry.name)?;
+            directoryEntries.push(WorkspaceFileEntry {
+                name: entry.name,
+                path: childPath.clone(),
+                relativePath: childPath,
+                isDirectory: true,
+                size: entry.size,
+                lastModified: entry.lastModified,
+            });
+        }
+        directoryEntries
+            .sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        Ok(directoryEntries)
     }
 
     #[allow(non_snake_case)]

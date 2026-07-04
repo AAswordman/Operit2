@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,7 +11,6 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
@@ -118,18 +118,9 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     final activePrompt = _activePromptSelection(
       await widget.clients.preferencesActivePromptManager.getActivePrompt(),
     );
-    final preferencesManager = UserPreferencesManager(clients: widget.clients);
     return _CharacterSettingsData(
       cards: cards,
       groups: groups,
-      cardAvatarUris: await _loadCharacterCardAvatarUris(
-        cards,
-        preferencesManager,
-      ),
-      groupAvatarUris: await _loadCharacterGroupAvatarUris(
-        groups,
-        preferencesManager,
-      ),
       sharedMemoryStores: await sharedMemoryManager.getAllSharedMemoryStores(),
       tags: await promptTagManager.getAllTags(),
       modelSummaries: await modelManager.getAllModelSummaries(),
@@ -151,46 +142,6 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
 
   Future<List<core_proxy.TtsConfig>> _loadTtsConfigs() {
     return widget.clients.preferencesTtsConfigManager.getAllTtsConfigs();
-  }
-
-  Future<Map<String, String>> _loadCharacterCardAvatarUris(
-    List<core_proxy.CharacterCard> cards,
-    UserPreferencesManager preferencesManager,
-  ) async {
-    final avatarUris = <String, String>{};
-    for (final card in cards) {
-      final hasTheme = await preferencesManager.hasCharacterCardTheme(card.id);
-      if (hasTheme) {
-        final snapshot = await preferencesManager
-            .resolveThemePreferenceSnapshot(characterCardId: card.id);
-        final avatarUri = snapshot.customAiAvatarUri?.trim();
-        if (avatarUri != null && avatarUri.isNotEmpty) {
-          avatarUris[card.id] = avatarUri;
-        }
-      }
-    }
-    return avatarUris;
-  }
-
-  Future<Map<String, String>> _loadCharacterGroupAvatarUris(
-    List<core_proxy.CharacterGroupCard> groups,
-    UserPreferencesManager preferencesManager,
-  ) async {
-    final avatarUris = <String, String>{};
-    for (final group in groups) {
-      final hasTheme = await preferencesManager.hasCharacterGroupTheme(
-        group.id,
-      );
-      if (hasTheme) {
-        final snapshot = await preferencesManager
-            .resolveThemePreferenceSnapshot(characterGroupId: group.id);
-        final avatarUri = snapshot.customAiAvatarUri?.trim();
-        if (avatarUri != null && avatarUri.isNotEmpty) {
-          avatarUris[group.id] = avatarUri;
-        }
-      }
-    }
-    return avatarUris;
   }
 
   void _reload() {
@@ -397,6 +348,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       openingStatement: '',
       otherContentChat: '',
       otherContentVoice: '',
+      avatarUri: null,
       attachedTagIds: const <String>[],
       advancedCustomPrompt: '',
       marks: '',
@@ -763,7 +715,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                   _CharacterCardTile(
                     card: card,
                     tags: data.tags,
-                    avatarUri: data.cardAvatarUris[card.id],
+                    avatarUri: card.avatarUri,
                     active: card.id == data.activeCardId,
                     onActivate: () => _activateCard(card),
                     onEdit: () => _editCard(card, data),
@@ -805,7 +757,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     group: group,
                     active: group.id == data.activeGroupId,
                     cards: data.cards,
-                    avatarUri: data.groupAvatarUris[group.id],
+                    avatarUri: null,
                     onActivate: () => _activateGroup(group),
                     onEdit: () => _editGroup(group, data),
                   ),

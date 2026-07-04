@@ -387,6 +387,7 @@ fn normalizeWindowsHostWorkspacePath(path: &str) -> Result<Option<String>, Strin
 fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
     let segments = pathSegments(path);
     match segments.as_slice() {
+        [] => Err("Workspace binding cannot use VFS root".to_string()),
         ["storage", "emulated", "0", rest @ ..] => Ok(joinNormalizedSegments(
             &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
             rest,

@@ -1,12 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::tools::packTool::PackageManager::PublishablePackageSource;
 use crate::core::tools::packTool::ToolPkgParser::ToolPkgArchiveParser;
-use crate::data::api::MarketStatsApiService::{
-    ArtifactProjectDetailResponse, ArtifactProjectNodeResponse,
-};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,40 +40,6 @@ impl ArtifactAuthorValidation {
             inspectJsAuthorDeclaration(&sourceFile)
         }
     }
-
-    #[allow(non_snake_case)]
-    pub fn collectArtifactPredecessorPublisherLogins(
-        &self,
-        project: ArtifactProjectDetailResponse,
-        parentNodeIds: Vec<String>,
-    ) -> Result<Vec<String>, String> {
-        let nodeById = project
-            .nodes
-            .iter()
-            .map(|node| (node.nodeId.as_str(), node))
-            .collect::<BTreeMap<_, _>>();
-        let mut publishers = Vec::new();
-
-        for nodeId in parentNodeIds
-            .iter()
-            .map(|nodeId| nodeId.trim())
-            .filter(|nodeId| !nodeId.is_empty())
-        {
-            let node = nodeById
-                .get(nodeId)
-                .ok_or_else(|| format!("找不到前驱节点 `{nodeId}`，无法校验作者数量。"))?;
-            let publisherLogin = artifactNodePublisherLogin(node);
-            if !publisherLogin.is_empty()
-                && !publishers
-                    .iter()
-                    .any(|existing: &String| existing == &publisherLogin)
-            {
-                publishers.push(publisherLogin);
-            }
-        }
-
-        Ok(publishers)
-    }
 }
 
 #[allow(non_snake_case)]
@@ -90,7 +53,6 @@ fn inspectJsAuthorDeclaration(sourceFile: &Path) -> Result<LocalArtifactAuthorDe
     };
     inspectAuthorDeclarationFromMetadata(&metadataString)
 }
-
 #[allow(non_snake_case)]
 fn inspectToolPkgAuthorDeclaration(
     sourceFile: &Path,
@@ -176,16 +138,6 @@ fn countDeclaredAuthorSlots(value: Option<&serde_json::Value>) -> i32 {
         None | Some(serde_json::Value::Null) => 0,
         Some(serde_json::Value::Array(items)) => items.len() as i32,
         Some(_) => 1,
-    }
-}
-
-#[allow(non_snake_case)]
-fn artifactNodePublisherLogin(node: &ArtifactProjectNodeResponse) -> String {
-    let declaredPublisherLogin = node.publisherLogin.trim();
-    if declaredPublisherLogin.is_empty() {
-        node.issue.user.login.trim().to_string()
-    } else {
-        declaredPublisherLogin.to_string()
     }
 }
 

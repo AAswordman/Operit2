@@ -9,12 +9,16 @@ class MarketBrowseControls extends StatelessWidget {
     super.key,
     required this.sortOption,
     required this.enabled,
+    required this.featuredOnly,
     required this.onSortChanged,
+    required this.onFeaturedOnlyChanged,
   });
 
   final MarketSortOption sortOption;
   final bool enabled;
+  final bool featuredOnly;
   final ValueChanged<MarketSortOption> onSortChanged;
+  final ValueChanged<bool> onFeaturedOnlyChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -39,14 +43,30 @@ class MarketBrowseControls extends StatelessWidget {
                 ),
               ),
               _MarketSortChip(
+                selected: sortOption == MarketSortOption.updated,
+                label: '最近更新',
+                onSelected: () => onSortChanged(MarketSortOption.updated),
+              ),
+              _MarketSortChip(
+                selected: sortOption == MarketSortOption.likes,
+                label: '点赞',
+                onSelected: () => onSortChanged(MarketSortOption.likes),
+              ),
+              _MarketSortChip(
                 selected: sortOption == MarketSortOption.downloads,
                 label: '下载',
                 onSelected: () => onSortChanged(MarketSortOption.downloads),
               ),
-              _MarketSortChip(
-                selected: sortOption == MarketSortOption.updated,
-                label: '更新',
-                onSelected: () => onSortChanged(MarketSortOption.updated),
+              FilterChip(
+                selected: featuredOnly,
+                showCheckmark: true,
+                label: const Text('精选'),
+                labelStyle: Theme.of(context).textTheme.labelMedium,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                onSelected: onFeaturedOnlyChanged,
               ),
             ],
           ),

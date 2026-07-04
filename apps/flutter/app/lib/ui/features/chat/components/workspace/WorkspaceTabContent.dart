@@ -25,6 +25,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.terminalSessionCountListenable,
     required this.browserSessionRegistry,
     required this.onListWorkspaceFiles,
+    required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
     required this.onWriteWorkspaceFileBytes,
@@ -40,6 +41,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onCloseCurrentTab,
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
+    required this.onChooseExistingWorkspace,
   });
 
   final WorkspaceTab tab;
@@ -48,6 +50,8 @@ class WorkspaceTabContent extends StatelessWidget {
   final WorkspaceBrowserSessionRegistry browserSessionRegistry;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final Future<List<WorkspaceFileEntry>> Function(String path)
+  onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
   final Future<void> Function(String path, Uint8List bytes)
@@ -70,6 +74,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onCloseCurrentTab;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
+  final VoidCallback onChooseExistingWorkspace;
 
   @override
   Widget build(BuildContext context) {
@@ -89,7 +94,15 @@ class WorkspaceTabContent extends StatelessWidget {
       case WorkspaceTabKind.setup:
         return WorkspaceSetupContent(
           onCreateDefaultWorkspace: onCreateDefaultWorkspace,
-          onBindWorkspace: onBindWorkspace,
+          onChooseExistingWorkspace: onChooseExistingWorkspace,
+        );
+      case WorkspaceTabKind.workspacePicker:
+        return WorkspaceFileBrowserContent(
+          rootLabel: '/',
+          rootRelativePath: '/',
+          onListWorkspaceFiles: onListWorkspaceBindingDirectories,
+          onOpenFile: onOpenFile,
+          onSelectCurrentDirectory: onBindWorkspace,
         );
       case WorkspaceTabKind.files:
         final rootPath = workspacePath?.trim();

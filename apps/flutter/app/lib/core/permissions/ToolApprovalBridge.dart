@@ -66,7 +66,7 @@ class ToolApprovalBridge {
       return;
     }
     _subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEventsChanges(kinds: const <RuntimeHostInteractionKind>[
+        .ownerHostInteractionEventsChanges(kinds: <RuntimeHostInteractionKind>[
           RuntimeHostInteractionKind.toolPermission,
         ])
         .listen(

@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -32,13 +33,11 @@ class AgentChatInputSection extends StatefulWidget {
     required this.focusNode,
     required this.isLoading,
     required this.inputState,
-    required this.modelLabel,
     required this.viewModel,
     required this.currentChatId,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
-    required this.onModelChanged,
     this.pendingQueueMessages = const <PendingQueueMessageItem>[],
     this.isPendingQueueExpanded = true,
     this.onPendingQueueExpandedChange,
@@ -65,13 +64,11 @@ class AgentChatInputSection extends StatefulWidget {
   final FocusNode focusNode;
   final bool isLoading;
   final ChatInputProcessingState inputState;
-  final String modelLabel;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
-  final ValueChanged<String> onModelChanged;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final ValueChanged<bool>? onPendingQueueExpandedChange;
@@ -106,12 +103,16 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
+  StreamSubscription<Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>>?
+  _modelBindingSubscription;
   bool _draggingFiles = false;
+  String _modelLabel = '';
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_handleInputChanged);
+    _watchCurrentModelLabel();
   }
 
   @override
@@ -192,7 +193,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                   child: AgentModelSelectorPopup(
                     viewModel: widget.viewModel,
                     onDismiss: _dismissModelSettingsPopup,
-                    onModelChanged: widget.onModelChanged,
+                    onModelChanged: _handleModelChanged,
                   ),
                 ),
               ),
@@ -310,6 +311,49 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     });
   }
 
+  Future<void> _watchCurrentModelLabel() async {
+    final clients = widget.viewModel.clients;
+    await clients.preferencesModelConfigManager.initializeIfNeeded();
+    await clients.preferencesFunctionalConfigManager.initializeIfNeeded();
+    final binding = await clients.preferencesFunctionalConfigManager
+        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
+    await _applyModelBinding(binding);
+    if (!mounted) {
+      return;
+    }
+    _modelBindingSubscription = clients.preferencesFunctionalConfigManager
+        .functionModelBindingFlowChanges()
+        .listen((bindings) {
+          _applyModelBinding(bindings[core_proxy.FunctionType.chat]!);
+        });
+  }
+
+  Future<void> _applyModelBinding(
+    core_proxy.FunctionModelBinding binding,
+  ) async {
+    final config = await widget.viewModel.clients.preferencesModelConfigManager
+        .getResolvedModelConfig(
+          providerId: binding.providerId,
+          modelId: binding.modelId,
+        );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _modelLabel = _formatModelLabel(config.modelId);
+    });
+  }
+
+  void _handleModelChanged(String modelId) {
+    setState(() {
+      _modelLabel = _formatModelLabel(modelId);
+    });
+  }
+
+  String _formatModelLabel(String modelId) {
+    return modelId.length > 26 ? '${modelId.substring(0, 26)}...' : modelId;
+  }
+
   VoidCallback? _runAttachmentAction(VoidCallback? action) {
     if (action == null) {
       return null;
@@ -393,6 +437,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleInputChanged);
+    _modelBindingSubscription?.cancel();
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
     _dismissAttachmentPopup();
@@ -476,7 +521,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     controller: widget.controller,
                     focusNode: widget.focusNode,
                     inputState: widget.inputState,
-                    modelLabel: widget.modelLabel,
+                    modelLabel: _modelLabel,
                     modelSelectorLink: _modelPopupLink,
                     modelSelectorKey: _modelPopupTargetKey,
                     settingsLink: _inputMenuPopupLink,

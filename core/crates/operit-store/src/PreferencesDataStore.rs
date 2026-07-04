@@ -1481,6 +1481,7 @@ pub struct PreferencesDataStore {
     syncOperationStore: Option<SyncOperationStore>,
     syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
+    sharedState: Arc<PreferencesDataStoreSharedState>,
 }
 
 #[derive(Clone, Debug)]
@@ -1538,6 +1539,17 @@ struct PreferencesDataStoreFlowSubscription {
     id: usize,
 }
 
+#[derive(Default)]
+struct PreferencesDataStoreSharedState {
+    preferences: Mutex<PreferencesDataStoreLoadedPreferences>,
+}
+
+#[derive(Default)]
+struct PreferencesDataStoreLoadedPreferences {
+    loaded: bool,
+    preferences: Preferences,
+}
+
 impl Drop for PreferencesDataStoreFlowSubscription {
     fn drop(&mut self) {
         let Some(signal) = self.signal.upgrade() else {
@@ -1553,6 +1565,7 @@ impl Drop for PreferencesDataStoreFlowSubscription {
 impl PreferencesDataStore {
     pub fn new(path: PathBuf) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
         let rootDir = path
             .parent()
             .map(Path::to_path_buf)
@@ -1567,6 +1580,7 @@ impl PreferencesDataStore {
             syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
             path,
             changeSignal,
+            sharedState,
         }
     }
 
@@ -1575,6 +1589,7 @@ impl PreferencesDataStore {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
         let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
         Self {
@@ -1585,6 +1600,7 @@ impl PreferencesDataStore {
             syncOperationStore: None,
             syncDescriptor: None,
             changeSignal,
+            sharedState,
         }
     }
 
@@ -1596,6 +1612,7 @@ impl PreferencesDataStore {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
         let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
         Self {
             path,
             storagePath,
@@ -1604,6 +1621,7 @@ impl PreferencesDataStore {
             syncOperationStore: None,
             syncDescriptor: None,
             changeSignal,
+            sharedState,
         }
     }
 
@@ -1615,6 +1633,7 @@ impl PreferencesDataStore {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
         let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
         Self {
@@ -1625,6 +1644,7 @@ impl PreferencesDataStore {
             syncOperationStore: None,
             syncDescriptor: None,
             changeSignal,
+            sharedState,
         }
     }
 
@@ -1641,6 +1661,15 @@ impl PreferencesDataStore {
         let content = serde_json::to_string_pretty(&preferences)?;
         defaultRuntimeStorageHost().writeBytes(entityId, content.as_bytes())?;
         let path = RuntimeStorePaths::default().root_dir().join(entityId);
+        {
+            let sharedState = preferencesDataStoreSharedState(&path);
+            let mut loaded = sharedState
+                .preferences
+                .lock()
+                .expect("PreferencesDataStore shared state mutex must not be poisoned");
+            loaded.loaded = true;
+            loaded.preferences = preferences;
+        }
         let signal = preferencesDataStoreChangeSignal(&path);
         let mut version = signal
             .version
@@ -1652,6 +1681,19 @@ impl PreferencesDataStore {
     }
 
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
+        let mut loaded = self
+            .sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        if !loaded.loaded {
+            loaded.preferences = self.readFromStorage()?;
+            loaded.loaded = true;
+        }
+        Ok(loaded.preferences.clone())
+    }
+
+    fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
         if !self.storageHost.exists(&self.storagePath)? {
             return Ok(emptyPreferences());
         }
@@ -1703,26 +1745,53 @@ impl PreferencesDataStore {
     where
         F: FnOnce(&mut Preferences),
     {
-        let mut preferences = self.data()?;
-        transform(&mut preferences);
-        self.write(&preferences)
+        self.try_edit_result(|preferences| {
+            transform(preferences);
+            Ok(())
+        })
     }
 
     pub fn edit_result<F, T>(&self, transform: F) -> Result<T, PreferencesDataStoreError>
     where
         F: FnOnce(&mut Preferences) -> T,
     {
-        let mut preferences = self.data()?;
-        let result = transform(&mut preferences);
-        self.write(&preferences)?;
+        self.try_edit_result(|preferences| Ok(transform(preferences)))
+    }
+
+    pub fn try_edit_result<F, T, E>(&self, transform: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut Preferences) -> Result<T, E>,
+        E: From<PreferencesDataStoreError>,
+    {
+        let mut loaded = self
+            .sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        if !loaded.loaded {
+            loaded.preferences = self.readFromStorage()?;
+            loaded.loaded = true;
+        }
+        let mut preferences = loaded.preferences.clone();
+        let result = transform(&mut preferences)?;
+        self.writeUnlocked(&preferences)?;
+        loaded.preferences = preferences;
         Ok(result)
     }
 
     pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
-        self.write(&preferences)
+        let mut loaded = self
+            .sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        self.writeUnlocked(&preferences)?;
+        loaded.loaded = true;
+        loaded.preferences = preferences;
+        Ok(())
     }
 
-    fn write(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
+    fn writeUnlocked(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
         let content = serde_json::to_string_pretty(preferences)?;
         let storedContent = match &self.encryption {
             Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
@@ -1770,6 +1839,22 @@ impl PreferencesDataStore {
         *version += 1;
         self.changeSignal.changed.notify_all();
     }
+}
+
+#[allow(non_snake_case)]
+fn preferencesDataStoreSharedState(path: &Path) -> Arc<PreferencesDataStoreSharedState> {
+    static SHARED_STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreSharedState>>>> =
+        OnceLock::new();
+    let states = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut states = states
+        .lock()
+        .expect("PreferencesDataStore shared state registry mutex must not be poisoned");
+    if let Some(state) = states.get(path).and_then(Weak::upgrade) {
+        return state;
+    }
+    let state = Arc::new(PreferencesDataStoreSharedState::default());
+    states.insert(path.to_path_buf(), Arc::downgrade(&state));
+    state
 }
 
 #[allow(non_snake_case)]

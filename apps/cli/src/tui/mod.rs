@@ -1,11 +1,11 @@
 #[path = "core/app.rs"]
 mod app;
-#[path = "config/mod.rs"]
-mod config;
 #[path = "core/approval.rs"]
 mod approval;
 #[path = "input/commands.rs"]
 mod commands;
+#[path = "config/mod.rs"]
+mod config;
 #[path = "transcript/empty_state.rs"]
 mod empty_state;
 #[path = "core/focus.rs"]

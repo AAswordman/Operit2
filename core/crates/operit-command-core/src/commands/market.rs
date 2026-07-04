@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,24 +12,22 @@ use operit_runtime::core::application::OperitApplicationContext::OperitApplicati
 use operit_runtime::core::tools::packTool::PackageManager::PackageManager;
 use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::data::api::MarketStatsApiService::{
-    mcpMetadataFromEntry, normalizeMarketArtifactId, parseArtifactMarketMetadata,
-    parseMcpMarketMetadata, parseSkillMarketMetadata, resolveMarketEntryId,
-    skillRepositoryUrlFromEntry, ArtifactProjectDetailResponse, ArtifactProjectNodeResponse,
-    GitHubIssue, MarketRankIssueEntryResponse, MarketStatsApiService,
+    MarketComment, MarketEntrySummary, MarketListPage, MarketNotification, MarketStatsApiService,
 };
 use operit_runtime::data::mcp::MCPLocalServer::MCPLocalServer;
 use operit_runtime::data::mcp::MCPRepository::MCPRepository;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use operit_runtime::data::skill::SkillRepository::SkillRepository;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
+const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const GITHUB_CLI_SCOPE: &str = "notifications,public_repo,user:email,read:user";
+
 macro_rules! println {
-    () => {
-        market_stdout_line("")
-    };
-    ($($arg:tt)*) => {
-        market_stdout_line(format!($($arg)*))
-    };
+    () => { market_stdout_line("") };
+    ($($arg:tt)*) => { market_stdout_line(format!($($arg)*)) };
 }
 
 thread_local! {
@@ -57,29 +55,29 @@ impl MarketCommand {
         Self { context }
     }
 
-    fn api_market_stats_api_service(&self) -> MarketStatsApiService {
-        MarketStatsApiService::newWithGitHubToken(
+    fn api(&self) -> MarketStatsApiService {
+        MarketStatsApiService::new_with_github_token(
             GitHubAuthPreferences::getInstance().getCurrentAccessToken(),
         )
     }
 
-    fn preferences_git_hub_auth_preferences(&self) -> GitHubAuthPreferences {
+    fn github_auth(&self) -> GitHubAuthPreferences {
         GitHubAuthPreferences::getInstance()
     }
 
-    fn skill_repository(&self) -> SkillRepository {
+    fn skill_repo(&self) -> SkillRepository {
         SkillRepository::getInstance(&self.context)
     }
 
-    fn mcp_local_server(&self) -> MCPLocalServer {
+    fn mcp_local(&self) -> MCPLocalServer {
         MCPLocalServer::getInstance(&self.context)
     }
 
-    fn mcp_repository(&self) -> MCPRepository {
+    fn mcp_repo(&self) -> MCPRepository {
         MCPRepository::getInstance(&self.context)
     }
 
-    fn permissions_pack_tool_package_manager(&self) -> PackageManagerCommand {
+    fn package_manager(&self) -> PackageManagerCommand {
         PackageManagerCommand {
             manager: AIToolHandler::getInstance(self.context.clone()).getOrCreatePackageManager(),
         }
@@ -91,13 +89,15 @@ struct PackageManagerCommand {
 }
 
 impl PackageManagerCommand {
-    fn addPackageFileFromExternalStorage(&self, path: &str) -> String {
+    fn add_from_external(&self, path: &str) -> String {
         self.manager
             .lock()
             .expect("package manager mutex poisoned")
             .addPackageFileFromExternalStorage(path)
     }
 }
+
+// ── Entry point ──────────────────────────────────────────────
 
 pub fn run_market_command(
     context: OperitApplicationContext,
@@ -107,507 +107,816 @@ pub fn run_market_command(
     set_market_output(output);
     let core = &mut MarketCommand::new(context);
     if args.is_empty() {
-        print_market_usage();
+        print_usage();
         return Ok(());
     }
 
     match args[0].as_str() {
-        "auth" => run_market_auth_command(core, &args[1..]),
-        "stats" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market stats <skill|mcp|package|script>".to_string()
-            })?;
-            ensure_env_auth_token_saved(core)?;
-            let stats = core
-                .api_market_stats_api_service()
-                .getStats(marketType)
-                .map_err(|error| error.to_string())?;
-            println!("updatedAt={}", stats.updatedAt.unwrap_or_default());
-            for (id, item) in stats.items {
-                println!(
-                    "{}\tdownloads={}\tlastDownloadAt={}\tupdatedAt={}",
-                    id,
-                    item.downloads,
-                    item.lastDownloadAt.unwrap_or_default(),
-                    item.updatedAt.unwrap_or_default()
-                );
-            }
-            Ok(())
-        }
+        "auth" => run_auth(core, &args[1..]),
         "rank" => {
-            let marketType = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 market rank <skill|mcp|package|script> [updated|downloads|likes] [page]".to_string())?;
-            let metric = args.get(2).map(String::as_str).unwrap_or("updated");
-            let page = parse_optional_i32_arg(args.get(3), 1)?;
-            print_market_rank(core, marketType, metric, page)
+            let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
+            let page = parse_i32_opt(args.get(2), 1)?;
+            print_list(core, sort, page)
+        }
+        "list" => {
+            let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
+            let type_filter = args.get(2).map(String::as_str);
+            let category = args.get(3).map(String::as_str);
+            let page = parse_i32_opt(args.get(4), 1)?;
+            print_list_filtered(core, sort, type_filter, category, page)
         }
         "search" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market search <skill|mcp|package|script> <query> [page]".to_string()
+            let query = args.get(1).ok_or_else(|| {
+                "usage: operit2 market search <query> [sort] [type|-] [category|-]".to_string()
             })?;
-            let query = args.get(2).ok_or_else(|| {
-                "usage: operit2 market search <skill|mcp|package|script> <query> [page]".to_string()
-            })?;
-            let page = parse_optional_i32_arg(args.get(3), 1)?;
-            search_issue_market(core, marketType, query, page)
-        }
-        "comments" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market comments <skill|mcp|package|script> <number> [page]"
-                    .to_string()
-            })?;
-            let number = parse_i32_arg(
-                args.get(2),
-                "usage: operit2 market comments <skill|mcp|package|script> <number> [page]",
-            )?;
-            let page = parse_optional_i32_arg(args.get(3), 1)?;
-            let (owner, repo, _) = issue_market_definition(marketType)?;
-            ensure_env_auth_token_saved(core)?;
-            for comment in core
-                .api_market_stats_api_service()
-                .getIssueComments(owner, repo, number, page, 50)
-                .map_err(|error| error.to_string())?
-            {
-                println!(
-                    "#{}\t{}\t{}\t{}",
-                    comment.id, comment.user.login, comment.updated_at, comment.html_url
-                );
-                println!("{}", comment.body);
-                println!();
-            }
-            Ok(())
-        }
-        "comment" => {
-            let marketType = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>".to_string())?;
-            let number = parse_i32_arg(
-                args.get(2),
-                "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>",
-            )?;
-            let bodyArg = args
-                .get(3)
-                .ok_or_else(|| "usage: operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>".to_string())?;
-            require_github_login(core)?;
-            let body = read_content_arg(bodyArg)?;
-            let (owner, repo, _) = issue_market_definition(marketType)?;
-            let comment = core
-                .api_market_stats_api_service()
-                .createIssueComment(owner, repo, number, &body)
-                .map_err(|error| error.to_string())?;
-            println!("created={}", comment.html_url);
-            Ok(())
-        }
-        "reactions" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market reactions <skill|mcp|package|script> <number>".to_string()
-            })?;
-            let number = parse_i32_arg(
-                args.get(2),
-                "usage: operit2 market reactions <skill|mcp|package|script> <number>",
-            )?;
-            let (owner, repo, _) = issue_market_definition(marketType)?;
-            ensure_env_auth_token_saved(core)?;
-            for reaction in core
-                .api_market_stats_api_service()
-                .getIssueReactions(owner, repo, number)
-                .map_err(|error| error.to_string())?
-            {
-                println!(
-                    "#{}\t{}\t{}\t{}",
-                    reaction.id, reaction.content, reaction.user.login, reaction.created_at
-                );
-            }
-            Ok(())
-        }
-        "react" => {
-            let marketType = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>".to_string())?;
-            let number = parse_i32_arg(args.get(2), "usage: operit2 market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>")?;
-            let content = args
-                .get(3)
-                .ok_or_else(|| "usage: operit2 market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>".to_string())?;
-            require_github_login(core)?;
-            let (owner, repo, _) = issue_market_definition(marketType)?;
-            let reaction = core
-                .api_market_stats_api_service()
-                .createIssueReaction(owner, repo, number, content)
-                .map_err(|error| error.to_string())?;
-            println!("created={} content={}", reaction.id, reaction.content);
-            Ok(())
+            let sort = normalize_sort(args.get(2).map(String::as_str).unwrap_or("updated"))?;
+            let type_filter = args.get(3).map(String::as_str);
+            let category = args.get(4).map(String::as_str);
+            print_search(core, query, sort, type_filter, category)
         }
         "show" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>".to_string()
-            })?;
-            let target = args.get(2).ok_or_else(|| {
-                "usage: operit2 market show <skill|mcp|package|script> <id-or-number>".to_string()
-            })?;
-            show_market_item(core, marketType, target)
+            let entry_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market show <entryId>".to_string())?;
+            print_entry(core, entry_id)
         }
+        "comments" => {
+            let entry_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market comments <entryId> [page]".to_string())?;
+            let page = parse_i32_opt(args.get(2), 1)?;
+            print_comments(core, entry_id, page)
+        }
+        "comment" => run_comment(core, &args[1..]),
+        "like" => {
+            let entry_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market like <entryId>".to_string())?;
+            require_login(core)?;
+            core.api().create_entry_reaction(entry_id)?;
+            println!("liked {entry_id}");
+            Ok(())
+        }
+        "notifications" => {
+            let limit = parse_i32_opt(args.get(1), 50)?;
+            let offset = parse_i32_opt(args.get(2), 0)?;
+            print_notifications(core, limit, offset)
+        }
+        "my" => print_my_entries(core),
+        "publish" => run_publish(core, &args[1..]),
         "install" => {
-            let marketType = args.get(1).ok_or_else(|| {
-                "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]"
-                    .to_string()
-            })?;
-            let target = args.get(2).ok_or_else(|| {
-                "usage: operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]"
-                    .to_string()
-            })?;
-            install_market_item(core, marketType, target, args.get(3).map(String::as_str))
+            let entry_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market install <entryId> [versionId]".to_string())?;
+            let version_id = args.get(2).map(String::as_str);
+            install_entry(core, entry_id, version_id)
+        }
+        "download" => {
+            let asset_id = args
+                .get(1)
+                .ok_or_else(|| "usage: operit2 market download <assetId>".to_string())?;
+            let bytes = core.api().download_asset(asset_id)?;
+            println!("downloaded asset {asset_id} bytes={}", bytes.len());
+            Ok(())
         }
         _ => {
-            print_market_usage();
+            print_usage();
             Ok(())
         }
     }
 }
 
-fn run_market_auth_command(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+fn print_usage() {
+    println!("usage: operit2 market <auth|rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>");
+    println!("sort: updated|likes|downloads");
+    println!("list: operit2 market list [sort] [type|-] [category|-] [page]");
+    println!("search: operit2 market search <query> [sort] [type|-] [category|-]");
+    println!("comment: operit2 market comment <entryId> <body-or-@file>");
+    println!("comment edit: operit2 market comment edit <commentId> <body-or-@file>");
+    println!("comment delete: operit2 market comment delete <commentId>");
+    println!("publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>");
+    println!("publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->");
+    println!("publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
+    println!("publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
+    println!("publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->");
+    println!("download: operit2 market download <assetId>");
+}
+
+// ── Auth ────────────────────────────────────────────────────
+
+fn run_auth(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("status") | None => {
-            ensure_env_auth_token_saved(core)?;
-            println!(
-                "loggedIn={}",
-                core.preferences_git_hub_auth_preferences().isLoggedIn()
-            );
-            if let Some(user) = core
-                .preferences_git_hub_auth_preferences()
-                .getCurrentUserInfo()
-            {
-                println!("user={}", user.login);
-            }
-            Ok(())
-        }
         Some("token") => {
-            let token = args
-                .get(1)
-                .ok_or_else(|| "usage: operit2 market auth token <github-token>".to_string())?;
-            core.preferences_git_hub_auth_preferences()
-                .updateAccessToken(token, "bearer", None)
-                .map_err(|error| error.to_string())?;
-            println!("saved");
+            let token = args.get(1).ok_or_else(|| "usage: operit2 market auth token <token>".to_string())?;
+            core.github_auth().updateAccessToken(token, "bearer", None).map_err(|e| e.to_string())?;
+            println!("token saved");
             Ok(())
         }
-        Some("logout") => {
-            core.preferences_git_hub_auth_preferences()
-                .logout()
-                .map_err(|error| error.to_string())?;
-            println!("logged out");
-            Ok(())
+        Some("login") => {
+            run_github_device_login(core)
         }
-        Some("whoami") => {
-            require_github_login(core)?;
-            let user = core
-                .api_market_stats_api_service()
-                .getCurrentUser()
-                .map_err(|error| error.to_string())?;
-            println!("{}", user.login);
-            Ok(())
-        }
-        _ => Err("usage: operit2 market auth <status|token|logout|whoami>".to_string()),
+        _ => Err("usage: operit2 market auth <token|login>  # login uses browser/device flow and requires OPERIT_GITHUB_CLIENT_ID or GITHUB_CLIENT_ID".to_string()),
     }
 }
 
-fn print_market_usage() {
-    println!("operit2 market auth <status|token|logout|whoami>");
-    println!("operit2 market stats <skill|mcp|package|script>");
-    println!("operit2 market rank <skill|mcp|package|script> [updated|downloads|likes] [page]");
-    println!("operit2 market search <skill|mcp|package|script> <query> [page]");
-    println!("operit2 market show <skill|mcp|package|script> <id-or-number>");
-    println!("operit2 market install <skill|mcp|package|script> <id-or-url> [node-id]");
-    println!("operit2 market comments <skill|mcp|package|script> <number> [page]");
-    println!("operit2 market comment <skill|mcp|package|script> <number> <body-or-@file>");
-    println!("operit2 market reactions <skill|mcp|package|script> <number>");
-    println!("operit2 market react <skill|mcp|package|script> <number> <+1|heart|rocket|...>");
+#[derive(Debug, Deserialize)]
+struct GitHubDeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    #[serde(default)]
+    expires_in: i64,
+    #[serde(default)]
+    interval: i64,
 }
 
-fn parse_i32_arg(value: Option<&String>, usage: &str) -> Result<i32, String> {
-    value
-        .ok_or_else(|| usage.to_string())?
-        .parse::<i32>()
-        .map_err(|error| error.to_string())
+#[derive(Debug, Deserialize)]
+struct GitHubDeviceTokenResponse {
+    access_token: Option<String>,
+    token_type: Option<String>,
+    scope: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
-fn parse_optional_i32_arg(value: Option<&String>, defaultValue: i32) -> Result<i32, String> {
-    match value {
-        Some(value) => value.parse::<i32>().map_err(|error| error.to_string()),
-        None => Ok(defaultValue),
-    }
-}
+fn run_github_device_login(core: &mut MarketCommand) -> Result<(), String> {
+    let client_id = github_oauth_client_id()?;
+    let client = reqwest::blocking::Client::new();
+    let device = client
+        .post(GITHUB_DEVICE_CODE_URL)
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", client_id.as_str()),
+            ("scope", GITHUB_CLI_SCOPE),
+        ])
+        .send()
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json::<GitHubDeviceCodeResponse>()
+        .map_err(|e| e.to_string())?;
 
-fn print_market_rank(
-    core: &mut MarketCommand,
-    marketType: &str,
-    metric: &str,
-    page: i32,
-) -> Result<(), String> {
-    if matches!(marketType, "package" | "script") {
-        return print_artifact_rank(core, marketType, metric, page);
-    }
-    ensure_env_auth_token_saved(core)?;
-    let rank = core
-        .api_market_stats_api_service()
-        .getRankPage(marketType, metric, page)
-        .map_err(|error| error.to_string())?;
-    println!(
-        "type={}\tmetric={}\tpage={}\ttotalPages={}\ttotalItems={}",
-        rank.r#type, rank.metric, rank.page, rank.totalPages, rank.totalItems
-    );
-    for item in rank.items {
-        print_issue_rank_entry(marketType, &item);
-    }
-    Ok(())
-}
+    println!("Open this URL in your browser: {}", device.verification_uri);
+    println!("Enter code: {}", device.user_code);
+    let _ = open_browser(&device.verification_uri);
 
-fn print_artifact_rank(
-    core: &mut MarketCommand,
-    marketType: &str,
-    metric: &str,
-    page: i32,
-) -> Result<(), String> {
-    ensure_env_auth_token_saved(core)?;
-    let rank = core
-        .api_market_stats_api_service()
-        .getArtifactRankPage(marketType, metric, page)
-        .map_err(|error| error.to_string())?;
-    println!(
-        "{} market ({}) - page {}/{} - {} items",
-        title_case_market_type(&rank.r#type),
-        rank.metric,
-        rank.page,
-        rank.totalPages,
-        rank.totalItems
-    );
-    println!();
-    for (index, item) in rank.items.iter().enumerate() {
-        let node = item.defaultNode.as_ref();
-        let defaultNodeId = item
-            .defaultNodeId
-            .as_str()
-            .if_empty_then(node.map(|node| node.nodeId.clone()).unwrap_or_default());
-        let shortSha = node
-            .map(|node| short_hash(&node.sha256))
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "-".to_string());
-        println!(
-            "{:>2}. {}",
-            index + 1,
-            item.projectDisplayName
-                .as_str()
-                .if_empty_then(item.projectId.clone())
-        );
-        println!("    id: {}", item.projectId);
-        println!("    downloads: {}    likes: {}", item.downloads, item.likes);
-        println!(
-            "    default node: {}    sha256: {}",
-            defaultNodeId, shortSha
-        );
-        if !item.projectDescription.trim().is_empty() {
-            println!("    {}", single_line_summary(&item.projectDescription, 160));
-        }
-        println!(
-            "    show: operit2 market show {} {}",
-            marketType, item.projectId
-        );
-        println!(
-            "    install: operit2 market install {} {}",
-            marketType, item.projectId
-        );
-        if !defaultNodeId.trim().is_empty() {
-            println!(
-                "    install node: operit2 market install {} {} {}",
-                marketType, item.projectId, defaultNodeId
-            );
-        }
-        println!();
-    }
-    Ok(())
-}
-
-fn search_issue_market(
-    core: &mut MarketCommand,
-    marketType: &str,
-    query: &str,
-    page: i32,
-) -> Result<(), String> {
-    let (owner, repo, label) = issue_market_definition(marketType)?;
-    ensure_env_auth_token_saved(core)?;
-    let issues = core
-        .api_market_stats_api_service()
-        .searchIssues(owner, repo, label, query, page, 50)
-        .map_err(|error| error.to_string())?;
-    for issue in issues
-        .into_iter()
-        .filter(|issue| !has_review_blocking_label(issue))
-    {
-        print_github_issue_summary(marketType, &issue);
-    }
-    Ok(())
-}
-
-fn show_market_item(
-    core: &mut MarketCommand,
-    marketType: &str,
-    target: &str,
-) -> Result<(), String> {
-    match marketType {
-        "package" | "script" => {
-            ensure_env_auth_token_saved(core)?;
-            let detail = core
-                .api_market_stats_api_service()
-                .getArtifactProject(target)
-                .map_err(|error| error.to_string())?;
-            print_artifact_project(&detail);
-            Ok(())
-        }
-        "skill" | "mcp" => {
-            let number = match target.parse::<i32>() {
-                Ok(number) => number,
-                Err(_) => {
-                    find_issue_rank_entry(core, marketType, target)?
-                        .issue
-                        .number
-                }
-            };
-            let (owner, repo, _) = issue_market_definition(marketType)?;
-            ensure_env_auth_token_saved(core)?;
-            let issue = core
-                .api_market_stats_api_service()
-                .getIssue(owner, repo, number)
-                .map_err(|error| error.to_string())?;
-            print_github_issue(&issue);
-            Ok(())
-        }
-        _ => Err("market type must be skill, mcp, package, or script".to_string()),
-    }
-}
-
-fn install_market_item(
-    core: &mut MarketCommand,
-    marketType: &str,
-    target: &str,
-    nodeId: Option<&str>,
-) -> Result<(), String> {
-    match marketType {
-        "skill" => install_market_skill(core, target),
-        "mcp" => install_market_mcp(core, target),
-        "package" | "script" => install_market_artifact(core, marketType, target, nodeId),
-        _ => Err("market type must be skill, mcp, package, or script".to_string()),
-    }
-}
-
-fn install_market_skill(core: &mut MarketCommand, target: &str) -> Result<(), String> {
-    let repoUrl = if looks_like_url(target) {
-        target.to_string()
+    let timeout_seconds = if device.expires_in <= 0 {
+        900
     } else {
-        let entry = find_issue_rank_entry(core, "skill", target)?;
-        let repoUrl = skillRepositoryUrlFromEntry(&entry);
-        if repoUrl.trim().is_empty() {
-            return Err(format!("skill entry has no repositoryUrl: {target}"));
-        }
-        let statsId = resolveMarketEntryId(&repoUrl, &entry.issue.title);
-        let downloadTarget = if repoUrl.trim().is_empty() {
-            entry.issue.html_url.as_str()
-        } else {
-            repoUrl.as_str()
-        };
-        let _ =
-            core.api_market_stats_api_service()
-                .trackDownload("skill", &statsId, downloadTarget);
-        repoUrl
+        device.expires_in
     };
-    println!(
-        "{}",
-        core.skill_repository().importSkillFromGitHubRepo(&repoUrl)
-    );
-    Ok(())
+    let mut interval_seconds = if device.interval <= 0 {
+        5
+    } else {
+        device.interval
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_seconds as u64);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("GitHub device login expired".to_string());
+        }
+        std::thread::sleep(Duration::from_secs(interval_seconds as u64));
+        let resp = client
+            .post(GITHUB_ACCESS_TOKEN_URL)
+            .header("Accept", "application/json")
+            .form(&[
+                ("client_id", client_id.as_str()),
+                ("device_code", device.device_code.as_str()),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json::<GitHubDeviceTokenResponse>()
+            .map_err(|e| e.to_string())?;
+
+        if let Some(token) = resp.access_token.filter(|t| !t.trim().is_empty()) {
+            let token_type = resp.token_type.as_deref().unwrap_or("bearer");
+            let scope = resp.scope.as_deref().unwrap_or(GITHUB_CLI_SCOPE);
+            core.github_auth()
+                .updateAccessToken(&token, token_type, Some(scope))
+                .map_err(|e| e.to_string())?;
+            let user = MarketStatsApiService::new_with_github_token(Some(token))
+                .get_current_github_user()?;
+            println!("logged in as {} (github_id={})", user.login, user.id);
+            return Ok(());
+        }
+
+        match resp.error.as_deref() {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                interval_seconds += 5;
+                continue;
+            }
+            Some("expired_token") => return Err("GitHub device login expired".to_string()),
+            Some(error) => {
+                let description = resp.error_description.unwrap_or_default();
+                return Err(format!("GitHub device login failed: {error} {description}"));
+            }
+            None => return Err("GitHub device login returned no access token".to_string()),
+        }
+    }
 }
 
-fn install_market_mcp(core: &mut MarketCommand, target: &str) -> Result<(), String> {
-    if target.trim_start().starts_with('{') {
-        let count = core
-            .mcp_local_server()
-            .mergeConfigFromJson(target)
-            .map_err(|error| error.to_string())?;
-        println!("imported={count}");
-        return Ok(());
-    }
-
-    let (pluginId, metadata, repoUrl, issueUrl, statsId, installConfig) = if looks_like_url(target)
-    {
-        let pluginId = mcp_id_from_title(target);
-        (
-            pluginId.clone(),
-            operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
-                name: pluginId,
-                description: String::new(),
-                author: "Unknown".to_string(),
-                version: "1.0.0".to_string(),
-            },
-            target.to_string(),
-            target.to_string(),
-            normalizeMarketArtifactId(target),
-            String::new(),
-        )
-    } else {
-        let entry = find_issue_rank_entry(core, "mcp", target)?;
-        let info = mcpMetadataFromEntry(&entry);
-        let pluginId = mcp_id_from_title(&entry.issue.title);
-        let statsId = resolveMarketEntryId(&info.repositoryUrl, &entry.issue.title);
-        let metadata = operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
-            name: entry.issue.title.clone(),
-            description: info
-                .description
-                .trim()
+fn github_oauth_client_id() -> Result<String, String> {
+    env::var("OPERIT_GITHUB_CLIENT_ID")
+        .or_else(|_| env::var("GITHUB_CLIENT_ID"))
+        .map(|id| id.trim().to_string())
+        .ok()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            "GitHub OAuth client id required. Set OPERIT_GITHUB_CLIENT_ID or GITHUB_CLIENT_ID."
                 .to_string()
-                .if_empty_then(entry.summaryDescription.clone()),
-            author: info
-                .repositoryUrl
-                .split("github.com/")
-                .nth(1)
-                .and_then(|value| value.split('/').next())
-                .unwrap_or(&entry.issue.user.login)
-                .to_string(),
-            version: info.version.if_empty_then("1.0.0".to_string()),
-        };
-        (
-            pluginId,
-            metadata,
-            info.repositoryUrl,
-            entry.issue.html_url,
-            statsId,
-            info.installConfig,
-        )
-    };
+        })
+}
 
-    let _ = core
-        .api_market_stats_api_service()
-        .trackDownload("mcp", &statsId, &issueUrl);
-    if repoUrl.trim().is_empty() {
-        if installConfig.trim().is_empty() {
-            return Err(format!(
-                "mcp entry has no repositoryUrl or installConfig: {target}"
-            ));
-        }
-        let count = core
-            .mcp_local_server()
-            .mergeConfigFromJson(&installConfig)
-            .map_err(|error| error.to_string())?;
-        println!("imported={count}");
+fn open_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
-    match core.mcp_repository().installMCPServerWithObject(
-        pluginId.clone(),
-        repoUrl,
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err("opening browser is not supported on this platform".to_string())
+}
+
+// ── List ────────────────────────────────────────────────────
+
+fn print_list(core: &mut MarketCommand, sort: &str, page: i32) -> Result<(), String> {
+    let list = core.api().get_list_page(sort, page)?;
+    println!(
+        "generatedAt={}  sort={sort}  page={page}  total={}",
+        list.generated_at.unwrap_or_default(),
+        list.total
+    );
+    for entry in &list.items {
+        println!(
+            "{}/{} [{}]  {}",
+            entry.r#type, entry.id, entry.state_code, entry.title
+        );
+    }
+    Ok(())
+}
+
+fn print_list_filtered(
+    core: &mut MarketCommand,
+    sort: &str,
+    type_filter: Option<&str>,
+    category: Option<&str>,
+    page: i32,
+) -> Result<(), String> {
+    let type_filter = clean_optional_arg(type_filter);
+    let category = clean_optional_arg(category);
+    let list = match (type_filter, category) {
+        (Some(r#type), Some(category_id)) => {
+            core.api()
+                .get_type_category_page(r#type, category_id, sort, page)?
+        }
+        (Some(r#type), None) => core.api().get_type_page(r#type, sort, page)?,
+        (None, Some(category_id)) => core.api().get_category_page(category_id, sort, page)?,
+        (None, None) => core.api().get_list_page(sort, page)?,
+    };
+    println!("sort={sort}  page={page}  total={}", list.total);
+    for entry in &list.items {
+        println!(
+            "{}/{} [{}]  {}",
+            entry.r#type, entry.id, entry.state_code, entry.title
+        );
+    }
+    Ok(())
+}
+
+fn print_search(
+    core: &mut MarketCommand,
+    query: &str,
+    sort: &str,
+    type_filter: Option<&str>,
+    category: Option<&str>,
+) -> Result<(), String> {
+    let entries = load_all_market_pages(core, sort, type_filter, category)?;
+    let query = query.trim().to_lowercase();
+    let matched = entries
+        .into_iter()
+        .filter(|entry| market_entry_matches_query(entry, &query))
+        .collect::<Vec<_>>();
+    println!("search query={query}  sort={sort}  count={}", matched.len());
+    for entry in &matched {
+        println!(
+            "{}/{} [{}]  {}",
+            entry.r#type, entry.id, entry.state_code, entry.title
+        );
+    }
+    Ok(())
+}
+
+fn load_all_market_pages(
+    core: &mut MarketCommand,
+    sort: &str,
+    type_filter: Option<&str>,
+    category: Option<&str>,
+) -> Result<Vec<MarketEntrySummary>, String> {
+    let type_filter = clean_optional_arg(type_filter);
+    let category = clean_optional_arg(category);
+    let first_page = load_market_page(core, sort, type_filter, category, 1)?;
+    let total_pages = market_total_pages(first_page.total, first_page.page_size)?;
+    let mut entries = first_page.items;
+    for page in 2..=total_pages {
+        entries.extend(load_market_page(core, sort, type_filter, category, page)?.items);
+    }
+    Ok(entries)
+}
+
+fn market_total_pages(total: i32, page_size: i32) -> Result<i32, String> {
+    if page_size <= 0 {
+        return Err(format!("invalid market page_size: {page_size}"));
+    }
+    Ok(((total + page_size - 1) / page_size).max(1))
+}
+
+fn load_market_page(
+    core: &mut MarketCommand,
+    sort: &str,
+    type_filter: Option<&str>,
+    category: Option<&str>,
+    page: i32,
+) -> Result<MarketListPage, String> {
+    match (type_filter, category) {
+        (Some(r#type), Some(category_id)) => {
+            core.api()
+                .get_type_category_page(r#type, category_id, sort, page)
+        }
+        (Some(r#type), None) => core.api().get_type_page(r#type, sort, page),
+        (None, Some(category_id)) => core.api().get_category_page(category_id, sort, page),
+        (None, None) => core.api().get_list_page(sort, page),
+    }
+}
+
+fn market_entry_matches_query(entry: &MarketEntrySummary, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    entry.title.to_lowercase().contains(query)
+        || entry.description.to_lowercase().contains(query)
+        || entry.detail.to_lowercase().contains(query)
+        || entry.id.to_lowercase().contains(query)
+        || entry.r#type.to_lowercase().contains(query)
+        || entry
+            .category_id
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(query)
+        || entry
+            .author
+            .as_ref()
+            .map(|author| author.login.as_str())
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(query)
+        || entry
+            .publisher
+            .as_ref()
+            .map(|publisher| publisher.login.as_str())
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(query)
+}
+
+fn print_entry(core: &mut MarketCommand, entry_id: &str) -> Result<(), String> {
+    let entry = core.api().get_entry_by_id(entry_id)?;
+    println!("id: {}", entry.id);
+    println!("type: {}", entry.r#type);
+    println!("title: {}", entry.title);
+    println!("description: {}", entry.description);
+    println!(
+        "detail: {}",
+        entry.detail.chars().take(500).collect::<String>()
+    );
+    let author_login = entry
+        .author
+        .as_ref()
+        .map(|a| a.login.as_str())
+        .unwrap_or("");
+    let author_avatar = entry
+        .author
+        .as_ref()
+        .and_then(|a| {
+            if a.avatar.is_empty() {
+                None
+            } else {
+                Some(a.avatar.as_str())
+            }
+        })
+        .unwrap_or("-");
+    println!("author: {author_login} ({author_avatar})");
+    println!(
+        "publisher: {}",
+        entry
+            .publisher
+            .as_ref()
+            .map(|p| p.login.as_str())
+            .unwrap_or("")
+    );
+    println!(
+        "category_id: {}",
+        entry.category_id.as_deref().unwrap_or("-")
+    );
+    println!("state: {}", entry.state_code);
+    println!("featured: {}", entry.featured);
+    println!("downloads: {}", entry_downloads(&entry));
+    println!("allow_public_updates: {}", entry.allow_public_updates);
+    println!("source: {:?}", entry.source.as_ref().map(|s| s.url.clone()));
+    if let Some(artifact) = &entry.artifact {
+        println!("artifact project_id: {}", artifact.project_id);
+        println!(
+            "artifact runtime_package_id: {}",
+            artifact.runtime_package_id.as_deref().unwrap_or("-")
+        );
+    }
+    println!("versions: {}", entry.versions.len());
+    for version in &entry.versions {
+        println!(
+            "  version {}  id={}  format={}  publisher={}",
+            version.version,
+            version.id,
+            version.format_ver,
+            version
+                .publisher
+                .as_ref()
+                .map(|p| p.login.as_str())
+                .unwrap_or("")
+        );
+    }
+    println!("assets: {}", entry.assets.len());
+    for asset in &entry.assets {
+        println!("  {}  kind={}  url={}", asset.id, asset.kind, asset.url);
+    }
+    for r in &entry.reactions {
+        println!("reaction {}  total={}", r.reaction, r.total);
+    }
+    Ok(())
+}
+
+fn print_comments(core: &mut MarketCommand, entry_id: &str, page: i32) -> Result<(), String> {
+    let page = core.api().get_comments_page(entry_id, page)?;
+    println!(
+        "comments for {entry_id}  page={}  total={}",
+        page.page, page.total
+    );
+    for c in &page.items {
+        println!(
+            "#{} {} by {}  at {}",
+            c.id,
+            c.body.chars().take(120).collect::<String>(),
+            c.author.login,
+            c.created_at
+        );
+    }
+    Ok(())
+}
+
+fn print_notifications(core: &mut MarketCommand, limit: i32, offset: i32) -> Result<(), String> {
+    let resp = core.api().get_notifications(limit, offset, None)?;
+    println!("notifications: {}", resp.items.len());
+    for n in &resp.items {
+        println!(
+            "{} [{}] entry={:?}  {}  {}",
+            n.id, n.kind, n.entry_id, n.title, n.created_at
+        );
+    }
+    Ok(())
+}
+
+fn print_my_entries(core: &mut MarketCommand) -> Result<(), String> {
+    let resp = core.api().get_my_entries()?;
+    println!("my entries: {}", resp.entries.len());
+    for e in &resp.entries {
+        println!(
+            "{}  {}  {}  {}  {:?}",
+            e.id, e.r#type, e.relation, e.state_code, e.reason_codes
+        );
+        println!("  title={}", e.title);
+    }
+    Ok(())
+}
+
+fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("edit") => {
+            let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
+            let body_arg = args.get(2).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
+            require_login(core)?;
+            let body = read_content_arg(body_arg)?;
+            core.api().edit_entry_comment(comment_id, &body)?;
+            println!("edited comment={comment_id}");
+            Ok(())
+        }
+        Some("delete") => {
+            let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment delete <commentId>".to_string())?;
+            require_login(core)?;
+            core.api().delete_entry_comment(comment_id)?;
+            println!("deleted comment={comment_id}");
+            Ok(())
+        }
+        Some(entry_id) => {
+            let body_arg = args.get(1).ok_or_else(|| "usage: operit2 market comment <entryId> <body-or-@file>".to_string())?;
+            require_login(core)?;
+            let body = read_content_arg(body_arg)?;
+            let comment_id = core.api().create_entry_comment(entry_id, &body)?;
+            println!("created comment={comment_id}");
+            Ok(())
+        }
+        None => Err("usage: operit2 market comment <entryId> <body-or-@file> | comment edit <commentId> <body-or-@file> | comment delete <commentId>".to_string()),
+    }
+}
+
+// ── Publish ────────────────────────────────────────────────
+
+fn run_publish(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("proof") => publish_proof_cli(core, &args[1..]),
+        Some("artifact") => publish_artifact_cli(core, &args[1..]),
+        Some("repo") => publish_repo_cli(core, &args[1..]),
+        Some("version") => publish_version_cli(core, &args[1..]),
+        Some("update-entry") => update_entry_cli(core, &args[1..]),
+        _ => Err(
+            "usage: operit2 market publish <proof|artifact|repo|version|update-entry> ..."
+                .to_string(),
+        ),
+    }
+}
+
+fn publish_proof_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 5 {
+        return Err(
+            "usage: operit2 market publish proof <owner> <repo> <releaseTag> <assetName> <sha256>"
+                .to_string(),
+        );
+    }
+    require_login(core)?;
+    let resp = core
+        .api()
+        .publish_proof(&args[0], &args[1], &args[2], &args[3], &args[4])?;
+    println!("proof ok={}", resp.ok);
+    if !resp.proof.trim().is_empty() {
+        println!("proof={}", resp.proof);
+    }
+    Ok(())
+}
+
+fn publish_artifact_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 20 {
+        return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>".to_string());
+    }
+    require_login(core)?;
+    let description = read_content_arg(&args[2])?;
+    let detail = read_content_arg(&args[3])?;
+    let max_app_ver = parse_optional_string(&args[9]);
+    let changelog = parse_optional_content_arg(&args[10])?;
+    let resp = core.api().publish_artifact(
+        &args[0],
+        &args[1],
+        &description,
+        &detail,
+        &args[4],
+        parse_bool_arg(&args[5])?,
+        &args[6],
+        &args[7],
+        &args[8],
+        max_app_ver,
+        changelog,
+        &args[11],
+        &args[12],
+        &args[13],
+        &args[14],
+        &args[15],
+        &args[16],
+        &args[17],
+        &args[18],
+        &args[19],
+    )?;
+    println_publish_response(resp);
+    Ok(())
+}
+
+fn publish_repo_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 14 {
+        return Err("usage: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->".to_string());
+    }
+    require_login(core)?;
+    let description = read_content_arg(&args[2])?;
+    let detail = read_content_arg(&args[3])?;
+    let install_config = read_content_arg(&args[9])?;
+    let resp = core.api().publish_repo_entry(
+        &args[0],
+        &args[1],
+        &description,
+        &detail,
+        &args[4],
+        parse_bool_arg(&args[5])?,
+        &args[6],
+        &args[7],
+        &args[8],
+        &install_config,
+        &args[10],
+        &args[11],
+        &args[12],
+        parse_optional_string(&args[13]),
+        parse_optional_content_arg(args.get(14).map(String::as_str).unwrap_or("-"))?,
+    )?;
+    println_publish_response(resp);
+    Ok(())
+}
+
+fn publish_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("artifact") => publish_artifact_version_cli(core, &args[1..]),
+        Some("repo") => publish_repo_version_cli(core, &args[1..]),
+        _ => Err("usage: operit2 market publish version <artifact|repo> ...".to_string()),
+    }
+}
+
+fn publish_artifact_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 15 {
+        return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
+    }
+    require_login(core)?;
+    let resp = core.api().publish_artifact_version(
+        &args[0],
+        &args[1],
+        &args[2],
+        &args[3],
+        parse_optional_string(&args[4]),
+        parse_optional_content_arg(&args[5])?,
+        &args[6],
+        &args[7],
+        &args[8],
+        &args[9],
+        &args[10],
+        &args[11],
+        &args[12],
+        &args[13],
+        &args[14],
+        parse_optional_string_arg(args.get(15)),
+        parse_optional_content_arg(args.get(16).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(args.get(17).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_string_arg(args.get(18)),
+        parse_optional_bool_arg(args.get(19))?,
+    )?;
+    println_publish_response(resp);
+    Ok(())
+}
+
+fn publish_repo_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 9 {
+        return Err("usage: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
+    }
+    require_login(core)?;
+    let install_config = read_content_arg(&args[8])?;
+    let resp = core.api().publish_repo_version(
+        &args[0],
+        &args[1],
+        &args[2],
+        &args[3],
+        parse_optional_string(&args[4]),
+        parse_optional_content_arg(&args[5])?,
+        &args[6],
+        &args[7],
+        &install_config,
+        parse_optional_string_arg(args.get(9)),
+        parse_optional_content_arg(args.get(10).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(args.get(11).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_string_arg(args.get(12)),
+        parse_optional_bool_arg(args.get(13))?,
+    )?;
+    println_publish_response(resp);
+    Ok(())
+}
+
+fn update_entry_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+    if args.len() < 6 {
+        return Err("usage: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->".to_string());
+    }
+    require_login(core)?;
+    let resp = core.api().update_entry(
+        &args[0],
+        parse_optional_string(&args[1]),
+        parse_optional_content_arg(&args[2])?,
+        parse_optional_content_arg(&args[3])?,
+        parse_optional_string(&args[4]),
+        parse_optional_bool_str(&args[5])?,
+    )?;
+    println_update_entry_response(resp);
+    Ok(())
+}
+
+fn println_publish_response(
+    resp: operit_runtime::data::api::MarketStatsApiService::MarketPublishResponse,
+) {
+    println!("published ok={} entry={}", resp.ok, resp.entry_id);
+    if !resp.version_id.trim().is_empty() {
+        println!("version_id={}", resp.version_id);
+    }
+}
+
+fn println_update_entry_response(
+    resp: operit_runtime::data::api::MarketStatsApiService::MarketEntryUpdateResponse,
+) {
+    println!("updated ok={} entry={}", resp.ok, resp.item.id);
+    println!("state={}", resp.item.state_code);
+}
+
+// ── Install ─────────────────────────────────────────────────
+
+fn install_entry(
+    core: &mut MarketCommand,
+    entry_id: &str,
+    version_id: Option<&str>,
+) -> Result<(), String> {
+    let entry = core.api().get_entry_by_id(entry_id)?;
+    match entry.r#type.as_str() {
+        "skill" => install_skill_from_entry(core, entry),
+        "mcp" => install_mcp_from_entry(core, entry),
+        "package" | "script" => install_artifact_from_entry(core, entry, version_id),
+        other => Err(format!("unknown market type: {other}")),
+    }
+}
+
+fn install_skill_from_entry(
+    core: &mut MarketCommand,
+    entry: MarketEntrySummary,
+) -> Result<(), String> {
+    let source_url = entry
+        .source
+        .as_ref()
+        .and_then(|s| {
+            if s.url.trim().is_empty() {
+                None
+            } else {
+                Some(s.url.clone())
+            }
+        })
+        .ok_or_else(|| "skill entry has no source url".to_string())?;
+    let result = core.skill_repo().importSkillFromGitHubRepo(&source_url);
+    println!("{result}");
+    Ok(())
+}
+
+fn install_mcp_from_entry(
+    core: &mut MarketCommand,
+    entry: MarketEntrySummary,
+) -> Result<(), String> {
+    let source_url = entry
+        .source
+        .as_ref()
+        .and_then(|s| {
+            if s.url.trim().is_empty() {
+                None
+            } else {
+                Some(s.url.clone())
+            }
+        })
+        .ok_or_else(|| "mcp entry has no source url".to_string())?;
+    let plugin_id = sanitize_id(&entry.title);
+    let metadata = operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
+        name: entry.title.clone(),
+        description: entry.description.clone(),
+        author: entry
+            .author
+            .as_ref()
+            .map(|a| a.login.clone())
+            .unwrap_or_default(),
+        version: "1.0.0".to_string(),
+    };
+    match core.mcp_repo().installMCPServerWithObject(
+        plugin_id.clone(),
+        source_url,
         metadata,
-        installConfig,
+        String::new(),
         |_| {},
     ) {
         operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
-            println!("installed={pluginId}");
+            println!("installed={plugin_id}");
             println!("path={pluginPath}");
             Ok(())
         }
@@ -615,615 +924,468 @@ fn install_market_mcp(core: &mut MarketCommand, target: &str) -> Result<(), Stri
     }
 }
 
-fn install_market_artifact(
+fn install_artifact_from_entry(
     core: &mut MarketCommand,
-    marketType: &str,
-    projectId: &str,
-    nodeId: Option<&str>,
+    entry: MarketEntrySummary,
+    version_id: Option<&str>,
 ) -> Result<(), String> {
-    ensure_env_auth_token_saved(core)?;
-    let detail = core
-        .api_market_stats_api_service()
-        .getArtifactProject(projectId)
-        .map_err(|error| error.to_string())?;
-    let node = resolve_artifact_node(&detail.nodes, nodeId.or(Some(&detail.defaultNodeId)))
-        .or_else(|| resolve_artifact_node(&detail.nodes, Some(&detail.latestOpenNodeId)))
-        .or_else(|| resolve_artifact_node(&detail.nodes, Some(&detail.latestNodeId)))
-        .ok_or_else(|| format!("artifact node not found for project: {projectId}"))?;
-    let tempFile = download_artifact_node_to_temp_file(&node)?;
+    entry
+        .artifact
+        .as_ref()
+        .ok_or_else(|| "entry is not an artifact".to_string())?;
+    let requested_version_id = version_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            entry
+                .latest_version
+                .as_ref()
+                .map(|version| version.id.clone())
+                .filter(|id| !id.trim().is_empty())
+        });
+    let asset = if let Some(version_id) = requested_version_id.as_deref() {
+        entry
+            .assets
+            .iter()
+            .find(|asset| asset.version_id == version_id && !asset.id.trim().is_empty())
+            .ok_or_else(|| format!("entry has no downloadable asset for version: {version_id}"))?
+    } else {
+        entry
+            .assets
+            .iter()
+            .find(|asset| !asset.id.trim().is_empty())
+            .ok_or_else(|| "entry has no downloadable asset".to_string())?
+    };
+    let temp_file = download_asset_to_temp_file(core, &asset.id)?;
     let result = core
-        .permissions_pack_tool_package_manager()
-        .addPackageFileFromExternalStorage(&tempFile.to_string_lossy());
-    let _ = fs::remove_file(&tempFile);
+        .package_manager()
+        .add_from_external(&temp_file.to_string_lossy());
+    let _ = fs::remove_file(&temp_file);
     if !result
         .to_ascii_lowercase()
         .starts_with("successfully imported")
     {
         return Err(result);
     }
-    let _ = core.api_market_stats_api_service().trackDownload(
-        marketType,
-        projectId,
-        if node.downloadUrl.trim().is_empty() {
-            node.issue.html_url.as_str()
-        } else {
-            node.downloadUrl.as_str()
-        },
-    );
     println!("{result}");
     Ok(())
 }
 
-fn print_artifact_project(detail: &ArtifactProjectDetailResponse) {
-    let marketType = if detail.r#type.trim().is_empty() {
-        "package"
-    } else {
-        detail.r#type.as_str()
-    };
-    println!(
-        "{} project: {}",
-        title_case_market_type(marketType),
-        detail
-            .projectDisplayName
-            .as_str()
-            .if_empty_then(detail.projectId.clone())
-    );
-    println!("id: {}", detail.projectId);
-    if !detail.projectDescription.trim().is_empty() {
-        println!(
-            "summary: {}",
-            single_line_summary(&detail.projectDescription, 180)
-        );
-    }
-    println!(
-        "stats: downloads={}    likes={}    contributors={}",
-        detail.downloads, detail.likes, detail.contributorCount
-    );
-    println!("default node: {}", value_or_dash(&detail.defaultNodeId));
-    println!("latest open: {}", value_or_dash(&detail.latestOpenNodeId));
-    println!("latest node: {}", value_or_dash(&detail.latestNodeId));
-    println!();
-    println!(
-        "install default: operit2 market install {} {}",
-        marketType, detail.projectId
-    );
-    if !detail.defaultNodeId.trim().is_empty() {
-        println!(
-            "install default node: operit2 market install {} {} {}",
-            marketType, detail.projectId, detail.defaultNodeId
-        );
-    }
-    println!();
-    println!("Versions ({} nodes)", detail.nodes.len());
-    print_artifact_node_tree(detail, marketType);
-}
-
-fn print_artifact_node_tree(detail: &ArtifactProjectDetailResponse, marketType: &str) {
-    let mut childrenByParent = BTreeMap::<String, Vec<&ArtifactProjectNodeResponse>>::new();
-    let mut childIds = BTreeSet::<String>::new();
-    let nodesById = detail
-        .nodes
-        .iter()
-        .map(|node| (node.nodeId.clone(), node))
-        .collect::<BTreeMap<_, _>>();
-
-    for node in &detail.nodes {
-        for parentNodeId in node.parentNodeIds.iter().filter(|id| !id.trim().is_empty()) {
-            if nodesById.contains_key(parentNodeId) {
-                childrenByParent
-                    .entry(parentNodeId.clone())
-                    .or_default()
-                    .push(node);
-                childIds.insert(node.nodeId.clone());
-            }
-        }
-    }
-
-    for edge in &detail.edges {
-        if childIds.contains(&edge.childNodeId) {
-            continue;
-        }
-        if let (Some(parent), Some(child)) = (
-            nodesById.get(&edge.parentNodeId),
-            nodesById.get(&edge.childNodeId),
-        ) {
-            childrenByParent
-                .entry(parent.nodeId.clone())
-                .or_default()
-                .push(*child);
-            childIds.insert(child.nodeId.clone());
-        }
-    }
-
-    let mut roots = detail
-        .nodes
-        .iter()
-        .filter(|node| node.nodeId == detail.rootNodeId || !childIds.contains(&node.nodeId))
-        .collect::<Vec<_>>();
-    roots.sort_by(|left, right| node_sort_key(left, detail).cmp(&node_sort_key(right, detail)));
-
-    let mut printed = BTreeSet::<String>::new();
-    for root in roots {
-        print_artifact_node_branch(
-            detail,
-            marketType,
-            root,
-            "",
-            true,
-            true,
-            &childrenByParent,
-            &mut printed,
-        );
-    }
-
-    for node in &detail.nodes {
-        if !printed.contains(&node.nodeId) {
-            print_artifact_node_branch(
-                detail,
-                marketType,
-                node,
-                "",
-                true,
-                true,
-                &childrenByParent,
-                &mut printed,
-            );
-        }
-    }
-}
-
-fn print_artifact_node_branch<'a>(
-    detail: &ArtifactProjectDetailResponse,
-    marketType: &str,
-    node: &'a ArtifactProjectNodeResponse,
-    prefix: &str,
-    isLast: bool,
-    isRoot: bool,
-    childrenByParent: &BTreeMap<String, Vec<&'a ArtifactProjectNodeResponse>>,
-    printed: &mut BTreeSet<String>,
-) {
-    let connector = if isRoot {
-        ""
-    } else if isLast {
-        "`- "
-    } else {
-        "+- "
-    };
-    let badges = artifact_node_badges(detail, node);
-    println!(
-        "{}{}{}{}",
-        prefix,
-        connector,
-        artifact_node_title(node),
-        if badges.is_empty() {
-            String::new()
-        } else {
-            format!(" {badges}")
-        }
-    );
-    println!(
-        "{}{}id={}  package={}  version={}  state={}  sha256={}",
-        prefix,
-        if isRoot { "   " } else { "   " },
-        node.nodeId,
-        value_or_dash(&node.runtimePackageId),
-        value_or_dash(&node.version),
-        value_or_dash(&node.state),
-        short_hash(&node.sha256)
-    );
-    if !node.parentNodeIds.is_empty() {
-        println!("{}   parents: {}", prefix, node.parentNodeIds.join(", "));
-    }
-    println!(
-        "{}   install: operit2 market install {} {} {}",
-        prefix, marketType, detail.projectId, node.nodeId
-    );
-    printed.insert(node.nodeId.clone());
-
-    let mut children = childrenByParent
-        .get(&node.nodeId)
-        .cloned()
-        .unwrap_or_default();
-    children.sort_by(|left, right| node_sort_key(left, detail).cmp(&node_sort_key(right, detail)));
-    let nextPrefix = if isRoot {
-        prefix.to_string()
-    } else if isLast {
-        format!("{prefix}   ")
-    } else {
-        format!("{prefix}|  ")
-    };
-    let lastIndex = children.len().saturating_sub(1);
-    for (index, child) in children.into_iter().enumerate() {
-        if printed.contains(&child.nodeId) {
-            continue;
-        }
-        print_artifact_node_branch(
-            detail,
-            marketType,
-            child,
-            &nextPrefix,
-            index == lastIndex,
-            false,
-            childrenByParent,
-            printed,
-        );
-    }
-}
-
-fn artifact_node_badges(
-    detail: &ArtifactProjectDetailResponse,
-    node: &ArtifactProjectNodeResponse,
-) -> String {
-    let mut badges = Vec::new();
-    if node.nodeId == detail.defaultNodeId {
-        badges.push("default");
-    }
-    if node.nodeId == detail.latestOpenNodeId {
-        badges.push("latest-open");
-    }
-    if node.nodeId == detail.latestNodeId {
-        badges.push("latest");
-    }
-    if node.state.eq_ignore_ascii_case("closed") {
-        badges.push("closed");
-    }
-    if badges.is_empty() {
-        String::new()
-    } else {
-        format!("[{}]", badges.join(", "))
-    }
-}
-
-fn artifact_node_title(node: &ArtifactProjectNodeResponse) -> String {
-    let title = node
-        .displayName
-        .as_str()
-        .if_empty_then(node.runtimePackageId.clone())
-        .if_empty_then(node.nodeId.clone());
-    if node.version.trim().is_empty() || title.contains(&node.version) {
-        title
-    } else {
-        format!("{title} v{}", node.version)
-    }
-}
-
-fn node_sort_key(
-    node: &ArtifactProjectNodeResponse,
-    detail: &ArtifactProjectDetailResponse,
-) -> (i32, String) {
-    let rank = if node.nodeId == detail.defaultNodeId {
-        0
-    } else if node.nodeId == detail.latestOpenNodeId {
-        1
-    } else if node.nodeId == detail.latestNodeId {
-        2
-    } else {
-        3
-    };
-    (rank, node.publishedAt.clone().unwrap_or_default())
-}
-
-fn print_issue_rank_entry(marketType: &str, entry: &MarketRankIssueEntryResponse) {
-    let repositoryUrl = if marketType == "skill" {
-        skillRepositoryUrlFromEntry(entry)
-    } else {
-        mcpMetadataFromEntry(entry).repositoryUrl
-    };
-    println!(
-        "{}\t{}\tdownloads={}\tlikes={}\tupdatedAt={}\trepo={}",
-        entry.id,
-        entry
-            .displayTitle
-            .clone()
-            .if_empty_then(entry.issue.title.clone()),
-        entry.downloads,
-        entry
-            .issue
-            .reactions
-            .as_ref()
-            .map(|item| item.thumbsUp)
-            .unwrap_or(0),
-        entry.issue.updated_at,
-        repositoryUrl
-    );
-    println!("  {}", entry.summaryDescription);
-}
-
-fn print_github_issue_summary(marketType: &str, issue: &GitHubIssue) {
-    let marketTarget = issue
-        .body
-        .as_deref()
-        .and_then(|body| match marketType {
-            "skill" => parseSkillMarketMetadata(body).map(|metadata| metadata.repositoryUrl),
-            "mcp" => parseMcpMarketMetadata(body).map(|metadata| metadata.repositoryUrl),
-            "package" | "script" => parseArtifactMarketMetadata(body)
-                .map(|metadata| metadata.projectId.if_empty_then(metadata.downloadUrl)),
-            _ => None,
-        })
-        .unwrap_or_default();
-    println!(
-        "#{}\t{}\t{}\tlikes={}\ttarget={}",
-        issue.number,
-        issue.title,
-        issue.updated_at,
-        issue
-            .reactions
-            .as_ref()
-            .map(|item| item.thumbsUp)
-            .unwrap_or(0),
-        marketTarget
-    );
-}
-
-fn print_github_issue(issue: &GitHubIssue) {
-    println!("number={}", issue.number);
-    println!("title={}", issue.title);
-    println!("state={}", issue.state);
-    println!("url={}", issue.html_url);
-    println!("user={}", issue.user.login);
-    println!("createdAt={}", issue.created_at);
-    println!("updatedAt={}", issue.updated_at);
-    println!(
-        "labels={}",
-        issue
-            .labels
-            .iter()
-            .map(|label| label.name.clone())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    println!();
-    println!("{}", issue.body.clone().unwrap_or_default());
-}
-
-fn find_issue_rank_entry(
+fn download_asset_to_temp_file(
     core: &mut MarketCommand,
-    marketType: &str,
-    target: &str,
-) -> Result<MarketRankIssueEntryResponse, String> {
-    let normalized = normalizeMarketArtifactId(target);
-    ensure_env_auth_token_saved(core)?;
-    let mut page = 1;
-    loop {
-        let rank = core
-            .api_market_stats_api_service()
-            .getRankPage(marketType, "updated", page)
-            .map_err(|error| error.to_string())?;
-        if let Some(entry) = rank.items.into_iter().find(|entry| {
-            entry.id == target
-                || normalizeMarketArtifactId(&entry.id) == normalized
-                || entry.issue.number.to_string() == target
-                || normalizeMarketArtifactId(&entry.issue.title) == normalized
-        }) {
-            return Ok(entry);
-        }
-        if page >= rank.totalPages.max(1) {
-            break;
-        }
-        page += 1;
-    }
-    Err(format!("market entry not found: {marketType}/{target}"))
-}
-
-fn resolve_artifact_node(
-    nodes: &[ArtifactProjectNodeResponse],
-    nodeId: Option<&str>,
-) -> Option<ArtifactProjectNodeResponse> {
-    let nodeId = nodeId?.trim();
-    if nodeId.is_empty() {
-        return None;
-    }
-    nodes.iter().find(|node| node.nodeId == nodeId).cloned()
-}
-
-fn download_artifact_node_to_temp_file(
-    node: &ArtifactProjectNodeResponse,
+    asset_id: &str,
 ) -> Result<PathBuf, String> {
-    if node.downloadUrl.trim().is_empty() {
-        return Err("artifact node has empty downloadUrl".to_string());
-    }
-    let extension = Path::new(&node.assetName)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("bin");
-    let tempFile = std::env::temp_dir().join(format!(
-        "operit_market_{}_{}.{}",
-        sanitize_cli_temp_part(&node.runtimePackageId),
-        current_time_millis(),
-        extension
-    ));
-    let mut response = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .user_agent("Operit-Market")
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(&node.downloadUrl)
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Download failed: HTTP {}",
-            response.status().as_u16()
-        ));
-    }
-    let mut out = fs::File::create(&tempFile).map_err(|error| error.to_string())?;
-    std::io::copy(&mut response, &mut out).map_err(|error| error.to_string())?;
-
-    let actualSha256 = sha256_file(&tempFile)?;
-    if !node.sha256.trim().is_empty() && !actualSha256.eq_ignore_ascii_case(&node.sha256) {
-        let _ = fs::remove_file(&tempFile);
-        return Err("Downloaded file sha256 mismatch".to_string());
-    }
-    Ok(tempFile)
+    let bytes = core.api().download_asset(asset_id)?;
+    let mut tmp = env::temp_dir();
+    tmp.push(format!("operit_dl_{}", current_millis()));
+    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    Ok(tmp)
 }
 
-fn env_auth_token() -> Option<String> {
-    env::var("OPERIT_GITHUB_TOKEN")
-        .ok()
-        .or_else(|| env::var("GITHUB_TOKEN").ok())
-        .filter(|token| !token.trim().is_empty())
+fn sanitize_id(title: &str) -> String {
+    title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
 }
 
-fn ensure_env_auth_token_saved(core: &mut MarketCommand) -> Result<(), String> {
-    if let Some(token) = env_auth_token() {
-        if core
-            .preferences_git_hub_auth_preferences()
-            .getCurrentAccessToken()
-            .as_deref()
-            != Some(token.as_str())
-        {
-            core.preferences_git_hub_auth_preferences()
-                .updateAccessToken(&token, "bearer", None)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
+// ── Util ────────────────────────────────────────────────────
 
-fn require_github_login(core: &mut MarketCommand) -> Result<(), String> {
-    ensure_env_auth_token_saved(core)?;
-    if core
-        .preferences_git_hub_auth_preferences()
-        .getCurrentAccessToken()
-        .is_some()
-    {
+fn require_login(core: &mut MarketCommand) -> Result<(), String> {
+    ensure_env_token(core)?;
+    if core.github_auth().getCurrentAccessToken().is_some() {
         Ok(())
     } else {
         Err(
-            "GitHub token required. Use `operit2 market auth token <token>` or GITHUB_TOKEN."
+            "GitHub token required. Use `operit2 market auth token <token>` or set GITHUB_TOKEN."
                 .to_string(),
         )
     }
 }
 
-fn issue_market_definition(
-    marketType: &str,
-) -> Result<(&'static str, &'static str, &'static str), String> {
-    match marketType {
-        "skill" => Ok(("AAswordman", "OperitSkillMarket", "skill-plugin")),
-        "mcp" => Ok(("AAswordman", "OperitMCPMarket", "mcp-plugin")),
-        "package" => Ok(("AAswordman", "OperitPackageMarket", "package-artifact")),
-        "script" => Ok(("AAswordman", "OperitScriptMarket", "script-artifact")),
-        _ => Err("issue market type must be skill, mcp, package, or script".to_string()),
+fn ensure_env_token(core: &mut MarketCommand) -> Result<(), String> {
+    let token = env::var("OPERIT_GITHUB_TOKEN")
+        .ok()
+        .or_else(|| env::var("GITHUB_TOKEN").ok())
+        .filter(|t| !t.trim().is_empty());
+    if let Some(token) = token {
+        if core.github_auth().getCurrentAccessToken() != Some(token.clone()) {
+            core.github_auth()
+                .updateAccessToken(&token, "bearer", None)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_i32_opt(raw: Option<&String>, default: i32) -> Result<i32, String> {
+    match raw {
+        Some(s) => s.parse::<i32>().map_err(|e| e.to_string()),
+        None => Ok(default),
     }
 }
 
-fn has_review_blocking_label(issue: &GitHubIssue) -> bool {
-    issue.labels.iter().any(|label| {
-        label.name.eq_ignore_ascii_case("review:changes-requested")
-            || label.name.eq_ignore_ascii_case("review:rejected")
+fn normalize_sort(sort: &str) -> Result<&str, String> {
+    match sort {
+        "updated" | "likes" | "downloads" => Ok(sort),
+        other => Err(format!(
+            "invalid market sort: {other}. expected updated|likes|downloads"
+        )),
+    }
+}
+
+fn clean_optional_arg(value: Option<&str>) -> Option<&str> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed == "-" {
+            None
+        } else {
+            Some(trimmed)
+        }
     })
 }
 
-fn looks_like_url(value: &str) -> bool {
-    let value = value.trim().to_ascii_lowercase();
-    value.starts_with("http://")
-        || value.starts_with("https://")
-        || value.starts_with("github.com/")
-}
-
-fn mcp_id_from_title(title: &str) -> String {
-    let mut out = String::new();
-    for ch in title.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
+fn parse_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "-" {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
-    out.trim_matches('_')
-        .if_empty_then("mcp_plugin".to_string())
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read =
-            std::io::Read::read(&mut file, &mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
+fn parse_optional_string_arg(value: Option<&String>) -> Option<String> {
+    value.and_then(|raw| parse_optional_string(raw))
+}
+
+fn parse_optional_content_arg(value: &str) -> Result<Option<String>, String> {
+    match parse_optional_string(value) {
+        Some(raw) => read_content_arg(&raw).map(Some),
+        None => Ok(None),
     }
-    Ok(format!("{:x}", digest.finalize()))
 }
 
-fn sanitize_cli_temp_part(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect()
+fn parse_bool_arg(value: &str) -> Result<bool, String> {
+    match value.trim() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        other => Err(format!("invalid bool: {other}")),
+    }
 }
 
-fn current_time_millis() -> i64 {
+fn parse_optional_bool_str(value: &str) -> Result<Option<bool>, String> {
+    match parse_optional_string(value) {
+        Some(raw) => parse_bool_arg(&raw).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_bool_arg(value: Option<&String>) -> Result<Option<bool>, String> {
+    match value {
+        Some(raw) => parse_optional_bool_str(raw),
+        None => Ok(None),
+    }
+}
+
+fn entry_downloads(entry: &MarketEntrySummary) -> i32 {
+    entry.download_count.max(entry.downloads)
+}
+
+fn current_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
+        .expect("system time before epoch")
         .as_millis() as i64
 }
 
-fn title_case_market_type(value: &str) -> String {
-    match value {
-        "mcp" => "MCP".to_string(),
-        "skill" => "Skill".to_string(),
-        "package" => "Package".to_string(),
-        "script" => "Script".to_string(),
-        other => other.to_string(),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
 
-fn single_line_summary(value: &str, maxChars: usize) -> String {
-    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out = String::new();
-    for ch in compact.chars() {
-        if out.chars().count() >= maxChars {
-            out.push_str("...");
-            break;
+    use operit_host_api::{
+        HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData, RuntimeStorageEntry,
+        RuntimeStorageHost,
+    };
+    use operit_runtime::core::application::OperitApplicationContext::{
+        setDefaultHttpHost, OperitApplicationContext,
+    };
+    use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+
+    #[derive(Clone, Default)]
+    struct MemoryStorageHost {
+        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    }
+
+    impl RuntimeStorageHost for MemoryStorageHost {
+        fn rootDir(&self) -> Option<std::path::PathBuf> {
+            None
         }
-        out.push(ch);
-    }
-    out
-}
 
-fn short_hash(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        "-".to_string()
-    } else {
-        trimmed.chars().take(12).collect()
-    }
-}
+        fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            files
+                .get(path)
+                .cloned()
+                .ok_or_else(|| HostError::new(format!("missing runtime storage file: {path}")))
+        }
 
-fn value_or_dash(value: &str) -> String {
-    if value.trim().is_empty() {
-        "-".to_string()
-    } else {
-        value.to_string()
-    }
-}
+        fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+            let mut files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            files.insert(path.to_string(), content.to_vec());
+            Ok(())
+        }
 
-trait CliStringExt {
-    fn if_empty_then(self, value: String) -> String;
-}
+        fn delete(&self, path: &str, _recursive: bool) -> HostResult<()> {
+            let mut files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            files.remove(path);
+            Ok(())
+        }
 
-impl CliStringExt for String {
-    fn if_empty_then(self, value: String) -> String {
-        if self.trim().is_empty() {
-            value
-        } else {
-            self
+        fn exists(&self, path: &str) -> HostResult<bool> {
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            Ok(files.contains_key(path))
+        }
+
+        fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+            let files = self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            Ok(files
+                .iter()
+                .filter(|(path, _)| path.starts_with(prefix))
+                .map(|(path, content)| RuntimeStorageEntry {
+                    path: path.clone(),
+                    isDirectory: false,
+                    size: content.len() as i64,
+                })
+                .collect())
         }
     }
-}
 
-impl CliStringExt for &str {
-    fn if_empty_then(self, value: String) -> String {
-        if self.trim().is_empty() {
-            value
-        } else {
-            self.to_string()
+    fn register_test_storage() {
+        setDefaultRuntimeStorageHost(Arc::new(MemoryStorageHost::default()));
+    }
+
+    struct ReqwestTestHttpHost;
+
+    impl HttpHost for ReqwestTestHttpHost {
+        fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
+            let method = reqwest::Method::from_bytes(request.method.as_bytes())
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let client = reqwest::blocking::Client::builder()
+                .redirect(if request.followRedirects {
+                    reqwest::redirect::Policy::limited(10)
+                } else {
+                    reqwest::redirect::Policy::none()
+                })
+                .timeout(std::time::Duration::from_secs(
+                    request.readTimeoutSeconds.max(1),
+                ))
+                .connect_timeout(std::time::Duration::from_secs(
+                    request.connectTimeoutSeconds.max(1),
+                ))
+                .build()
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let mut builder = client.request(method, &request.url);
+            for (key, value) in &request.headers {
+                builder = builder.header(key, value);
+            }
+            if !request.body.is_empty() {
+                builder = builder.body(request.body);
+            }
+            let response = builder.send().map_err(|e| HostError::new(e.to_string()))?;
+            let status = response.status();
+            let status_code = status.as_u16() as i32;
+            let status_message = status.canonical_reason().unwrap_or_default().to_string();
+            let final_url = response.url().to_string();
+            let headers = response
+                .headers()
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.as_str().to_string(),
+                        value.to_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect();
+            let body = response
+                .bytes()
+                .map_err(|e| HostError::new(e.to_string()))?
+                .to_vec();
+            Ok(HttpResponseData {
+                finalUrl: final_url,
+                statusCode: status_code,
+                statusMessage: status_message,
+                headers,
+                body,
+            })
         }
+    }
+
+    fn run_market_cli(args: &[&str]) {
+        let mut root = std::env::temp_dir();
+        root.push(format!("operit_market_test_{}", current_millis()));
+        std::fs::create_dir_all(&root).expect("create test runtime root");
+        operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot(root);
+        register_test_storage();
+        let ctx = OperitApplicationContext::new();
+        let mut out = CoreCommandOutput::new();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        // Tests that parsing does not panic; network/IO errors are OK at this level.
+        let _ = run_market_command(ctx, &args, &mut out);
+    }
+
+    #[test]
+    fn empty_prints_usage() {
+        run_market_cli(&[]);
+    }
+
+    #[test]
+    fn show_missing_id_prints_usage() {
+        run_market_cli(&["show"]);
+    }
+
+    #[test]
+    fn comments_missing_id_prints_usage() {
+        run_market_cli(&["comments"]);
+    }
+
+    #[test]
+    fn auth_token_missing_value_prints_usage() {
+        run_market_cli(&["auth", "token"]);
+    }
+
+    #[test]
+    fn auth_login_without_client_id_returns_error() {
+        std::env::remove_var("OPERIT_GITHUB_CLIENT_ID");
+        std::env::remove_var("GITHUB_CLIENT_ID");
+        run_market_cli(&["auth", "login"]);
+    }
+
+    #[test]
+    fn search_missing_query_prints_usage() {
+        run_market_cli(&["search"]);
+    }
+
+    #[test]
+    fn comment_missing_body_prints_usage() {
+        run_market_cli(&["comment", "entry_1"]);
+    }
+
+    #[test]
+    fn download_missing_id_prints_usage() {
+        run_market_cli(&["download"]);
+    }
+
+    #[test]
+    fn install_missing_id_prints_usage() {
+        run_market_cli(&["install"]);
+    }
+
+    #[test]
+    fn notifications_rejects_bad_limit_without_network() {
+        run_market_cli(&["notifications", "bad-limit"]);
+    }
+
+    #[test]
+    fn publish_missing_subcommand_prints_usage() {
+        run_market_cli(&["publish"]);
+    }
+
+    #[test]
+    fn publish_proof_missing_args_prints_usage() {
+        run_market_cli(&["publish", "proof", "owner", "repo"]);
+    }
+
+    #[test]
+    fn publish_artifact_missing_args_prints_usage() {
+        run_market_cli(&["publish", "artifact", "script", "title"]);
+    }
+
+    #[test]
+    fn publish_repo_missing_args_prints_usage() {
+        run_market_cli(&["publish", "repo", "mcp", "title"]);
+    }
+
+    #[test]
+    fn publish_version_missing_args_prints_usage() {
+        run_market_cli(&["publish", "version"]);
+    }
+
+    #[test]
+    fn invalid_featured_sort_is_rejected_without_network() {
+        run_market_cli(&["rank", "featured"]);
+    }
+
+    fn run_online_rank(sort: &str) -> String {
+        setDefaultHttpHost(Arc::new(ReqwestTestHttpHost));
+        let mut root = std::env::temp_dir();
+        root.push(format!("operit_market_online_test_{}", current_millis()));
+        std::fs::create_dir_all(&root).expect("create test runtime root");
+        operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot(root);
+        register_test_storage();
+
+        let ctx = OperitApplicationContext::new();
+        let mut out = CoreCommandOutput::new();
+        let args = vec!["rank".to_string(), sort.to_string(), "1".to_string()];
+        run_market_command(ctx, &args, &mut out)
+            .expect("online rank command should read cloud market");
+        out.stdout
+    }
+
+    fn assert_online_rank_output(stdout: &str, sort: &str) {
+        assert!(
+            stdout.contains(&format!("sort={sort}")),
+            "stdout was: {stdout}"
+        );
+        assert!(stdout.contains("page=1"), "stdout was: {stdout}");
+        assert!(
+            stdout.contains("total=") && !stdout.contains("total=0"),
+            "stdout was: {stdout}"
+        );
+        assert!(
+            stdout.contains("package/")
+                || stdout.contains("mcp/")
+                || stdout.contains("skill/")
+                || stdout.contains("script/"),
+            "stdout was: {stdout}"
+        );
+    }
+
+    #[test]
+    #[ignore = "hits api.operit.app"]
+    fn online_rank_command_reads_cloud_market_v2() {
+        let stdout = run_online_rank("updated");
+        assert_online_rank_output(&stdout, "updated");
+    }
+
+    #[test]
+    #[ignore = "hits api.operit.app"]
+    fn online_rank_command_reads_cloud_downloads_market_v2() {
+        let stdout = run_online_rank("downloads");
+        assert_online_rank_output(&stdout, "downloads");
     }
 }

@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
@@ -136,7 +136,8 @@ impl CharacterGroupCardManager {
             updatedAt: now,
             ..group
         });
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertGroupNameUnique(preferences, &normalizedGroup.name, Some(&id))?;
             let mut currentList = Self::readGroupList(preferences);
             if !currentList.contains(&id) {
                 currentList.push(id.clone());
@@ -148,6 +149,7 @@ impl CharacterGroupCardManager {
                 &Self::groupDataKey(&id),
                 serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
             );
+            Ok::<(), PreferencesDataStoreError>(())
         })?;
         Ok(id)
     }
@@ -164,7 +166,8 @@ impl CharacterGroupCardManager {
             updatedAt: currentTimeMillis(),
             ..group.clone()
         });
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertGroupNameUnique(preferences, &normalizedGroup.name, Some(&group.id))?;
             let mut currentList = Self::readGroupList(preferences);
             if !currentList.contains(&group.id) {
                 currentList.push(group.id.clone());
@@ -176,6 +179,7 @@ impl CharacterGroupCardManager {
                 &Self::groupDataKey(&group.id),
                 serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
             );
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
@@ -186,7 +190,7 @@ impl CharacterGroupCardManager {
         }
         self.dataStore.edit(|preferences| {
             let mut currentList = Self::readGroupList(preferences);
-            currentList.retain(|id| id != groupId);
+            currentList.retain(|item| item != groupId);
             Self::writeGroupList(preferences, currentList);
             preferences.remove(&Self::groupDataKey(groupId));
             if preferences.get(&Self::ACTIVE_CHARACTER_GROUP_ID()) == Some(&groupId.to_string()) {
@@ -366,7 +370,8 @@ impl CharacterGroupCardManager {
             return Ok(());
         }
         let normalizedGroup = self.normalizeGroup(group);
-        self.dataStore.edit(|preferences| {
+        self.dataStore.try_edit_result(|preferences| {
+            Self::assertGroupNameUnique(preferences, &normalizedGroup.name, Some(&id))?;
             let mut currentList = Self::readGroupList(preferences);
             if !currentList.contains(&id) {
                 currentList.push(id.clone());
@@ -378,10 +383,37 @@ impl CharacterGroupCardManager {
                 &Self::groupDataKey(&id),
                 serde_json::to_string(&normalizedGroup).expect("character group must serialize"),
             );
+            Ok::<(), PreferencesDataStoreError>(())
         })
     }
 
     #[allow(non_snake_case)]
+
+    fn assertGroupNameUnique(
+        preferences: &Preferences,
+        name: &str,
+        currentGroupId: Option<&str>,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let normalizedName = name.trim();
+        let groupIds = Self::readGroupList(preferences);
+        for groupId in groupIds {
+            if currentGroupId == Some(groupId.as_str()) {
+                continue;
+            }
+            let existingName = preferences
+                .get(&stringPreferencesKey(&format!(
+                    "character_group_{groupId}_name"
+                )))
+                .cloned()
+                .unwrap_or_default();
+            if existingName.trim() == normalizedName {
+                return Err(PreferencesDataStoreError::Message(format!(
+                    "character group name already exists: {normalizedName}"
+                )));
+            }
+        }
+        Ok(())
+    }
     fn readGroupList(preferences: &Preferences) -> Vec<String> {
         preferences
             .get(&Self::CHARACTER_GROUP_LIST())

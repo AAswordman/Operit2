@@ -221,3 +221,41 @@ fn encrypted_store_round_trips_without_plaintext_file() {
         Some(&"{\"login\":\"codex\"}".to_string())
     );
 }
+
+#[test]
+fn stores_with_same_path_share_latest_in_memory_preferences() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let first = PreferencesDataStore::newWithStorage(
+        host.clone(),
+        "runtime/config/preferences/shared_state_test.preferences.json",
+    );
+    let second = PreferencesDataStore::newWithStorage(
+        host,
+        "runtime/config/preferences/shared_state_test.preferences.json",
+    );
+
+    first
+        .edit(|preferences| {
+            preferences.set(&stringPreferencesKey("api_key"), "sk-test".to_string());
+        })
+        .expect("first edit");
+
+    second
+        .edit(|preferences| {
+            preferences.set(
+                &stringPreferencesKey("provider_list"),
+                "[\"DEEPSEEK\"]".to_string(),
+            );
+        })
+        .expect("second edit");
+
+    let preferences = first.data().expect("preferences");
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("api_key")),
+        Some(&"sk-test".to_string())
+    );
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("provider_list")),
+        Some(&"[\"DEEPSEEK\"]".to_string())
+    );
+}

@@ -5,8 +5,8 @@ use operit_core_proxy::LocalCoreProxy;
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost,
     LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
-    LinuxFileSystemHost as NativeFileSystemHost, LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
-    LinuxHttpHost as NativeHttpHost,
+    LinuxFileSystemHost as NativeFileSystemHost,
+    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,

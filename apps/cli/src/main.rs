@@ -50,7 +50,9 @@ async fn run() -> Result<(), CliError> {
             .await
             .map_err(CliError::internal),
         "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::user),
-        value if value.starts_with('-') => tui::run_tui_command(&args).await.map_err(CliError::internal),
+        value if value.starts_with('-') => tui::run_tui_command(&args)
+            .await
+            .map_err(CliError::internal),
         _ => {
             cli::print_root_usage();
             Ok(())

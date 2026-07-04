@@ -520,6 +520,7 @@ class _ChatAreaState extends State<ChatArea> {
             key: ValueKey<String>(message.stableKey),
             message: message,
             isStreaming: isStreaming,
+            currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
           );
     final messageContent = _SelectableMessageFrame(
       selected: selected,

@@ -18,6 +18,7 @@ class WorkspaceShell extends StatefulWidget {
     required this.hasBoundWorkspace,
     required this.workspacePath,
     required this.onListWorkspaceFiles,
+    required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
     required this.onWriteWorkspaceFileBytes,
@@ -33,6 +34,8 @@ class WorkspaceShell extends StatefulWidget {
   final String? workspacePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final Future<List<WorkspaceFileEntry>> Function(String path)
+  onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
   final Future<void> Function(String path, Uint8List bytes)
@@ -194,6 +197,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       hasBoundWorkspace: widget.hasBoundWorkspace,
       workspacePath: widget.workspacePath,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
+      onListWorkspaceBindingDirectories:
+          widget.onListWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
       onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,

@@ -123,6 +123,7 @@ pub fn run_character_command(
                     openingStatement: String::new(),
                     otherContentChat: String::new(),
                     otherContentVoice: String::new(),
+                    avatarUri: None,
                     attachedTagIds: Vec::new(),
                     advancedCustomPrompt: String::new(),
                     marks: String::new(),

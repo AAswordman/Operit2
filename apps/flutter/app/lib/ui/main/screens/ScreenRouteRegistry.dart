@@ -162,8 +162,12 @@ class ScreenRouteRegistry {
     if (initialTab is! String) {
       throw StateError('Invalid Market.initialTab: $initialTab');
     }
+    final categoryId = args['categoryId'];
+    final categoryName = args['categoryName'];
     return MarketScreenRoute(
       initialTab: _enumByName(MarketHomeTab.values, initialTab),
+      categoryId: categoryId is String ? categoryId : null,
+      categoryName: categoryName is String ? categoryName : null,
     );
   }
 

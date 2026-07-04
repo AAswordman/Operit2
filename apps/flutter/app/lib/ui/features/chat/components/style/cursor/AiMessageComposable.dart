@@ -18,11 +18,13 @@ class AiMessageComposable extends StatefulWidget {
     required this.message,
     required this.isStreaming,
     required this.useBubbleStyle,
+    this.avatarImagePath,
   });
 
   final ChatUiMessage message;
   final bool isStreaming;
   final bool useBubbleStyle;
+  final String? avatarImagePath;
 
   @override
   State<AiMessageComposable> createState() => _AiMessageComposableState();
@@ -147,7 +149,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
           if (widget.useBubbleStyle &&
               themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
             _MessageAvatar(
-              imagePath: themePreferenceSnapshot.customAiAvatarUri,
+              imagePath: widget.avatarImagePath,
               backgroundColor: aiBubbleColor,
               square:
                   themePreferenceSnapshot.avatarShape ==

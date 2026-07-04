@@ -1700,11 +1700,24 @@ impl EnhancedAIService {
             .map(|result| result.toolName.clone())
             .collect::<Vec<_>>()
             .join(", ");
+        let hasToolResultMessageOverride = toolResultMessageOverride.is_some();
         let rawToolResultMessage = toolResultMessageOverride
             .unwrap_or_else(|| ConversationMarkupManager::buildBoundedToolResultMessage(&results));
+        let rawToolResultMessageLen = rawToolResultMessage.len();
         let toolResultMessage = rawToolResultMessage;
+        let toolResultMessageLen = toolResultMessage.len();
 
         if toolResultMessage.trim().is_empty() {
+            AppLogger::w(
+                TAG,
+                &format!(
+                    "chat.tool_result.empty executionId={} round={} resultCount={} override={}",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    results.len(),
+                    hasToolResultMessageOverride
+                ),
+            );
             return Ok(());
         }
 
@@ -1713,6 +1726,21 @@ impl EnhancedAIService {
         } else {
             toolNames.clone()
         };
+        let successCount = results.iter().filter(|result| result.success).count();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.tool_result.start executionId={} round={} resultCount={} successCount={} tools=[{}] messageChars={} override={} historyTurns={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                results.len(),
+                successCount,
+                displayToolNames,
+                rawToolResultMessageLen,
+                hasToolResultMessageOverride,
+                context.conversationHistory.len()
+            ),
+        );
 
         if !self.isExecutionContextActive(context) {
             return Ok(());
@@ -1746,7 +1774,24 @@ impl EnhancedAIService {
         context.conversationHistory.extend(normalizedChatHistory);
         let currentChatHistory = context.conversationHistory.clone();
 
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.tool_result.history_ready executionId={} round={} historyTurns={} messageChars={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                currentChatHistory.len(),
+                toolResultMessageLen
+            ),
+        );
         self.startAssistantResponseRound(context);
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.response.round_started executionId={} round={} reason=tool_result tools=[{}]",
+                context.executionId, context.roundManager.roundIndex, displayToolNames
+            ),
+        );
 
         let modelParameters = self.getModelParametersForFunction(
             functionType.clone(),
@@ -1780,6 +1825,18 @@ impl EnhancedAIService {
         if maxTokens > 0 {
             let usageRatio = currentTokens as f64 / maxTokens as f64;
             if usageRatio >= tokenUsageThreshold {
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "chat.token_limit executionId={} round={} currentTokens={} maxTokens={} usageRatio={:.4} threshold={:.4}",
+                        context.executionId,
+                        context.roundManager.roundIndex,
+                        currentTokens,
+                        maxTokens,
+                        usageRatio,
+                        tokenUsageThreshold
+                    ),
+                );
                 if let Some(callback) = onTokenLimitExceeded {
                     callback();
                 }
@@ -1802,6 +1859,18 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
         }
 
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.model_request.after_tool_result executionId={} round={} tools=[{}] historyTurns={} availableTools={} stream={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                displayToolNames,
+                currentChatHistory.len(),
+                availableTools.len(),
+                stream
+            ),
+        );
         let mut response = {
             let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> =
                 onNonFatalError.map(|callbackFn| {
@@ -1848,10 +1917,14 @@ impl EnhancedAIService {
             });
         });
         let activeExecutionState = self.shared_state.clone();
+        let mut chunkCount = 0usize;
+        let mut totalChars = 0usize;
         response.collect(&mut |content| {
             if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context) {
                 return;
             }
+            chunkCount += 1;
+            totalChars += content.len();
             context.streamBuffer.push_str(&content);
             context
                 .roundManager
@@ -1863,6 +1936,17 @@ impl EnhancedAIService {
         if !self.isExecutionContextActive(context) {
             return Ok(());
         }
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.model_response.after_tool_result_complete executionId={} round={} tools=[{}] chunkCount={} totalChars={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                displayToolNames,
+                chunkCount,
+                totalChars
+            ),
+        );
 
         let (providerModel, inputTokens, cachedInputTokens, outputTokens) = {
             let service = runtime.aiService.lock().await;
@@ -1907,14 +1991,17 @@ impl EnhancedAIService {
         AppLogger::d(
             TAG,
             &format!(
-                "Token count updated after tool result for {}. Input: {}, Output: {}, CachedInput: {}. Turn Accumulated: {}, {}, {}",
+                "Token count updated after tool result for {}. Input: {}, Output: {}, CachedInput: {}. Turn Accumulated: {}, {}, {}. executionId={}, round={}, tools=[{}]",
                 function_type_name(&functionType),
                 inputTokens,
                 outputTokens,
                 cachedInputTokens,
                 accumulatedInputTokenCount,
                 accumulatedOutputTokenCount,
-                accumulatedCachedInputTokenCount
+                accumulatedCachedInputTokenCount,
+                context.executionId,
+                context.roundManager.roundIndex,
+                displayToolNames
             ),
         );
 
@@ -1981,7 +2068,24 @@ impl EnhancedAIService {
         }
 
         let content = context.streamBuffer.trim().to_string();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.response.complete_start executionId={} round={} contentChars={} historyTurns={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                content.len(),
+                context.conversationHistory.len()
+            ),
+        );
         if content.is_empty() {
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "chat.response.finalize_empty executionId={} round={}",
+                    context.executionId, context.roundManager.roundIndex
+                ),
+            );
             self.finalizeAssistantResponse(
                 context,
                 &content,
@@ -2001,6 +2105,13 @@ impl EnhancedAIService {
         if contentWithoutThinking.is_empty() {
             if disableWarning {
                 let displayContent = context.roundManager.getDisplayContent();
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "chat.response.finalize_pure_thinking executionId={} round={} disableWarning=true",
+                        context.executionId, context.roundManager.roundIndex
+                    ),
+                );
                 self.finalizeAssistantResponse(
                     context,
                     &displayContent,
@@ -2065,6 +2176,16 @@ impl EnhancedAIService {
             .unwrap_or(enhancedContent);
 
         if let Some(recovery) = &truncatedToolRecovery {
+            AppLogger::w(
+                TAG,
+                &format!(
+                    "chat.tool_call.truncated executionId={} round={} appendedChars={} invalidatedTools={}",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    recovery.appendedSuffix.len(),
+                    recovery.invalidatedToolNames.join(", ")
+                ),
+            );
             if !recovery.appendedSuffix.is_empty() {
                 context.streamBuffer.push_str(&recovery.appendedSuffix);
                 context
@@ -2072,6 +2193,16 @@ impl EnhancedAIService {
                     .updateContent(context.streamBuffer.clone());
             }
         } else if finalContent != content {
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "chat.tool_call.normalized_xml executionId={} round={} beforeChars={} afterChars={}",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    content.len(),
+                    finalContent.len()
+                ),
+            );
             context.streamBuffer.clear();
             context.streamBuffer.push_str(&finalContent);
             context.roundManager.updateContent(finalContent.clone());
@@ -2082,6 +2213,22 @@ impl EnhancedAIService {
         } else {
             Vec::new()
         };
+        let extractedToolNames = extractedToolInvocations
+            .iter()
+            .map(|invocation| invocation.tool.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.tool_call.detected executionId={} round={} toolCount={} tools=[{}] finalChars={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                extractedToolInvocations.len(),
+                extractedToolNames,
+                finalContent.len()
+            ),
+        );
 
         if !self.isExecutionContextActive(context) {
             return Ok(());
@@ -2101,6 +2248,13 @@ impl EnhancedAIService {
         if let Some(_recovery) = truncatedToolRecovery {
             if disableWarning {
                 let displayContent = context.roundManager.getDisplayContent();
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "chat.response.finalize_truncated_tool executionId={} round={} disableWarning=true",
+                        context.executionId, context.roundManager.roundIndex
+                    ),
+                );
                 self.finalizeAssistantResponse(
                     context,
                     &displayContent,
@@ -2153,6 +2307,16 @@ impl EnhancedAIService {
         }
 
         if !extractedToolInvocations.is_empty() {
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "chat.tool_call.dispatch executionId={} round={} toolCount={} tools=[{}]",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    extractedToolInvocations.len(),
+                    extractedToolNames
+                ),
+            );
             return Box::pin(self.handleToolInvocation(
                 collector,
                 extractedToolInvocations,
@@ -2183,6 +2347,16 @@ impl EnhancedAIService {
             .await;
         }
 
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.response.finalize_no_tools executionId={} round={} displayChars={} historyTurns={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                context.roundManager.getDisplayContent().len(),
+                context.conversationHistory.len()
+            ),
+        );
         self.finalizeAssistantResponse(
             context,
             &context.roundManager.getDisplayContent(),
@@ -2231,6 +2405,23 @@ impl EnhancedAIService {
             return Ok(());
         }
 
+        let toolNames = toolInvocations
+            .iter()
+            .map(|invocation| resolveToolDisplayName(&invocation.tool))
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.tool_call.handle_start executionId={} round={} toolCount={} tools=[{}] historyTurns={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                toolInvocations.len(),
+                toolNames,
+                context.conversationHistory.len()
+            ),
+        );
+
         for invocation in &toolInvocations {
             if let Some(callback) = onToolInvocation.as_ref() {
                 callback(invocation.tool.name.clone());
@@ -2238,13 +2429,8 @@ impl EnhancedAIService {
         }
 
         if !isSubTask && !toolInvocations.is_empty() {
-            let toolNames = toolInvocations
-                .iter()
-                .map(|invocation| resolveToolDisplayName(&invocation.tool))
-                .collect::<Vec<_>>()
-                .join(", ");
             self.setInputProcessingState(InputProcessingState::ExecutingTool {
-                toolName: toolNames,
+                toolName: toolNames.clone(),
             });
         }
 
@@ -2271,6 +2457,22 @@ impl EnhancedAIService {
             chatId.clone(),
             roleCardId.clone(),
             toolExposureMode,
+        );
+        let emittedChars = emittedToolResultMessages
+            .iter()
+            .map(|content| content.len())
+            .sum::<usize>();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.tool_call.handle_executed executionId={} round={} toolCount={} emittedMessages={} emittedChars={} resultCount={}",
+                context.executionId,
+                context.roundManager.roundIndex,
+                toolInvocations.len(),
+                emittedToolResultMessages.len(),
+                emittedChars,
+                allToolResults.len()
+            ),
         );
 
         if !self.isExecutionContextActive(context) {

@@ -14,7 +14,7 @@ use operit_host_api::{
 };
 use serde_json::Value;
 use zbus::blocking::{Connection, MessageIterator};
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value as ZValue};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::MatchRule;
 
 const TAG: &str = "LinuxHostRuntimeEvent";
@@ -101,15 +101,9 @@ fn run_system_dbus_event_loop(
             return;
         }
     };
-    let rule = match MatchRule::builder()
+    let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-    {
-        Ok(builder) => builder.build(),
-        Err(error) => {
-            let _ = init.send(Err(format!("create system dbus match rule failed: {error}")));
-            return;
-        }
-    };
+        .build();
     let mut iterator = match MessageIterator::for_match_rule(rule, &connection, Some(64)) {
         Ok(iterator) => iterator,
         Err(error) => {
@@ -161,15 +155,9 @@ fn run_session_dbus_event_loop(
             return;
         }
     };
-    let rule = match MatchRule::builder()
+    let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-    {
-        Ok(builder) => builder.build(),
-        Err(error) => {
-            let _ = init.send(Err(format!("create session dbus match rule failed: {error}")));
-            return;
-        }
-    };
+        .build();
     let mut iterator = match MessageIterator::for_match_rule(rule, &connection, Some(64)) {
         Ok(iterator) => iterator,
         Err(error) => {
@@ -549,34 +537,28 @@ fn bluez_device_payload(path: &str, changed: &HashMap<String, OwnedValue>) -> Va
 fn prop_bool(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     properties
         .get(key)
-        .and_then(|value| ZValue::try_from(value).ok())
         .and_then(|value| bool::try_from(value).ok())
 }
 
 fn prop_u64(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<u64> {
-    properties
-        .get(key)
-        .and_then(|value| ZValue::try_from(value).ok())
-        .and_then(|value| {
-            u64::try_from(value.clone())
-                .ok()
-                .or_else(|| u32::try_from(value.clone()).ok().map(u64::from))
-                .or_else(|| i32::try_from(value).ok().map(|number| number as u64))
-        })
+    let value = properties.get(key)?;
+    u64::try_from(value)
+        .ok()
+        .or_else(|| u32::try_from(value).ok().map(u64::from))
+        .or_else(|| i32::try_from(value).ok().map(|number| number as u64))
 }
 
 fn prop_f64(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<f64> {
     properties
         .get(key)
-        .and_then(|value| ZValue::try_from(value).ok())
         .and_then(|value| f64::try_from(value).ok())
 }
 
 fn prop_string(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     properties
         .get(key)
-        .and_then(|value| ZValue::try_from(value).ok())
-        .and_then(|value| String::try_from(value).ok())
+        .and_then(|value| <&str>::try_from(value).ok())
+        .map(str::to_string)
 }
 
 fn unix_millis() -> u64 {

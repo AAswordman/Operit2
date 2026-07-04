@@ -6,6 +6,7 @@ import 'package:operit2/core/web_visit/WebVisitModels.dart';
 enum WorkspaceTabKind {
   home,
   setup,
+  workspacePicker,
   files,
   terminal,
   browser,

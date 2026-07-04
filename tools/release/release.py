@@ -813,7 +813,7 @@ command -v aarch64-linux-musl-gcc >/dev/null 2>&1 || {
     echo "Install an aarch64 musl cross C compiler and put aarch64-linux-musl-gcc on PATH." >&2
     exit 1
 }
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
 export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
 """
     else:

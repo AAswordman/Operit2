@@ -1,3 +1,16 @@
+pub(crate) fn dart_default_value(dart_ty: &str) -> &'static str {
+    match dart_ty {
+        "String" => "''",
+        "int" => "0",
+        "double" => "0.0",
+        "bool" => "false",
+        _ if dart_ty.starts_with("List<") => "const []",
+        _ if dart_ty.starts_with("Map<") => "const {}",
+        _ if dart_ty.ends_with('?') => "null",
+        _ => "null",
+    }
+}
+
 use super::*;
 
 pub(crate) fn write_dart_proxy_artifacts(
@@ -52,6 +65,12 @@ fn render_dart_models(
                 unit_only: true,
             } => {
                 output.push_str(&render_dart_enum(ty, variants, serializable_types));
+            }
+            SerializableTypeKind::TaggedEnum {
+                variants,
+                ..
+            } => {
+                output.push_str(&render_dart_tagged_enum(ty, variants, serializable_types));
             }
             SerializableTypeKind::Enum {
                 unit_only: false, ..
@@ -366,6 +385,127 @@ fn render_dart_enum(
     output
 }
 
+fn render_dart_tagged_enum(
+    ty: &SerializableType,
+    variants: &[SerializableEnumVariant],
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let enum_name = dart_class_name(&ty.full_type, serializable_types);
+    let mut output = String::new();
+    output.push_str(&format!("class {enum_name} {{\n"));
+    output.push_str(&format!("  const {enum_name}._({{\n"));
+    let mut seen_fields: Vec<String> = Vec::new();
+    for variant in variants {
+        for field in &variant.fields {
+            let name = dart_identifier(&field.name);
+            if !seen_fields.contains(&name) {
+                let field_type = dart_type(&field.ty, serializable_types);
+                let default_val = dart_default_value(&field_type);
+                output.push_str(&format!("    this.{} = {},\n", name, default_val));
+                seen_fields.push(name);
+            }
+        }
+    }
+    output.push_str("    required this.tag,\n");
+    output.push_str("  });\n\n");
+    for variant in variants {
+        let variant_name = dart_identifier(&variant.name);
+        if variant.fields.is_empty() {
+            output.push_str(&format!("  factory {enum_name}.{variant_name}() => {enum_name}._(tag: '{}');\n", dart_string_literal(&variant.json_name)));
+        } else {
+            let mut factory_params = String::from("{");
+            let mut forward_args = String::new();
+            for field in &variant.fields {
+                let name = dart_identifier(&field.name);
+                let field_type = dart_type(&field.ty, serializable_types);
+                factory_params.push_str(&format!("required {} {}, ", field_type, name));
+                if !forward_args.is_empty() {
+                    forward_args.push_str(", ");
+                }
+                forward_args.push_str(&format!("{}: {}", name, name));
+            }
+            factory_params.push_str("}");
+            output.push_str(&format!(
+                "  factory {enum_name}.{variant_name}({}) => {enum_name}._(tag: '{}', {});\n",
+                factory_params,
+                dart_string_literal(&variant.json_name),
+                forward_args
+            ));
+        }
+    }
+    output.push_str("  final String tag;\n");
+    let mut seen_field_decls: Vec<String> = Vec::new();
+    for variant in variants {
+        for field in &variant.fields {
+            let name = dart_identifier(&field.name);
+            if !seen_field_decls.contains(&name) {
+                output.push_str(&format!(
+                    "  final {} {};\n",
+                    dart_type(&field.ty, serializable_types),
+                    name
+                ));
+                seen_field_decls.push(name);
+            }
+        }
+    }
+    output.push_str(&format!(
+        "\n  factory {enum_name}.fromJson(Object? json) {{\n"
+    ));
+    output.push_str(&format!(
+        "    final map = json as Map<String, Object?>;\n"
+    ));
+    // externally tagged: {{\"CharacterCard\": {{\"id\": \"...\"}}}}
+    output.push_str("    final tag = map.keys.first;\n");
+    output.push_str("    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n");
+    output.push_str("    return switch (tag) {\n");
+    for variant in variants {
+        let variant_name = dart_identifier(&variant.name);
+        output.push_str(&format!("      '{}' => {enum_name}.{variant_name}(",
+            dart_string_literal(&variant.json_name)));
+        for field in &variant.fields {
+            output.push_str(&format!(
+                "{}: {}, ",
+                dart_identifier(&field.name),
+                dart_decode_expr(
+                    &format!("data['{}']", field.json_name),
+                    &dart_type(&field.ty, serializable_types),
+                    serializable_types
+                )
+            ));
+        }
+        output.push_str("),\n");
+    }
+    output.push_str(&format!(
+        "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+    ));
+    output.push_str("    };\n  }\n\n");
+    output.push_str("  Map<String, Object?> toJson() {\n");
+    output.push_str("    final data = <String, Object?>{\n");
+    let mut seen_json: Vec<String> = Vec::new();
+    for variant in variants {
+        for field in &variant.fields {
+            if seen_json.contains(&field.json_name) {
+                continue;
+            }
+            seen_json.push(field.json_name.clone());
+            output.push_str(&format!(
+                "      '{}': {},\n",
+                field.json_name,
+                dart_encode_expr(
+                    &dart_identifier(&field.name),
+                    &dart_type(&field.ty, serializable_types),
+                    serializable_types
+                )
+            ));
+        }
+    }
+    output.push_str("    };\n");
+    output.push_str("    return <String, Object?>{tag: data};\n");
+    output.push_str("  }\n");
+    output.push_str("}\n\n");
+    output
+}
+
 fn render_dart_params(
     args: &[SourceArg],
     serializable_types: &HashMap<String, SerializableType>,
@@ -447,12 +587,24 @@ fn collect_reachable_type(
 ) {
     if serializable_types.contains_key(ty) && out.insert(ty.to_string()) {
         if let Some(SerializableType {
-            kind: SerializableTypeKind::Struct { fields },
+            kind,
             ..
         }) = serializable_types.get(ty)
         {
-            for field in fields {
-                collect_reachable_type(&field.ty, serializable_types, out);
+            match kind {
+                SerializableTypeKind::Struct { fields } => {
+                    for field in fields {
+                        collect_reachable_type(&field.ty, serializable_types, out);
+                    }
+                }
+                SerializableTypeKind::TaggedEnum { variants, .. } => {
+                    for variant in variants {
+                        for field in &variant.fields {
+                            collect_reachable_type(&field.ty, serializable_types, out);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -523,12 +675,16 @@ fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -
                 ..
             }) => dart_class_name(ty, serializable_types),
             Some(SerializableType {
+                kind: SerializableTypeKind::TaggedEnum { .. },
+                ..
+            }) => dart_class_name(ty, serializable_types),
+            Some(SerializableType {
                 kind:
                     SerializableTypeKind::Enum {
                         unit_only: false, ..
                     },
                 ..
-            }) => "Object?".to_string(),
+            }) => dart_class_name(ty, serializable_types),
             None => "Object?".to_string(),
         },
     }
@@ -571,6 +727,9 @@ fn dart_decode_expr(
         );
     }
     if dart_is_unit_enum_type(dart_type, serializable_types) {
+        return format!("{dart_type}.fromJson({value})");
+    }
+    if dart_is_tagged_enum_type(dart_type, serializable_types) {
         return format!("{dart_type}.fromJson({value})");
     }
     format!("{dart_type}.fromJson({value} as Map<String, Object?>)")
@@ -625,6 +784,9 @@ fn dart_encode_expr(
     if dart_is_unit_enum_type(dart_type, serializable_types) {
         return format!("{value}.toJson()");
     }
+    if dart_is_tagged_enum_type(dart_type, serializable_types) {
+        return format!("{value}.toJson()");
+    }
     format!("{value}.toJson()")
 }
 
@@ -639,6 +801,18 @@ fn dart_is_unit_enum_type(
                 unit_only: true,
                 ..
             }
+        ) && dart_class_name(&ty.full_type, serializable_types) == dart_type
+    })
+}
+
+fn dart_is_tagged_enum_type(
+    dart_type: &str,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> bool {
+    serializable_types.values().any(|ty| {
+        matches!(
+            &ty.kind,
+            SerializableTypeKind::TaggedEnum { .. }
         ) && dart_class_name(&ty.full_type, serializable_types) == dart_type
     })
 }
