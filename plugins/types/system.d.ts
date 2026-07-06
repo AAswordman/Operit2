@@ -7,7 +7,7 @@ import {
     AppUsageTimeResultData, DeviceInfoResultData, NotificationData, LocationData,
     BluetoothStateData, BluetoothBondedDevicesData, BluetoothScanResultData, BluetoothSessionData,
     BluetoothTransferData, BluetoothReadData, BluetoothBleServicesData, BluetoothBleNotificationData,
-    IntentResultData, TerminalInfoResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
+    TerminalInfoResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
     TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData,
     MusicPlaybackResultData
 } from './results';
@@ -227,35 +227,6 @@ export namespace System {
             function readNotifications(sessionId: string, limit?: number | string): Promise<BluetoothBleNotificationData>;
         }
     }
-
-    /**
-     * Execute an Intent
-     * @param options - Intent options object
-     */
-    function intent(options?: {
-        action?: string;
-        uri?: string;
-        package?: string;
-        component?: string;
-        flags?: number | string;
-        extras?: Record<string, any> | string;
-        type?: 'activity' | 'broadcast' | 'service';
-    }): Promise<IntentResultData>;
-
-    /**
-     * Send a broadcast intent (string extras supported via extra_key/extra_value pairs).
-     */
-    function sendBroadcast(options?: {
-        action: string;
-        uri?: string;
-        package?: string;
-        component?: string;
-        extras?: Record<string, any> | string;
-        extra_key?: string;
-        extra_value?: string;
-        extra_key2?: string;
-        extra_value2?: string;
-    }): Promise<IntentResultData>;
 
     /**
      * Terminal operations.

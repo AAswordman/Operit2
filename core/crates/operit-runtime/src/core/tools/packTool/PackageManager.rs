@@ -24,6 +24,9 @@ use crate::core::tools::ToolPackage::{
 use crate::core::tools::ToolResultDataClasses::stringResultData;
 use crate::data::mcp::MCPLocalServer::MCPLocalServer;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
+use crate::plugins::BuiltinPluginAssets::{
+    PluginAsset, BUNDLED_EXTERNAL_PLUGIN_ASSETS, BUILTIN_PLUGIN_ASSETS,
+};
 use crate::util::AppLogger::AppLogger;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
@@ -443,13 +446,12 @@ impl PackageManager {
                 ))
             }
             ToolPkgSourceType::ASSET => {
-                let assetFile = builtInPackageAssetPath(sourcePath);
-                let metadata = fs::metadata(&assetFile).ok()?;
+                let asset = bundledPluginAssetByName(sourcePath)?;
                 Some(format!(
                     "asset|{}|{}|{}|{}|{}",
                     sourcePath,
-                    metadata.len(),
-                    metadataModifiedMillis(&metadata),
+                    asset.bytes.len(),
+                    sha256Hex(asset.bytes),
                     version,
                     mainEntry
                 ))
@@ -488,8 +490,13 @@ impl PackageManager {
                 )
             }
             ToolPkgSourceType::ASSET => {
-                let sourcePath = builtInPackageAssetPath(&runtime.sourcePath);
-                ToolPkgArchiveParser::extractZipEntriesFromAsset(&sourcePath, destinationDir)
+                let Some(asset) = bundledPluginAssetByName(&runtime.sourcePath) else {
+                    return false;
+                };
+                ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(
+                    asset.bytes,
+                    destinationDir,
+                )
             }
         }
     }
@@ -1259,22 +1266,32 @@ impl PackageManager {
         packageName: &str,
     ) -> String {
         let sourcePath = result.sourcePath;
-        let sourceFile = PathBuf::from(&sourcePath);
-        let sourceSignature = match Self::buildFileContentSignature(&sourceFile) {
-            Ok(value) => value,
-            Err(error) => return format!("Error importing package: {error}"),
+        let Some(sourceAsset) = bundledExternalPluginAssetByName(&sourcePath) else {
+            return format!("Bundled external package asset not found: {sourcePath}");
         };
+        let sourceSignature = sha256Hex(sourceAsset.bytes);
         let sourceFileName = packageSourceFileName(&sourcePath);
-        let message = self.addPackageFileFromExternalStorage(&sourcePath);
-        if !message.starts_with("Successfully imported package:") {
-            return message;
+        if let Err(error) = self.storePaths.ensure_packages_dir() {
+            return format!("Error importing package: {error}");
         }
+        let destinationFile = self.storePaths.packages_dir().join(&sourceFileName);
+        if let Err(error) = fs::write(&destinationFile, sourceAsset.bytes) {
+            return format!("Error importing package: {error}");
+        }
+        self.externalPackageScanCache
+            .remove(&destinationFile.to_string_lossy().to_string());
+        self.loadAvailablePackages();
         let record = BundledExternalImportRecord {
             packageName: packageName.to_string(),
             sourceFileName: sourceFileName.clone(),
             destinationFileName: sourceFileName,
             sourceSignature,
         };
+        let message = format!(
+            "Successfully imported package: {}\nStored at: {}",
+            packageName,
+            destinationFile.to_string_lossy()
+        );
         match self.upsertBundledExternalImportRecord(record) {
             Ok(()) => message,
             Err(error) => format!("{message}\nFailed to record bundled external import: {error}"),
@@ -1533,26 +1550,9 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn scanBuiltInPackageAssets(&self) -> PackageScanSnapshot {
-        let sourceDir = builtInPackageAssetsDir();
-        let Ok(entries) = fs::read_dir(&sourceDir) else {
-            logPackageManagerError(format!(
-                "Built-in package asset directory is unavailable: {}",
-                sourceDir.display()
-            ));
-            return PackageScanSnapshot::default();
-        };
-        let mut files = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file())
-            .collect::<Vec<_>>();
-        files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
-        let results = files
-            .into_iter()
-            .filter_map(|path| {
-                let fileName = path.file_name()?.to_string_lossy().to_string();
-                Some(self.parseBuiltInPackageCandidate(&fileName, &path))
-            })
+        let results = BUILTIN_PLUGIN_ASSETS
+            .iter()
+            .map(|asset| self.parseBuiltInPackageAsset(asset))
             .collect::<Vec<_>>();
         self.mergePackageScanCandidateResults(results, None)
     }
@@ -1607,32 +1607,20 @@ impl PackageManager {
 
     #[allow(non_snake_case)]
     fn scanBundledExternalPackageCandidates(&mut self) -> Vec<PackageScanCandidateResult> {
-        let sourceDir = bundledExternalPackageAssetsDir();
-        let Ok(entries) = fs::read_dir(&sourceDir) else {
-            logPackageManagerError(format!(
-                "Bundled external package asset directory is unavailable: {}",
-                sourceDir.display()
-            ));
-            return Vec::new();
-        };
-        let mut files = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file())
-            .filter(|path| isExternalPackageCandidateFile(path))
-            .collect::<Vec<_>>();
-        files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
         let previousCache = self.bundledExternalPackageScanCache.clone();
         let mut nextCache = BTreeMap::new();
         let mut results = Vec::new();
-        for file in files {
-            let cacheKey = file.to_string_lossy().to_string();
-            let signature = self.buildExternalPackageScanSignature(&file);
+        for asset in BUNDLED_EXTERNAL_PLUGIN_ASSETS {
+            if !isPackageCandidateAssetName(asset.name) {
+                continue;
+            }
+            let cacheKey = asset.name.to_string();
+            let signature = buildBundledPluginAssetSignature(asset);
             let result = previousCache
                 .get(&cacheKey)
                 .filter(|entry| entry.signature == signature)
                 .map(|entry| entry.result.clone())
-                .unwrap_or_else(|| self.parseExternalPackageCandidate(&file));
+                .unwrap_or_else(|| self.parseBundledExternalPackageAsset(asset));
             nextCache.insert(
                 cacheKey,
                 ExternalPackageScanCacheEntry {
@@ -1698,53 +1686,93 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
-    fn parseBuiltInPackageCandidate(
-        &self,
-        fileName: &str,
-        path: &Path,
-    ) -> PackageScanCandidateResult {
+    fn parseBuiltInPackageAsset(&self, asset: &PluginAsset) -> PackageScanCandidateResult {
         let mut result = PackageScanCandidateResult {
             phase: "asset".to_string(),
-            sourcePath: fileName.to_string(),
+            sourcePath: asset.name.to_string(),
             ..Default::default()
         };
-        let lowerName = fileName.to_ascii_lowercase();
+        let lowerName = asset.name.to_ascii_lowercase();
         if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
-            match fs::read_to_string(path).and_then(|script| {
-                self.parseJsPackage(&script)
+            match std::str::from_utf8(asset.bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|script| {
+                    self.parseJsPackage(script)
                     .map(|package| ToolPackage {
                         is_built_in: true,
                         ..package
                     })
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            }) {
+                }) {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
                     "Built-in JavaScript package load error [{}]: {error}",
-                    path.display()
+                    asset.name
                 )),
             }
         } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
-            match fs::read_to_string(path).and_then(|content| {
-                self.parsePackageMetadata(&content, "")
+            match std::str::from_utf8(asset.bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|content| {
+                    self.parsePackageMetadata(content, "")
                     .map(|package| ToolPackage {
                         is_built_in: true,
                         ..package
                     })
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            }) {
+                }) {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
                     "Built-in package metadata load error [{}]: {error}",
-                    path.display()
+                    asset.name
                 )),
             }
         } else if lowerName.ends_with(".toolpkg") {
-            match self.loadToolPkgFromBuiltInAssetFile(fileName, path) {
+            match self.loadToolPkgFromBuiltInAsset(asset.name, asset.bytes) {
                 Ok(loadResult) => result.toolPkgLoadResult = Some(loadResult),
                 Err(error) => logPackageManagerError(format!(
                     "Built-in ToolPkg package load error [{}]: {error}",
-                    path.display()
+                    asset.name
+                )),
+            }
+        }
+        result
+    }
+
+    #[allow(non_snake_case)]
+    fn parseBundledExternalPackageAsset(&self, asset: &PluginAsset) -> PackageScanCandidateResult {
+        let mut result = PackageScanCandidateResult {
+            phase: "bundled_external".to_string(),
+            sourcePath: asset.name.to_string(),
+            ..Default::default()
+        };
+        let lowerName = asset.name.to_ascii_lowercase();
+        if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
+            match std::str::from_utf8(asset.bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|script| self.parseJsPackage(script))
+            {
+                Ok(package) => result.toolPackage = Some(package),
+                Err(error) => logPackageManagerError(format!(
+                    "Bundled external JavaScript package load error [{}]: {error}",
+                    asset.name
+                )),
+            }
+        } else if lowerName.ends_with(".hjson") || lowerName.ends_with(".json") {
+            match std::str::from_utf8(asset.bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|content| self.parsePackageMetadata(content, ""))
+            {
+                Ok(package) => result.toolPackage = Some(package),
+                Err(error) => logPackageManagerError(format!(
+                    "Bundled external package metadata load error [{}]: {error}",
+                    asset.name
+                )),
+            }
+        } else if lowerName.ends_with(".toolpkg") {
+            match self.loadToolPkgFromBuiltInAsset(asset.name, asset.bytes) {
+                Ok(loadResult) => result.toolPkgLoadResult = Some(loadResult),
+                Err(error) => logPackageManagerError(format!(
+                    "Bundled external ToolPkg package load error [{}]: {error}",
+                    asset.name
                 )),
             }
         }
@@ -2083,11 +2111,14 @@ impl PackageManager {
                 continue;
             }
 
-            let sourceFile = PathBuf::from(&result.sourcePath);
-            let sourceSignature =
-                Self::buildFileContentSignature(&sourceFile).map_err(|error| error.to_string())?;
+            let Some(sourceAsset) = bundledExternalPluginAssetByName(&result.sourcePath) else {
+                packageNamesToRemove.push(packageName);
+                recordsChanged = true;
+                continue;
+            };
+            let sourceSignature = sha256Hex(sourceAsset.bytes);
             if sourceSignature != record.sourceSignature {
-                fs::copy(&sourceFile, &destinationFile).map_err(|error| error.to_string())?;
+                fs::write(&destinationFile, sourceAsset.bytes).map_err(|error| error.to_string())?;
                 if let Some(recordToUpdate) = records.get_mut(&record.packageName) {
                     recordToUpdate.sourceSignature = sourceSignature;
                 }
@@ -2122,18 +2153,18 @@ impl PackageManager {
                 continue;
             }
             let sourceFileName = packageSourceFileName(&result.sourcePath);
-            let sourceFile = PathBuf::from(&result.sourcePath);
             let destinationFile = packagesDir.join(&sourceFileName);
             if !destinationFile.exists() || !destinationFile.is_file() {
                 continue;
             }
-            if !Self::filesHaveSameContent(&sourceFile, &destinationFile)
-                .map_err(|error| error.to_string())?
-            {
+            let Some(sourceAsset) = bundledExternalPluginAssetByName(&result.sourcePath) else {
+                continue;
+            };
+            let destinationBytes = fs::read(&destinationFile).map_err(|error| error.to_string())?;
+            if destinationBytes != sourceAsset.bytes {
                 continue;
             }
-            let sourceSignature =
-                Self::buildFileContentSignature(&sourceFile).map_err(|error| error.to_string())?;
+            let sourceSignature = sha256Hex(sourceAsset.bytes);
             records.insert(
                 packageName.clone(),
                 BundledExternalImportRecord {
@@ -2831,20 +2862,6 @@ impl PackageManager {
     }
 
     #[allow(non_snake_case)]
-    fn loadToolPkgFromBuiltInAssetFile(
-        &self,
-        assetName: &str,
-        file: &Path,
-    ) -> Result<ToolPkgLoadResult, String> {
-        ToolPkgLoader::loadToolPkgFromBuiltInAssetFile(
-            assetName,
-            file,
-            &self.jsEngine,
-            |jsContent| self.parseJsPackage(jsContent),
-        )
-    }
-
-    #[allow(non_snake_case)]
     fn parseJsPackage(&self, jsContent: &str) -> Result<ToolPackage, String> {
         let metadataString = self.extractMetadataFromJs(jsContent);
         let packageMetadata = self.parsePackageMetadata(&metadataString, jsContent)?;
@@ -3044,24 +3061,28 @@ fn currentUseTime() -> String {
 }
 
 #[allow(non_snake_case)]
-fn builtInPackageAssetsDir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join("plugins")
-        .join("buildin")
+fn bundledPluginAssetByName(assetName: &str) -> Option<&'static PluginAsset> {
+    BUILTIN_PLUGIN_ASSETS
+        .iter()
+        .chain(BUNDLED_EXTERNAL_PLUGIN_ASSETS.iter())
+        .find(|asset| asset.name == assetName)
 }
 
 #[allow(non_snake_case)]
-fn builtInPackageAssetPath(assetName: &str) -> PathBuf {
-    builtInPackageAssetsDir().join(assetName)
+fn bundledExternalPluginAssetByName(assetName: &str) -> Option<&'static PluginAsset> {
+    BUNDLED_EXTERNAL_PLUGIN_ASSETS
+        .iter()
+        .find(|asset| asset.name == assetName)
 }
 
 #[allow(non_snake_case)]
-fn bundledExternalPackageAssetsDir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join("plugins")
-        .join("external")
+fn buildBundledPluginAssetSignature(asset: &PluginAsset) -> String {
+    format!("{}|{}|{}", asset.name, asset.bytes.len(), sha256Hex(asset.bytes))
+}
+
+#[allow(non_snake_case)]
+fn sha256Hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 #[allow(non_snake_case)]
@@ -3182,6 +3203,18 @@ fn collectDirectoryFiles(directory: &Path, files: &mut Vec<PathBuf>) {
 #[allow(non_snake_case)]
 fn isExternalPackageCandidateFile(path: &Path) -> bool {
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let normalized = extension.to_ascii_lowercase();
+    matches!(normalized.as_str(), "js" | "ts" | "hjson" | "toolpkg")
+}
+
+#[allow(non_snake_case)]
+fn isPackageCandidateAssetName(assetName: &str) -> bool {
+    let Some(extension) = Path::new(assetName)
+        .extension()
+        .and_then(|value| value.to_str())
+    else {
         return false;
     };
     let normalized = extension.to_ascii_lowercase();

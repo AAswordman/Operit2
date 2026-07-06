@@ -351,7 +351,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sync Operit2 plugin package sources.")
     parser.add_argument(
         "--source",
-        choices=("buildin", "external", "examples", "all"),
+        choices=("buildin", "external", "runtime", "examples", "all"),
         default="all",
     )
     parser.add_argument("--dry-run", action="store_true")
@@ -375,9 +375,9 @@ def main() -> int:
     total_packed = 0
     total_deleted = 0
     jobs: list[tuple[Path, Path]] = []
-    if args.source in {"buildin", "all"}:
+    if args.source in {"buildin", "runtime", "all"}:
         jobs.append((_plugin_packages_root() / "buildin", Path(args.buildin_output)))
-    if args.source in {"external", "all"}:
+    if args.source in {"external", "runtime", "all"}:
         jobs.append((_plugin_packages_root() / "external", Path(args.external_output)))
     if args.source in {"examples", "all"}:
         jobs.append((_plugin_packages_root() / "examples", Path(args.examples_output)))
@@ -388,7 +388,7 @@ def main() -> int:
         total_packed += packed
         total_deleted += deleted
 
-    if args.source in {"buildin", "all"}:
+    if args.source in {"buildin", "runtime", "all"}:
         _maybe_hot_reload_buildin(
             _plugin_packages_root() / "buildin",
             Path(args.buildin_output),

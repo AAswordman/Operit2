@@ -1,6 +1,7 @@
 use crate::data::model::ActivePrompt::ActivePrompt;
 use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
 use crate::data::model::ChatHistory::ChatHistory;
+use crate::data::model::ChatHistoryListItem::ChatHistoryListItem;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
@@ -71,6 +72,7 @@ pub struct ChatHistoryDelegate {
     pub showChatHistorySelector: bool,
     pub chatHistories: Vec<ChatHistory>,
     pub chatHistoriesFlow: MutableStateFlow<Vec<ChatHistory>>,
+    pub chatHistoryListItemsFlow: StateFlow<Vec<ChatHistoryListItem>>,
     pub currentChatId: Option<String>,
     pub currentChatIdFlow: MutableStateFlow<Option<String>>,
     pub isInitialized: bool,
@@ -82,6 +84,13 @@ pub struct ChatHistoryDelegate {
 
 impl ChatHistoryDelegate {
     pub fn new(selectionMode: ChatSelectionMode) -> Self {
+        let chatHistoriesFlow = mutableStateFlow(Vec::<ChatHistory>::new());
+        let chatHistoryListItemsFlow = chatHistoriesFlow.asStateFlow().map(|histories| {
+            histories
+                .iter()
+                .map(ChatHistoryListItem::fromChatHistory)
+                .collect::<Vec<_>>()
+        });
         Self {
             chatHistoryManager: ChatHistoryManager::default()
                 .expect("ChatHistoryManager must initialize for ChatHistoryDelegate"),
@@ -99,7 +108,8 @@ impl ChatHistoryDelegate {
             latestDisplayPageCountByChatId: Vec::new(),
             showChatHistorySelector: false,
             chatHistories: Vec::new(),
-            chatHistoriesFlow: mutableStateFlow(Vec::new()),
+            chatHistoriesFlow,
+            chatHistoryListItemsFlow,
             currentChatId: None,
             currentChatIdFlow: mutableStateFlow(None),
             isInitialized: false,
@@ -130,6 +140,7 @@ impl ChatHistoryDelegate {
             showChatHistorySelector: self.showChatHistorySelector,
             chatHistories: self.chatHistoriesFlow.value(),
             chatHistoriesFlow: self.chatHistoriesFlow.clone(),
+            chatHistoryListItemsFlow: self.chatHistoryListItemsFlow.clone(),
             currentChatId: self.currentChatIdFlow.value(),
             currentChatIdFlow: self.currentChatIdFlow.clone(),
             isInitialized: self.isInitialized,
@@ -148,6 +159,11 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn chatHistoriesFlow(&self) -> StateFlow<Vec<ChatHistory>> {
         self.chatHistoriesFlow.asStateFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn chatHistoryListItemsFlow(&self) -> StateFlow<Vec<ChatHistoryListItem>> {
+        self.chatHistoryListItemsFlow.clone()
     }
 
     #[allow(non_snake_case)]
@@ -484,7 +500,7 @@ impl ChatHistoryDelegate {
 
     pub fn initialize(&mut self) {
         self.chatHistories = self.chatHistoryManager.chatHistoriesFlow.value();
-        self.chatHistoriesFlow.set_value(self.chatHistories.clone());
+        self.emitChatHistoriesState();
         let _chatHistories = self.chatHistoriesFlow.clone();
         self.chatHistoryManager
             .chatHistoriesFlow
@@ -1310,26 +1326,30 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     pub fn updateChatOrderAndGroup(
         &mut self,
-        reorderedHistories: Vec<ChatHistory>,
-        movedItem: ChatHistory,
+        reorderedHistories: Vec<ChatHistoryListItem>,
+        movedItem: ChatHistoryListItem,
         targetGroup: Option<String>,
     ) {
         let updatedList = reorderedHistories
             .into_iter()
             .enumerate()
-            .map(|(index, mut history)| {
-                let mut newGroup = history.group.clone();
-                if history.id == movedItem.id && targetGroup.is_some() {
-                    newGroup = targetGroup.clone();
-                }
+            .map(|(index, item)| {
+                let mut history = self
+                    .chatHistories
+                    .iter()
+                    .find(|history| history.id == item.id)
+                    .cloned()
+                    .expect("Chat history list item id must exist in chat histories");
                 history.displayOrder = index as i64;
-                history.group = newGroup;
+                if history.id == movedItem.id {
+                    history.group = targetGroup.clone();
+                }
                 history
             })
             .collect::<Vec<_>>();
 
         self.chatHistories = updatedList.clone();
-        self.chatHistoriesFlow.set_value(updatedList.clone());
+        self.emitChatHistoriesState();
         self.chatHistoryManager
             .updateChatOrderAndGroup(updatedList)
             .expect("ChatHistoryManager.updateChatOrderAndGroup must succeed");

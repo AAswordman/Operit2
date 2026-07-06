@@ -220,7 +220,6 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
             return [
                 typeof UINode,
                 typeof Android,
-                typeof Intent,
                 typeof PackageManager,
                 typeof ContentProvider,
                 typeof SystemManager,
@@ -253,7 +252,7 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
 
     assert_eq!(
         output.as_deref(),
-        Some("\"function:function:function:function:function:function:function:object:object:function:object:object:object:function:function:function:function\"")
+        Some("\"function:function:function:function:function:function:object:object:function:object:object:object:function:function:function:function\"")
     );
 }
 

@@ -10,8 +10,14 @@ pub mod StandardChatManagerTool;
 #[path = "StandardBrowserAutomationTools.rs"]
 pub mod StandardBrowserAutomationTools;
 
+#[path = "StandardBluetoothTools.rs"]
+pub mod StandardBluetoothTools;
+
 #[path = "StandardMemoryTools.rs"]
 pub mod StandardMemoryTools;
+
+#[path = "StandardMusicTools.rs"]
+pub mod StandardMusicTools;
 
 #[path = "StandardSystemOperationTools.rs"]
 pub mod StandardSystemOperationTools;

@@ -1260,8 +1260,8 @@ fn print_cli_usage() {
     println!("operit2 cli tts config <list|show|current|use|create|update|delete>");
     println!("operit2 cli tts synthesize --character <id> --text <text>");
     println!("operit2 cli export <memory|chat|snapshot>");
-    println!("operit2 cli import <memory|chat|snapshot>");
-    println!("operit2 cli backup <create|restore|inspect>");
+    println!("operit2 cli import <memory|chat|snapshot|operit1-model-config>");
+    println!("operit2 cli backup <create|restore|inspect|inspect-operit1-model-config>");
     println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     println!("operit2 cli tag <list|show|create|update|delete>");
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");

@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -27,6 +26,11 @@ class DrawerContent extends StatefulWidget {
     required this.pluginEntries,
     required this.selectedRouteId,
     required this.appearance,
+    required this.histories,
+    required this.characterGroupNamesById,
+    required this.currentChatId,
+    required this.errorMessage,
+    required this.loading,
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
     this.bridge = const ProxyCoreRuntimeBridge(),
@@ -36,6 +40,11 @@ class DrawerContent extends StatefulWidget {
   final List<NavigationEntrySpec> pluginEntries;
   final String selectedRouteId;
   final NavigationDrawerAppearance appearance;
+  final List<core_proxy.ChatHistoryListItem> histories;
+  final Map<String, String> characterGroupNamesById;
+  final String? currentChatId;
+  final String? errorMessage;
+  final bool loading;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
   final OperitRuntimeBridge bridge;
@@ -52,178 +61,70 @@ class _DrawerContentState extends State<DrawerContent> {
 
   final ScrollController _historyScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
-  final List<core_proxy.ChatHistory> _histories = <core_proxy.ChatHistory>[];
-  final Map<String, String> _characterGroupNamesById = <String, String>{};
   final Set<String> _collapsedCharacterSections = Set<String>.of(
     _rememberedCollapsedCharacterSections,
   );
   final Set<String> _collapsedGroupSections = Set<String>.of(
     _rememberedCollapsedGroupSections,
   );
-  StreamSubscription<List<core_proxy.ChatHistory>>? _historiesSubscription;
-  StreamSubscription<String?>? _currentChatSubscription;
-  StreamSubscription<List<core_proxy.CharacterGroupCard>>?
-  _characterGroupsSubscription;
-  String? _currentChatId;
   String? _errorMessage;
-  bool _loading = true;
+  List<core_proxy.ChatHistoryListItem>? _pendingOrderedHistories;
   int _historyRenderLimit = _collapsedHistoryLimit;
   bool _searchExpanded = false;
 
   GeneratedChatRuntimeHolderMainCoreProxy get _chatCoreProxy =>
       GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain;
 
-  GeneratedPreferencesCharacterGroupCardManagerCoreProxy
-  get _characterGroupCoreProxy => GeneratedCoreProxyClients(
-    widget.bridge,
-  ).preferencesCharacterGroupCardManager;
-
   String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';
+
+  List<core_proxy.ChatHistoryListItem> get _histories =>
+      _pendingOrderedHistories ?? widget.histories;
+
+  String? get _visibleErrorMessage => _errorMessage ?? widget.errorMessage;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
-    _loadConversations();
-    _watchConversations();
-    _watchCharacterGroups();
+  }
+
+  @override
+  void didUpdateWidget(covariant DrawerContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final pending = _pendingOrderedHistories;
+    if (pending != null && _sameHistoryOrder(pending, widget.histories)) {
+      _pendingOrderedHistories = null;
+    }
+    if (oldWidget.errorMessage != widget.errorMessage && _errorMessage != null) {
+      _errorMessage = null;
+    }
   }
 
   @override
   void dispose() {
-    _historiesSubscription?.cancel();
-    _currentChatSubscription?.cancel();
-    _characterGroupsSubscription?.cancel();
     _historyScrollController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadConversations() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
-    try {
-      await _characterGroupCoreProxy.initializeIfNeeded();
-      final results = await Future.wait<Object?>(<Future<Object?>>[
-        _chatCoreProxy.chatHistoriesFlowSnapshot(),
-        _chatCoreProxy.currentChatIdFlowSnapshot(),
-        _characterGroupCoreProxy.allCharacterGroupCardsFlowSnapshot(),
-      ]);
-      final histories = results[0] as List<core_proxy.ChatHistory>;
-      final currentChatId = results[1] as String?;
-      final characterGroups = results[2] as List<core_proxy.CharacterGroupCard>;
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _histories
-          ..clear()
-          ..addAll(histories);
-        _characterGroupNamesById
-          ..clear()
-          ..addAll(_characterGroupNameMap(characterGroups));
-        _currentChatId = currentChatId;
-        _loading = false;
-      });
-    } catch (error, stackTrace) {
-      debugPrint('Failed to load chat histories: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _errorMessage = error.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  void _watchConversations() {
-    _historiesSubscription?.cancel();
-    _historiesSubscription = _chatCoreProxy.chatHistoriesFlowChanges().listen(
-      (histories) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _histories
-            ..clear()
-            ..addAll(histories);
-          _loading = false;
-          _errorMessage = null;
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Failed to watch chat histories: $error\n$stackTrace');
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _errorMessage = error.toString();
-          _loading = false;
-        });
-      },
-    );
-
-    _currentChatSubscription?.cancel();
-    _currentChatSubscription = _chatCoreProxy.currentChatIdFlowChanges().listen(
-      (chatId) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _currentChatId = chatId;
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Failed to watch current chat id: $error\n$stackTrace');
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _errorMessage = error.toString();
-        });
-      },
-    );
-  }
-
-  void _watchCharacterGroups() {
-    _characterGroupsSubscription?.cancel();
-    _characterGroupsSubscription = _characterGroupCoreProxy
-        .allCharacterGroupCardsFlowChanges()
-        .listen(
-          (groups) {
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _characterGroupNamesById
-                ..clear()
-                ..addAll(_characterGroupNameMap(groups));
-            });
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            debugPrint('Failed to watch character groups: $error\n$stackTrace');
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _errorMessage = error.toString();
-            });
-          },
-        );
-  }
-
-  Map<String, String> _characterGroupNameMap(
-    List<core_proxy.CharacterGroupCard> groups,
+  bool _sameHistoryOrder(
+    List<core_proxy.ChatHistoryListItem> left,
+    List<core_proxy.ChatHistoryListItem> right,
   ) {
-    return <String, String>{
-      for (final group in groups)
-        if (group.id.trim().isNotEmpty && group.name.trim().isNotEmpty)
-          group.id.trim(): group.name.trim(),
-    };
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      final leftItem = left[index];
+      final rightItem = right[index];
+      if (leftItem.id != rightItem.id ||
+          leftItem.group != rightItem.group ||
+          leftItem.displayOrder != rightItem.displayOrder) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _onSearchChanged() {
@@ -347,7 +248,7 @@ class _DrawerContentState extends State<DrawerContent> {
     throw StateError('Unknown active prompt: $prompt');
   }
 
-  Future<void> _switchConversation(core_proxy.ChatHistory history) async {
+  Future<void> _switchConversation(core_proxy.ChatHistoryListItem history) async {
     setState(() {
       _errorMessage = null;
     });
@@ -372,7 +273,7 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _showRenameConversationDialog(
-    core_proxy.ChatHistory history,
+    core_proxy.ChatHistoryListItem history,
   ) async {
     final title = await showDialog<String>(
       context: context,
@@ -388,7 +289,7 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _showDeleteConversationDialog(
-    core_proxy.ChatHistory history,
+    core_proxy.ChatHistoryListItem history,
   ) async {
     if (history.locked) {
       await _deleteConversation(history);
@@ -408,7 +309,7 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _showConversationActionDialog(
-    core_proxy.ChatHistory history,
+    core_proxy.ChatHistoryListItem history,
   ) async {
     final index = _histories.indexWhere((item) => item.id == history.id);
     final action = await showDialog<ConversationAction>(
@@ -447,7 +348,7 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  Future<void> _deleteConversation(core_proxy.ChatHistory history) async {
+  Future<void> _deleteConversation(core_proxy.ChatHistoryListItem history) async {
     setState(() {
       _errorMessage = null;
     });
@@ -465,7 +366,7 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _updateConversationTitle(
-    core_proxy.ChatHistory history,
+    core_proxy.ChatHistoryListItem history,
     String title,
   ) async {
     final normalizedTitle = title.trim();
@@ -491,7 +392,9 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  Future<void> _updateConversationPinned(core_proxy.ChatHistory history) async {
+  Future<void> _updateConversationPinned(
+    core_proxy.ChatHistoryListItem history,
+  ) async {
     setState(() {
       _errorMessage = null;
     });
@@ -511,7 +414,9 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  Future<void> _updateConversationLocked(core_proxy.ChatHistory history) async {
+  Future<void> _updateConversationLocked(
+    core_proxy.ChatHistoryListItem history,
+  ) async {
     setState(() {
       _errorMessage = null;
     });
@@ -532,7 +437,7 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _moveConversationRelative(
-    core_proxy.ChatHistory history,
+    core_proxy.ChatHistoryListItem history,
     int delta,
   ) async {
     final currentIndex = _histories.indexWhere((item) => item.id == history.id);
@@ -542,7 +447,7 @@ class _DrawerContentState extends State<DrawerContent> {
         targetIndex >= _histories.length) {
       return;
     }
-    final reordered = List<core_proxy.ChatHistory>.of(_histories);
+    final reordered = List<core_proxy.ChatHistoryListItem>.of(_histories);
     final moved = reordered.removeAt(currentIndex);
     reordered.insert(targetIndex, moved);
     await _updateConversationOrder(
@@ -554,13 +459,13 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _moveConversationTo(
-    core_proxy.ChatHistory moved,
-    core_proxy.ChatHistory target,
+    core_proxy.ChatHistoryListItem moved,
+    core_proxy.ChatHistoryListItem target,
   ) async {
     if (moved.id == target.id) {
       return;
     }
-    final reordered = List<core_proxy.ChatHistory>.of(_histories);
+    final reordered = List<core_proxy.ChatHistoryListItem>.of(_histories);
     final fromIndex = reordered.indexWhere((item) => item.id == moved.id);
     final toIndex = reordered.indexWhere((item) => item.id == target.id);
     if (fromIndex < 0 || toIndex < 0) {
@@ -578,32 +483,34 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 
   Future<void> _updateConversationOrder(
-    List<core_proxy.ChatHistory> reordered,
-    core_proxy.ChatHistory moved,
+    List<core_proxy.ChatHistoryListItem> reordered,
+    core_proxy.ChatHistoryListItem moved,
     String? targetGroup, {
     required bool optimistic,
   }) async {
-    final orderedJson = <Map<String, Object?>>[];
+    final updatedHistories = <core_proxy.ChatHistoryListItem>[];
     for (var index = 0; index < reordered.length; index += 1) {
-      final json = reordered[index].toJson();
-      json['messages'] = const <Object?>[];
-      json['displayOrder'] = index;
-      if (json['id'] == moved.id) {
-        json['group'] = targetGroup;
-      }
-      orderedJson.add(json);
+      final history = reordered[index];
+      updatedHistories.add(
+        core_proxy.ChatHistoryListItem(
+          id: history.id,
+          title: history.title,
+          updatedAt: history.updatedAt,
+          group: history.id == moved.id ? targetGroup : history.group,
+          displayOrder: index,
+          characterCardName: history.characterCardName,
+          characterGroupId: history.characterGroupId,
+          locked: history.locked,
+          pinned: history.pinned,
+        ),
+      );
     }
-    final updatedHistories = orderedJson
-        .map(core_proxy.ChatHistory.fromJson)
-        .toList(growable: false);
     final updatedMoved = updatedHistories.firstWhere(
       (history) => history.id == moved.id,
     );
     if (optimistic) {
       setState(() {
-        _histories
-          ..clear()
-          ..addAll(updatedHistories);
+        _pendingOrderedHistories = updatedHistories;
       });
     }
     try {
@@ -623,24 +530,27 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  List<core_proxy.ChatHistory> get _visibleHistories {
+  List<core_proxy.ChatHistoryListItem> get _visibleHistories {
     final query = _searchController.text.trim().toLowerCase();
     if (query.isEmpty) {
-      return List<core_proxy.ChatHistory>.unmodifiable(_histories);
+      return List<core_proxy.ChatHistoryListItem>.unmodifiable(_histories);
     }
     return _histories
         .where((history) => _historyMatchesQuery(history, query))
         .toList(growable: false);
   }
 
-  bool _historyMatchesQuery(core_proxy.ChatHistory history, String query) {
+  bool _historyMatchesQuery(
+    core_proxy.ChatHistoryListItem history,
+    String query,
+  ) {
     return history.title.toLowerCase().contains(query) ||
         _bindingLabel(history).toLowerCase().contains(query) ||
         _groupLabel(history).toLowerCase().contains(query);
   }
 
   List<_CharacterHistorySection> _buildCharacterSections(
-    List<core_proxy.ChatHistory> histories,
+    List<core_proxy.ChatHistoryListItem> histories,
   ) {
     final sections = <_CharacterHistorySection>[];
     final sectionIndexes = <String, int>{};
@@ -660,7 +570,7 @@ class _DrawerContentState extends State<DrawerContent> {
               _HistoryGroupSection(
                 key: groupKey,
                 label: groupLabel,
-                histories: <core_proxy.ChatHistory>[history],
+                histories: <core_proxy.ChatHistoryListItem>[history],
               ),
             ],
           ),
@@ -677,7 +587,7 @@ class _DrawerContentState extends State<DrawerContent> {
           _HistoryGroupSection(
             key: groupKey,
             label: groupLabel,
-            histories: <core_proxy.ChatHistory>[history],
+            histories: <core_proxy.ChatHistoryListItem>[history],
           ),
         );
       } else {
@@ -740,7 +650,7 @@ class _DrawerContentState extends State<DrawerContent> {
     );
   }
 
-  String _characterSectionKey(core_proxy.ChatHistory history) {
+  String _characterSectionKey(core_proxy.ChatHistoryListItem history) {
     final characterGroupId = history.characterGroupId?.trim();
     if (characterGroupId != null && characterGroupId.isNotEmpty) {
       return 'character-group:$characterGroupId';
@@ -751,7 +661,7 @@ class _DrawerContentState extends State<DrawerContent> {
         : 'character:$name';
   }
 
-  _HistoryBindingKind _bindingKind(core_proxy.ChatHistory history) {
+  _HistoryBindingKind _bindingKind(core_proxy.ChatHistoryListItem history) {
     final characterGroupId = history.characterGroupId?.trim();
     if (characterGroupId != null && characterGroupId.isNotEmpty) {
       return _HistoryBindingKind.characterGroup;
@@ -762,23 +672,26 @@ class _DrawerContentState extends State<DrawerContent> {
         : _HistoryBindingKind.characterCard;
   }
 
-  String _bindingLabel(core_proxy.ChatHistory history) {
+  String _bindingLabel(core_proxy.ChatHistoryListItem history) {
     final characterGroupId = history.characterGroupId?.trim();
     if (characterGroupId != null && characterGroupId.isNotEmpty) {
-      return _characterGroupNamesById[characterGroupId] ??
+      return widget.characterGroupNamesById[characterGroupId] ??
           _shortIdentifier(characterGroupId);
     }
     final name = history.characterCardName?.trim();
     return name == null || name.isEmpty ? '未绑定' : name;
   }
 
-  String _groupSectionKey(String sectionKey, core_proxy.ChatHistory history) {
+  String _groupSectionKey(
+    String sectionKey,
+    core_proxy.ChatHistoryListItem history,
+  ) {
     final group = history.group?.trim();
     final groupPart = group == null || group.isEmpty ? 'ungrouped' : group;
     return 'group::$sectionKey::$groupPart';
   }
 
-  String _groupLabel(core_proxy.ChatHistory history) {
+  String _groupLabel(core_proxy.ChatHistoryListItem history) {
     final group = history.group?.trim();
     return group == null || group.isEmpty ? '未分组' : group;
   }
@@ -851,8 +764,9 @@ class _DrawerContentState extends State<DrawerContent> {
   @override
   Widget build(BuildContext context) {
     final visibleHistories = _visibleHistories;
+    final errorMessage = _visibleErrorMessage;
     final showInitialLoading =
-        _loading && _histories.isEmpty && _errorMessage == null;
+        widget.loading && _histories.isEmpty && errorMessage == null;
     final searching = _searchController.text.trim().isNotEmpty;
     final allCharacterSections = _buildCharacterSections(visibleHistories);
     final historyPlan = searching
@@ -981,10 +895,10 @@ class _DrawerContentState extends State<DrawerContent> {
                           : const SizedBox.shrink(),
                     ),
                   ),
-                  if (_errorMessage != null)
+                  if (errorMessage != null)
                     SliverToBoxAdapter(
                       child: SidebarStatusText(
-                        text: _errorMessage!,
+                        text: errorMessage,
                         appearance: widget.appearance,
                       ),
                     ),
@@ -1020,7 +934,7 @@ class _DrawerContentState extends State<DrawerContent> {
                             title: history.title,
                             selected:
                                 conversationSelectionEnabled &&
-                                _currentChatId == history.id,
+                                widget.currentChatId == history.id,
                             appearance: widget.appearance,
                             nested: true,
                             onClick: () => _switchConversation(history),
@@ -1189,7 +1103,7 @@ class _HistoryGroupSection {
 
   final String key;
   final String label;
-  final List<core_proxy.ChatHistory> histories;
+  final List<core_proxy.ChatHistoryListItem> histories;
   final int historyCount;
 }
 
@@ -1222,7 +1136,7 @@ class _GroupHeaderEntry extends _HistoryListEntry {
 class _HistoryRowEntry extends _HistoryListEntry {
   const _HistoryRowEntry(this.history);
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
 }
 
 class _ChatBindingForCreate {

@@ -3,7 +3,6 @@
  * 
  * This library provides a set of convenient wrappers for common Android operations
  * using shell commands under the hood. Classes are provided for:
- * - Intent management (starting activities, sending broadcasts)
  * - Content provider operations
  * - Package management
  * - System settings and properties
@@ -14,21 +13,6 @@
  * 
  * Example usage:
  * ```javascript
- * // Start an activity
- * const intent = new Intent();
- * intent.setComponent("com.example.app", "com.example.app.MainActivity");
- * intent.start();
- * 
- * // Or just start an app by package name
- * const intent = new Intent();
- * intent.setPackage("com.example.app");
- * intent.start();
- * 
- * // Send a broadcast
- * const broadcastIntent = new Intent("android.intent.action.AIRPLANE_MODE");
- * broadcastIntent.putExtra("state", "true");
- * broadcastIntent.sendBroadcast();
- * 
  * // Get system property
  * const systemManager = new SystemManager();
  * const sdkVersion = await systemManager.getProperty("ro.build.version.sdk");
@@ -76,290 +60,6 @@ function escapeShellArg(str) {
     }
     return "'" + str.replace(/'/g, "'\\''") + "'";
 }
-/**
- * Class representing an Android intent
- */
-class Intent {
-    /**
-     * Create a new Intent
-     * @param {string} action - Optional action to set
-     */
-    constructor(action = undefined) {
-        this.action = action;
-        this.packageName = undefined;
-        this.component = undefined;
-        this.extras = {};
-        this.flags = [];
-        this.categories = [];
-        this.uri = undefined;
-        this.type = undefined;
-    }
-
-    /**
-     * Set the component for this intent
-     * @param {string} packageName - Package name
-     * @param {string} component - Component name
-     * @returns {Intent} - This intent for chaining
-     */
-    setComponent(packageName, component) {
-        this.packageName = packageName;
-
-        // If component doesn't include package, prepend the package name
-        if (component.includes('.')) {
-            this.component = component.includes(packageName) ? component : `${packageName}.${component}`;
-        } else {
-            this.component = `${packageName}.${component}`;
-        }
-
-        return this;
-    }
-
-    /**
-     * Set just the package name without specifying component
-     * @param {string} packageName - Package name
-     * @returns {Intent} - This intent for chaining
-     */
-    setPackage(packageName) {
-        this.packageName = packageName;
-        return this;
-    }
-
-    /**
-     * Set the action for this intent
-     * @param {string} action - Intent action
-     * @returns {Intent} - This intent for chaining
-     */
-    setAction(action) {
-        this.action = action;
-        return this;
-    }
-
-    /**
-     * Set the data URI for this intent
-     * @param {string} uri - Data URI
-     * @returns {Intent} - This intent for chaining
-     */
-    setData(uri) {
-        this.uri = uri;
-        return this;
-    }
-
-    /**
-     * Set the MIME type for this intent
-     * @param {string} type - MIME type
-     * @returns {Intent} - This intent for chaining
-     */
-    setType(type) {
-        this.type = type;
-        return this;
-    }
-
-    /**
-     * Add a category to this intent
-     * @param {string} category - Intent category
-     * @returns {Intent} - This intent for chaining
-     */
-    addCategory(category) {
-        if (category && !this.categories.includes(category)) {
-            this.categories.push(category);
-        }
-        return this;
-    }
-
-    /**
-     * Remove a category from this intent
-     * @param {string} category - Intent category to remove
-     * @returns {Intent} - This intent for chaining
-     */
-    removeCategory(category) {
-        const index = this.categories.indexOf(category);
-        if (index !== -1) {
-            this.categories.splice(index, 1);
-        }
-        return this;
-    }
-
-    /**
-     * Check if intent has a specific category
-     * @param {string} category - Intent category to check
-     * @returns {boolean} - True if the intent has the category
-     */
-    hasCategory(category) {
-        return this.categories.includes(category);
-    }
-
-    /**
-     * Get all categories
-     * @returns {Array<string>} - Array of categories
-     */
-    getCategories() {
-        return [...this.categories];
-    }
-
-    /**
-     * Clear all categories
-     * @returns {Intent} - This intent for chaining
-     */
-    clearCategories() {
-        this.categories = [];
-        return this;
-    }
-
-    /**
-     * Add a flag to this intent
-     * @param {string} flag - Intent flag
-     * @returns {Intent} - This intent for chaining
-     */
-    addFlag(flag) {
-        if (!this.flags.includes(flag)) {
-            this.flags.push(flag);
-        }
-        return this;
-    }
-
-    /**
-     * Put an extra value in this intent
-     * @param {string} key - Extra key
-     * @param {any} value - Extra value
-     * @returns {Intent} - This intent for chaining
-     */
-    putExtra(key, value) {
-        this.extras[key] = value;
-        return this;
-    }
-
-    /**
-     * Start this intent as an activity
-     * @returns {Promise<Object>} - Intent result
-     */
-    async start() {
-        if (!this.action) {
-            throw new Error("Package name or action not set. Call setComponent(), setPackage() or setAction() first.");
-        }
-
-        // Prepare component format
-        let componentName = undefined;
-        if (this.component) {
-            componentName = this.component.includes('/') ?
-                this.component :
-                `${this.packageName}/${this.component}`;
-        }
-
-        // Prepare flags
-        let flags = undefined;
-        if (this.flags.length > 0) {
-            flags = JSON.stringify(this.flags);
-        }
-
-        // Prepare extras with categories added
-        const combinedExtras = { ...this.extras };
-
-        // Add categories if we have any
-        if (this.categories.length > 0) {
-            combinedExtras['categories'] = this.categories;
-        }
-
-        // Add type if specified
-        if (this.type) {
-            combinedExtras['type'] = this.type;
-        }
-
-        // Use the direct Tools.System.intent interface
-        const result = await Tools.System.intent({
-            action: this.action,
-            uri: this.uri,
-            package: this.packageName,
-            component: componentName,
-            flags: flags,
-            extras: Object.keys(combinedExtras).length > 0 ? combinedExtras : undefined,
-            type: 'activity' // Explicitly specify that this is an activity intent
-        });
-
-        return result;
-    }
-
-    /**
-     * Send this intent as a broadcast
-     * @returns {Promise<Object>} - Intent result
-     */
-    async sendBroadcast() {
-        if (!this.action) {
-            throw new Error("Action not set. Call setAction() first.");
-        }
-
-        // Prepare extras with categories added
-        const combinedExtras = { ...this.extras };
-
-        // Add categories if we have any
-        if (this.categories.length > 0) {
-            combinedExtras['categories'] = this.categories;
-        }
-
-        // Add type if specified
-        if (this.type) {
-            combinedExtras['type'] = this.type;
-        }
-
-        // Prepare component format
-        let componentName = undefined;
-        if (this.component) {
-            componentName = this.component.includes('/') ?
-                this.component :
-                `${this.packageName}/${this.component}`;
-        }
-
-        // Use the direct Tools.System.intent interface with broadcast type
-        return await Tools.System.intent({
-            action: this.action,
-            uri: this.uri,
-            package: this.packageName,
-            component: componentName,
-            flags: undefined, // No special flags needed for broadcast
-            extras: Object.keys(combinedExtras).length > 0 ? combinedExtras : undefined,
-            type: 'broadcast' // Explicitly specify that this is a broadcast intent
-        });
-    }
-
-    /**
-     * Start this intent as a service
-     * @returns {Promise<Object>} - Intent result
-     */
-    async startService() {
-        if (!this.packageName || !this.component) {
-            throw new Error("Component not set. Call setComponent() first.");
-        }
-
-        // Prepare component format
-        const componentName = this.component.includes('/') ?
-            this.component :
-            `${this.packageName}/${this.component}`;
-
-        // Prepare extras with categories added
-        const combinedExtras = { ...this.extras };
-
-        // Add categories if we have any
-        if (this.categories.length > 0) {
-            combinedExtras['categories'] = this.categories;
-        }
-
-        // Add type if specified
-        if (this.type) {
-            combinedExtras['type'] = this.type;
-        }
-
-        // Use the direct Tools.System.intent interface with service type
-        return await Tools.System.intent({
-            action: this.action,
-            uri: this.uri,
-            package: this.packageName,
-            component: componentName,
-            flags: undefined, // No special flags needed for service
-            extras: Object.keys(combinedExtras).length > 0 ? combinedExtras : undefined,
-            type: 'service' // Explicitly specify that this is a service intent
-        });
-    }
-}
-
 /**
  * Class for package management operations
  */
@@ -925,21 +625,6 @@ class DeviceController {
     }
 
     /**
-     * Toggle airplane mode
-     * @param {boolean} enable - Enable or disable airplane mode
-     * @returns {Promise<string>} - Command output
-     */
-    async setAirplaneMode(enable) {
-        // First set the setting
-        await this.systemManager.setSetting('global', 'airplane_mode_on', enable ? '1' : '0');
-
-        // Then broadcast the change
-        const intent = new Intent('android.intent.action.AIRPLANE_MODE');
-        intent.putExtra('state', enable.toString());
-        return intent.sendBroadcast();
-    }
-
-    /**
      * Toggle WiFi
      * @param {boolean} enable - Enable or disable WiFi
      * @returns {Promise<string>} - Command output
@@ -1006,15 +691,6 @@ class Android {
     }
 
     /**
-     * Create a new Intent
-     * @param {string} action - Optional action to set
-     * @returns {Intent} - New Intent object
-     */
-    createIntent(action = undefined) {
-        return new Intent(action);
-    }
-
-    /**
      * Create a new ContentProvider
      * @param {string} uri - Content URI
      * @returns {ContentProvider} - New ContentProvider object
@@ -1028,7 +704,6 @@ class Android {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         Android,
-        Intent,
         PackageManager,
         ContentProvider,
         SystemManager,
@@ -1038,7 +713,6 @@ if (typeof module !== 'undefined' && module.exports) {
     */
 
 __operitExpose('Android', Android);
-__operitExpose('Intent', Intent);
 __operitExpose('PackageManager', PackageManager);
 __operitExpose('ContentProvider', ContentProvider);
 __operitExpose('SystemManager', SystemManager);

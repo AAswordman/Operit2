@@ -3,6 +3,8 @@
 pub(crate) mod common;
 pub mod tools;
 
+pub use tools::audio::WebAudioPlaybackHost;
+pub use tools::bluetooth::WebBluetoothHost;
 pub use tools::browser::WebWebVisitHost;
 pub use tools::fs::WebFileSystemHost;
 pub use tools::http::WebHttpHost;

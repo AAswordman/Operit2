@@ -504,8 +504,14 @@ fn createAndroidPtySession(
     rows: u16,
     cols: u16,
 ) -> HostResult<AndroidPtySession> {
+    androidLogInfo(&format!(
+        "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
+    ));
     let command = buildAndroidPtyCommand(&workingDir)?;
     let (pid, masterFd) = forkPtyExecve(&command, rows, cols)?;
+    androidLogInfo(&format!(
+        "createAndroidPtySession forked pid={pid} masterFd={masterFd} name={sessionName}"
+    ));
     let writer = Arc::new(Mutex::new(masterFd));
     let output = Arc::new(Mutex::new(VecDeque::new()));
     let commandOutput: AndroidPtyCommandOutput =
@@ -524,10 +530,16 @@ fn createAndroidPtySession(
     if let Err(error) =
         waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
     {
+        androidLogError(&format!(
+            "createAndroidPtySession initial prompt failed pid={pid} masterFd={masterFd} name={sessionName}: {error}"
+        ));
         closeAndroidPtyProcess(pid, masterFd);
         return Err(error);
     }
     clearAndroidPtyCommandOutput(&commandOutput)?;
+    androidLogInfo(&format!(
+        "createAndroidPtySession ready pid={pid} masterFd={masterFd} name={sessionName}"
+    ));
     Ok(AndroidPtySession {
         sessionName,
         terminalType,
@@ -551,6 +563,7 @@ fn spawnAndroidPtyReaderThread(
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     cursorState: AndroidPtyCursorState,
 ) {
+    androidLogInfo(&format!("Android PTY reader thread start fd={masterFd}"));
     thread::spawn(move || loop {
         match readPtyFd(masterFd) {
             Ok(data) if data.is_empty() => thread::sleep(Duration::from_millis(20)),
@@ -562,7 +575,12 @@ fn spawnAndroidPtyReaderThread(
                 appendAndroidPtyOutput(&screenOutput, &visibleChunk);
                 appendAndroidPtyCommandOutput(&commandOutput, &commandChunk);
             }
-            Err(_) => break,
+            Err(error) => {
+                androidLogError(&format!(
+                    "Android PTY reader thread exit fd={masterFd}: {error}"
+                ));
+                break;
+            }
         }
     });
 }
@@ -673,6 +691,10 @@ fn waitForInitialAndroidPtyPrompt(
     output: AndroidPtyCommandOutput,
     timeout: Duration,
 ) -> HostResult<()> {
+    androidLogInfo(&format!(
+        "waitForInitialAndroidPtyPrompt start timeoutMs={}",
+        timeout.as_millis()
+    ));
     let deadline = Instant::now() + timeout;
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
@@ -683,17 +705,39 @@ fn waitForInitialAndroidPtyPrompt(
             promptSeenAt = None;
         }
         if findLastAndroidPtyPromptMarker(&collected)?.is_some() && promptSeenAt.is_none() {
+            androidLogInfo(&format!(
+                "waitForInitialAndroidPtyPrompt marker seen bytes={}",
+                collected.len()
+            ));
             promptSeenAt = Some(Instant::now());
         }
         if promptSeenAt.is_some_and(|seenAt| seenAt.elapsed() >= quietPeriod) {
+            androidLogInfo(&format!(
+                "waitForInitialAndroidPtyPrompt ready bytes={}",
+                collected.len()
+            ));
             return Ok(());
         }
         if Instant::now() >= deadline {
+            androidLogError(&format!(
+                "Timed out waiting for Android terminal prompt bytes={} output={}",
+                collected.len(),
+                androidPtyLogSnippet(&collected)
+            ));
             return Err(HostError::new(
                 "Timed out waiting for Android terminal prompt",
             ));
         }
     }
+}
+
+fn androidPtyLogSnippet(data: &[u8]) -> String {
+    const MAX_LOG_BYTES: usize = 4096;
+    let start = data.len().saturating_sub(MAX_LOG_BYTES);
+    String::from_utf8_lossy(&data[start..])
+        .replace('\x1b', "\\x1b")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
 }
 
 fn executeAndroidPtyCommandInSession(
@@ -1320,6 +1364,14 @@ fn nonBlank(value: &str, paramName: &str) -> HostResult<String> {
 }
 
 #[cfg(target_os = "android")]
+fn androidLogInfo(message: &str) {
+    androidLogWrite(4, message);
+}
+
+#[cfg(not(target_os = "android"))]
+fn androidLogInfo(_message: &str) {}
+
+#[cfg(target_os = "android")]
 fn androidLogError(message: &str) {
     androidLogWrite(6, message);
 }
@@ -1401,6 +1453,15 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
         cstring("PS1=$PWD $ ")?,
         cstring(&format!("PROMPT_COMMAND={promptCommand}"))?,
     ];
+    androidLogInfo(&format!(
+        "buildAndroidPtyCommand workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} bash={} loader={} nativeLibraryDir={}",
+        runtimeDir.to_string_lossy(),
+        internalRoot.to_string_lossy(),
+        tmpDir.to_string_lossy(),
+        bash.to_string_lossy(),
+        loader.to_string_lossy(),
+        nativeLibraryDir.to_string_lossy()
+    ));
     Ok(AndroidPtyCommand {
         executable: cstringPath(&bash)?,
         argv,

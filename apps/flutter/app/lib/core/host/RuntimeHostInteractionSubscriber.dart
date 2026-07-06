@@ -30,6 +30,8 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionKind.systemCaptureScreenshot,
     RuntimeHostInteractionKind.systemRecognizeText,
     RuntimeHostInteractionKind.audioPlay,
+    RuntimeHostInteractionKind.musicPlayback,
+    RuntimeHostInteractionKind.bluetooth,
     RuntimeHostInteractionKind.ttsSynthesis,
     RuntimeHostInteractionKind.ttsPlayback,
   ];
@@ -100,6 +102,12 @@ class RuntimeHostInteractionSubscriber {
         ),
       RuntimeHostInteractionKind.audioPlay => _handleAudioPlay(
           _requirePayload(request.audioPlay, request.kind),
+        ),
+      RuntimeHostInteractionKind.musicPlayback => _handleMusicPlayback(
+          _requirePayload(request.musicPlayback, request.kind),
+        ),
+      RuntimeHostInteractionKind.bluetooth => _handleBluetooth(
+          _requirePayload(request.bluetooth, request.kind),
         ),
       RuntimeHostInteractionKind.ttsSynthesis => _handleTtsSynthesis(
           _requirePayload(request.ttsSynthesis, request.kind),
@@ -177,8 +185,10 @@ class RuntimeHostInteractionSubscriber {
     final rawResponse = await _channel.invokeMethod<Object?>(
       'ownerSystemCaptureScreenshot',
     );
-    final response = RuntimeHostInteractionSystemCaptureScreenshotResponse
-        .fromJson(rawResponse as Map<String, Object?>);
+    final response =
+        RuntimeHostInteractionSystemCaptureScreenshotResponse.fromJson(
+      _requireMethodResponseMap(rawResponse, 'ownerSystemCaptureScreenshot'),
+    );
     return _response(systemCaptureScreenshot: response);
   }
 
@@ -190,7 +200,7 @@ class RuntimeHostInteractionSubscriber {
       payload.toJson(),
     );
     final response = RuntimeHostInteractionSystemRecognizeTextResponse.fromJson(
-      rawResponse as Map<String, Object?>,
+      _requireMethodResponseMap(rawResponse, 'ownerSystemRecognizeText'),
     );
     return _response(systemRecognizeText: response);
   }
@@ -203,9 +213,35 @@ class RuntimeHostInteractionSubscriber {
       payload.toJson(),
     );
     final response = RuntimeHostInteractionAudioPlayResponse.fromJson(
-      rawResponse as Map<String, Object?>,
+      _requireMethodResponseMap(rawResponse, 'ownerAudioPlay'),
     );
     return _response(audioPlay: response);
+  }
+
+  static Future<RuntimeHostInteractionResponse> _handleMusicPlayback(
+    RuntimeHostInteractionMusicPlaybackPayload payload,
+  ) async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerMusicPlayback',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionMusicPlaybackResponse.fromJson(
+      _requireMethodResponseMap(rawResponse, 'ownerMusicPlayback'),
+    );
+    return _response(musicPlayback: response);
+  }
+
+  static Future<RuntimeHostInteractionResponse> _handleBluetooth(
+    RuntimeHostInteractionBluetoothPayload payload,
+  ) async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerBluetooth',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionBluetoothResponse.fromJson(
+      _requireMethodResponseMap(rawResponse, 'ownerBluetooth'),
+    );
+    return _response(bluetooth: response);
   }
 
   static Future<RuntimeHostInteractionResponse> _handleTtsSynthesis(
@@ -216,7 +252,7 @@ class RuntimeHostInteractionSubscriber {
       payload.toJson(),
     );
     final response = RuntimeHostInteractionTtsSynthesisResponse.fromJson(
-      rawResponse as Map<String, Object?>,
+      _requireMethodResponseMap(rawResponse, 'ownerTtsSynthesize'),
     );
     return _response(ttsSynthesis: response);
   }
@@ -226,6 +262,21 @@ class RuntimeHostInteractionSubscriber {
       throw StateError('$kind payload is missing');
     }
     return payload;
+  }
+
+  static Map<String, Object?> _requireMethodResponseMap(
+    Object? rawResponse,
+    String method,
+  ) {
+    if (rawResponse is! Map<Object?, Object?>) {
+      throw StateError('$method response must be a map');
+    }
+    return rawResponse.map((key, value) {
+      if (key is! String) {
+        throw StateError('$method response key must be a string: $key');
+      }
+      return MapEntry(key, value);
+    });
   }
 
   static RuntimeHostInteractionWebVisitResponse _webVisitResponse(
@@ -247,7 +298,7 @@ class RuntimeHostInteractionSubscriber {
       payload.toJson(),
     );
     final response = RuntimeHostInteractionTtsPlaybackResponse.fromJson(
-      rawResponse as Map<String, Object?>,
+      _requireMethodResponseMap(rawResponse, 'ownerTtsPlayback'),
     );
     return _response(ttsPlayback: response);
   }
@@ -288,6 +339,8 @@ class RuntimeHostInteractionSubscriber {
         systemCaptureScreenshot,
     RuntimeHostInteractionSystemRecognizeTextResponse? systemRecognizeText,
     RuntimeHostInteractionAudioPlayResponse? audioPlay,
+    RuntimeHostInteractionMusicPlaybackResponse? musicPlayback,
+    RuntimeHostInteractionBluetoothResponse? bluetooth,
     RuntimeHostInteractionTtsSynthesisResponse? ttsSynthesis,
     RuntimeHostInteractionTtsPlaybackResponse? ttsPlayback,
     RuntimeHostInteractionToolPermissionResponse? toolPermission,
@@ -299,6 +352,8 @@ class RuntimeHostInteractionSubscriber {
       systemCaptureScreenshot: systemCaptureScreenshot,
       systemRecognizeText: systemRecognizeText,
       audioPlay: audioPlay,
+      musicPlayback: musicPlayback,
+      bluetooth: bluetooth,
       ttsSynthesis: ttsSynthesis,
       ttsPlayback: ttsPlayback,
       toolPermission: toolPermission,

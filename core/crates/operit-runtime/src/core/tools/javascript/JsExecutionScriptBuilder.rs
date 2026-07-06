@@ -56,7 +56,6 @@ pub fn buildExecutionPreludeSource() -> String {
         var Tools = globalThis.Tools;
         var Java = globalThis.Java;
         var Android = globalThis.Android;
-        var Intent = globalThis.Intent;
         var PackageManager = globalThis.PackageManager;
         var ContentProvider = globalThis.ContentProvider;
         var SystemManager = globalThis.SystemManager;

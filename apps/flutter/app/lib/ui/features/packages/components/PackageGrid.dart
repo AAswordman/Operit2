@@ -47,6 +47,7 @@ class PackageInlineGrid extends StatelessWidget {
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
           gridDelegate: _delegateForWidth(constraints.maxWidth),
           itemCount: itemCount,
           itemBuilder: itemBuilder,

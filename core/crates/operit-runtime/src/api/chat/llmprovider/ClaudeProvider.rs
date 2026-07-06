@@ -159,6 +159,7 @@ impl ClaudeProvider {
             );
         }
         self.add_parameters(&mut object, &request.model_parameters);
+        self.apply_thinking_format(&mut object, request);
         self.apply_stable_cache_breakpoints(&mut object);
         Ok(Value::Object(object))
     }
@@ -173,6 +174,8 @@ impl ClaudeProvider {
             chat_history,
             self.enable_tool_call,
         );
+        let mut next_tool_use_ordinal = 0usize;
+        let mut open_tool_use_ids: Vec<String> = Vec::new();
         for turn in provider_ready_history {
             match turn.kind {
                 PromptTurnKind::SYSTEM | PromptTurnKind::SUMMARY => {
@@ -183,7 +186,11 @@ impl ClaudeProvider {
                 ),
                 PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => {
                     let content = if self.enable_tool_call {
-                        self.build_assistant_content_blocks(&turn.content)?
+                        self.build_assistant_content_blocks(
+                            &turn.content,
+                            &mut next_tool_use_ordinal,
+                            &mut open_tool_use_ids,
+                        )?
                     } else {
                         self.build_content_array(&turn.content)
                     };
@@ -191,7 +198,7 @@ impl ClaudeProvider {
                 }
                 PromptTurnKind::TOOL_RESULT => {
                     let content = if self.enable_tool_call {
-                        self.build_tool_result_blocks(&turn.content)
+                        self.build_tool_result_blocks(&turn.content, &mut open_tool_use_ids)
                     } else {
                         self.build_content_array(&turn.content)
                     };
@@ -243,14 +250,19 @@ impl ClaudeProvider {
         json!([{"type": "text", "text": text}])
     }
 
-    fn build_assistant_content_blocks(&self, content: &str) -> Result<Value, AiServiceError> {
+    fn build_assistant_content_blocks(
+        &self,
+        content: &str,
+        next_tool_use_ordinal: &mut usize,
+        open_tool_use_ids: &mut Vec<String>,
+    ) -> Result<Value, AiServiceError> {
         let matches = ChatMarkupRegex::tool_call_matches(content);
         if matches.is_empty() {
             return Ok(self.build_content_array(content));
         }
         let mut text_content = content.to_string();
         let mut blocks = Vec::new();
-        for (call_index, tool_match) in matches.iter().enumerate() {
+        for tool_match in matches.iter() {
             text_content = text_content.replace(
                 &format!(
                     "<{} name=\"{}\">{}</{}>",
@@ -274,16 +286,9 @@ impl ClaudeProvider {
                     .to_string();
                 input.insert(name, json!(value));
             }
-            let tool_name_part = sanitize_tool_call_id(&tool_match.name);
-            let hash_part = stable_id_hash_part(&format!(
-                "{}:{}",
-                tool_match.name,
-                Value::Object(input.clone())
-            ));
-            let call_id = sanitize_tool_call_id(&format!(
-                "toolu_{}_{}_{}",
-                tool_name_part, hash_part, call_index
-            ));
+            let call_id = generated_tool_use_id(*next_tool_use_ordinal);
+            *next_tool_use_ordinal += 1;
+            open_tool_use_ids.push(call_id.clone());
             blocks.push(json!({
                 "type": "tool_use",
                 "id": call_id,
@@ -300,13 +305,22 @@ impl ClaudeProvider {
         Ok(Value::Array(content_blocks))
     }
 
-    fn build_tool_result_blocks(&self, content: &str) -> Value {
+    fn build_tool_result_blocks(
+        &self,
+        content: &str,
+        open_tool_use_ids: &mut Vec<String>,
+    ) -> Value {
         let blocks = ChatMarkupRegex::tool_result_blocks(content);
         if blocks.is_empty() {
             return self.build_content_array(content);
         }
         let mut result_blocks = Vec::new();
         for (index, block) in blocks.iter().enumerate() {
+            let tool_use_id = if !open_tool_use_ids.is_empty() {
+                open_tool_use_ids.remove(0)
+            } else {
+                generated_tool_use_id(index)
+            };
             let result_content = crate::util::ChatMarkupRegex::tag_ranges(&block.body, "content")
                 .into_iter()
                 .next()
@@ -320,7 +334,7 @@ impl ClaudeProvider {
                 .unwrap_or_else(|| block.body.trim().to_string());
             result_blocks.push(json!({
                 "type": "tool_result",
-                "tool_use_id": format!("toolu_result_{}", index),
+                "tool_use_id": tool_use_id,
                 "content": result_content,
             }));
         }
@@ -342,6 +356,52 @@ impl ClaudeProvider {
                 parameter.apiName.as_str()
             };
             json_object.insert(api_name.to_string(), parameter.currentValue.clone());
+        }
+    }
+
+    fn apply_thinking_format(
+        &self,
+        json_object: &mut Map<String, Value>,
+        request: &SendMessageRequest,
+    ) {
+        if !request.enable_thinking {
+            return;
+        }
+
+        let thinking = match self.thinking_format() {
+            ClaudeThinkingFormat::Adaptive => json!({
+                "type": "adaptive",
+                "display": "summarized"
+            }),
+            ClaudeThinkingFormat::Enabled => json!({
+                "type": "enabled",
+                "budget_tokens": self.thinking_budget_tokens(json_object)
+            }),
+        };
+        json_object.insert("thinking".to_string(), thinking);
+    }
+
+    fn thinking_format(&self) -> ClaudeThinkingFormat {
+        let model_name = normalize_claude_model_name(&self.model_name);
+        if has_claude_family(&model_name, "fable")
+            || has_claude_family(&model_name, "mythos")
+            || has_claude_family_at_least(&model_name, "opus", 4, 6)
+            || has_claude_family_at_least(&model_name, "sonnet", 4, 6)
+        {
+            ClaudeThinkingFormat::Adaptive
+        } else {
+            ClaudeThinkingFormat::Enabled
+        }
+    }
+
+    fn thinking_budget_tokens(&self, json_object: &Map<String, Value>) -> i64 {
+        let max_tokens = json_object
+            .get("max_tokens")
+            .and_then(Value::as_i64)
+            .filter(|value| *value > 0);
+        match max_tokens {
+            Some(value) => value.min(1024),
+            None => 1024,
         }
     }
 
@@ -955,6 +1015,137 @@ impl ClaudeProvider {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaudeThinkingFormat {
+    Adaptive,
+    Enabled,
+}
+
+fn normalize_claude_model_name(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_was_separator = false;
+    let mut previous_kind = ModelNameCharKind::Separator;
+
+    for ch in value.trim().chars().flat_map(char::to_lowercase) {
+        let current_kind = ModelNameCharKind::from_char(ch);
+        if current_kind == ModelNameCharKind::Separator {
+            if !previous_was_separator && !normalized.is_empty() {
+                normalized.push('-');
+                previous_was_separator = true;
+            }
+            previous_kind = ModelNameCharKind::Separator;
+            continue;
+        }
+
+        if should_split_model_name_part(previous_kind, current_kind, previous_was_separator) {
+            normalized.push('-');
+        }
+        normalized.push(ch);
+        previous_was_separator = false;
+        previous_kind = current_kind;
+    }
+
+    normalized.trim_matches('-').to_string()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModelNameCharKind {
+    Letter,
+    Digit,
+    Separator,
+}
+
+impl ModelNameCharKind {
+    fn from_char(ch: char) -> Self {
+        if ch.is_ascii_alphabetic() {
+            Self::Letter
+        } else if ch.is_ascii_digit() {
+            Self::Digit
+        } else {
+            Self::Separator
+        }
+    }
+}
+
+fn should_split_model_name_part(
+    previous_kind: ModelNameCharKind,
+    current_kind: ModelNameCharKind,
+    previous_was_separator: bool,
+) -> bool {
+    !previous_was_separator
+        && matches!(
+            (previous_kind, current_kind),
+            (ModelNameCharKind::Letter, ModelNameCharKind::Digit)
+                | (ModelNameCharKind::Digit, ModelNameCharKind::Letter)
+        )
+}
+
+fn has_claude_family(normalized_model_name: &str, family: &str) -> bool {
+    normalized_model_name.split('-').any(|part| part == family)
+}
+
+fn has_claude_family_at_least(
+    normalized_model_name: &str,
+    family: &str,
+    min_major: i32,
+    min_minor: i32,
+) -> bool {
+    match claude_family_version(normalized_model_name, family) {
+        Some((major, minor)) => major > min_major || major == min_major && minor >= min_minor,
+        None => false,
+    }
+}
+
+fn claude_family_version(normalized_model_name: &str, family: &str) -> Option<(i32, i32)> {
+    let parts = normalized_model_name
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let family_index = parts.iter().position(|part| *part == family)?;
+
+    let before_family = take_last_version_parts(&parts[..family_index]);
+    if let Some(version) = numeric_version(&before_family) {
+        return Some(version);
+    }
+
+    let after_family = take_first_version_parts(&parts[family_index + 1..]);
+    numeric_version(&after_family)
+}
+
+fn take_last_version_parts(parts: &[&str]) -> Vec<String> {
+    let mut version_parts = parts
+        .iter()
+        .rev()
+        .take_while(|part| is_version_part(part))
+        .map(|part| (*part).to_string())
+        .collect::<Vec<_>>();
+    version_parts.reverse();
+    let start = version_parts.len().saturating_sub(2);
+    version_parts[start..].to_vec()
+}
+
+fn take_first_version_parts(parts: &[&str]) -> Vec<String> {
+    parts
+        .iter()
+        .take_while(|part| is_version_part(part))
+        .take(2)
+        .map(|part| (*part).to_string())
+        .collect()
+}
+
+fn is_version_part(value: &str) -> bool {
+    value.len() < 8 && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn numeric_version(parts: &[String]) -> Option<(i32, i32)> {
+    let major = parts.first()?.parse::<i32>().ok()?;
+    let minor = match parts.get(1) {
+        Some(value) => value.parse::<i32>().ok()?,
+        None => 0,
+    };
+    Some((major, minor))
+}
+
 fn append_converter_events(chunks: &mut Vec<String>, events: Vec<StreamingJsonXmlEvent>) {
     for event in events {
         match event {
@@ -990,6 +1181,36 @@ fn sanitize_tool_call_id(raw: &str) -> String {
     } else {
         output
     }
+}
+
+fn sanitize_short_tool_call_id(raw: &str) -> String {
+    let cleaned = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
+    if cleaned.is_empty() {
+        return "call00000".to_string();
+    }
+    if cleaned.len() == 9 {
+        return cleaned;
+    }
+    if cleaned.len() > 9 {
+        return cleaned[cleaned.len() - 9..].to_string();
+    }
+    let filler = stable_id_hash_part(raw);
+    format!("{cleaned}{filler}000000000")
+        .chars()
+        .take(9)
+        .collect()
+}
+
+fn generated_tool_use_id(ordinal: usize) -> String {
+    let suffix = sanitize_short_tool_call_id(&format!(
+        "{}_{}",
+        stable_id_hash_part(&format!("tool_use:{ordinal}")),
+        ordinal
+    ));
+    format!("toolu_{suffix}")
 }
 
 fn stable_id_hash_part(raw: &str) -> String {

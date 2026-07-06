@@ -29,6 +29,10 @@ struct SkillIncludeEntry {
 }
 
 fn main() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-lib=advapi32");
+    }
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let source_dir = manifest_dir.join("assets").join("plugins").join("buildin");
     println!("cargo:rerun-if-changed={}", source_dir.display());
@@ -74,15 +78,28 @@ fn main() {
 
     let generated = out_dir.join("builtin_plugin_assets.rs");
     let mut code = String::new();
-    code.push_str("#[derive(Clone, Copy)]\n");
-    code.push_str("pub struct BuiltinPluginAsset {\n");
-    code.push_str("    pub name: &'static str,\n");
-    code.push_str("    pub bytes: &'static [u8],\n");
-    code.push_str("}\n\n");
-    code.push_str("pub static BUILTIN_PLUGIN_ASSETS: &[BuiltinPluginAsset] = &[\n");
-    for asset in assets {
+    push_plugin_asset_struct(&mut code);
+    code.push_str("pub static BUILTIN_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
+    for asset in &assets {
         code.push_str(&format!(
-            "    BuiltinPluginAsset {{ name: {:?}, bytes: include_bytes!({:?}) }},\n",
+            "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}) }},\n",
+            asset.name,
+            asset.path.to_string_lossy()
+        ));
+    }
+    code.push_str("];\n");
+    code.push_str("\n");
+
+    let external_assets = collect_packaged_plugin_assets(
+        &manifest_dir
+            .join("assets")
+            .join("plugins")
+            .join("external"),
+    );
+    code.push_str("pub static BUNDLED_EXTERNAL_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
+    for asset in &external_assets {
+        code.push_str(&format!(
+            "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}) }},\n",
             asset.name,
             asset.path.to_string_lossy()
         ));
@@ -92,6 +109,38 @@ fn main() {
 
     generate_workspace_template_assets(&manifest_dir, &out_dir);
     generate_bundled_external_skill_assets(&manifest_dir, &out_dir);
+}
+
+fn push_plugin_asset_struct(code: &mut String) {
+    code.push_str("#[derive(Clone, Copy)]\n");
+    code.push_str("pub struct PluginAsset {\n");
+    code.push_str("    pub name: &'static str,\n");
+    code.push_str("    pub bytes: &'static [u8],\n");
+    code.push_str("}\n\n");
+}
+
+fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
+    println!("cargo:rerun-if-changed={}", source_dir.display());
+    let mut assets = Vec::new();
+    if !source_dir.is_dir() {
+        return assets;
+    }
+    let mut entries = fs::read_dir(source_dir)
+        .expect("read packaged plugin asset directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_syncable_file(path))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+    for path in entries {
+        let name = path
+            .file_name()
+            .expect("packaged plugin file name")
+            .to_string_lossy()
+            .to_string();
+        assets.push(BuildinAsset { name, path });
+    }
+    assets
 }
 
 fn is_syncable_file(path: &Path) -> bool {

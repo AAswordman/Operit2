@@ -1,7 +1,9 @@
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::tools::defaultTool::standard::StandardBluetoothTools::StandardBluetoothTools;
 use crate::core::tools::defaultTool::standard::StandardBrowserAutomationTools::StandardBrowserAutomationTools;
 use crate::core::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools;
 use crate::core::tools::defaultTool::standard::StandardHttpTools::StandardHttpTools;
+use crate::core::tools::defaultTool::standard::StandardMusicTools::StandardMusicTools;
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::StandardSystemOperationTools;
 use crate::core::tools::defaultTool::standard::StandardTerminalTools::StandardTerminalTools;
 use crate::core::tools::defaultTool::standard::StandardWebVisitTool::StandardWebVisitTool;
@@ -67,5 +69,15 @@ impl ToolGetter {
     #[allow(non_snake_case)]
     pub fn getTerminalTools(context: &OperitApplicationContext) -> StandardTerminalTools {
         StandardTerminalTools::new(context.terminalHost.clone())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getMusicTools(context: &OperitApplicationContext) -> StandardMusicTools {
+        StandardMusicTools::new(context.audioPlaybackHost.clone())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getBluetoothTools(context: &OperitApplicationContext) -> StandardBluetoothTools {
+        StandardBluetoothTools::new(context.bluetoothHost.clone())
     }
 }

@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../concurrency/AppWorkers.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
 
@@ -134,6 +135,7 @@ class _MethodChannelWatchChannel {
   final MethodChannel _channel;
   final Map<String, StreamController<CoreEvent>> _controllers =
       <String, StreamController<CoreEvent>>{};
+  Future<void> _dispatchTail = Future<void>.value();
   int _nextSubscriptionIndex = 0;
 
   String nextSubscriptionId() {
@@ -167,7 +169,8 @@ class _MethodChannelWatchChannel {
     switch (call.method) {
       case 'watchChannelEvent':
         final frameText = call.arguments as String;
-        _dispatch(frameText);
+        _dispatchTail = _dispatchTail.then((_) => _dispatch(frameText));
+        unawaited(_dispatchTail);
         return null;
       default:
         throw MissingPluginException(
@@ -176,15 +179,18 @@ class _MethodChannelWatchChannel {
     }
   }
 
-  void _dispatch(String frameText) {
+  Future<void> _dispatch(String frameText) async {
     try {
-      final frame = jsonDecode(frameText) as Map<String, Object?>;
-      final subscriptionId = frame['subscriptionId'] as String;
+      final frame = await AppWorkers.run(
+        () => _parseMethodChannelWatchFrame(frameText),
+        debugName: 'method-channel-watch-event-parse',
+      );
+      final subscriptionId = frame.subscriptionId;
       final controller = _controllers[subscriptionId];
       if (controller == null) {
         return;
       }
-      final event = CoreEvent.fromJson(frame['event'] as Map<String, Object?>);
+      final event = frame.event;
       controller.add(event);
       if (event.kind == 'Completed') {
         _controllers.remove(subscriptionId);
@@ -216,6 +222,24 @@ class _MethodChannelWatchChannel {
     _controllers.remove(subscriptionId);
     await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
   }
+}
+
+class _MethodChannelWatchFrame {
+  const _MethodChannelWatchFrame({
+    required this.subscriptionId,
+    required this.event,
+  });
+
+  final String subscriptionId;
+  final CoreEvent event;
+}
+
+_MethodChannelWatchFrame _parseMethodChannelWatchFrame(String frameText) {
+  final frame = jsonDecode(frameText) as Map<String, Object?>;
+  return _MethodChannelWatchFrame(
+    subscriptionId: frame['subscriptionId'] as String,
+    event: CoreEvent.fromJson(frame['event'] as Map<String, Object?>),
+  );
 }
 
 Future<String?> _invokeWatchStream(

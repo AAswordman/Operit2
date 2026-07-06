@@ -4,6 +4,7 @@ use operit_core_proxy::LocalCoreProxy;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost,
+    LinuxBluetoothHost as NativeBluetoothHost,
     LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
@@ -15,6 +16,7 @@ use operit_host_linux_native::{
 #[cfg(windows)]
 use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
+    WindowsBluetoothHost as NativeBluetoothHost,
     WindowsBrowserAutomationHost as NativeBrowserAutomationHost,
     WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
@@ -49,6 +51,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
     }
     context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+    context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();

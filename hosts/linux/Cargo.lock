@@ -1234,6 +1234,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "image",
+ "libc",
  "operit-host-api",
  "portable-pty",
  "regex",

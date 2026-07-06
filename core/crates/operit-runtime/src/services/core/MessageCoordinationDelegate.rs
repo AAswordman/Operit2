@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
+use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
 use crate::core::config::FunctionalPrompts::FunctionalPrompts;
 use crate::data::model::ActivePrompt::ActivePrompt;
@@ -27,8 +27,8 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::util::ChainLogger::{self, SEND_CHAIN};
 use crate::util::stream::Stream::Stream;
+use crate::util::ChainLogger::{self, SEND_CHAIN};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {

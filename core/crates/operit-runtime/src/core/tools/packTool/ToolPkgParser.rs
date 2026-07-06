@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1169,11 +1170,11 @@ impl ToolPkgArchiveParser {
     }
 
     #[allow(non_snake_case)]
-    pub fn extractZipEntriesFromAsset(
-        assetPath: &std::path::Path,
+    pub fn extractZipEntriesFromAssetBytes(
+        bytes: &'static [u8],
         destinationDir: &std::path::Path,
     ) -> bool {
-        Self::extractZipEntriesFromFile(assetPath, destinationDir)
+        Self::extractZipEntriesFromReader(Cursor::new(bytes), destinationDir)
     }
 
     #[allow(non_snake_case)]
@@ -1184,7 +1185,15 @@ impl ToolPkgArchiveParser {
         let Ok(file) = std::fs::File::open(zipFile) else {
             return false;
         };
-        let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        Self::extractZipEntriesFromReader(file, destinationDir)
+    }
+
+    #[allow(non_snake_case)]
+    fn extractZipEntriesFromReader<R: std::io::Read + std::io::Seek>(
+        reader: R,
+        destinationDir: &std::path::Path,
+    ) -> bool {
+        let Ok(mut archive) = zip::ZipArchive::new(reader) else {
             return false;
         };
         for index in 0..archive.len() {

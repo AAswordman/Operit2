@@ -8,6 +8,7 @@ pub mod host_runtime_event;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
 pub use tools::audio::WindowsAudioPlaybackHost;
+pub use tools::bluetooth::WindowsBluetoothHost;
 pub use tools::tts::{WindowsTtsPlaybackHost, WindowsTtsSynthesisHost};
 pub use tools::browser::{WindowsBrowserAutomationHost, WindowsWebVisitHost};
 pub use tools::fs::WindowsFileSystemHost;

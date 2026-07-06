@@ -31,3 +31,4 @@ tokio = { version = "1", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+lmdb = { package = "lmdb-rkv", version = "0.14" }

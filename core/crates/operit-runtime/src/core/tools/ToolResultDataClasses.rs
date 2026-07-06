@@ -1,7 +1,20 @@
 use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Local, TimeZone};
-use operit_host_api::WebVisitLinkData;
+use operit_host_api::{
+    BluetoothBleNotificationData as HostBluetoothBleNotificationData,
+    BluetoothBleNotificationEntry as HostBluetoothBleNotificationEntry,
+    BluetoothBleServiceData as HostBluetoothBleServiceData,
+    BluetoothBleServicesData as HostBluetoothBleServicesData,
+    BluetoothDeviceData as HostBluetoothDeviceData,
+    BluetoothReadData as HostBluetoothReadData,
+    BluetoothScanResultData as HostBluetoothScanResultData,
+    BluetoothScannedDeviceData as HostBluetoothScannedDeviceData,
+    BluetoothSessionData as HostBluetoothSessionData,
+    BluetoothStateData as HostBluetoothStateData,
+    BluetoothTransferData as HostBluetoothTransferData,
+    MusicPlaybackStatus as HostMusicPlaybackStatus, WebVisitLinkData,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -51,6 +64,15 @@ pub enum ToolResultData {
     TerminalSessionCreationResultData(TerminalSessionCreationResultData),
     TerminalSessionCloseResultData(TerminalSessionCloseResultData),
     TerminalSessionScreenResultData(TerminalSessionScreenResultData),
+    MusicPlaybackResultData(MusicPlaybackResultData),
+    BluetoothStateData(BluetoothStateData),
+    BluetoothBondedDevicesData(BluetoothBondedDevicesData),
+    BluetoothScanResultData(BluetoothScanResultData),
+    BluetoothSessionData(BluetoothSessionData),
+    BluetoothTransferData(BluetoothTransferData),
+    BluetoothReadData(BluetoothReadData),
+    BluetoothBleServicesData(BluetoothBleServicesData),
+    BluetoothBleNotificationData(BluetoothBleNotificationData),
     FindFilesResultData(FindFilesResultData),
     GrepResultData(GrepResultData),
     MemoryLinkResultData(MemoryLinkResultData),
@@ -132,6 +154,15 @@ impl ToolResultData {
             ToolResultData::TerminalSessionCreationResultData(data) => data.toString(),
             ToolResultData::TerminalSessionCloseResultData(data) => data.message.clone(),
             ToolResultData::TerminalSessionScreenResultData(data) => data.toString(),
+            ToolResultData::MusicPlaybackResultData(data) => data.toString(),
+            ToolResultData::BluetoothStateData(data) => data.toString(),
+            ToolResultData::BluetoothBondedDevicesData(data) => data.toString(),
+            ToolResultData::BluetoothScanResultData(data) => data.toString(),
+            ToolResultData::BluetoothSessionData(data) => data.toString(),
+            ToolResultData::BluetoothTransferData(data) => data.toString(),
+            ToolResultData::BluetoothReadData(data) => data.toString(),
+            ToolResultData::BluetoothBleServicesData(data) => data.toString(),
+            ToolResultData::BluetoothBleNotificationData(data) => data.toString(),
             ToolResultData::FindFilesResultData(data) => data.toString(),
             ToolResultData::GrepResultData(data) => data.toString(),
             ToolResultData::MemoryLinkResultData(data) => data.toString(),
@@ -573,6 +604,112 @@ pub struct TerminalSessionScreenResultData {
     pub content: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MusicPlaybackResultData {
+    pub state: String,
+    pub source: Option<String>,
+    pub sourceType: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub durationMs: Option<i64>,
+    pub positionMs: i64,
+    pub bufferedPositionMs: i64,
+    pub volume: f64,
+    pub r#loop: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothStateData {
+    pub supported: bool,
+    pub enabled: bool,
+    pub state: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothDeviceData {
+    pub name: Option<String>,
+    pub address: String,
+    pub r#type: String,
+    pub bondState: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBondedDevicesData {
+    pub devices: Vec<BluetoothDeviceData>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothScannedDeviceData {
+    pub name: Option<String>,
+    pub address: String,
+    pub r#type: String,
+    pub bondState: String,
+    pub source: String,
+    pub rssi: Option<i32>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothScanResultData {
+    pub devices: Vec<BluetoothScannedDeviceData>,
+    pub durationMs: i64,
+    pub includesBle: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothSessionData {
+    pub sessionId: String,
+    pub address: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothTransferData {
+    pub sessionId: String,
+    pub bytesWritten: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothReadData {
+    pub sessionId: String,
+    pub bytesRead: i64,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBleCharacteristicData {
+    pub uuid: String,
+    pub properties: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBleServiceData {
+    pub uuid: String,
+    pub characteristics: Vec<BluetoothBleCharacteristicData>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBleServicesData {
+    pub sessionId: String,
+    pub services: Vec<BluetoothBleServiceData>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBleNotificationEntry {
+    pub characteristicUuid: String,
+    pub bytesRead: i64,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BluetoothBleNotificationData {
+    pub sessionId: String,
+    pub notifications: Vec<BluetoothBleNotificationEntry>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VisitWebResultData {
     pub url: String,
@@ -652,6 +789,142 @@ impl From<WebVisitLinkData> for LinkData {
         Self {
             url: value.url,
             text: value.text,
+        }
+    }
+}
+
+impl From<HostMusicPlaybackStatus> for MusicPlaybackResultData {
+    fn from(value: HostMusicPlaybackStatus) -> Self {
+        Self {
+            state: value.state,
+            source: value.source,
+            sourceType: value.sourceType,
+            title: value.title,
+            artist: value.artist,
+            durationMs: value.durationMs,
+            positionMs: value.positionMs,
+            bufferedPositionMs: value.bufferedPositionMs,
+            volume: value.volume,
+            r#loop: value.loopPlayback,
+            message: value.message,
+        }
+    }
+}
+
+impl From<HostBluetoothStateData> for BluetoothStateData {
+    fn from(value: HostBluetoothStateData) -> Self {
+        Self {
+            supported: value.supported,
+            enabled: value.enabled,
+            state: value.state,
+        }
+    }
+}
+
+impl From<HostBluetoothDeviceData> for BluetoothDeviceData {
+    fn from(value: HostBluetoothDeviceData) -> Self {
+        Self {
+            name: value.name,
+            address: value.address,
+            r#type: value.r#type,
+            bondState: value.bondState,
+        }
+    }
+}
+
+impl From<HostBluetoothScannedDeviceData> for BluetoothScannedDeviceData {
+    fn from(value: HostBluetoothScannedDeviceData) -> Self {
+        Self {
+            name: value.name,
+            address: value.address,
+            r#type: value.r#type,
+            bondState: value.bondState,
+            source: value.source,
+            rssi: value.rssi,
+        }
+    }
+}
+
+impl From<HostBluetoothScanResultData> for BluetoothScanResultData {
+    fn from(value: HostBluetoothScanResultData) -> Self {
+        Self {
+            devices: value.devices.into_iter().map(Into::into).collect(),
+            durationMs: value.durationMs,
+            includesBle: value.includesBle,
+        }
+    }
+}
+
+impl From<HostBluetoothSessionData> for BluetoothSessionData {
+    fn from(value: HostBluetoothSessionData) -> Self {
+        Self {
+            sessionId: value.sessionId,
+            address: value.address,
+            mode: value.mode,
+        }
+    }
+}
+
+impl From<HostBluetoothTransferData> for BluetoothTransferData {
+    fn from(value: HostBluetoothTransferData) -> Self {
+        Self {
+            sessionId: value.sessionId,
+            bytesWritten: value.bytesWritten,
+        }
+    }
+}
+
+impl From<HostBluetoothReadData> for BluetoothReadData {
+    fn from(value: HostBluetoothReadData) -> Self {
+        Self {
+            sessionId: value.sessionId,
+            bytesRead: value.bytesRead,
+            text: value.text,
+            dataBase64: value.dataBase64,
+        }
+    }
+}
+
+impl From<HostBluetoothBleServiceData> for BluetoothBleServiceData {
+    fn from(value: HostBluetoothBleServiceData) -> Self {
+        Self {
+            uuid: value.uuid,
+            characteristics: value.characteristics.into_iter().map(|item| {
+                BluetoothBleCharacteristicData {
+                    uuid: item.uuid,
+                    properties: item.properties,
+                }
+            }).collect(),
+        }
+    }
+}
+
+impl From<HostBluetoothBleServicesData> for BluetoothBleServicesData {
+    fn from(value: HostBluetoothBleServicesData) -> Self {
+        Self {
+            sessionId: value.sessionId,
+            services: value.services.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<HostBluetoothBleNotificationEntry> for BluetoothBleNotificationEntry {
+    fn from(value: HostBluetoothBleNotificationEntry) -> Self {
+        Self {
+            characteristicUuid: value.characteristicUuid,
+            bytesRead: value.bytesRead,
+            text: value.text,
+            dataBase64: value.dataBase64,
+            timestamp: value.timestamp,
+        }
+    }
+}
+
+impl From<HostBluetoothBleNotificationData> for BluetoothBleNotificationData {
+    fn from(value: HostBluetoothBleNotificationData) -> Self {
+        Self {
+            sessionId: value.sessionId,
+            notifications: value.notifications.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -1321,6 +1594,201 @@ impl TerminalSessionScreenResultData {
         sb.push('\n');
         sb.push_str(&self.content);
         sb
+    }
+}
+
+impl MusicPlaybackResultData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str("Music Playback:\n");
+        sb.push_str(&format!("State: {}\n", self.state));
+        if let Some(title) = &self.title {
+            if !title.trim().is_empty() {
+                sb.push_str(&format!("Title: {title}\n"));
+            }
+        }
+        if let Some(artist) = &self.artist {
+            if !artist.trim().is_empty() {
+                sb.push_str(&format!("Artist: {artist}\n"));
+            }
+        }
+        if let Some(source) = &self.source {
+            if !source.trim().is_empty() {
+                sb.push_str(&format!("Source: {source}\n"));
+            }
+        }
+        if let Some(sourceType) = &self.sourceType {
+            if !sourceType.trim().is_empty() {
+                sb.push_str(&format!("Source Type: {sourceType}\n"));
+            }
+        }
+        sb.push_str(&format!("Position: {}ms\n", self.positionMs));
+        if let Some(durationMs) = self.durationMs {
+            sb.push_str(&format!("Duration: {durationMs}ms\n"));
+        }
+        sb.push_str(&format!("Buffered Position: {}ms\n", self.bufferedPositionMs));
+        sb.push_str(&format!("Volume: {:.2}\n", self.volume));
+        sb.push_str(&format!("Loop: {}\n", self.r#loop));
+        if !self.message.trim().is_empty() {
+            sb.push_str(&format!("Message: {}\n", self.message));
+        }
+        sb.trim_end().to_string()
+    }
+}
+
+impl BluetoothStateData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        format!(
+            "Bluetooth State:\nSupported: {}\nEnabled: {}\nState: {}",
+            self.supported, self.enabled, self.state
+        )
+    }
+}
+
+impl BluetoothBondedDevicesData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str(&format!(
+            "Bluetooth Bonded Devices ({}):\n",
+            self.devices.len()
+        ));
+        for device in &self.devices {
+            sb.push_str(&format!(
+                "- {} [{}] type={} bond={}\n",
+                device.name.as_deref().unwrap_or("Unnamed"),
+                device.address,
+                device.r#type,
+                device.bondState
+            ));
+        }
+        sb.trim_end().to_string()
+    }
+}
+
+impl BluetoothScanResultData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str(&format!(
+            "Bluetooth Scan Result ({} devices, {}ms, includes BLE={}):\n",
+            self.devices.len(),
+            self.durationMs,
+            self.includesBle
+        ));
+        for device in &self.devices {
+            let rssi = device
+                .rssi
+                .map(|value| format!(" rssi={value}"))
+                .unwrap_or_default();
+            sb.push_str(&format!(
+                "- {} [{}] type={} bond={} source={}{}\n",
+                device.name.as_deref().unwrap_or("Unnamed"),
+                device.address,
+                device.r#type,
+                device.bondState,
+                device.source,
+                rssi
+            ));
+        }
+        sb.trim_end().to_string()
+    }
+}
+
+impl BluetoothSessionData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        format!(
+            "Bluetooth Session:\nSession ID: {}\nAddress: {}\nMode: {}",
+            self.sessionId, self.address, self.mode
+        )
+    }
+}
+
+impl BluetoothTransferData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        format!(
+            "Bluetooth Transfer:\nSession ID: {}\nBytes Written: {}",
+            self.sessionId, self.bytesWritten
+        )
+    }
+}
+
+impl BluetoothReadData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str("Bluetooth Read:\n");
+        sb.push_str(&format!("Session ID: {}\n", self.sessionId));
+        sb.push_str(&format!("Bytes Read: {}\n", self.bytesRead));
+        if let Some(text) = &self.text {
+            if !text.is_empty() {
+                sb.push_str("Text:\n");
+                sb.push_str(text);
+                sb.push('\n');
+            }
+        }
+        if let Some(dataBase64) = &self.dataBase64 {
+            if !dataBase64.is_empty() {
+                sb.push_str(&format!("Data Base64: {dataBase64}\n"));
+            }
+        }
+        sb.trim_end().to_string()
+    }
+}
+
+impl BluetoothBleServicesData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str(&format!(
+            "BLE Services for session {} ({} services):\n",
+            self.sessionId,
+            self.services.len()
+        ));
+        for service in &self.services {
+            sb.push_str(&format!("- Service {}\n", service.uuid));
+            for characteristic in &service.characteristics {
+                sb.push_str(&format!(
+                    "  - Characteristic {} [{}]\n",
+                    characteristic.uuid,
+                    characteristic.properties.join(", ")
+                ));
+            }
+        }
+        sb.trim_end().to_string()
+    }
+}
+
+impl BluetoothBleNotificationData {
+    #[allow(non_snake_case)]
+    fn toString(&self) -> String {
+        let mut sb = String::new();
+        sb.push_str(&format!(
+            "BLE Notifications for session {} ({}):\n",
+            self.sessionId,
+            self.notifications.len()
+        ));
+        for item in &self.notifications {
+            sb.push_str(&format!(
+                "- {} bytes from {} at {}\n",
+                item.bytesRead, item.characteristicUuid, item.timestamp
+            ));
+            if let Some(text) = &item.text {
+                if !text.is_empty() {
+                    sb.push_str(&format!("  Text: {text}\n"));
+                }
+            }
+            if let Some(dataBase64) = &item.dataBase64 {
+                if !dataBase64.is_empty() {
+                    sb.push_str(&format!("  Data Base64: {dataBase64}\n"));
+                }
+            }
+        }
+        sb.trim_end().to_string()
     }
 }
 

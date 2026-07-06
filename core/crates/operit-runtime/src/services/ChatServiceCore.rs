@@ -9,6 +9,7 @@ use crate::data::model::ActivePrompt::ActivePrompt;
 use crate::data::model::AttachmentInfo::AttachmentInfo;
 use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
 use crate::data::model::ChatHistory::ChatHistory;
+use crate::data::model::ChatHistoryListItem::ChatHistoryListItem;
 use crate::data::model::ChatMainState::ChatMainState;
 use crate::data::model::ChatMessage::ChatMessage;
 use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
@@ -525,8 +526,8 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     pub fn updateChatOrderAndGroup(
         &mut self,
-        reorderedHistories: Vec<crate::data::model::ChatHistory::ChatHistory>,
-        movedItem: crate::data::model::ChatHistory::ChatHistory,
+        reorderedHistories: Vec<ChatHistoryListItem>,
+        movedItem: ChatHistoryListItem,
         targetGroup: Option<String>,
     ) {
         self.chatHistoryDelegate.updateChatOrderAndGroup(
@@ -1147,6 +1148,11 @@ impl ChatServiceCore {
         &self,
     ) -> StateFlow<Vec<crate::data::model::ChatHistory::ChatHistory>> {
         self.chatHistoryDelegate.chatHistoriesFlow()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn chatHistoryListItemsFlow(&self) -> StateFlow<Vec<ChatHistoryListItem>> {
+        self.chatHistoryDelegate.chatHistoryListItemsFlow()
     }
 
     #[allow(non_snake_case)]

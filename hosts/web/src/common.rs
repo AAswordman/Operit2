@@ -1,9 +1,17 @@
 use std::collections::BTreeMap;
 
-use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use operit_host_api::{
-    AppOperationData, FindFilesRequest, GrepCodeRequest, HostError, HostResult,
-    HttpFilePart, HttpRequestData, HttpResponseData, ManagedRuntimeProgram, RuntimeProcessRequest,
+    AppOperationData, BluetoothBleCharacteristicAddress, BluetoothBleCharacteristicData,
+    BluetoothBleConnectRequest, BluetoothBleNotificationData, BluetoothBleNotificationEntry,
+    BluetoothBleServiceData, BluetoothBleServicesData, BluetoothBleSubscribeRequest,
+    BluetoothBleWriteAndReadRequest, BluetoothBleWriteRequest, BluetoothBondedDevicesData,
+    BluetoothClassicAcceptRequest, BluetoothClassicConnectRequest, BluetoothClassicListenRequest,
+    BluetoothDeviceData, BluetoothPayload, BluetoothReadData, BluetoothReadRequest,
+    BluetoothScanRequest, BluetoothScanResultData, BluetoothScannedDeviceData,
+    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, FindFilesRequest,
+    GrepCodeRequest, HostError, HostResult, HttpFilePart, HttpRequestData, HttpResponseData,
+    ManagedRuntimeProgram, MusicPlaybackRequest, MusicPlaybackStatus, RuntimeProcessRequest,
     SqliteRow, SqliteValue, SystemSettingData, WebVisitLinkData, WebVisitRequest,
 };
 use wasm_bindgen::prelude::*;
@@ -54,6 +62,16 @@ pub(crate) fn call_tts_playback(method: &str, args: &[JsValue]) -> HostResult<Js
     call_function(&module, method, args)
 }
 
+pub(crate) fn call_music_playback(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("musicPlayback")?;
+    call_function(&module, method, args)
+}
+
+pub(crate) fn call_bluetooth(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("bluetooth")?;
+    call_function(&module, method, args)
+}
+
 fn bridge_module(name: &str) -> HostResult<JsValue> {
     let global = js_sys::global();
     let host = Reflect::get(global.as_ref(), &JsValue::from_str("__operitHost")).map_err(js_error)?;
@@ -76,7 +94,13 @@ fn call_function(target: &JsValue, method: &str, args: &[JsValue]) -> HostResult
     for arg in args {
         array.push(arg);
     }
-    function.apply(target, &array).map_err(js_error)
+    let value = function.apply(target, &array).map_err(js_error)?;
+    if value.is_instance_of::<Promise>() {
+        return Err(HostError::new(format!(
+            "web host bridge method returned an asynchronous Promise: {method}"
+        )));
+    }
+    Ok(value)
 }
 
 pub(crate) fn find_files_request_to_js(request: &FindFilesRequest) -> JsValue {
@@ -106,6 +130,185 @@ pub(crate) fn web_visit_request_to_js(request: &WebVisitRequest) -> JsValue {
     set_property(&object, "headers", string_pairs_to_js(&request.headers));
     set_property(&object, "userAgent", JsValue::from_str(&request.userAgent));
     set_property(&object, "includeImageLinks", JsValue::from_bool(request.includeImageLinks));
+    object.into()
+}
+
+pub(crate) fn music_playback_request_to_js(request: MusicPlaybackRequest) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "source", JsValue::from_str(&request.source));
+    set_property(&object, "sourceType", JsValue::from_str(&request.sourceType));
+    set_property(&object, "title", optional_string_to_js(request.title.as_ref()));
+    set_property(&object, "artist", optional_string_to_js(request.artist.as_ref()));
+    set_property(&object, "loopPlayback", JsValue::from_bool(request.loopPlayback));
+    set_property(&object, "volume", JsValue::from_f64(request.volume));
+    set_property(
+        &object,
+        "startPositionMs",
+        JsValue::from_f64(request.startPositionMs as f64),
+    );
+    object.into()
+}
+
+pub(crate) fn music_playback_status(value: JsValue) -> HostResult<MusicPlaybackStatus> {
+    Ok(MusicPlaybackStatus {
+        state: read_string_property(&value, "state")?,
+        source: read_optional_string_property(&value, "source")?,
+        sourceType: read_optional_string_property(&value, "sourceType")?,
+        title: read_optional_string_property(&value, "title")?,
+        artist: read_optional_string_property(&value, "artist")?,
+        durationMs: read_optional_i64_property(&value, "durationMs")?,
+        positionMs: read_i64_property(&value, "positionMs")?,
+        bufferedPositionMs: read_i64_property(&value, "bufferedPositionMs")?,
+        volume: read_f64_property(&value, "volume")?,
+        loopPlayback: read_bool_property(&value, "loopPlayback")?,
+        message: read_string_property(&value, "message")?,
+    })
+}
+
+pub(crate) fn bluetooth_scan_request_to_js(request: BluetoothScanRequest) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "durationMs", JsValue::from_f64(request.durationMs as f64));
+    set_property(&object, "includeBle", JsValue::from_bool(request.includeBle));
+    object.into()
+}
+
+pub(crate) fn bluetooth_classic_connect_request_to_js(
+    request: BluetoothClassicConnectRequest,
+) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "address", JsValue::from_str(&request.address));
+    set_property(&object, "uuid", JsValue::from_str(&request.uuid));
+    object.into()
+}
+
+pub(crate) fn bluetooth_classic_listen_request_to_js(
+    request: BluetoothClassicListenRequest,
+) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "name", JsValue::from_str(&request.name));
+    set_property(&object, "uuid", JsValue::from_str(&request.uuid));
+    object.into()
+}
+
+pub(crate) fn bluetooth_classic_accept_request_to_js(
+    request: BluetoothClassicAcceptRequest,
+) -> JsValue {
+    let object = Object::new();
+    set_property(
+        &object,
+        "listenerSessionId",
+        JsValue::from_str(&request.listenerSessionId),
+    );
+    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    object.into()
+}
+
+pub(crate) fn bluetooth_payload_to_js(payload: BluetoothPayload) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "text", optional_string_to_js(payload.text.as_ref()));
+    set_property(
+        &object,
+        "dataBase64",
+        optional_string_to_js(payload.dataBase64.as_ref()),
+    );
+    object.into()
+}
+
+pub(crate) fn bluetooth_read_request_to_js(request: BluetoothReadRequest) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
+    set_property(&object, "maxBytes", JsValue::from_f64(request.maxBytes as f64));
+    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    object.into()
+}
+
+pub(crate) fn bluetooth_ble_connect_request_to_js(request: BluetoothBleConnectRequest) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "address", JsValue::from_str(&request.address));
+    set_property(&object, "autoConnect", JsValue::from_bool(request.autoConnect));
+    object.into()
+}
+
+pub(crate) fn bluetooth_ble_characteristic_address_to_js(
+    address: BluetoothBleCharacteristicAddress,
+) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "sessionId", JsValue::from_str(&address.sessionId));
+    set_property(&object, "serviceUuid", JsValue::from_str(&address.serviceUuid));
+    set_property(
+        &object,
+        "characteristicUuid",
+        JsValue::from_str(&address.characteristicUuid),
+    );
+    set_property(&object, "timeoutMs", JsValue::from_f64(address.timeoutMs as f64));
+    object.into()
+}
+
+pub(crate) fn bluetooth_ble_write_request_to_js(request: BluetoothBleWriteRequest) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
+    set_property(&object, "serviceUuid", JsValue::from_str(&request.serviceUuid));
+    set_property(
+        &object,
+        "characteristicUuid",
+        JsValue::from_str(&request.characteristicUuid),
+    );
+    set_property(&object, "text", optional_string_to_js(request.text.as_ref()));
+    set_property(
+        &object,
+        "dataBase64",
+        optional_string_to_js(request.dataBase64.as_ref()),
+    );
+    object.into()
+}
+
+pub(crate) fn bluetooth_ble_write_and_read_request_to_js(
+    request: BluetoothBleWriteAndReadRequest,
+) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
+    set_property(
+        &object,
+        "writeServiceUuid",
+        JsValue::from_str(&request.writeServiceUuid),
+    );
+    set_property(
+        &object,
+        "writeCharacteristicUuid",
+        JsValue::from_str(&request.writeCharacteristicUuid),
+    );
+    set_property(
+        &object,
+        "readServiceUuid",
+        JsValue::from_str(&request.readServiceUuid),
+    );
+    set_property(
+        &object,
+        "readCharacteristicUuid",
+        JsValue::from_str(&request.readCharacteristicUuid),
+    );
+    set_property(&object, "text", optional_string_to_js(request.text.as_ref()));
+    set_property(
+        &object,
+        "dataBase64",
+        optional_string_to_js(request.dataBase64.as_ref()),
+    );
+    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    object.into()
+}
+
+pub(crate) fn bluetooth_ble_subscribe_request_to_js(
+    request: BluetoothBleSubscribeRequest,
+) -> JsValue {
+    let object = Object::new();
+    set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
+    set_property(&object, "serviceUuid", JsValue::from_str(&request.serviceUuid));
+    set_property(
+        &object,
+        "characteristicUuid",
+        JsValue::from_str(&request.characteristicUuid),
+    );
+    set_property(&object, "enable", JsValue::from_bool(request.enable));
     object.into()
 }
 
@@ -394,6 +597,14 @@ pub(crate) fn read_i64_property(value: &JsValue, property: &str) -> HostResult<i
     js_i64(property_value, property)
 }
 
+pub(crate) fn read_optional_i64_property(value: &JsValue, property: &str) -> HostResult<Option<i64>> {
+    let property_value = Reflect::get(value, &JsValue::from_str(property)).map_err(js_error)?;
+    if property_value.is_null() || property_value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Some(js_i64(property_value, property)?))
+}
+
 pub(crate) fn read_i32_property(value: &JsValue, property: &str) -> HostResult<i32> {
     let value = read_i64_property(value, property)?;
     i32::try_from(value).map_err(|error| HostError::new(error.to_string()))
@@ -475,4 +686,133 @@ pub(crate) fn js_error(value: JsValue) -> HostError {
     } else {
         HostError::new(format!("{value:?}"))
     }
+}
+
+pub(crate) fn bluetooth_state_data(value: JsValue) -> HostResult<BluetoothStateData> {
+    Ok(BluetoothStateData {
+        supported: read_bool_property(&value, "supported")?,
+        enabled: read_bool_property(&value, "enabled")?,
+        state: read_string_property(&value, "state")?,
+    })
+}
+
+pub(crate) fn bluetooth_device_data(value: JsValue) -> HostResult<BluetoothDeviceData> {
+    Ok(BluetoothDeviceData {
+        name: read_optional_string_property(&value, "name")?,
+        address: read_string_property(&value, "address")?,
+        r#type: read_string_property(&value, "type")?,
+        bondState: read_string_property(&value, "bondState")?,
+    })
+}
+
+pub(crate) fn bluetooth_bonded_devices_data(value: JsValue) -> HostResult<BluetoothBondedDevicesData> {
+    let array = Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
+    let mut devices = Vec::new();
+    for index in 0..array.length() {
+        devices.push(bluetooth_device_data(array.get(index))?);
+    }
+    Ok(BluetoothBondedDevicesData { devices })
+}
+
+pub(crate) fn bluetooth_scanned_device_data(value: JsValue) -> HostResult<BluetoothScannedDeviceData> {
+    Ok(BluetoothScannedDeviceData {
+        name: read_optional_string_property(&value, "name")?,
+        address: read_string_property(&value, "address")?,
+        r#type: read_string_property(&value, "type")?,
+        bondState: read_string_property(&value, "bondState")?,
+        source: read_string_property(&value, "source")?,
+        rssi: read_optional_i32_property(&value, "rssi")?,
+    })
+}
+
+pub(crate) fn bluetooth_scan_result_data(value: JsValue) -> HostResult<BluetoothScanResultData> {
+    let array = Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
+    let mut devices = Vec::new();
+    for index in 0..array.length() {
+        devices.push(bluetooth_scanned_device_data(array.get(index))?);
+    }
+    Ok(BluetoothScanResultData {
+        devices,
+        durationMs: read_i64_property(&value, "durationMs")?,
+        includesBle: read_bool_property(&value, "includesBle")?,
+    })
+}
+
+pub(crate) fn bluetooth_session_data(value: JsValue) -> HostResult<BluetoothSessionData> {
+    Ok(BluetoothSessionData {
+        sessionId: read_string_property(&value, "sessionId")?,
+        address: read_string_property(&value, "address")?,
+        mode: read_string_property(&value, "mode")?,
+    })
+}
+
+pub(crate) fn bluetooth_transfer_data(value: JsValue) -> HostResult<BluetoothTransferData> {
+    Ok(BluetoothTransferData {
+        sessionId: read_string_property(&value, "sessionId")?,
+        bytesWritten: read_i64_property(&value, "bytesWritten")?,
+    })
+}
+
+pub(crate) fn bluetooth_read_data(value: JsValue) -> HostResult<BluetoothReadData> {
+    Ok(BluetoothReadData {
+        sessionId: read_string_property(&value, "sessionId")?,
+        bytesRead: read_i64_property(&value, "bytesRead")?,
+        text: read_optional_string_property(&value, "text")?,
+        dataBase64: read_optional_string_property(&value, "dataBase64")?,
+    })
+}
+
+pub(crate) fn bluetooth_ble_services_data(value: JsValue) -> HostResult<BluetoothBleServicesData> {
+    let services_value = Reflect::get(&value, &JsValue::from_str("services")).map_err(js_error)?;
+    let services_array = Array::from(&services_value);
+    let mut services = Vec::new();
+    for service_index in 0..services_array.length() {
+        let service = services_array.get(service_index);
+        let characteristics_value =
+            Reflect::get(&service, &JsValue::from_str("characteristics")).map_err(js_error)?;
+        let characteristics_array = Array::from(&characteristics_value);
+        let mut characteristics = Vec::new();
+        for characteristic_index in 0..characteristics_array.length() {
+            let characteristic = characteristics_array.get(characteristic_index);
+            characteristics.push(BluetoothBleCharacteristicData {
+                uuid: read_string_property(&characteristic, "uuid")?,
+                properties: js_string_array(
+                    Reflect::get(&characteristic, &JsValue::from_str("properties"))
+                        .map_err(js_error)?,
+                    "bluetooth characteristic properties",
+                )?,
+            });
+        }
+        services.push(BluetoothBleServiceData {
+            uuid: read_string_property(&service, "uuid")?,
+            characteristics,
+        });
+    }
+    Ok(BluetoothBleServicesData {
+        sessionId: read_string_property(&value, "sessionId")?,
+        services,
+    })
+}
+
+pub(crate) fn bluetooth_ble_notification_data(
+    value: JsValue,
+) -> HostResult<BluetoothBleNotificationData> {
+    let notifications_value =
+        Reflect::get(&value, &JsValue::from_str("notifications")).map_err(js_error)?;
+    let notifications_array = Array::from(&notifications_value);
+    let mut notifications = Vec::new();
+    for index in 0..notifications_array.length() {
+        let notification = notifications_array.get(index);
+        notifications.push(BluetoothBleNotificationEntry {
+            characteristicUuid: read_string_property(&notification, "characteristicUuid")?,
+            bytesRead: read_i64_property(&notification, "bytesRead")?,
+            text: read_optional_string_property(&notification, "text")?,
+            dataBase64: read_optional_string_property(&notification, "dataBase64")?,
+            timestamp: read_i64_property(&notification, "timestamp")?,
+        });
+    }
+    Ok(BluetoothBleNotificationData {
+        sessionId: read_string_property(&value, "sessionId")?,
+        notifications,
+    })
 }

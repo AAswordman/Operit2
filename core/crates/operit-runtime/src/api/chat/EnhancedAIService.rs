@@ -36,6 +36,7 @@ use crate::core::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::data::model::CharacterCard::CharacterCardMemoryBindingMode;
 use crate::data::model::FunctionType::FunctionType;
 use crate::data::model::InputProcessingState::InputProcessingState;
 use crate::data::model::ModelConfigData::ResolvedModelConfig;
@@ -53,7 +54,7 @@ use crate::util::stream::Stream::{FnStream, Stream};
 use crate::util::AppLogger::AppLogger;
 use crate::util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use crate::util::ChatUtils::ChatUtils;
-use crate::util::OperitPaths::characterMemoryOwnerKey;
+use crate::util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 const TAG: &str = "EnhancedAIService";
 
@@ -1011,16 +1012,23 @@ impl EnhancedAIService {
             .map(|card| card.name.clone())
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Operit".to_string());
-        let activeCardId = activeCard
-            .as_ref()
-            .map(|card| card.id.clone())
-            .ok_or_else(|| {
+        let activeCard = activeCard.as_ref().ok_or_else(|| {
                 AiServiceError::RequestFailed(
                     "roleCardId is required to resolve USER.md".to_string(),
                 )
             })?;
-        let userOwnerKey =
-            characterMemoryOwnerKey(&activeCardId).map_err(AiServiceError::RequestFailed)?;
+        let memoryBindingMode =
+            CharacterCardMemoryBindingMode::normalize(Some(&activeCard.memoryBindingMode));
+        let userOwnerKey = if memoryBindingMode == CharacterCardMemoryBindingMode::SHARED {
+            let sharedMemoryId = activeCard.sharedMemoryId.as_ref().ok_or_else(|| {
+                AiServiceError::RequestFailed(
+                    "shared memory binding requires sharedMemoryId".to_string(),
+                )
+            })?;
+            sharedMemoryOwnerKey(sharedMemoryId).map_err(AiServiceError::RequestFailed)?
+        } else {
+            characterMemoryOwnerKey(&activeCard.id).map_err(AiServiceError::RequestFailed)?
+        };
         let userPreferencesText = UserMarkdownRepository::new(userOwnerKey)
             .readUserMarkdown()
             .map_err(AiServiceError::RequestFailed)?;

@@ -8,15 +8,15 @@ use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
 use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use crate::data::model::ModelCatalog::ModelCatalog;
 use crate::data::model::ModelConfigData::{
-    ApiProviderType, AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities,
-    ModelCatalogKey, ModelConfigDefaults, ModelContextSpec, ModelProfile, ModelRequestSpec,
-    ModelSummarySettings, ProviderModelSummary, ProviderProfile, ResolvedModelConfig,
-    default_deepseek_provider,
+    default_deepseek_provider, ApiProviderType, AvailableProviderModel,
+    AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
+    ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
+    ProviderProfile, ResolvedModelConfig,
 };
 use crate::data::model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
-    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -189,6 +189,25 @@ impl ModelConfigManager {
                 Some(&provider.id),
             )?;
             Self::writeProvider(preferences, &provider)?;
+            Ok::<(), ModelConfigError>(())
+        })?;
+        Ok(provider)
+    }
+
+    pub fn replaceDefaultProviderProfile(
+        &self,
+        provider: ProviderProfile,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        if provider.id != Self::DEFAULT_PROVIDER_ID {
+            return Err(ModelConfigError::ProviderNotFound(provider.id));
+        }
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let mut providerIds = Self::readProviderList(preferences)?;
+            if !providerIds.iter().any(|id| id == Self::DEFAULT_PROVIDER_ID) {
+                providerIds.insert(0, Self::DEFAULT_PROVIDER_ID.to_string());
+            }
+            Self::writeProvider(preferences, &provider)?;
+            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })?;
         Ok(provider)

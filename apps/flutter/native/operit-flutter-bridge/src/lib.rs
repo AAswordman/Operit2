@@ -36,16 +36,18 @@ use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgHostEventRegistration;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerAudioPlay, requestOwnerBrowserAutomation, requestOwnerComposeWebViewController,
+    requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
+    requestOwnerComposeWebViewController, requestOwnerMusicPlayback,
     requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
     requestOwnerToolPermission, requestOwnerTtsPlayback, requestOwnerTtsSynthesis,
     requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
-    RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload,
-    RuntimeHostInteractionSystemRecognizeTextPayload, RuntimeHostInteractionToolPermissionPayload,
-    RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
-    RuntimeHostInteractionTtsPlaybackPayload, RuntimeHostInteractionTtsSynthesisPayload,
-    RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
+    RuntimeHostInteractionMusicPlaybackPayload, RuntimeHostInteractionSystemRecognizeTextPayload,
+    RuntimeHostInteractionToolPermissionPayload, RuntimeHostInteractionToolPermissionTool,
+    RuntimeHostInteractionToolPermissionToolParameter, RuntimeHostInteractionTtsPlaybackPayload,
+    RuntimeHostInteractionTtsSynthesisPayload, RuntimeHostInteractionWebVisitHeader,
+    RuntimeHostInteractionWebVisitPayload,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,8 +56,9 @@ use js_sys::Function;
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
     AndroidAudioPlaybackHost as NativeAudioPlaybackHost,
-    AndroidFileSystemHost as NativeFileSystemHost, AndroidHttpHost as NativeHttpHost,
-    AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
+    AndroidBluetoothHost as NativeBluetoothHost, AndroidFileSystemHost as NativeFileSystemHost,
+    AndroidHttpHost as NativeHttpHost, AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
+    AndroidMusicCommand as NativeMusicCommand,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
     AndroidSystemOperationHost as NativeSystemOperationHost,
     AndroidTerminalHost as NativeTerminalHost, AndroidTtsPlaybackHost as NativeTtsPlaybackHost,
@@ -63,9 +66,24 @@ use operit_host_android_native::{
 };
 #[cfg(target_os = "android")]
 use operit_host_api::SystemOperationHost;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use operit_host_apple_native::{
+    AppleAudioPlaybackHost as NativeAudioPlaybackHost, AppleBluetoothHost as NativeBluetoothHost,
+    AppleFileSystemHost as NativeFileSystemHost, AppleHttpHost as NativeHttpHost,
+    AppleManagedRuntimeHost as NativeManagedRuntimeHost, AppleMusicCommand as NativeMusicCommand,
+    AppleRuntimeStorageHost as NativeRuntimeStorageHost,
+    AppleSystemOperationHost as NativeSystemOperationHost,
+    AppleTtsPlaybackHost as NativeTtsPlaybackHost, AppleTtsSynthesisHost as NativeTtsSynthesisHost,
+};
+#[cfg(target_os = "macos")]
+use operit_host_apple_native::{
+    AppleHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    AppleTerminalHost as NativeTerminalHost,
+};
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxFileSystemHost as NativeFileSystemHost,
+    LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
+    LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -77,6 +95,7 @@ use operit_host_linux_native::{
 };
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
+    WebAudioPlaybackHost as NativeAudioPlaybackHost, WebBluetoothHost as NativeBluetoothHost,
     WebFileSystemHost as NativeFileSystemHost, WebHttpHost as NativeHttpHost,
     WebManagedRuntimeHost as NativeManagedRuntimeHost,
     WebRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -86,7 +105,7 @@ use operit_host_web::{
 #[cfg(windows)]
 use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
-    WindowsFileSystemHost as NativeFileSystemHost,
+    WindowsBluetoothHost as NativeBluetoothHost, WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -117,7 +136,12 @@ pub struct OperitFlutterBridge {
     pendingRemotePairings: Mutex<HashMap<String, PendingRemotePairing>>,
     #[cfg(not(target_arch = "wasm32"))]
     mdns: Mutex<Option<mdnss::MdnsHandle>>,
-    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos"
+    ))]
     terminalHost: Arc<NativeTerminalHost>,
 }
 
@@ -525,14 +549,24 @@ impl OperitFlutterBridge {
         let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
         let webVisitBridge = FlutterWebVisitBridge::new();
         let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new();
-        #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+        #[cfg(any(
+            windows,
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos"
+        ))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
             storage_root,
             Arc::new(webVisitBridge),
             Some(Arc::new(browserAutomationBridge)),
             Some(Arc::new(composeDslWebViewBridge)),
-            #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+            #[cfg(any(
+                windows,
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos"
+            ))]
             terminalHost.clone(),
         )?;
         core.localApplicationMut().onCreate()?;
@@ -553,7 +587,12 @@ impl OperitFlutterBridge {
             pendingRemotePairings: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             mdns: Mutex::new(None),
-            #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+            #[cfg(any(
+                windows,
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos"
+            ))]
             terminalHost,
         })
     }
@@ -1041,7 +1080,26 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
     }
 }
 
-#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+fn musicCommandPayload(command: &str) -> RuntimeHostInteractionMusicPlaybackPayload {
+    RuntimeHostInteractionMusicPlaybackPayload {
+        command: command.to_string(),
+        source: None,
+        sourceType: None,
+        title: None,
+        artist: None,
+        loopPlayback: false,
+        volume: 1.0,
+        positionMs: 0,
+    }
+}
+
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos"
+))]
 fn create_local_core(
     storage_root: Option<PathBuf>,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
@@ -1080,9 +1138,9 @@ fn create_local_core(
         context = context.withComposeDslWebViewHost(host);
     }
     context = context.withTerminalHost(terminalHost);
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
-        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::fromPlayer(
+        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::fromPlayers(
             Arc::new(|path| {
                 let response = requestOwnerAudioPlay(
                     RuntimeHostInteractionAudioPlayPayload {
@@ -1095,6 +1153,70 @@ fn create_local_core(
                     path: response.path,
                     started: response.started,
                     details: response.details,
+                })
+            }),
+            Arc::new(|command| {
+                let payload = match command {
+                    NativeMusicCommand::Play(request) => {
+                        RuntimeHostInteractionMusicPlaybackPayload {
+                            command: "play".to_string(),
+                            source: Some(request.source),
+                            sourceType: Some(request.sourceType),
+                            title: request.title,
+                            artist: request.artist,
+                            loopPlayback: request.loopPlayback,
+                            volume: request.volume,
+                            positionMs: request.startPositionMs,
+                        }
+                    }
+                    NativeMusicCommand::Pause => musicCommandPayload("pause"),
+                    NativeMusicCommand::Resume => musicCommandPayload("resume"),
+                    NativeMusicCommand::Stop => musicCommandPayload("stop"),
+                    NativeMusicCommand::Status => musicCommandPayload("status"),
+                    NativeMusicCommand::Seek(positionMs) => {
+                        RuntimeHostInteractionMusicPlaybackPayload {
+                            positionMs,
+                            ..musicCommandPayload("seek")
+                        }
+                    }
+                    NativeMusicCommand::SetVolume(volume) => {
+                        RuntimeHostInteractionMusicPlaybackPayload {
+                            volume,
+                            ..musicCommandPayload("set_volume")
+                        }
+                    }
+                };
+                let response = requestOwnerMusicPlayback(payload, Duration::from_secs(60))
+                    .map_err(operit_host_api::HostError::new)?;
+                Ok(operit_host_api::MusicPlaybackStatus {
+                    state: response.state,
+                    source: response.source,
+                    sourceType: response.sourceType,
+                    title: response.title,
+                    artist: response.artist,
+                    durationMs: response.durationMs,
+                    positionMs: response.positionMs,
+                    bufferedPositionMs: response.bufferedPositionMs,
+                    volume: response.volume,
+                    loopPlayback: response.loopPlayback,
+                    message: response.message,
+                })
+            }),
+        )));
+        context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::fromController(
+            Arc::new(|command, params| {
+                let response = requestOwnerBluetooth(
+                    RuntimeHostInteractionBluetoothPayload {
+                        command: command.to_string(),
+                        paramsJson: params.to_string(),
+                    },
+                    Duration::from_secs(120),
+                )
+                .map_err(operit_host_api::HostError::new)?;
+                serde_json::from_str(&response.resultJson).map_err(|error| {
+                    operit_host_api::HostError::new(format!(
+                        "platform Bluetooth response JSON decode failed: {error}"
+                    ))
                 })
             }),
         )));
@@ -1120,30 +1242,45 @@ fn create_local_core(
         )));
         context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::fromController(
             Arc::new(|command| {
-                let (text, voice, locale, speed, pitch, interrupt) = match command.request {
-                    Some(request) => (
-                        request.text,
-                        request.voice,
-                        request.locale,
-                        request.speed,
-                        request.pitch,
-                        request.interrupt,
-                    ),
-                    None => (String::new(), String::new(), String::new(), 1.0, 1.0, false),
+                let payload = match command.command.as_str() {
+                    "speak" => {
+                        let request = match command.request {
+                            Some(request) => request,
+                            None => {
+                                return Err(operit_host_api::HostError::new(
+                                    "tts speak request is required",
+                                ))
+                            }
+                        };
+                        RuntimeHostInteractionTtsPlaybackPayload {
+                            command: command.command,
+                            text: request.text,
+                            voice: request.voice,
+                            locale: request.locale,
+                            speed: request.speed,
+                            pitch: request.pitch,
+                            interrupt: request.interrupt,
+                        }
+                    }
+                    "pause" | "resume" | "stop" | "status" => {
+                        RuntimeHostInteractionTtsPlaybackPayload {
+                            command: command.command,
+                            text: String::new(),
+                            voice: String::new(),
+                            locale: String::new(),
+                            speed: 1.0,
+                            pitch: 1.0,
+                            interrupt: false,
+                        }
+                    }
+                    other => {
+                        return Err(operit_host_api::HostError::new(format!(
+                            "unsupported tts playback command: {other}"
+                        )))
+                    }
                 };
-                let response = requestOwnerTtsPlayback(
-                    RuntimeHostInteractionTtsPlaybackPayload {
-                        command: command.command,
-                        text,
-                        voice,
-                        locale,
-                        speed,
-                        pitch,
-                        interrupt,
-                    },
-                    Duration::from_secs(120),
-                )
-                .map_err(operit_host_api::HostError::new)?;
+                let response = requestOwnerTtsPlayback(payload, Duration::from_secs(120))
+                    .map_err(operit_host_api::HostError::new)?;
                 Ok(operit_host_api::TtsPlaybackStatus {
                     path: response.path,
                     active: response.active,
@@ -1156,6 +1293,7 @@ fn create_local_core(
     #[cfg(target_os = "linux")]
     {
         context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+        context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
         context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
         context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
         context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
@@ -1163,15 +1301,20 @@ fn create_local_core(
     #[cfg(windows)]
     {
         context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+        context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
         context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::new()));
         context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
+        context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
+    }
+    #[cfg(target_os = "macos")]
+    {
         context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     }
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "ios", target_os = "macos"))]
 fn default_native_storage_root() -> Result<PathBuf, String> {
     Ok(NativeRuntimeStorageHost::defaultRoot())
 }
@@ -1179,6 +1322,188 @@ fn default_native_storage_root() -> Result<PathBuf, String> {
 #[cfg(target_os = "android")]
 fn default_native_storage_root() -> Result<PathBuf, String> {
     Err("Android runtime storage root must be provided by the Android host".to_string())
+}
+
+#[cfg(target_os = "ios")]
+fn create_local_core(
+    storage_root: Option<PathBuf>,
+    webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
+    browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+) -> Result<LocalCoreProxy, String> {
+    let root_dir = match storage_root {
+        Some(root_dir) => root_dir,
+        None => default_native_storage_root()?,
+    };
+    let appFilesRoot = root_dir.clone();
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
+    let runtimeSqliteHost = runtimeStorageHost.clone();
+    let mut context =
+        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+            Arc::new(NativeFileSystemHost::new()),
+            webVisitHost,
+            Arc::new(NativeHttpHost::new()),
+            Arc::new(NativeSystemOperationHost::new()),
+            Arc::new(NativeManagedRuntimeHost::new()),
+            runtimeStorageHost,
+            runtimeSqliteHost,
+        )
+        .withAppFilesRoot(appFilesRoot);
+    if let Some(host) = browserAutomationHost {
+        context = context.withBrowserAutomationHost(host);
+    }
+    if let Some(host) = composeDslWebViewHost {
+        context = context.withComposeDslWebViewHost(host);
+    }
+    context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::fromPlayers(
+        Arc::new(|path| {
+            let response = requestOwnerAudioPlay(
+                RuntimeHostInteractionAudioPlayPayload {
+                    path: path.to_string(),
+                },
+                Duration::from_secs(60),
+            )
+            .map_err(operit_host_api::HostError::new)?;
+            Ok(operit_host_api::AudioPlaybackStatus {
+                path: response.path,
+                started: response.started,
+                details: response.details,
+            })
+        }),
+        Arc::new(|command| {
+            let payload = match command {
+                NativeMusicCommand::Play(request) => RuntimeHostInteractionMusicPlaybackPayload {
+                    command: "play".to_string(),
+                    source: Some(request.source),
+                    sourceType: Some(request.sourceType),
+                    title: request.title,
+                    artist: request.artist,
+                    loopPlayback: request.loopPlayback,
+                    volume: request.volume,
+                    positionMs: request.startPositionMs,
+                },
+                NativeMusicCommand::Pause => musicCommandPayload("pause"),
+                NativeMusicCommand::Resume => musicCommandPayload("resume"),
+                NativeMusicCommand::Stop => musicCommandPayload("stop"),
+                NativeMusicCommand::Status => musicCommandPayload("status"),
+                NativeMusicCommand::Seek(positionMs) => {
+                    RuntimeHostInteractionMusicPlaybackPayload {
+                        positionMs,
+                        ..musicCommandPayload("seek")
+                    }
+                }
+                NativeMusicCommand::SetVolume(volume) => {
+                    RuntimeHostInteractionMusicPlaybackPayload {
+                        volume,
+                        ..musicCommandPayload("set_volume")
+                    }
+                }
+            };
+            let response = requestOwnerMusicPlayback(payload, Duration::from_secs(60))
+                .map_err(operit_host_api::HostError::new)?;
+            Ok(operit_host_api::MusicPlaybackStatus {
+                state: response.state,
+                source: response.source,
+                sourceType: response.sourceType,
+                title: response.title,
+                artist: response.artist,
+                durationMs: response.durationMs,
+                positionMs: response.positionMs,
+                bufferedPositionMs: response.bufferedPositionMs,
+                volume: response.volume,
+                loopPlayback: response.loopPlayback,
+                message: response.message,
+            })
+        }),
+    )));
+    context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::fromController(Arc::new(
+        |command, params| {
+            let response = requestOwnerBluetooth(
+                RuntimeHostInteractionBluetoothPayload {
+                    command: command.to_string(),
+                    paramsJson: params.to_string(),
+                },
+                Duration::from_secs(120),
+            )
+            .map_err(operit_host_api::HostError::new)?;
+            serde_json::from_str(&response.resultJson).map_err(|error| {
+                operit_host_api::HostError::new(format!(
+                    "platform Bluetooth response JSON decode failed: {error}"
+                ))
+            })
+        },
+    ))));
+    context = context.withTtsSynthesisHost(Arc::new(NativeTtsSynthesisHost::fromSynthesizer(
+        Arc::new(|request| {
+            let response = requestOwnerTtsSynthesis(
+                RuntimeHostInteractionTtsSynthesisPayload {
+                    text: request.text,
+                    voice: request.voice,
+                    locale: request.locale,
+                    speed: request.speed,
+                    pitch: request.pitch,
+                    outputFormat: request.outputFormat,
+                },
+                Duration::from_secs(120),
+            )
+            .map_err(operit_host_api::HostError::new)?;
+            Ok(operit_host_api::TtsSynthesisResponse {
+                audioPath: response.audioPath,
+                details: response.details,
+            })
+        }),
+    )));
+    context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::fromController(
+        Arc::new(|command| {
+            let payload = match command.command.as_str() {
+                "speak" => {
+                    let request = match command.request {
+                        Some(request) => request,
+                        None => {
+                            return Err(operit_host_api::HostError::new(
+                                "tts speak request is required",
+                            ))
+                        }
+                    };
+                    RuntimeHostInteractionTtsPlaybackPayload {
+                        command: command.command,
+                        text: request.text,
+                        voice: request.voice,
+                        locale: request.locale,
+                        speed: request.speed,
+                        pitch: request.pitch,
+                        interrupt: request.interrupt,
+                    }
+                }
+                "pause" | "resume" | "stop" | "status" => {
+                    RuntimeHostInteractionTtsPlaybackPayload {
+                        command: command.command,
+                        text: String::new(),
+                        voice: String::new(),
+                        locale: String::new(),
+                        speed: 1.0,
+                        pitch: 1.0,
+                        interrupt: false,
+                    }
+                }
+                other => {
+                    return Err(operit_host_api::HostError::new(format!(
+                        "unsupported tts playback command: {other}"
+                    )))
+                }
+            };
+            let response = requestOwnerTtsPlayback(payload, Duration::from_secs(120))
+                .map_err(operit_host_api::HostError::new)?;
+            Ok(operit_host_api::TtsPlaybackStatus {
+                path: response.path,
+                active: response.active,
+                paused: response.paused,
+                details: response.details,
+            })
+        }),
+    )));
+    let application = OperitApplication::newWithContext(context);
+    Ok(LocalCoreProxy::new(application))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1207,6 +1532,8 @@ fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
+    context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+    context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
@@ -1216,6 +1543,8 @@ fn create_local_core(
     windows,
     target_os = "linux",
     target_os = "android",
+    target_os = "ios",
+    target_os = "macos",
     target_arch = "wasm32"
 )))]
 fn create_local_core(
@@ -1791,6 +2120,45 @@ pub unsafe extern "C" fn operit_flutter_bridge_remote_pair_finish(
                 .expect("CoreLinkError must serialize"),
         ),
     }
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_emit_runtime_event(
+    handle: *mut OperitFlutterBridge,
+    event_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bridge is not initialized",
+            })
+            .to_string(),
+        );
+    }
+    if event_json.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime event pointer is null",
+            })
+            .to_string(),
+        );
+    }
+    let eventJson = match CStr::from_ptr(event_json).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("runtime event is not valid UTF-8: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr((*handle).emitRuntimeEvent(eventJson))
 }
 
 #[no_mangle]

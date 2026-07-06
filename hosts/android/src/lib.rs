@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod audio_playback;
+mod bluetooth;
 mod filesystem;
 mod http;
 mod managed_runtime;
@@ -12,7 +13,8 @@ mod tts_playback;
 mod tts_synthesis;
 mod web_visit;
 
-pub use audio_playback::AndroidAudioPlaybackHost;
+pub use audio_playback::{AndroidAudioPlaybackHost, AndroidMusicCommand};
+pub use bluetooth::AndroidBluetoothHost;
 pub use filesystem::AndroidFileSystemHost;
 pub use http::AndroidHttpHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;

@@ -12,6 +12,9 @@ use crate::core::tools::climode::CliToolModeSupport::{
 use crate::core::tools::defaultTool::standard::StandardBrowserAutomationTools::{
     BrowserAutomationToolExecutor, StandardBrowserAutomationTools,
 };
+use crate::core::tools::defaultTool::standard::StandardBluetoothTools::{
+    BluetoothToolExecutor, BluetoothToolOperation, StandardBluetoothTools,
+};
 use crate::core::tools::defaultTool::standard::StandardChatManagerTool::{
     ChatManagerToolExecutor, ChatManagerToolOperation, StandardChatManagerTool,
 };
@@ -23,6 +26,9 @@ use crate::core::tools::defaultTool::standard::StandardHttpTools::{
 };
 use crate::core::tools::defaultTool::standard::StandardMemoryTools::{
     MemoryToolExecutor, MemoryToolOperation,
+};
+use crate::core::tools::defaultTool::standard::StandardMusicTools::{
+    MusicToolExecutor, MusicToolOperation, StandardMusicTools,
 };
 use crate::core::tools::defaultTool::standard::StandardSystemOperationTools::{
     StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
@@ -87,6 +93,8 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &OperitApplicationC
         Box::new(ToolGetter::getWebVisitTool(context)),
     );
     registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
+    registerMusicTools(handler, ToolGetter::getMusicTools(context));
+    registerBluetoothTools(handler, ToolGetter::getBluetoothTools(context));
     registerMemoryPublicTools(handler);
     registerChatTools(handler, StandardChatManagerTool::new());
 
@@ -581,6 +589,172 @@ fn registerTerminalTool(
         name.to_string(),
         Box::new(TerminalToolExecutor {
             tools: terminalTools.clone(),
+            operation,
+        }),
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerMusicTools(handler: &mut AIToolHandler, musicTools: StandardMusicTools) {
+    registerMusicTool(handler, &musicTools, "music_play", MusicToolOperation::Play);
+    registerMusicTool(handler, &musicTools, "music_pause", MusicToolOperation::Pause);
+    registerMusicTool(handler, &musicTools, "music_resume", MusicToolOperation::Resume);
+    registerMusicTool(handler, &musicTools, "music_stop", MusicToolOperation::Stop);
+    registerMusicTool(handler, &musicTools, "music_seek", MusicToolOperation::Seek);
+    registerMusicTool(
+        handler,
+        &musicTools,
+        "music_set_volume",
+        MusicToolOperation::SetVolume,
+    );
+    registerMusicTool(handler, &musicTools, "music_status", MusicToolOperation::Status);
+}
+
+#[allow(non_snake_case)]
+fn registerMusicTool(
+    handler: &mut AIToolHandler,
+    musicTools: &StandardMusicTools,
+    name: &str,
+    operation: MusicToolOperation,
+) {
+    handler.registerTool(
+        name.to_string(),
+        Box::new(MusicToolExecutor {
+            tools: musicTools.clone(),
+            operation,
+        }),
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerBluetoothTools(handler: &mut AIToolHandler, bluetoothTools: StandardBluetoothTools) {
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "request_bluetooth_permission",
+        BluetoothToolOperation::RequestPermission,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "get_bluetooth_state",
+        BluetoothToolOperation::GetState,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "request_enable_bluetooth",
+        BluetoothToolOperation::RequestEnable,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "list_bluetooth_bonded_devices",
+        BluetoothToolOperation::ListBondedDevices,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "scan_bluetooth_devices",
+        BluetoothToolOperation::ScanDevices,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_connect",
+        BluetoothToolOperation::Connect,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_listen",
+        BluetoothToolOperation::Listen,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_accept",
+        BluetoothToolOperation::Accept,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_send",
+        BluetoothToolOperation::Send,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_read",
+        BluetoothToolOperation::Read,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_send_and_read",
+        BluetoothToolOperation::SendAndRead,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_close",
+        BluetoothToolOperation::Close,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_connect",
+        BluetoothToolOperation::BleConnect,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_discover_services",
+        BluetoothToolOperation::BleDiscoverServices,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_read_characteristic",
+        BluetoothToolOperation::BleReadCharacteristic,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_write_characteristic",
+        BluetoothToolOperation::BleWriteCharacteristic,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_write_and_read_characteristic",
+        BluetoothToolOperation::BleWriteAndReadCharacteristic,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_subscribe_characteristic",
+        BluetoothToolOperation::BleSubscribeCharacteristic,
+    );
+    registerBluetoothTool(
+        handler,
+        &bluetoothTools,
+        "bluetooth_ble_read_notifications",
+        BluetoothToolOperation::BleReadNotifications,
+    );
+}
+
+#[allow(non_snake_case)]
+fn registerBluetoothTool(
+    handler: &mut AIToolHandler,
+    bluetoothTools: &StandardBluetoothTools,
+    name: &str,
+    operation: BluetoothToolOperation,
+) {
+    handler.registerTool(
+        name.to_string(),
+        Box::new(BluetoothToolExecutor {
+            tools: bluetoothTools.clone(),
             operation,
         }),
     );

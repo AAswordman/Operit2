@@ -105,7 +105,7 @@ val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
         operitPluginSyncPython.absolutePath,
         operitPluginSyncScript.absolutePath,
         "--source",
-        "buildin",
+        "runtime",
     )
 }
 

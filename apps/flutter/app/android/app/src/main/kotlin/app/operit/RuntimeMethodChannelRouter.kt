@@ -34,4 +34,12 @@ class RuntimeMethodChannelRouter(
         runtimeChannel?.setMethodCallHandler(null)
         runtimeChannel = null
     }
+
+    fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ): Boolean {
+        return androidPlatformChannel.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
 }

@@ -45,7 +45,7 @@ pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> H
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
     let proot = requiredAndroidRuntimePath("OPERIT_ANDROID_PROOT")?;
     let loader = requiredAndroidRuntimePath("OPERIT_ANDROID_LOADER")?;
-    let _ = cwd;
+    let workingDir = androidProotWorkingDir(cwd)?;
 
     if !proot.is_file() {
         return Err(HostError::new(format!(
@@ -69,6 +69,7 @@ pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> H
     ensureRootfsAbsolutePath(&rootfsDir, &internalRoot)?;
     ensureRootfsAbsolutePath(&rootfsDir, &storageRoot)?;
     ensureRootfsAbsolutePath(&rootfsDir, Path::new("/data/local/tmp"))?;
+    ensureRootfsAbsolutePath(&rootfsDir, &workingDir)?;
     std::fs::create_dir_all(rootfsDir.join("dev/pts"))?;
     std::fs::create_dir_all(&tmpDir)?;
 
@@ -95,9 +96,28 @@ pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> H
     command.arg("-b").arg("/data/local/tmp:/data/local/tmp");
     command.arg("-b").arg(bindSamePath(&internalRoot));
     command.arg("-b").arg(bindSamePath(&storageRoot));
-    command.arg("-w").arg("/root");
+    command.arg("-w").arg(&workingDir);
     command.arg(executable);
     Ok(command)
+}
+
+#[allow(non_snake_case)]
+fn androidProotWorkingDir(cwd: Option<&str>) -> HostResult<PathBuf> {
+    let Some(value) = cwd else {
+        return Ok(PathBuf::from("/root"));
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(HostError::new(
+            "Android managed runtime cwd must not be blank",
+        ));
+    }
+    if !trimmed.starts_with('/') {
+        return Err(HostError::new(format!(
+            "Android managed runtime cwd must be absolute: {trimmed}"
+        )));
+    }
+    Ok(PathBuf::from(trimmed))
 }
 
 #[allow(non_snake_case)]

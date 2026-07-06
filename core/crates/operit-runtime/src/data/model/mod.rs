@@ -26,6 +26,8 @@ pub mod ChatDisplayWindowState;
 pub mod ChatEntity;
 #[path = "ChatHistory.rs"]
 pub mod ChatHistory;
+#[path = "ChatHistoryListItem.rs"]
+pub mod ChatHistoryListItem;
 #[path = "ChatMainState.rs"]
 pub mod ChatMainState;
 #[path = "ChatMessage.rs"]
@@ -118,6 +120,7 @@ pub use CharacterGroupChatStats::*;
 pub use ChatDisplayWindowState::*;
 pub use ChatEntity::*;
 pub use ChatHistory::*;
+pub use ChatHistoryListItem::*;
 pub use ChatMainState::*;
 pub use ChatMessage::*;
 pub use ChatMessageDisplayMode::*;

@@ -797,6 +797,333 @@
     };
   })();
 
+  const musicPlayback = (() => {
+    let audio = null;
+    let source = null;
+    let sourceType = null;
+    let title = null;
+    let artist = null;
+    let loopPlayback = false;
+    let volume = 1;
+    let state = "idle";
+    let message = "browser music player idle";
+
+    function currentStatus(details) {
+      const activeAudio = audio;
+      return {
+        state,
+        source,
+        sourceType,
+        title,
+        artist,
+        durationMs: activeAudio && Number.isFinite(activeAudio.duration) ? Math.round(activeAudio.duration * 1000) : null,
+        positionMs: activeAudio ? Math.round(activeAudio.currentTime * 1000) : 0,
+        bufferedPositionMs: bufferedPositionMs(activeAudio),
+        volume,
+        loopPlayback,
+        message: details,
+      };
+    }
+
+    function bufferedPositionMs(activeAudio) {
+      if (!activeAudio || activeAudio.buffered.length === 0) {
+        return activeAudio ? Math.round(activeAudio.currentTime * 1000) : 0;
+      }
+      return Math.round(activeAudio.buffered.end(activeAudio.buffered.length - 1) * 1000);
+    }
+
+    function setSource(activeAudio, request) {
+      if (request.sourceType === "path" || request.sourceType === "url" || request.sourceType === "uri") {
+        activeAudio.src = request.source;
+        return;
+      }
+      throw new Error(`unsupported music sourceType: ${request.sourceType}`);
+    }
+
+    return {
+      playAudio(path) {
+        const oneShot = new Audio(String(path));
+        oneShot.play();
+        return { path: String(path), started: true, details: "browser audio playback started" };
+      },
+      playMusic(request) {
+        if (audio !== null) {
+          audio.pause();
+        }
+        const activeAudio = new Audio();
+        setSource(activeAudio, request);
+        source = String(request.source || "");
+        sourceType = String(request.sourceType || "");
+        title = request.title || null;
+        artist = request.artist || null;
+        loopPlayback = request.loopPlayback === true;
+        volume = Number.isFinite(request.volume) ? Math.min(Math.max(request.volume, 0), 1) : 1;
+        activeAudio.loop = loopPlayback;
+        activeAudio.volume = volume;
+        activeAudio.currentTime = Math.max(Number(request.startPositionMs || 0), 0) / 1000;
+        activeAudio.onended = () => {
+          state = "completed";
+          message = "browser music playback completed";
+        };
+        activeAudio.onerror = () => {
+          state = "error";
+          message = "browser music playback error";
+        };
+        audio = activeAudio;
+        state = "playing";
+        message = "browser music playback started";
+        activeAudio.play();
+        return currentStatus(message);
+      },
+      pauseMusic() {
+        if (audio === null) {
+          throw new Error("browser music player is not initialized");
+        }
+        audio.pause();
+        state = "paused";
+        message = "browser music playback paused";
+        return currentStatus(message);
+      },
+      resumeMusic() {
+        if (audio === null) {
+          throw new Error("browser music player is not initialized");
+        }
+        audio.play();
+        state = "playing";
+        message = "browser music playback resumed";
+        return currentStatus(message);
+      },
+      stopMusic() {
+        if (audio !== null) {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+          audio = null;
+        }
+        state = "stopped";
+        message = "browser music playback stopped";
+        return currentStatus(message);
+      },
+      seekMusic(positionMs) {
+        if (audio === null) {
+          throw new Error("browser music player is not initialized");
+        }
+        audio.currentTime = Math.max(Number(positionMs || 0), 0) / 1000;
+        message = "browser music playback seeked";
+        return currentStatus(message);
+      },
+      setMusicVolume(value) {
+        if (audio === null) {
+          throw new Error("browser music player is not initialized");
+        }
+        volume = Math.min(Math.max(Number(value), 0), 1);
+        audio.volume = volume;
+        message = "browser music playback volume changed";
+        return currentStatus(message);
+      },
+      musicStatus() {
+        return currentStatus(message);
+      },
+    };
+  })();
+
+  const bluetooth = (() => {
+    const bleSessions = new Map();
+    const notifications = new Map();
+
+    function browserBluetooth() {
+      const api = navigator.bluetooth;
+      if (!api) {
+        throw new Error("browser Web Bluetooth is not available");
+      }
+      return api;
+    }
+
+    function bytesFromPayload(payload) {
+      if (payload.text && payload.dataBase64) {
+        throw new Error("Provide exactly one of text or dataBase64");
+      }
+      if (payload.text) {
+        return textEncoder.encode(String(payload.text));
+      }
+      if (payload.dataBase64) {
+        return base64ToBytes(String(payload.dataBase64));
+      }
+      throw new Error("Provide exactly one of text or dataBase64");
+    }
+
+    function readData(sessionId, bytes) {
+      const value = bytes instanceof DataView ? new Uint8Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)) : new Uint8Array(bytes);
+      return {
+        sessionId,
+        bytesRead: value.length,
+        text: textDecoder.decode(value),
+        dataBase64: bytesToBase64(value),
+      };
+    }
+
+    function session(id) {
+      const value = bleSessions.get(id);
+      if (!value) {
+        throw new Error(`BLE session not found: ${id}`);
+      }
+      return value;
+    }
+
+    function characteristic(sessionId, serviceUuid, characteristicUuid) {
+      const value = session(sessionId);
+      const key = `${serviceUuid}:${characteristicUuid}`;
+      const cached = value.characteristics.get(key);
+      if (!cached) {
+        throw new Error(`BLE characteristic not discovered: ${key}`);
+      }
+      return cached;
+    }
+
+    function classicUnavailable(name) {
+      throw new Error(`browser Bluetooth classic ${name} is not available`);
+    }
+
+    return {
+      requestBluetoothPermission() {
+        browserBluetooth();
+        return "browser_web_bluetooth_user_gesture_required";
+      },
+      bluetoothState() {
+        return {
+          supported: !!navigator.bluetooth,
+          enabled: !!navigator.bluetooth,
+          state: navigator.bluetooth ? "available" : "unavailable",
+        };
+      },
+      requestEnableBluetooth() {
+        browserBluetooth();
+        return "browser_bluetooth_enable_controlled_by_system";
+      },
+      listBluetoothBondedDevices() {
+        return { devices: [] };
+      },
+      scanBluetoothDevices(request) {
+        const filters = [];
+        const optionalServices = [];
+        const deviceRequest = { acceptAllDevices: true, optionalServices };
+        return browserBluetooth().requestDevice(deviceRequest).then((device) => ({
+          devices: [{
+            name: device.name || null,
+            address: device.id,
+            type: "ble",
+            bondState: "unknown",
+            source: "browser.web_bluetooth",
+            rssi: null,
+          }],
+          durationMs: request.durationMs || 0,
+          includesBle: true,
+        }));
+      },
+      bluetoothConnect() { classicUnavailable("connect"); },
+      bluetoothListen() { classicUnavailable("listen"); },
+      bluetoothAccept() { classicUnavailable("accept"); },
+      bluetoothSend() { classicUnavailable("send"); },
+      bluetoothRead() { classicUnavailable("read"); },
+      bluetoothSendAndRead() { classicUnavailable("sendAndRead"); },
+      bluetoothClose(sessionId) {
+        const value = bleSessions.get(sessionId);
+        if (value && value.device.gatt.connected) {
+          value.device.gatt.disconnect();
+        }
+        bleSessions.delete(sessionId);
+        notifications.delete(sessionId);
+        return `browser_bluetooth_session_closed:${sessionId}`;
+      },
+      bluetoothBleConnect(request) {
+        return browserBluetooth().requestDevice({ acceptAllDevices: true }).then((device) =>
+          device.gatt.connect().then((server) => {
+            const sessionId = `web-ble-${crypto.randomUUID()}`;
+            bleSessions.set(sessionId, { device, server, characteristics: new Map() });
+            notifications.set(sessionId, []);
+            return { sessionId, address: device.id, mode: "ble" };
+          })
+        );
+      },
+      bluetoothBleDiscoverServices(sessionId) {
+        const value = session(sessionId);
+        return value.server.getPrimaryServices().then((services) =>
+          Promise.all(services.map((service) =>
+            service.getCharacteristics().then((characteristics) => {
+              for (const item of characteristics) {
+                value.characteristics.set(`${service.uuid}:${item.uuid}`, item);
+              }
+              return {
+                uuid: service.uuid,
+                characteristics: characteristics.map((item) => ({
+                  uuid: item.uuid,
+                  properties: characteristicPropertyNames(item.properties),
+                })),
+              };
+            })
+          )).then((items) => ({ sessionId, services: items }))
+        );
+      },
+      bluetoothBleReadCharacteristic(address) {
+        return characteristic(address.sessionId, address.serviceUuid, address.characteristicUuid)
+          .readValue()
+          .then((value) => readData(address.sessionId, value));
+      },
+      bluetoothBleWriteCharacteristic(request) {
+        const bytes = bytesFromPayload(request);
+        return characteristic(request.sessionId, request.serviceUuid, request.characteristicUuid)
+          .writeValue(bytes)
+          .then(() => ({ sessionId: request.sessionId, bytesWritten: bytes.length }));
+      },
+      bluetoothBleWriteAndReadCharacteristic(request) {
+        const bytes = bytesFromPayload(request);
+        return characteristic(request.sessionId, request.writeServiceUuid, request.writeCharacteristicUuid)
+          .writeValue(bytes)
+          .then(() =>
+            characteristic(request.sessionId, request.readServiceUuid, request.readCharacteristicUuid).readValue()
+          )
+          .then((value) => readData(request.sessionId, value));
+      },
+      bluetoothBleSubscribeCharacteristic(request) {
+        const item = characteristic(request.sessionId, request.serviceUuid, request.characteristicUuid);
+        if (!request.enable) {
+          return item.stopNotifications().then(() => ({ sessionId: request.sessionId, bytesWritten: 0 }));
+        }
+        item.addEventListener("characteristicvaluechanged", (event) => {
+          const value = new Uint8Array(event.target.value.buffer.slice(event.target.value.byteOffset, event.target.value.byteOffset + event.target.value.byteLength));
+          notifications.get(request.sessionId).push({
+            characteristicUuid: item.uuid,
+            bytesRead: value.length,
+            text: textDecoder.decode(value),
+            dataBase64: bytesToBase64(value),
+            timestamp: Date.now(),
+          });
+        });
+        return item.startNotifications().then(() => ({ sessionId: request.sessionId, bytesWritten: 0 }));
+      },
+      bluetoothBleReadNotifications(sessionId, limit) {
+        const queue = notifications.get(sessionId);
+        if (!queue) {
+          throw new Error(`BLE session not found: ${sessionId}`);
+        }
+        return {
+          sessionId,
+          notifications: queue.splice(0, Math.max(Number(limit || 50), 0)),
+        };
+      },
+    };
+  })();
+
+  function characteristicPropertyNames(properties) {
+    const names = [];
+    if (properties.read) names.push("read");
+    if (properties.write) names.push("write");
+    if (properties.writeWithoutResponse) names.push("write_without_response");
+    if (properties.notify) names.push("notify");
+    if (properties.indicate) names.push("indicate");
+    return names;
+  }
+
   globalThis.__operitHost = {
     runtimeStorage: {
       readBytes(path) {
@@ -1028,6 +1355,8 @@
       },
       kill() {},
     },
+    musicPlayback,
+    bluetooth,
     ttsPlayback,
     systemOperation: {
       toast(message) {

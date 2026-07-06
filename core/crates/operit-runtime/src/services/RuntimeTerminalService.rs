@@ -6,10 +6,15 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{TerminalHost, TerminalSessionListEntry};
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_store::{
+    PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow},
+    RuntimeStorePaths::RuntimeStorePaths,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use crate::core::files::PathMapper::PathMapper;
+use crate::core::files::VisualFileSystem::VisualFileSystem;
 use crate::util::stream::HotStream::MutableSharedStreamImpl;
 use crate::util::stream::Stream::Stream;
 
@@ -35,6 +40,7 @@ pub struct RuntimeTerminalScreen {
 
 pub struct RuntimeTerminalService {
     terminalHost: Arc<dyn TerminalHost>,
+    context: OperitApplicationContext,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +165,7 @@ impl RuntimeTerminalService {
                 .terminalHost
                 .clone()
                 .expect("TerminalHost must be configured for RuntimeTerminalService"),
+            context: context.clone(),
         }
     }
 
@@ -183,9 +190,10 @@ impl RuntimeTerminalService {
         rows: i32,
         cols: i32,
     ) -> Result<String, String> {
+        let resolvedWorkingDir = resolve_terminal_working_dir(&self.context, &workingDir)?;
         let sessionId = self
             .terminalHost
-            .startPtySession(&sessionName, &workingDir, rows as u16, cols as u16)
+            .startPtySession(&sessionName, &resolvedWorkingDir, rows as u16, cols as u16)
             .map_err(|error| error.message)?;
         self.ensureTerminalPtyOutputStream(sessionId.clone());
         publish_terminal_sessions(&self.terminalHost)?;
@@ -276,4 +284,38 @@ impl RuntimeTerminalService {
         start_terminal_pty_output_reader(self.terminalHost.clone(), sessionId, stream.clone());
         stream
     }
+}
+
+fn resolve_terminal_working_dir(
+    context: &OperitApplicationContext,
+    workingDir: &str,
+) -> Result<String, String> {
+    let trimmed = workingDir.trim();
+    if trimmed.starts_with("/app/") || trimmed == "/app" {
+        return terminal_vfs(context)?
+            .resolvePath(trimmed)
+            .map(|path| path.physicalPath);
+    }
+    Ok(trimmed.to_string())
+}
+
+fn terminal_vfs(context: &OperitApplicationContext) -> Result<VisualFileSystem, String> {
+    let runtimeStoreRoot = context
+        .runtimeStorageHost
+        .as_ref()
+        .and_then(|host| host.rootDir())
+        .ok_or_else(|| {
+            "RuntimeStorageHost root is not configured for terminal working directory".to_string()
+        })?;
+    let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+    Ok(VisualFileSystem::new(
+        context.fileSystemHost.clone().ok_or_else(|| {
+            "FileSystemHost is not registered for terminal working directory".to_string()
+        })?,
+        PathMapper::new(
+            runtimeStoreRoot,
+            context.appFilesRoot.clone(),
+            runtimeStorePaths.workspace_dir(),
+        ),
+    ))
 }

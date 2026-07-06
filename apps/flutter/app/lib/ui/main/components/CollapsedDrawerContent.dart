@@ -370,7 +370,7 @@ class ConversationDrawerItem extends StatelessWidget {
     this.nested = false,
   });
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
   final String title;
   final bool selected;
   final NavigationDrawerAppearance appearance;
@@ -378,7 +378,7 @@ class ConversationDrawerItem extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onLongPress;
-  final ValueChanged<core_proxy.ChatHistory> onMoveTo;
+  final ValueChanged<core_proxy.ChatHistoryListItem> onMoveTo;
   final bool canDetach;
   final VoidCallback onDetach;
   final bool nested;
@@ -389,7 +389,7 @@ class ConversationDrawerItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final itemShape = BorderRadius.circular(12);
     final windowSize = MediaQuery.sizeOf(context);
-    return DragTarget<core_proxy.ChatHistory>(
+    return DragTarget<core_proxy.ChatHistoryListItem>(
       onWillAcceptWithDetails: (details) => details.data.id != history.id,
       onAcceptWithDetails: (details) => onMoveTo(details.data),
       builder: (context, candidateData, rejectedData) {
@@ -453,7 +453,7 @@ class ConversationDrawerItem extends StatelessWidget {
                           ),
                           child: Row(
                             children: <Widget>[
-                              Draggable<core_proxy.ChatHistory>(
+                              Draggable<core_proxy.ChatHistoryListItem>(
                                 data: history,
                                 dragAnchorStrategy: pointerDragAnchorStrategy,
                                 onDragEnd: (details) {
@@ -756,7 +756,7 @@ class _DraggingConversationItem extends StatelessWidget {
     required this.appearance,
   });
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
   final String title;
   final NavigationDrawerAppearance appearance;
 

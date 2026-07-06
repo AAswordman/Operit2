@@ -68,6 +68,9 @@ impl HostEnvironmentDescriptor {
                 "os.open".to_string(),
                 "os.share".to_string(),
                 "audio.playback".to_string(),
+                "music.playback".to_string(),
+                "bluetooth.classic".to_string(),
+                "bluetooth.ble".to_string(),
                 "tts.synthesis".to_string(),
                 "tts.playback".to_string(),
                 "system.location".to_string(),
@@ -108,6 +111,9 @@ impl HostEnvironmentDescriptor {
                 "os.open".to_string(),
                 "os.share".to_string(),
                 "audio.playback".to_string(),
+                "music.playback".to_string(),
+                "bluetooth.classic".to_string(),
+                "bluetooth.ble".to_string(),
                 "tts.synthesis".to_string(),
                 "tts.playback".to_string(),
                 "system.location".to_string(),
@@ -140,6 +146,9 @@ impl HostEnvironmentDescriptor {
                 "os.open".to_string(),
                 "os.share".to_string(),
                 "audio.playback".to_string(),
+                "music.playback".to_string(),
+                "bluetooth.classic".to_string(),
+                "bluetooth.ble".to_string(),
                 "tts.synthesis".to_string(),
                 "tts.playback".to_string(),
                 "system.location".to_string(),
@@ -175,6 +184,10 @@ impl HostEnvironmentDescriptor {
                 "runtime.process".to_string(),
                 "runtime.storage".to_string(),
                 "runtime.sqlite".to_string(),
+                "audio.playback".to_string(),
+                "music.playback".to_string(),
+                "bluetooth.classic".to_string(),
+                "bluetooth.ble".to_string(),
                 "tts.playback".to_string(),
                 "os.open".to_string(),
                 "os.share".to_string(),
@@ -782,8 +795,278 @@ pub struct AudioPlaybackStatus {
     pub details: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MusicPlaybackRequest {
+    pub source: String,
+    pub sourceType: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub loopPlayback: bool,
+    pub volume: f64,
+    pub startPositionMs: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MusicPlaybackStatus {
+    pub state: String,
+    pub source: Option<String>,
+    pub sourceType: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub durationMs: Option<i64>,
+    pub positionMs: i64,
+    pub bufferedPositionMs: i64,
+    pub volume: f64,
+    pub loopPlayback: bool,
+    pub message: String,
+}
+
 pub trait AudioPlaybackHost: Send + Sync {
     fn playAudio(&self, path: &str) -> HostResult<AudioPlaybackStatus>;
+    fn playMusic(&self, request: MusicPlaybackRequest) -> HostResult<MusicPlaybackStatus>;
+    fn pauseMusic(&self) -> HostResult<MusicPlaybackStatus>;
+    fn resumeMusic(&self) -> HostResult<MusicPlaybackStatus>;
+    fn stopMusic(&self) -> HostResult<MusicPlaybackStatus>;
+    fn seekMusic(&self, positionMs: i64) -> HostResult<MusicPlaybackStatus>;
+    fn setMusicVolume(&self, volume: f64) -> HostResult<MusicPlaybackStatus>;
+    fn musicStatus(&self) -> HostResult<MusicPlaybackStatus>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothStateData {
+    pub supported: bool,
+    pub enabled: bool,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothDeviceData {
+    pub name: Option<String>,
+    pub address: String,
+    pub r#type: String,
+    pub bondState: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBondedDevicesData {
+    pub devices: Vec<BluetoothDeviceData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothScannedDeviceData {
+    pub name: Option<String>,
+    pub address: String,
+    pub r#type: String,
+    pub bondState: String,
+    pub source: String,
+    pub rssi: Option<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothScanRequest {
+    pub durationMs: i64,
+    pub includeBle: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothScanResultData {
+    pub devices: Vec<BluetoothScannedDeviceData>,
+    pub durationMs: i64,
+    pub includesBle: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothSessionData {
+    pub sessionId: String,
+    pub address: String,
+    pub mode: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothClassicConnectRequest {
+    pub address: String,
+    pub uuid: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothClassicListenRequest {
+    pub name: String,
+    pub uuid: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothClassicAcceptRequest {
+    pub listenerSessionId: String,
+    pub timeoutMs: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothPayload {
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothTransferData {
+    pub sessionId: String,
+    pub bytesWritten: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothReadRequest {
+    pub sessionId: String,
+    pub maxBytes: i64,
+    pub timeoutMs: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothReadData {
+    pub sessionId: String,
+    pub bytesRead: i64,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleConnectRequest {
+    pub address: String,
+    pub autoConnect: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleCharacteristicData {
+    pub uuid: String,
+    pub properties: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleServiceData {
+    pub uuid: String,
+    pub characteristics: Vec<BluetoothBleCharacteristicData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleServicesData {
+    pub sessionId: String,
+    pub services: Vec<BluetoothBleServiceData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleCharacteristicAddress {
+    pub sessionId: String,
+    pub serviceUuid: String,
+    pub characteristicUuid: String,
+    pub timeoutMs: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleWriteRequest {
+    pub sessionId: String,
+    pub serviceUuid: String,
+    pub characteristicUuid: String,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleWriteAndReadRequest {
+    pub sessionId: String,
+    pub writeServiceUuid: String,
+    pub writeCharacteristicUuid: String,
+    pub readServiceUuid: String,
+    pub readCharacteristicUuid: String,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+    pub timeoutMs: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleSubscribeRequest {
+    pub sessionId: String,
+    pub serviceUuid: String,
+    pub characteristicUuid: String,
+    pub enable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleNotificationEntry {
+    pub characteristicUuid: String,
+    pub bytesRead: i64,
+    pub text: Option<String>,
+    pub dataBase64: Option<String>,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BluetoothBleNotificationData {
+    pub sessionId: String,
+    pub notifications: Vec<BluetoothBleNotificationEntry>,
+}
+
+pub trait BluetoothHost: Send + Sync {
+    fn requestBluetoothPermission(&self) -> HostResult<String>;
+    fn bluetoothState(&self) -> HostResult<BluetoothStateData>;
+    fn requestEnableBluetooth(&self) -> HostResult<String>;
+    fn listBluetoothBondedDevices(&self) -> HostResult<BluetoothBondedDevicesData>;
+    fn scanBluetoothDevices(
+        &self,
+        request: BluetoothScanRequest,
+    ) -> HostResult<BluetoothScanResultData>;
+    fn bluetoothConnect(
+        &self,
+        request: BluetoothClassicConnectRequest,
+    ) -> HostResult<BluetoothSessionData>;
+    fn bluetoothListen(
+        &self,
+        request: BluetoothClassicListenRequest,
+    ) -> HostResult<BluetoothSessionData>;
+    fn bluetoothAccept(
+        &self,
+        request: BluetoothClassicAcceptRequest,
+    ) -> HostResult<BluetoothSessionData>;
+    fn bluetoothSend(
+        &self,
+        sessionId: &str,
+        payload: BluetoothPayload,
+    ) -> HostResult<BluetoothTransferData>;
+    fn bluetoothRead(&self, request: BluetoothReadRequest) -> HostResult<BluetoothReadData>;
+    fn bluetoothSendAndRead(
+        &self,
+        sessionId: &str,
+        payload: BluetoothPayload,
+        read: BluetoothReadRequest,
+    ) -> HostResult<BluetoothReadData>;
+    fn bluetoothClose(&self, sessionId: &str) -> HostResult<String>;
+    fn bluetoothBleConnect(
+        &self,
+        request: BluetoothBleConnectRequest,
+    ) -> HostResult<BluetoothSessionData>;
+    fn bluetoothBleDiscoverServices(
+        &self,
+        sessionId: &str,
+        timeoutMs: i64,
+    ) -> HostResult<BluetoothBleServicesData>;
+    fn bluetoothBleReadCharacteristic(
+        &self,
+        address: BluetoothBleCharacteristicAddress,
+    ) -> HostResult<BluetoothReadData>;
+    fn bluetoothBleWriteCharacteristic(
+        &self,
+        request: BluetoothBleWriteRequest,
+    ) -> HostResult<BluetoothTransferData>;
+    fn bluetoothBleWriteAndReadCharacteristic(
+        &self,
+        request: BluetoothBleWriteAndReadRequest,
+    ) -> HostResult<BluetoothReadData>;
+    fn bluetoothBleSubscribeCharacteristic(
+        &self,
+        request: BluetoothBleSubscribeRequest,
+    ) -> HostResult<BluetoothTransferData>;
+    fn bluetoothBleReadNotifications(
+        &self,
+        sessionId: &str,
+        limit: i64,
+    ) -> HostResult<BluetoothBleNotificationData>;
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

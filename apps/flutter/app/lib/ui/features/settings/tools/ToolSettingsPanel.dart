@@ -162,7 +162,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 _ToolPermissionGroup(
                   title: l10n.settingsToolsAlwaysAllow,
                   description: l10n.settingsToolsAlwaysAllowDescription,
@@ -173,7 +173,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                       _openToolSelector(data, core_proxy.PermissionLevel.allow),
                   onRemove: _clearToolPermission,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 _ToolPermissionGroup(
                   title: l10n.settingsToolsAlwaysForbid,
                   description: l10n.settingsToolsAlwaysForbidDescription,
@@ -365,10 +365,10 @@ class _ToolPermissionGroup extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: color.withValues(alpha: 0.28)),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -384,35 +384,46 @@ class _ToolPermissionGroup extends StatelessWidget {
                         title,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       Text(
                         description,
-                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.25,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 TextButton.icon(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                   onPressed: allToolCount == 0 ? null : onAdd,
                   icon: const Icon(Icons.add),
                   label: Text(l10n.settingsToolsAddTool),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             if (tools.isEmpty)
               Text(
                 l10n.settingsToolsNoToolsInGroup,
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
               )
             else
               Wrap(
-                spacing: 8,
-                runSpacing: 8,
+                spacing: 6,
+                runSpacing: 6,
                 children: <Widget>[
                   for (final toolName in tools)
-                    InputChip(
-                      label: Text(toolName),
+                    _CompactToolChip(
+                      color: color,
+                      toolName: toolName,
                       onDeleted: () => onRemove(toolName),
                     ),
                 ],
@@ -420,6 +431,41 @@ class _ToolPermissionGroup extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _CompactToolChip extends StatelessWidget {
+  const _CompactToolChip({
+    required this.color,
+    required this.toolName,
+    required this.onDeleted,
+  });
+
+  final Color color;
+  final String toolName;
+  final VoidCallback onDeleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InputChip(
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      labelPadding: const EdgeInsets.only(left: 6, right: 1),
+      side: BorderSide(color: color.withValues(alpha: 0.28)),
+      backgroundColor: color.withValues(alpha: 0.06),
+      deleteIconColor: theme.colorScheme.onSurfaceVariant,
+      deleteIcon: const Icon(Icons.close, size: 14),
+      label: Text(
+        toolName,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurface,
+          height: 1.0,
+        ),
+      ),
+      onDeleted: onDeleted,
     );
   }
 }

@@ -89,7 +89,6 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
             loadAndroidUtilsJs(),
             &[
                 "Android",
-                "Intent",
                 "PackageManager",
                 "ContentProvider",
                 "SystemManager",

@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/concurrency/AppWorkers.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
@@ -139,7 +140,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
-      final result = _ComposeDslRenderResult.parse(raw);
+      final result = await AppWorkers.run(
+        () => _ComposeDslRenderResult.parse(raw),
+        debugName: 'compose-dsl-render-parse',
+      );
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
@@ -214,15 +218,14 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         if (event is! String) {
           throw StateError('compose_dsl action event must be a string');
         }
-        final decoded = jsonDecode(event) as Map<String, Object?>;
-        final phase = decoded['phase']?.toString().trim();
+        final parsedEvent = await AppWorkers.run(
+          () => _ParsedComposeDslActionEvent.parse(event),
+          debugName: 'compose-dsl-action-event-parse',
+        );
+        final phase = parsedEvent.phase;
         if (phase == 'intermediate' || phase == 'final') {
-          final raw = decoded['result'];
-          if (raw is! String) {
-            throw StateError('compose_dsl action result event missing result');
-          }
-          latestActionResult = _ComposeDslRenderResult.actionResultOf(raw);
-          final result = _ComposeDslRenderResult.tryParse(raw);
+          latestActionResult = parsedEvent.actionResult;
+          final result = parsedEvent.renderResult;
           if (result == null) {
             continue;
           }
@@ -234,7 +237,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             _error = null;
           });
         } else if (phase == 'error') {
-          final errorText = decoded['error']?.toString();
+          final errorText = parsedEvent.errorText;
           if (errorText == null) {
             throw StateError('compose_dsl action error event missing error');
           }
@@ -2903,6 +2906,52 @@ class _SizeReportingBoxState extends State<_SizeReportingBox> {
 
   @override
   Widget build(BuildContext context) => widget.child;
+}
+
+class _ParsedComposeDslActionEvent {
+  const _ParsedComposeDslActionEvent({
+    required this.phase,
+    required this.renderResult,
+    required this.actionResult,
+    required this.errorText,
+  });
+
+  final String? phase;
+  final _ComposeDslRenderResult? renderResult;
+  final Object? actionResult;
+  final String? errorText;
+
+  static _ParsedComposeDslActionEvent parse(String event) {
+    final decoded = jsonDecode(event) as Map<String, Object?>;
+    final phase = decoded['phase']?.toString().trim();
+    if (phase == 'intermediate' || phase == 'final') {
+      final raw = decoded['result'];
+      if (raw is! String) {
+        throw StateError('compose_dsl action result event missing result');
+      }
+      final result = _ComposeDslRenderResult.tryParse(raw);
+      return _ParsedComposeDslActionEvent(
+        phase: phase,
+        renderResult: result,
+        actionResult: _ComposeDslRenderResult.actionResultOf(raw),
+        errorText: null,
+      );
+    }
+    if (phase == 'error') {
+      return _ParsedComposeDslActionEvent(
+        phase: phase,
+        renderResult: null,
+        actionResult: null,
+        errorText: decoded['error']?.toString(),
+      );
+    }
+    return _ParsedComposeDslActionEvent(
+      phase: phase,
+      renderResult: null,
+      actionResult: null,
+      errorText: null,
+    );
+  }
 }
 
 class _ComposeDslRenderResult {

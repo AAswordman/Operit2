@@ -4,6 +4,12 @@ use crate::core::application::OperitApplicationContext::{
 };
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+use crate::data::backup::Operit1SnapshotImportManager::{
+    observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
+    Operit1ModelConfigImportResult, Operit1ModelConfigSnapshotPreview,
+    Operit1SnapshotImportManager, Operit1SnapshotImportProgress, Operit1SnapshotImportResult,
+    Operit1SnapshotPreview,
+};
 use crate::data::backup::RawSnapshotBackupManager::{
     RawSnapshotBackupManager, RawSnapshotManifest,
 };
@@ -21,6 +27,7 @@ use operit_host_api::HostRuntimeEventRegistration;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
+use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
 };
@@ -28,6 +35,7 @@ use operit_store::RuntimeStorePaths::{setDefaultRuntimeStoreRoot, RuntimeStorePa
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
+use std::fs;
 use std::sync::{Mutex, OnceLock};
 
 use crate::util::AppLogger::AppLogger;
@@ -297,6 +305,85 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn inspectRawSnapshot(&self, bytes: Vec<u8>) -> Result<RawSnapshotManifest, String> {
         RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).inspectSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn inspectOperit1ModelConfigSnapshot(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<Operit1ModelConfigSnapshotPreview, String> {
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .inspectModelConfigSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn inspectOperit1Snapshot(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<Operit1SnapshotPreview, String> {
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .inspectSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn inspectOperit1SnapshotFile(
+        &self,
+        path: String,
+    ) -> Result<Operit1SnapshotPreview, String> {
+        let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .inspectSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importOperit1ModelConfigSnapshot(
+        &self,
+        bytes: Vec<u8>,
+        configId: String,
+        modelId: String,
+    ) -> Result<Operit1ModelConfigImportResult, String> {
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .importModelConfigSnapshot(bytes, configId, modelId)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importOperit1Snapshot(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<Operit1SnapshotImportResult, String> {
+        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
+            stage: "parse".to_string(),
+            title: "解析快照".to_string(),
+            detail: "正在读取 Operit1 快照内容。".to_string(),
+            progress: 0.04,
+            active: true,
+        });
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .importSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn importOperit1SnapshotFile(
+        &self,
+        path: String,
+    ) -> Result<Operit1SnapshotImportResult, String> {
+        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
+            stage: "read_file".to_string(),
+            title: "读取快照文件".to_string(),
+            detail: "正在从所选路径读取快照。".to_string(),
+            progress: 0.02,
+            active: true,
+        });
+        let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+            .importSnapshot(bytes)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn operit1SnapshotImportProgressFlow(
+        &self,
+    ) -> StateFlow<Operit1SnapshotImportProgress> {
+        observeOperit1SnapshotImportProgress()
     }
 
     #[allow(non_snake_case)]

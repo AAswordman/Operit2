@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
@@ -47,6 +47,7 @@ impl MistralProvider {
             .get_mut("messages")
             .and_then(Value::as_array_mut)
         {
+            let mut next_tool_call_ordinal = 0usize;
             for message in messages {
                 if message.get("role").and_then(Value::as_str) != Some("assistant") {
                     continue;
@@ -54,23 +55,11 @@ impl MistralProvider {
                 if let Some(tool_calls) =
                     message.get_mut("tool_calls").and_then(Value::as_array_mut)
                 {
-                    for (index, tool_call) in tool_calls.iter_mut().enumerate() {
-                        let name = tool_call
-                            .pointer("/function/name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        let arguments = tool_call
-                            .pointer("/function/arguments")
-                            .and_then(Value::as_str)
-                            .unwrap_or("{}");
-                        let params =
-                            serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| json!({}));
+                    for tool_call in tool_calls.iter_mut() {
+                        let call_id = generate_mistral_tool_call_id(next_tool_call_ordinal);
+                        next_tool_call_ordinal += 1;
                         if let Some(object) = tool_call.as_object_mut() {
-                            object.insert(
-                                "id".to_string(),
-                                json!(generate_mistral_tool_call_id(&name, &params, index)),
-                            );
+                            object.insert("id".to_string(), json!(call_id));
                         }
                     }
                 }
@@ -121,8 +110,8 @@ impl AIService for MistralProvider {
     }
 }
 
-fn generate_mistral_tool_call_id(tool_name: &str, params: &Value, index: usize) -> String {
-    let raw = format!("{tool_name}:{params}:{index}");
+fn generate_mistral_tool_call_id(ordinal: usize) -> String {
+    let raw = format!("tool_call:{ordinal}");
     let mut hash: i32 = 0;
     for unit in raw.encode_utf16() {
         hash = hash.wrapping_mul(31).wrapping_add(unit as i32);

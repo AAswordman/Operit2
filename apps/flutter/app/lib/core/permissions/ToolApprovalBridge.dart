@@ -50,6 +50,8 @@ class ToolApprovalBridge {
             systemCaptureScreenshot: null,
             systemRecognizeText: null,
             audioPlay: null,
+            musicPlayback: null,
+            bluetooth: null,
             ttsSynthesis: null,
             ttsPlayback: null,
             toolPermission: RuntimeHostInteractionToolPermissionResponse(

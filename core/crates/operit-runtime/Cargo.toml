@@ -27,9 +27,10 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true
+rusqlite.workspace = true
+lmdb.workspace = true
 
 [dev-dependencies]
-rusqlite.workspace = true
 
 [build-dependencies]
 serde.workspace = true

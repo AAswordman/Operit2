@@ -274,6 +274,7 @@ impl StructuredToolCallBridge {
         let mut queuedToolCalls = Vec::new();
         let mut queuedToolCallIds = Vec::new();
         let mut openToolCallIds = Vec::new();
+        let mut nextToolCallOrdinal = 0usize;
 
         fn appendQueuedAssistantToolText(queuedAssistantToolText: &mut Option<String>, text: &str) {
             if text.trim().is_empty() {
@@ -289,17 +290,20 @@ impl StructuredToolCallBridge {
             queuedAssistantToolText: &mut Option<String>,
             queuedToolCalls: &mut Vec<Value>,
             queuedToolCallIds: &mut Vec<String>,
+            nextToolCallOrdinal: &mut usize,
             textContent: &str,
             toolCalls: &[Value],
         ) {
             appendQueuedAssistantToolText(queuedAssistantToolText, textContent);
             for toolCall in toolCalls {
-                queuedToolCalls.push(toolCall.clone());
-                if let Some(callId) = toolCall.get("id").and_then(Value::as_str).map(str::trim) {
-                    if !callId.is_empty() {
-                        queuedToolCallIds.push(callId.to_string());
-                    }
+                let callId = StructuredToolCallBridge::generatedToolCallId(*nextToolCallOrdinal);
+                *nextToolCallOrdinal += 1;
+                let mut clonedToolCall = toolCall.clone();
+                if let Some(object) = clonedToolCall.as_object_mut() {
+                    object.insert("id".to_string(), json!(callId.clone()));
                 }
+                queuedToolCalls.push(clonedToolCall);
+                queuedToolCallIds.push(callId);
             }
         }
 
@@ -402,6 +406,7 @@ impl StructuredToolCallBridge {
                                 &mut queuedAssistantToolText,
                                 &mut queuedToolCalls,
                                 &mut queuedToolCallIds,
+                                &mut nextToolCallOrdinal,
                                 &textContent,
                                 &toolCalls,
                             );
@@ -890,6 +895,35 @@ impl StructuredToolCallBridge {
         } else {
             output
         }
+    }
+
+    fn generatedToolCallId(ordinal: usize) -> String {
+        Self::sanitizeShortToolCallId(&format!(
+            "{}_{}",
+            Self::stableIdHashPart(&format!("tool_call:{ordinal}")),
+            ordinal
+        ))
+    }
+
+    fn sanitizeShortToolCallId(raw: &str) -> String {
+        let cleaned = raw
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .collect::<String>();
+        if cleaned.is_empty() {
+            return "call00000".to_string();
+        }
+        if cleaned.len() == 9 {
+            return cleaned;
+        }
+        if cleaned.len() > 9 {
+            return cleaned[cleaned.len() - 9..].to_string();
+        }
+        let filler = Self::stableIdHashPart(raw);
+        format!("{cleaned}{filler}000000000")
+            .chars()
+            .take(9)
+            .collect()
     }
 
     fn stableIdHashPart(raw: &str) -> String {

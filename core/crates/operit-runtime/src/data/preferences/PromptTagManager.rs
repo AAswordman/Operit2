@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;

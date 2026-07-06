@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod bluetooth;
 pub mod browser;
 pub mod fs;
 pub mod http;

@@ -260,6 +260,8 @@ async fn handle_remote_tool_permission_interaction(
                 systemCaptureScreenshot: None,
                 systemRecognizeText: None,
                 audioPlay: None,
+                musicPlayback: None,
+                bluetooth: None,
                 ttsSynthesis: None,
                 ttsPlayback: None,
                 toolPermission: Some(RuntimeHostInteractionToolPermissionResponse {

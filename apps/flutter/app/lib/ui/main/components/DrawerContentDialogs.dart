@@ -60,7 +60,7 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
 class RenameConversationDialog extends StatefulWidget {
   const RenameConversationDialog({super.key, required this.history});
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
 
   @override
   State<RenameConversationDialog> createState() =>
@@ -107,7 +107,7 @@ class _RenameConversationDialogState extends State<RenameConversationDialog> {
 class DeleteConversationDialog extends StatelessWidget {
   const DeleteConversationDialog({super.key, required this.history});
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
 
   @override
   Widget build(BuildContext context) {
@@ -141,7 +141,7 @@ class ConversationActionDialog extends StatelessWidget {
     required this.canMoveDown,
   });
 
-  final core_proxy.ChatHistory history;
+  final core_proxy.ChatHistoryListItem history;
   final bool canOpenInWindow;
   final bool canMoveUp;
   final bool canMoveDown;

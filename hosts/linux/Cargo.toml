@@ -24,4 +24,5 @@ uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 zbus = { version = "4", features = ["blocking"] }

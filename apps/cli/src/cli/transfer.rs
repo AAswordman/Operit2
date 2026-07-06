@@ -88,6 +88,7 @@ pub(super) async fn run_import_command(core: &mut CliCore, args: &[String]) -> R
             Ok(())
         }
         "snapshot" => import_snapshot(core, args.get(1)).await,
+        "operit1-snapshot" => import_operit1_snapshot(core, args.get(1)).await,
         _ => {
             print_import_usage();
             Ok(())
@@ -121,6 +122,67 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             }
             Ok(())
         }
+        "inspect-operit1-snapshot" => {
+            let path = args.get(1).ok_or_else(|| {
+                "usage: operit2 backup inspect-operit1-snapshot <snapshot-zip-path>"
+                    .to_string()
+            })?;
+            let bytes = fs::read(path).map_err(|error| error.to_string())?;
+            let preview = core
+                .application()
+                .inspectOperit1Snapshot(bytes)
+                .await
+                .map_err(|error| error.to_string())?;
+            println!("formatVersion={}", preview.formatVersion);
+            println!("packageName={}", preview.packageName);
+            println!("createdAt={}", preview.createdAt);
+            println!("chatCount={}", preview.chatCount);
+            println!("messageCount={}", preview.messageCount);
+            println!("problemRecordCount={}", preview.problemRecordCount);
+            println!("datastoreFileCount={}", preview.datastoreFiles.len());
+            println!("importedFileCount={}", preview.importedFileCount);
+            println!("importedExternalFileCount={}", preview.importedExternalFileCount);
+            println!("detectedDomains={}", preview.detectedDomains.join(","));
+            println!(
+                "chatConfigId={}",
+                preview.modelConfig.chatConfigId.unwrap_or_default()
+            );
+            println!(
+                "chatModelId={}",
+                preview.modelConfig.chatModelId.unwrap_or_default()
+            );
+            println!(
+                "chatModelIndex={}",
+                preview.modelConfig
+                    .chatModelIndex
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            );
+            println!("configCount={}", preview.modelConfig.configs.len());
+            for config in preview.modelConfig.configs {
+                println!("configId={}", config.configId);
+                println!("  name={}", config.name);
+                println!("  providerTypeId={}", config.providerTypeId);
+                println!("  providerDisplayName={}", config.providerDisplayName);
+                println!("  endpoint={}", config.endpoint);
+                println!(
+                    "  selectedModelId={}",
+                    config.selectedModelId.unwrap_or_default()
+                );
+                println!(
+                    "  selectedModelIndex={}",
+                    config
+                        .selectedModelIndex
+                        .map(|value| value.to_string())
+                        .unwrap_or_default()
+                );
+                println!("  modelIds={}", config.modelIds.join(","));
+            }
+            for datastoreFile in preview.datastoreFiles {
+                println!("datastore={}:{}", datastoreFile.fileName, datastoreFile.keyCount);
+            }
+            Ok(())
+        }
         _ => {
             print_backup_usage();
             Ok(())
@@ -149,6 +211,43 @@ async fn import_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
         .await
         .map_err(|error| error.to_string())?;
     println!("imported={}", Path::new(path).display());
+    Ok(())
+}
+
+async fn import_operit1_snapshot(
+    core: &mut CliCore,
+    path: Option<&String>,
+) -> Result<(), String> {
+    let path = path
+        .ok_or_else(|| "usage: operit2 import operit1-snapshot <snapshot-zip-path>".to_string())?;
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let result = core
+        .application()
+        .importOperit1Snapshot(bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    println!("providerId={}", result.modelConfig.providerId);
+    println!("providerTypeId={}", result.modelConfig.providerTypeId);
+    println!("providerName={}", result.modelConfig.providerName);
+    println!("modelId={}", result.modelConfig.modelId);
+    println!("importedModelCount={}", result.modelConfig.importedModelCount);
+    println!("chatBindingUpdated={}", result.modelConfig.chatBindingUpdated);
+    println!("importedDatastoreFiles={}", result.importedDatastoreFiles);
+    println!("importedDatastoreKeys={}", result.importedDatastoreKeys);
+    println!("importedChats={}", result.importedChats);
+    println!("importedMessages={}", result.importedMessages);
+    println!("importedMemories={}", result.importedMemories);
+    println!("importedMemoryLinks={}", result.importedMemoryLinks);
+    println!("importedFiles={}", result.importedFiles);
+    println!("importedExternalFiles={}", result.importedExternalFiles);
+    println!("importedWorkspaces={}", result.importedWorkspaces);
+    println!(
+        "importedWorkspaceFiles={}",
+        result.importedWorkspaceFiles
+    );
+    if !result.modelConfig.skippedFields.is_empty() {
+        println!("skippedFields={}", result.modelConfig.skippedFields.join(","));
+    }
     Ok(())
 }
 
@@ -207,10 +306,12 @@ fn print_import_usage() {
     println!("operit2 cli import memory <path> <SKIP|UPDATE|CREATE_NEW> <owner-key>");
     println!("operit2 cli import chat <path>");
     println!("operit2 cli import snapshot <path>");
+    println!("operit2 cli import operit1-snapshot <snapshot-zip-path>");
 }
 
 fn print_backup_usage() {
     println!("operit2 cli backup create <snapshot-zip-path>");
     println!("operit2 cli backup restore <snapshot-zip-path>");
     println!("operit2 cli backup inspect <snapshot-zip-path>");
+    println!("operit2 cli backup inspect-operit1-snapshot <snapshot-zip-path>");
 }

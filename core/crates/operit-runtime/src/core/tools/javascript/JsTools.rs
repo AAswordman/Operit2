@@ -422,31 +422,158 @@ pub fn getJsToolsDefinition() -> &'static str {
                 getLocation: function(highAccuracy, timeout) {
                     return toolCall("get_device_location", { high_accuracy: !!highAccuracy, timeout: parseInt(timeout === undefined ? 10 : timeout) });
                 },
-                intent: function(options) {
-                    var source = options || {};
-                    var params = {};
-                    if (source.action !== undefined && source.action !== null) params.action = String(source.action);
-                    if (source.uri !== undefined && source.uri !== null) params.uri = String(source.uri);
-                    if (source.package !== undefined && source.package !== null) params.package = String(source.package);
-                    if (source.component !== undefined && source.component !== null) params.component = String(source.component);
-                    if (source.flags !== undefined && source.flags !== null) params.flags = String(source.flags);
-                    if (source.extras !== undefined && source.extras !== null) params.extras = typeof source.extras === 'string' ? source.extras : JSON.stringify(source.extras);
-                    if (source.type !== undefined && source.type !== null) params.type = String(source.type);
-                    return toolCall("execute_intent", params);
+                music: {
+                    play: function(options) {
+                        options = options || {};
+                        var params = {
+                            source: String(options.source || ""),
+                            source_type: String(options.sourceType || options.source_type || "")
+                        };
+                        if (options.title !== undefined && options.title !== null) params.title = String(options.title);
+                        if (options.artist !== undefined && options.artist !== null) params.artist = String(options.artist);
+                        if (options.loop !== undefined) params.loop = !!options.loop;
+                        if (options.volume !== undefined && options.volume !== null) params.volume = String(options.volume);
+                        if (options.startPositionMs !== undefined && options.startPositionMs !== null) params.start_position_ms = String(options.startPositionMs);
+                        if (options.start_position_ms !== undefined && options.start_position_ms !== null) params.start_position_ms = String(options.start_position_ms);
+                        return toolCall("music_play", params);
+                    },
+                    pause: function() { return toolCall("music_pause", {}); },
+                    resume: function() { return toolCall("music_resume", {}); },
+                    stop: function() { return toolCall("music_stop", {}); },
+                    seek: function(positionMs) { return toolCall("music_seek", { position_ms: String(positionMs) }); },
+                    setVolume: function(volume) { return toolCall("music_set_volume", { volume: String(volume) }); },
+                    status: function() { return toolCall("music_status", {}); }
                 },
-                sendBroadcast: function(options) {
-                    var source = options || {};
-                    var params = {};
-                    if (source.action !== undefined && source.action !== null) params.action = String(source.action);
-                    if (source.uri !== undefined && source.uri !== null) params.uri = String(source.uri);
-                    if (source.package !== undefined && source.package !== null) params.package = String(source.package);
-                    if (source.component !== undefined && source.component !== null) params.component = String(source.component);
-                    if (source.extras !== undefined && source.extras !== null) params.extras = typeof source.extras === 'string' ? source.extras : JSON.stringify(source.extras);
-                    if (source.extra_key !== undefined && source.extra_key !== null) params.extra_key = String(source.extra_key);
-                    if (source.extra_value !== undefined && source.extra_value !== null) params.extra_value = String(source.extra_value);
-                    if (source.extra_key2 !== undefined && source.extra_key2 !== null) params.extra_key2 = String(source.extra_key2);
-                    if (source.extra_value2 !== undefined && source.extra_value2 !== null) params.extra_value2 = String(source.extra_value2);
-                    return toolCall("send_broadcast", params);
+                bluetooth: {
+                    requestPermission: function() { return toolCall("request_bluetooth_permission", {}); },
+                    getState: function() { return toolCall("get_bluetooth_state", {}); },
+                    requestEnable: function() { return toolCall("request_enable_bluetooth", {}); },
+                    listBondedDevices: function() { return toolCall("list_bluetooth_bonded_devices", {}); },
+                    scan: function(options) {
+                        options = options || {};
+                        var params = {};
+                        if (options.durationMs !== undefined && options.durationMs !== null) params.duration_ms = String(options.durationMs);
+                        if (options.duration_ms !== undefined && options.duration_ms !== null) params.duration_ms = String(options.duration_ms);
+                        if (options.includeBle !== undefined) params.include_ble = !!options.includeBle;
+                        if (options.include_ble !== undefined) params.include_ble = !!options.include_ble;
+                        return toolCall("scan_bluetooth_devices", params);
+                    },
+                    connect: function(options) {
+                        options = options || {};
+                        var params = { address: String(options.address || "") };
+                        if (options.uuid !== undefined && options.uuid !== null) params.uuid = String(options.uuid);
+                        return toolCall("bluetooth_connect", params);
+                    },
+                    listen: function(options) {
+                        options = options || {};
+                        var params = {};
+                        if (options.name !== undefined && options.name !== null) params.name = String(options.name);
+                        if (options.uuid !== undefined && options.uuid !== null) params.uuid = String(options.uuid);
+                        return toolCall("bluetooth_listen", params);
+                    },
+                    accept: function(listenerSessionId, timeoutMs) {
+                        var params = { listener_session_id: String(listenerSessionId || "") };
+                        if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
+                        return toolCall("bluetooth_accept", params);
+                    },
+                    send: function(sessionId, options) {
+                        options = options || {};
+                        var params = { session_id: String(sessionId || "") };
+                        if (options.text !== undefined && options.text !== null) params.text = String(options.text);
+                        if (options.dataBase64 !== undefined && options.dataBase64 !== null) params.data_base64 = String(options.dataBase64);
+                        if (options.data_base64 !== undefined && options.data_base64 !== null) params.data_base64 = String(options.data_base64);
+                        return toolCall("bluetooth_send", params);
+                    },
+                    read: function(sessionId, options) {
+                        options = options || {};
+                        var params = { session_id: String(sessionId || "") };
+                        if (options.maxBytes !== undefined && options.maxBytes !== null) params.max_bytes = String(options.maxBytes);
+                        if (options.max_bytes !== undefined && options.max_bytes !== null) params.max_bytes = String(options.max_bytes);
+                        if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
+                        if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                        return toolCall("bluetooth_read", params);
+                    },
+                    sendAndRead: function(sessionId, options) {
+                        options = options || {};
+                        var params = { session_id: String(sessionId || "") };
+                        if (options.text !== undefined && options.text !== null) params.text = String(options.text);
+                        if (options.dataBase64 !== undefined && options.dataBase64 !== null) params.data_base64 = String(options.dataBase64);
+                        if (options.data_base64 !== undefined && options.data_base64 !== null) params.data_base64 = String(options.data_base64);
+                        if (options.maxBytes !== undefined && options.maxBytes !== null) params.max_bytes = String(options.maxBytes);
+                        if (options.max_bytes !== undefined && options.max_bytes !== null) params.max_bytes = String(options.max_bytes);
+                        if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
+                        if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                        return toolCall("bluetooth_send_and_read", params);
+                    },
+                    close: function(sessionId) { return toolCall("bluetooth_close", { session_id: String(sessionId || "") }); },
+                    ble: {
+                        connect: function(options) {
+                            options = options || {};
+                            var params = { address: String(options.address || "") };
+                            if (options.autoConnect !== undefined) params.auto_connect = !!options.autoConnect;
+                            if (options.auto_connect !== undefined) params.auto_connect = !!options.auto_connect;
+                            return toolCall("bluetooth_ble_connect", params);
+                        },
+                        discoverServices: function(sessionId, timeoutMs) {
+                            var params = { session_id: String(sessionId || "") };
+                            if (timeoutMs !== undefined && timeoutMs !== null) params.timeout_ms = String(timeoutMs);
+                            return toolCall("bluetooth_ble_discover_services", params);
+                        },
+                        readCharacteristic: function(sessionId, options) {
+                            options = options || {};
+                            var params = {
+                                session_id: String(sessionId || ""),
+                                service_uuid: String(options.serviceUuid || options.service_uuid || ""),
+                                characteristic_uuid: String(options.characteristicUuid || options.characteristic_uuid || "")
+                            };
+                            if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
+                            if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                            return toolCall("bluetooth_ble_read_characteristic", params);
+                        },
+                        writeCharacteristic: function(sessionId, options) {
+                            options = options || {};
+                            var params = {
+                                session_id: String(sessionId || ""),
+                                service_uuid: String(options.serviceUuid || options.service_uuid || ""),
+                                characteristic_uuid: String(options.characteristicUuid || options.characteristic_uuid || "")
+                            };
+                            if (options.text !== undefined && options.text !== null) params.text = String(options.text);
+                            if (options.dataBase64 !== undefined && options.dataBase64 !== null) params.data_base64 = String(options.dataBase64);
+                            if (options.data_base64 !== undefined && options.data_base64 !== null) params.data_base64 = String(options.data_base64);
+                            return toolCall("bluetooth_ble_write_characteristic", params);
+                        },
+                        writeAndReadCharacteristic: function(sessionId, options) {
+                            options = options || {};
+                            var params = {
+                                session_id: String(sessionId || ""),
+                                write_service_uuid: String(options.writeServiceUuid || options.write_service_uuid || ""),
+                                write_characteristic_uuid: String(options.writeCharacteristicUuid || options.write_characteristic_uuid || ""),
+                                read_service_uuid: String(options.readServiceUuid || options.read_service_uuid || ""),
+                                read_characteristic_uuid: String(options.readCharacteristicUuid || options.read_characteristic_uuid || "")
+                            };
+                            if (options.text !== undefined && options.text !== null) params.text = String(options.text);
+                            if (options.dataBase64 !== undefined && options.dataBase64 !== null) params.data_base64 = String(options.dataBase64);
+                            if (options.data_base64 !== undefined && options.data_base64 !== null) params.data_base64 = String(options.data_base64);
+                            if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
+                            if (options.timeout_ms !== undefined && options.timeout_ms !== null) params.timeout_ms = String(options.timeout_ms);
+                            return toolCall("bluetooth_ble_write_and_read_characteristic", params);
+                        },
+                        subscribe: function(sessionId, options) {
+                            options = options || {};
+                            var params = {
+                                session_id: String(sessionId || ""),
+                                service_uuid: String(options.serviceUuid || options.service_uuid || ""),
+                                characteristic_uuid: String(options.characteristicUuid || options.characteristic_uuid || "")
+                            };
+                            if (options.enable !== undefined) params.enable = !!options.enable;
+                            return toolCall("bluetooth_ble_subscribe_characteristic", params);
+                        },
+                        readNotifications: function(sessionId, limit) {
+                            var params = { session_id: String(sessionId || "") };
+                            if (limit !== undefined && limit !== null) params.limit = String(limit);
+                            return toolCall("bluetooth_ble_read_notifications", params);
+                        }
+                    }
                 },
                 terminal: {
                     info: function() { return toolCall("get_terminal_info", {}); },

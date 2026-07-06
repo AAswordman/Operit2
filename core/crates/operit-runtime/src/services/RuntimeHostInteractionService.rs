@@ -29,6 +29,10 @@ pub enum RuntimeHostInteractionKind {
     SystemRecognizeText,
     #[serde(rename = "audio_play")]
     AudioPlay,
+    #[serde(rename = "music_playback")]
+    MusicPlayback,
+    #[serde(rename = "bluetooth")]
+    Bluetooth,
     #[serde(rename = "tts_synthesis")]
     TtsSynthesis,
     #[serde(rename = "tts_playback")]
@@ -47,6 +51,8 @@ pub struct RuntimeHostInteractionRequest {
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
+    pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackPayload>,
+    pub bluetooth: Option<RuntimeHostInteractionBluetoothPayload>,
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
@@ -72,166 +78,88 @@ struct RuntimeHostInteractionPending {
 
 impl RuntimeHostInteractionRequest {
     fn browserAutomation(payload: RuntimeHostInteractionBrowserAutomationPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::BrowserAutomation,
-            Some(payload),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::BrowserAutomation);
+        request.browserAutomation = Some(payload);
+        request
     }
 
     fn webVisit(payload: RuntimeHostInteractionWebVisitPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::WebVisit,
-            None,
-            Some(payload),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::WebVisit);
+        request.webVisit = Some(payload);
+        request
     }
 
     fn composeWebViewController(
         payload: RuntimeHostInteractionComposeWebViewControllerPayload,
     ) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::ComposeWebViewController,
-            None,
-            None,
-            Some(payload),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::ComposeWebViewController);
+        request.composeWebViewController = Some(payload);
+        request
     }
 
     fn systemCaptureScreenshot() -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::SystemCaptureScreenshot,
-            None,
-            None,
-            None,
-            Some(RuntimeHostInteractionSystemCaptureScreenshotPayload {}),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::SystemCaptureScreenshot);
+        request.systemCaptureScreenshot = Some(RuntimeHostInteractionSystemCaptureScreenshotPayload {});
+        request
     }
 
     fn systemRecognizeText(payload: RuntimeHostInteractionSystemRecognizeTextPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::SystemRecognizeText,
-            None,
-            None,
-            None,
-            None,
-            Some(payload),
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::SystemRecognizeText);
+        request.systemRecognizeText = Some(payload);
+        request
     }
 
     fn audioPlay(payload: RuntimeHostInteractionAudioPlayPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::AudioPlay,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(payload),
-            None,
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::AudioPlay);
+        request.audioPlay = Some(payload);
+        request
+    }
+
+    fn musicPlayback(payload: RuntimeHostInteractionMusicPlaybackPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::MusicPlayback);
+        request.musicPlayback = Some(payload);
+        request
+    }
+
+    fn bluetooth(payload: RuntimeHostInteractionBluetoothPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::Bluetooth);
+        request.bluetooth = Some(payload);
+        request
     }
 
     fn ttsSynthesis(payload: RuntimeHostInteractionTtsSynthesisPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::TtsSynthesis,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(payload),
-            None,
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::TtsSynthesis);
+        request.ttsSynthesis = Some(payload);
+        request
     }
 
     fn ttsPlayback(payload: RuntimeHostInteractionTtsPlaybackPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::TtsPlayback,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(payload),
-            None,
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::TtsPlayback);
+        request.ttsPlayback = Some(payload);
+        request
     }
 
     fn toolPermission(payload: RuntimeHostInteractionToolPermissionPayload) -> Self {
-        Self::withPayload(
-            RuntimeHostInteractionKind::ToolPermission,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(payload),
-        )
+        let mut request = Self::empty(RuntimeHostInteractionKind::ToolPermission);
+        request.toolPermission = Some(payload);
+        request
     }
 
-    fn withPayload(
-        kind: RuntimeHostInteractionKind,
-        browserAutomation: Option<RuntimeHostInteractionBrowserAutomationPayload>,
-        webVisit: Option<RuntimeHostInteractionWebVisitPayload>,
-        composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
-        systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
-        systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
-        audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
-        ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
-        ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
-        toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
-    ) -> Self {
+    fn empty(kind: RuntimeHostInteractionKind) -> Self {
         Self {
             requestId: Uuid::new_v4().to_string(),
             kind,
-            browserAutomation,
-            webVisit,
-            composeWebViewController,
-            systemCaptureScreenshot,
-            systemRecognizeText,
-            audioPlay,
-            ttsSynthesis,
-            ttsPlayback,
-            toolPermission,
+            browserAutomation: None,
+            webVisit: None,
+            composeWebViewController: None,
+            systemCaptureScreenshot: None,
+            systemRecognizeText: None,
+            audioPlay: None,
+            musicPlayback: None,
+            bluetooth: None,
+            ttsSynthesis: None,
+            ttsPlayback: None,
+            toolPermission: None,
         }
     }
 }
@@ -281,6 +209,44 @@ pub struct RuntimeHostInteractionAudioPlayPayload {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionMusicPlaybackPayload {
+    pub command: String,
+    pub source: Option<String>,
+    pub sourceType: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub loopPlayback: bool,
+    pub volume: f64,
+    pub positionMs: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionMusicPlaybackResponse {
+    pub state: String,
+    pub source: Option<String>,
+    pub sourceType: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub durationMs: Option<i64>,
+    pub positionMs: i64,
+    pub bufferedPositionMs: i64,
+    pub volume: f64,
+    pub loopPlayback: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionBluetoothPayload {
+    pub command: String,
+    pub paramsJson: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeHostInteractionBluetoothResponse {
+    pub resultJson: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeHostInteractionTtsSynthesisPayload {
     pub text: String,
     pub voice: String,
@@ -327,6 +293,8 @@ pub struct RuntimeHostInteractionResponse {
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
+    pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackResponse>,
+    pub bluetooth: Option<RuntimeHostInteractionBluetoothResponse>,
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackResponse>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
@@ -334,158 +302,90 @@ pub struct RuntimeHostInteractionResponse {
 
 impl RuntimeHostInteractionResponse {
     pub fn browserAutomation(response: RuntimeHostInteractionBrowserAutomationResponse) -> Self {
-        Self::withResponse(
-            Some(response),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.browserAutomation = Some(response);
+        value
     }
 
     pub fn webVisit(response: RuntimeHostInteractionWebVisitResponse) -> Self {
-        Self::withResponse(
-            None,
-            Some(response),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.webVisit = Some(response);
+        value
     }
 
     pub fn composeWebViewController(
         response: RuntimeHostInteractionComposeWebViewControllerResponse,
     ) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.composeWebViewController = Some(response);
+        value
     }
 
     pub fn systemCaptureScreenshot(
         response: RuntimeHostInteractionSystemCaptureScreenshotResponse,
     ) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.systemCaptureScreenshot = Some(response);
+        value
     }
 
     pub fn systemRecognizeText(
         response: RuntimeHostInteractionSystemRecognizeTextResponse,
     ) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.systemRecognizeText = Some(response);
+        value
     }
 
     pub fn audioPlay(response: RuntimeHostInteractionAudioPlayResponse) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.audioPlay = Some(response);
+        value
+    }
+
+    pub fn musicPlayback(response: RuntimeHostInteractionMusicPlaybackResponse) -> Self {
+        let mut value = Self::empty();
+        value.musicPlayback = Some(response);
+        value
+    }
+
+    pub fn bluetooth(response: RuntimeHostInteractionBluetoothResponse) -> Self {
+        let mut value = Self::empty();
+        value.bluetooth = Some(response);
+        value
     }
 
     pub fn ttsSynthesis(response: RuntimeHostInteractionTtsSynthesisResponse) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-        )
+        let mut value = Self::empty();
+        value.ttsSynthesis = Some(response);
+        value
     }
 
     pub fn ttsPlayback(response: RuntimeHostInteractionTtsPlaybackResponse) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(response),
-            None,
-        )
+        let mut value = Self::empty();
+        value.ttsPlayback = Some(response);
+        value
     }
 
     pub fn toolPermission(response: RuntimeHostInteractionToolPermissionResponse) -> Self {
-        Self::withResponse(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(response),
-        )
+        let mut value = Self::empty();
+        value.toolPermission = Some(response);
+        value
     }
 
-    fn withResponse(
-        browserAutomation: Option<RuntimeHostInteractionBrowserAutomationResponse>,
-        webVisit: Option<RuntimeHostInteractionWebVisitResponse>,
-        composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
-        systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
-        systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
-        audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
-        ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
-        ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackResponse>,
-        toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
-    ) -> Self {
+    fn empty() -> Self {
         Self {
-            browserAutomation,
-            webVisit,
-            composeWebViewController,
-            systemCaptureScreenshot,
-            systemRecognizeText,
-            audioPlay,
-            ttsSynthesis,
-            ttsPlayback,
-            toolPermission,
+            browserAutomation: None,
+            webVisit: None,
+            composeWebViewController: None,
+            systemCaptureScreenshot: None,
+            systemRecognizeText: None,
+            audioPlay: None,
+            musicPlayback: None,
+            bluetooth: None,
+            ttsSynthesis: None,
+            ttsPlayback: None,
+            toolPermission: None,
         }
     }
 }
@@ -741,6 +641,34 @@ pub fn requestOwnerAudioPlay(
     response
         .audioPlay
         .ok_or_else(|| "audio play response payload is missing".to_string())
+}
+
+pub fn requestOwnerMusicPlayback(
+    payload: RuntimeHostInteractionMusicPlaybackPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionMusicPlaybackResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::musicPlayback(payload),
+        timeout,
+    )?;
+    response
+        .musicPlayback
+        .ok_or_else(|| "music playback response payload is missing".to_string())
+}
+
+pub fn requestOwnerBluetooth(
+    payload: RuntimeHostInteractionBluetoothPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionBluetoothResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::bluetooth(payload),
+        timeout,
+    )?;
+    response
+        .bluetooth
+        .ok_or_else(|| "bluetooth response payload is missing".to_string())
 }
 
 pub fn requestOwnerTtsSynthesis(

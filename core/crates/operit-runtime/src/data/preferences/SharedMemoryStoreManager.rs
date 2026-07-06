@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
@@ -74,18 +74,35 @@ impl SharedMemoryStoreManager {
             return Err("shared memory store name is empty".to_string());
         }
         let id = Uuid::new_v4().to_string();
+        self.createSharedMemoryStoreWithId(id, trimmedName.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn createSharedMemoryStoreWithId(
+        &self,
+        id: String,
+        name: String,
+    ) -> Result<SharedMemoryStore, String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("shared memory store id is empty".to_string());
+        }
+        let trimmedName = name.trim();
+        if trimmedName.is_empty() {
+            return Err("shared memory store name is empty".to_string());
+        }
         let now = currentTimeMillis();
         let store = SharedMemoryStore {
-            id: id.clone(),
+            id: id.to_string(),
             name: trimmedName.to_string(),
             createdAt: now,
             updatedAt: now,
         };
         self.dataStore
             .try_edit_result(|preferences| {
-                assertStoreNameUnique(preferences, trimmedName, None)?;
+                assertStoreNameUnique(preferences, trimmedName, Some(id))?;
                 let mut list = readStoreList(preferences);
-                list.push(id.clone());
+                list.push(id.to_string());
                 list.sort();
                 list.dedup();
                 writeStoreList(preferences, &list);

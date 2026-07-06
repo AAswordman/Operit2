@@ -78,7 +78,6 @@ import {
     ModelConfigConnectionTestItemResultData as _ModelConfigConnectionTestItemResultData,
     ModelConfigConnectionTestResultData as _ModelConfigConnectionTestResultData
 } from './results';
-import { Intent as AndroidIntent, IntentFlag as AndroidIntentFlag, IntentAction as AndroidIntentAction, IntentCategory as AndroidIntentCategory } from './android';
 import { UINode as UINodeClass, UI as UINamespace } from './ui';
 import { Android as AndroidClass } from './android';
 import type {
@@ -139,10 +138,6 @@ export { Memory } from './memory';
 
 // Export Android utilities
 export {
-    IntentFlag,
-    IntentAction,
-    IntentCategory,
-    Intent,
     PackageManager,
     ContentProvider,
     SystemManager,
@@ -154,10 +149,6 @@ export {
 // Global declarations (these will be available without imports)
 declare global {
     // Make Android classes/constructs available globally
-    const Intent: typeof AndroidIntent;
-    const IntentFlag: typeof AndroidIntentFlag;
-    const IntentAction: typeof AndroidIntentAction;
-    const IntentCategory: typeof AndroidIntentCategory;
     const UINode: typeof UINodeClass;
     const Android: typeof AndroidClass;
     const Icons: MaterialIconsRegistryType;

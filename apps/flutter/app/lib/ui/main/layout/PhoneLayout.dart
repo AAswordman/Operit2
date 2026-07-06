@@ -2,9 +2,11 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 
+import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -17,8 +19,9 @@ class PhoneLayout extends StatefulWidget {
     required this.navigationEntries,
     required this.pluginSidebarEntries,
     required this.selectedRouteId,
+    required this.drawerConversationState,
     required this.drawerWidth,
-    required this.drawerOpen,
+    required this.drawerOpenState,
     required this.enableNavigationAnimation,
     required this.onOpenDrawer,
     required this.onCloseDrawer,
@@ -30,8 +33,9 @@ class PhoneLayout extends StatefulWidget {
   final List<NavigationEntrySpec> navigationEntries;
   final List<NavigationEntrySpec> pluginSidebarEntries;
   final String selectedRouteId;
+  final ValueListenable<DrawerConversationState> drawerConversationState;
   final double drawerWidth;
-  final bool drawerOpen;
+  final ValueListenable<bool> drawerOpenState;
   final bool enableNavigationAnimation;
   final VoidCallback onOpenDrawer;
   final VoidCallback onCloseDrawer;
@@ -58,27 +62,31 @@ class _PhoneLayoutState extends State<PhoneLayout>
     super.initState();
     _drawerProgressController = AnimationController.unbounded(
       vsync: this,
-      value: widget.drawerOpen ? 1.0 : 0.0,
+      value: widget.drawerOpenState.value ? 1.0 : 0.0,
     );
+    widget.drawerOpenState.addListener(_animateDrawerProgress);
   }
 
   @override
   void didUpdateWidget(covariant PhoneLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.drawerOpen != widget.drawerOpen) {
+    if (oldWidget.drawerOpenState != widget.drawerOpenState) {
+      oldWidget.drawerOpenState.removeListener(_animateDrawerProgress);
+      widget.drawerOpenState.addListener(_animateDrawerProgress);
       _animateDrawerProgress();
     }
   }
 
   @override
   void dispose() {
+    widget.drawerOpenState.removeListener(_animateDrawerProgress);
     _drawerProgressController.dispose();
     super.dispose();
   }
 
   void _animateDrawerProgress() {
-    final target = widget.drawerOpen ? 1.0 : 0.0;
-    final dampingRatio = widget.drawerOpen
+    final target = widget.drawerOpenState.value ? 1.0 : 0.0;
+    final dampingRatio = widget.drawerOpenState.value
         ? _lowBouncyDampingRatio
         : _noBouncyDampingRatio;
     final simulation = SpringSimulation(
@@ -102,14 +110,14 @@ class _PhoneLayoutState extends State<PhoneLayout>
   void _handleHorizontalDragUpdate(DragUpdateDetails details) {
     _currentDrag += details.primaryDelta ?? 0;
     _verticalDrag += details.delta.dy;
-    if (!widget.drawerOpen &&
+    if (!widget.drawerOpenState.value &&
         _currentDrag > _dragThreshold &&
         _currentDrag.abs() > _verticalDrag.abs()) {
       _currentDrag = 0;
       _verticalDrag = 0;
       widget.onOpenDrawer();
     }
-    if (widget.drawerOpen && _currentDrag < -_dragThreshold) {
+    if (widget.drawerOpenState.value && _currentDrag < -_dragThreshold) {
       _currentDrag = 0;
       _verticalDrag = 0;
       widget.onCloseDrawer();
@@ -127,13 +135,24 @@ class _PhoneLayoutState extends State<PhoneLayout>
     final animatedChild = _PhoneLayoutAnimatedChild(
       content: RepaintBoundary(child: widget.content),
       drawerContent: RepaintBoundary(
-        child: DrawerContent(
-          navigationEntries: widget.navigationEntries,
-          pluginEntries: widget.pluginSidebarEntries,
-          selectedRouteId: widget.selectedRouteId,
-          appearance: appearance,
-          onNavigationEntrySelected: widget.onNavigationEntrySelected,
-          onConversationActivated: widget.onConversationActivated,
+        child: ValueListenableBuilder<DrawerConversationState>(
+          valueListenable: widget.drawerConversationState,
+          builder: (context, drawerState, _) {
+            return DrawerContent(
+              key: const ValueKey<String>('phoneDrawerContent'),
+              navigationEntries: widget.navigationEntries,
+              pluginEntries: widget.pluginSidebarEntries,
+              selectedRouteId: widget.selectedRouteId,
+              appearance: appearance,
+              histories: drawerState.histories,
+              characterGroupNamesById: drawerState.characterGroupNamesById,
+              currentChatId: drawerState.currentChatId,
+              errorMessage: drawerState.errorMessage,
+              loading: drawerState.loading,
+              onNavigationEntrySelected: widget.onNavigationEntrySelected,
+              onConversationActivated: widget.onConversationActivated,
+            );
+          },
         ),
       ),
     );
@@ -189,7 +208,8 @@ class _PhoneLayoutState extends State<PhoneLayout>
             0.0,
             math.min(drawerContentAlpha, 1.0),
           );
-          final isDrawerOpen = widget.drawerOpen || drawerProgress > 0.001;
+          final isDrawerOpen =
+              widget.drawerOpenState.value || drawerProgress > 0.001;
 
           return Stack(
             children: <Widget>[

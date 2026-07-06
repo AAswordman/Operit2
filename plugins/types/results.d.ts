@@ -574,21 +574,6 @@ export interface ADBResultData {
 }
 
 /**
- * Intent execution result data
- */
-export interface IntentResultData {
-    action: string;
-    uri: string;
-    package_name: string;
-    component: string;
-    flags: number;
-    extras_count: number;
-    result: string;
-    type: 'activity' | 'broadcast' | 'service';
-    toString(): string;
-}
-
-/**
  * Terminal type availability entry
  */
 export interface TerminalTypeInfoData {
@@ -886,10 +871,6 @@ export interface AutomationExecutionResult extends BaseResult {
 
 export interface ADBResult extends BaseResult {
     data: ADBResultData;
-}
-
-export interface IntentResult extends BaseResult {
-    data: IntentResultData;
 }
 
 export interface TerminalCommandResult extends BaseResult {

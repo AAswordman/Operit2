@@ -46,7 +46,14 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   @override
   void initState() {
     super.initState();
-    _terminal = Terminal(maxLines: 10000);
+    _terminal = Terminal(
+      maxLines: 10000,
+      inputHandler: _LatchedTerminalInputHandler(
+        ctrlLatched: () => _ctrlLatched,
+        altLatched: () => _altLatched,
+        releaseLatchedModifiers: _releaseLatchedModifiers,
+      ),
+    );
     _controller = TerminalController();
     _focusNode = FocusNode(debugLabel: 'WorkspaceTerminal');
     _terminal.onOutput = _writeToSession;
@@ -302,14 +309,14 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   }
 
   void _sendTerminalKey(TerminalKey key) {
-    _terminal.keyInput(key, ctrl: _ctrlLatched, alt: _altLatched);
+    _terminal.keyInput(key);
     _releaseLatchedModifiers();
     _focusNode.requestFocus();
   }
 
   void _sendTerminalText(String text, {required TerminalKey modifiedKey}) {
     if (_ctrlLatched || _altLatched) {
-      _terminal.keyInput(modifiedKey, ctrl: _ctrlLatched, alt: _altLatched);
+      _terminal.keyInput(modifiedKey);
     } else {
       _terminal.textInput(text);
     }
@@ -327,6 +334,33 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     });
   }
 
+}
+
+class _LatchedTerminalInputHandler implements TerminalInputHandler {
+  const _LatchedTerminalInputHandler({
+    required this.ctrlLatched,
+    required this.altLatched,
+    required this.releaseLatchedModifiers,
+  });
+
+  final bool Function() ctrlLatched;
+  final bool Function() altLatched;
+  final VoidCallback releaseLatchedModifiers;
+
+  @override
+  String? call(TerminalKeyboardEvent event) {
+    final ctrl = ctrlLatched();
+    final alt = altLatched();
+    final hasLatchedModifiers = ctrl || alt;
+    final effectiveEvent = hasLatchedModifiers
+        ? event.copyWith(ctrl: event.ctrl || ctrl, alt: event.alt || alt)
+        : event;
+    final output = defaultInputHandler(effectiveEvent);
+    if (hasLatchedModifiers && output != null) {
+      releaseLatchedModifiers();
+    }
+    return output;
+  }
 }
 
 class _TerminalShortcutBar extends StatelessWidget {

@@ -40,7 +40,7 @@ class LinkHostServer extends ChangeNotifier {
   Future<String> discoverDevices(int timeoutMs) async {
     final responseText = await _runtimeChannel.invokeMethod<String>(
       'discoverDevices',
-      <String, Object?>{'timeoutMs': timeoutMs.toString()},
+      <String, Object?>{'timeoutMs': timeoutMs},
     );
     return responseText ?? '[]';
   }

@@ -324,6 +324,8 @@ class MarkdownEventNodeBuilder {
     }
     _xmlControllers.clear();
     _xmlMarkdownControllers.clear();
+    xmlNodeStreams.clear();
+    xmlMarkdownEventStreams.clear();
   }
 
   List<MarkdownNodeStable> toStableNodes({required bool isStreaming}) {

@@ -104,50 +104,6 @@ impl ToolPkgLoader {
         )
     }
 
-    #[allow(non_snake_case)]
-    pub fn loadToolPkgFromBuiltInAssetFile<FParseJsPackage>(
-        assetName: &str,
-        file: &Path,
-        jsEngine: &JsEngine,
-        parseJsPackage: FParseJsPackage,
-    ) -> Result<ToolPkgLoadResult, String>
-    where
-        FParseJsPackage: Fn(&str) -> Result<ToolPackage, String>,
-    {
-        let zipFile = fs::File::open(file).map_err(|error| error.to_string())?;
-        let mut archive = zip::ZipArchive::new(zipFile).map_err(|error| error.to_string())?;
-        let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
-        let textResources = Arc::new(readToolPkgTextResources(&mut archive, &entryIndex));
-        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
-            &entryIndex,
-            |entryName| readIndexedTextResource(&textResources, &entryIndex, entryName),
-            ToolPkgSourceType::ASSET,
-            assetName,
-            true,
-            |jsContent, reportPackageLoadError| match parseJsPackage(jsContent) {
-                Ok(package) => Some(package),
-                Err(error) => {
-                    reportPackageLoadError(String::new(), error);
-                    None
-                }
-            },
-            |mainScriptText, toolPkgId, mainScriptPath| {
-                parseMainRegistration(
-                    mainScriptText,
-                    toolPkgId,
-                    mainScriptPath,
-                    jsEngine,
-                    textResources.clone(),
-                )
-            },
-            |packageName, error| {
-                AppLogger::e(
-                    TAG,
-                    &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
-                );
-            },
-        )
-    }
 }
 
 #[allow(non_snake_case)]

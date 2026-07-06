@@ -2,9 +2,11 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../components/CollapsedDrawerContent.dart';
+import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -17,6 +19,7 @@ class TabletLayout extends StatefulWidget {
     required this.navigationEntries,
     required this.pluginSidebarEntries,
     required this.selectedRouteId,
+    required this.drawerConversationState,
     required this.isTabletSidebarExpanded,
     required this.tabletSidebarWidth,
     required this.collapsedTabletSidebarWidth,
@@ -28,6 +31,7 @@ class TabletLayout extends StatefulWidget {
   final List<NavigationEntrySpec> navigationEntries;
   final List<NavigationEntrySpec> pluginSidebarEntries;
   final String selectedRouteId;
+  final ValueListenable<DrawerConversationState> drawerConversationState;
   final bool isTabletSidebarExpanded;
   final double tabletSidebarWidth;
   final double collapsedTabletSidebarWidth;
@@ -130,15 +134,28 @@ class _TabletLayoutState extends State<TabletLayout> {
             child: AnimatedSwitcher(
               duration: _sidebarContentFadeDuration,
               child: _isSidebarContentExpanded
-                  ? DrawerContent(
+                  ? ValueListenableBuilder<DrawerConversationState>(
                       key: const ValueKey<String>('expandedSidebarContent'),
-                      navigationEntries: widget.navigationEntries,
-                      pluginEntries: widget.pluginSidebarEntries,
-                      selectedRouteId: widget.selectedRouteId,
-                      appearance: appearance,
-                      onNavigationEntrySelected:
-                          widget.onNavigationEntrySelected,
-                      onConversationActivated: widget.onConversationActivated,
+                      valueListenable: widget.drawerConversationState,
+                      builder: (context, drawerState, _) {
+                        return DrawerContent(
+                          key: const ValueKey<String>('expandedDrawerContent'),
+                          navigationEntries: widget.navigationEntries,
+                          pluginEntries: widget.pluginSidebarEntries,
+                          selectedRouteId: widget.selectedRouteId,
+                          appearance: appearance,
+                          histories: drawerState.histories,
+                          characterGroupNamesById:
+                              drawerState.characterGroupNamesById,
+                          currentChatId: drawerState.currentChatId,
+                          errorMessage: drawerState.errorMessage,
+                          loading: drawerState.loading,
+                          onNavigationEntrySelected:
+                              widget.onNavigationEntrySelected,
+                          onConversationActivated:
+                              widget.onConversationActivated,
+                        );
+                      },
                     )
                   : CollapsedDrawerContent(
                       key: const ValueKey<String>('collapsedSidebarContent'),

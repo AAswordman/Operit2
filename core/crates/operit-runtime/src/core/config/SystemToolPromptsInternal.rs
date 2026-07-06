@@ -218,6 +218,220 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
+                    "request_bluetooth_permission",
+                    "Request Bluetooth permission for the current platform.",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "get_bluetooth_state",
+                    "Get Bluetooth adapter support, enabled state, and state label.",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "request_enable_bluetooth",
+                    "Request enabling Bluetooth on the current platform.",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "list_bluetooth_bonded_devices",
+                    "List bonded Bluetooth devices.",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "scan_bluetooth_devices",
+                    "Scan nearby Bluetooth classic and BLE devices.",
+                    "",
+                    vec![
+                        param("duration_ms", "integer", "optional scan duration in milliseconds", false, Some("10000".to_string())),
+                        param("include_ble", "boolean", "optional, include BLE devices", false, Some("true".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_connect",
+                    "Connect to a Bluetooth classic device.",
+                    "",
+                    vec![
+                        param("address", "string", "Bluetooth device address", true, None),
+                        param("uuid", "string", "optional service UUID", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_listen",
+                    "Create a Bluetooth classic listener.",
+                    "",
+                    vec![
+                        param("name", "string", "optional service name", false, None),
+                        param("uuid", "string", "optional service UUID", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_accept",
+                    "Accept one Bluetooth classic connection from a listener session.",
+                    "",
+                    vec![
+                        param("listener_session_id", "string", "listener session id", true, None),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_send",
+                    "Send text or base64 bytes to a Bluetooth classic session.",
+                    "",
+                    vec![
+                        param("session_id", "string", "Bluetooth session id", true, None),
+                        param("text", "string", "text payload; provide exactly one of text or data_base64", false, None),
+                        param("data_base64", "string", "base64 payload; provide exactly one of text or data_base64", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_read",
+                    "Read data from a Bluetooth classic session.",
+                    "",
+                    vec![
+                        param("session_id", "string", "Bluetooth session id", true, None),
+                        param("max_bytes", "integer", "optional maximum bytes to read", false, Some("4096".to_string())),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_send_and_read",
+                    "Send text or base64 bytes to a Bluetooth classic session and read the response.",
+                    "",
+                    vec![
+                        param("session_id", "string", "Bluetooth session id", true, None),
+                        param("text", "string", "text payload; provide exactly one of text or data_base64", false, None),
+                        param("data_base64", "string", "base64 payload; provide exactly one of text or data_base64", false, None),
+                        param("max_bytes", "integer", "optional maximum bytes to read", false, Some("4096".to_string())),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_close",
+                    "Close a Bluetooth classic listener, classic session, or BLE session.",
+                    "",
+                    vec![
+                        param("session_id", "string", "Bluetooth session id", true, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_connect",
+                    "Connect to a BLE device.",
+                    "",
+                    vec![
+                        param("address", "string", "BLE device address", true, None),
+                        param("auto_connect", "boolean", "optional, request auto connect where supported", false, Some("false".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_discover_services",
+                    "Discover BLE services and characteristics for a BLE session.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_read_characteristic",
+                    "Read a BLE characteristic.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("service_uuid", "string", "BLE service UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE characteristic UUID", true, None),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_write_characteristic",
+                    "Write text or base64 bytes to a BLE characteristic.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("service_uuid", "string", "BLE service UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE characteristic UUID", true, None),
+                        param("text", "string", "text payload; provide exactly one of text or data_base64", false, None),
+                        param("data_base64", "string", "base64 payload; provide exactly one of text or data_base64", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_write_and_read_characteristic",
+                    "Write text or base64 bytes to one BLE characteristic and read another characteristic.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("write_service_uuid", "string", "write BLE service UUID", true, None),
+                        param("write_characteristic_uuid", "string", "write BLE characteristic UUID", true, None),
+                        param("read_service_uuid", "string", "read BLE service UUID", true, None),
+                        param("read_characteristic_uuid", "string", "read BLE characteristic UUID", true, None),
+                        param("text", "string", "text payload; provide exactly one of text or data_base64", false, None),
+                        param("data_base64", "string", "base64 payload; provide exactly one of text or data_base64", false, None),
+                        param("timeout_ms", "integer", "optional timeout in milliseconds", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_subscribe_characteristic",
+                    "Subscribe or unsubscribe BLE characteristic notifications.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("service_uuid", "string", "BLE service UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE characteristic UUID", true, None),
+                        param("enable", "boolean", "optional, true subscribes and false unsubscribes", false, Some("true".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_read_notifications",
+                    "Read queued BLE characteristic notifications for a BLE session.",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE session id", true, None),
+                        param("limit", "integer", "optional maximum notification count", false, Some("50".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "browser_click",
                     "Click an element on the current page by browser_snapshot ref, including refs inside same-origin iframes.",
                     "",
@@ -457,40 +671,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("action", "string", "one of: list, create, select, close", true, None),
                         param("index", "integer", "optional tab index used by select or close", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "execute_intent",
-                    "Execute an Android Intent (activity/broadcast/service).",
-                    "",
-                    vec![
-                        param("action", "string", "optional, intent action", false, None),
-                        param("uri", "string", "optional, data URI", false, None),
-                        param("package", "string", "optional, package name", false, None),
-                        param("component", "string", "optional, component in \"package/class\" format", false, None),
-                        param("type", "string", "optional, one of activity/broadcast/service", false, Some("activity".to_string())),
-                        param("flags", "string", "optional, JSON array string of int flags (or a single int)", false, None),
-                        param("extras", "string", "optional, JSON object string for extras", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "send_broadcast",
-                    "Send a broadcast intent.",
-                    "",
-                    vec![
-                        param("action", "string", "required, broadcast action", true, None),
-                        param("uri", "string", "optional, data URI", false, None),
-                        param("package", "string", "optional, package name", false, None),
-                        param("component", "string", "optional, component in \"package/class\" format", false, None),
-                        param("extras", "string", "optional, JSON object string for extras", false, None),
-                        param("extra_key", "string", "optional, a single string extra key", false, None),
-                        param("extra_value", "string", "optional, a single string extra value", false, None),
-                        param("extra_key2", "string", "optional, second string extra key", false, None),
-                        param("extra_value2", "string", "optional, second string extra value", false, None)
                     ],
                     "",
                     "",
@@ -1420,6 +1600,220 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
+                    "request_bluetooth_permission",
+                    "请求当前平台的蓝牙权限。",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "get_bluetooth_state",
+                    "获取蓝牙适配器支持情况、启用状态和状态标签。",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "request_enable_bluetooth",
+                    "请求在当前平台启用蓝牙。",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "list_bluetooth_bonded_devices",
+                    "列出已配对的蓝牙设备。",
+                    "",
+                    Vec::new(),
+                    "",
+                    "",
+                ),
+                tool(
+                    "scan_bluetooth_devices",
+                    "扫描附近的蓝牙 Classic 和 BLE 设备。",
+                    "",
+                    vec![
+                        param("duration_ms", "integer", "可选，扫描时长，单位毫秒", false, Some("10000".to_string())),
+                        param("include_ble", "boolean", "可选，是否包含 BLE 设备", false, Some("true".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_connect",
+                    "连接蓝牙 Classic 设备。",
+                    "",
+                    vec![
+                        param("address", "string", "蓝牙设备地址", true, None),
+                        param("uuid", "string", "可选，服务 UUID", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_listen",
+                    "创建蓝牙 Classic 监听会话。",
+                    "",
+                    vec![
+                        param("name", "string", "可选，服务名称", false, None),
+                        param("uuid", "string", "可选，服务 UUID", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_accept",
+                    "从监听会话接受一个蓝牙 Classic 连接。",
+                    "",
+                    vec![
+                        param("listener_session_id", "string", "监听会话 ID", true, None),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_send",
+                    "向蓝牙 Classic 会话发送文本或 base64 字节。",
+                    "",
+                    vec![
+                        param("session_id", "string", "蓝牙会话 ID", true, None),
+                        param("text", "string", "文本载荷；text 和 data_base64 必须二选一", false, None),
+                        param("data_base64", "string", "base64 载荷；text 和 data_base64 必须二选一", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_read",
+                    "从蓝牙 Classic 会话读取数据。",
+                    "",
+                    vec![
+                        param("session_id", "string", "蓝牙会话 ID", true, None),
+                        param("max_bytes", "integer", "可选，最大读取字节数", false, Some("4096".to_string())),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_send_and_read",
+                    "向蓝牙 Classic 会话发送文本或 base64 字节并读取响应。",
+                    "",
+                    vec![
+                        param("session_id", "string", "蓝牙会话 ID", true, None),
+                        param("text", "string", "文本载荷；text 和 data_base64 必须二选一", false, None),
+                        param("data_base64", "string", "base64 载荷；text 和 data_base64 必须二选一", false, None),
+                        param("max_bytes", "integer", "可选，最大读取字节数", false, Some("4096".to_string())),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_close",
+                    "关闭蓝牙 Classic 监听、Classic 会话或 BLE 会话。",
+                    "",
+                    vec![
+                        param("session_id", "string", "蓝牙会话 ID", true, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_connect",
+                    "连接 BLE 设备。",
+                    "",
+                    vec![
+                        param("address", "string", "BLE 设备地址", true, None),
+                        param("auto_connect", "boolean", "可选，在支持的平台请求自动连接", false, Some("false".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_discover_services",
+                    "发现 BLE 会话的服务和特征。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_read_characteristic",
+                    "读取 BLE 特征。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("service_uuid", "string", "BLE 服务 UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE 特征 UUID", true, None),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_write_characteristic",
+                    "向 BLE 特征写入文本或 base64 字节。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("service_uuid", "string", "BLE 服务 UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE 特征 UUID", true, None),
+                        param("text", "string", "文本载荷；text 和 data_base64 必须二选一", false, None),
+                        param("data_base64", "string", "base64 载荷；text 和 data_base64 必须二选一", false, None)
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_write_and_read_characteristic",
+                    "向一个 BLE 特征写入文本或 base64 字节，并读取另一个 BLE 特征。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("write_service_uuid", "string", "写入 BLE 服务 UUID", true, None),
+                        param("write_characteristic_uuid", "string", "写入 BLE 特征 UUID", true, None),
+                        param("read_service_uuid", "string", "读取 BLE 服务 UUID", true, None),
+                        param("read_characteristic_uuid", "string", "读取 BLE 特征 UUID", true, None),
+                        param("text", "string", "文本载荷；text 和 data_base64 必须二选一", false, None),
+                        param("data_base64", "string", "base64 载荷；text 和 data_base64 必须二选一", false, None),
+                        param("timeout_ms", "integer", "可选，超时时间，单位毫秒", false, Some("30000".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_subscribe_characteristic",
+                    "订阅或取消订阅 BLE 特征通知。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("service_uuid", "string", "BLE 服务 UUID", true, None),
+                        param("characteristic_uuid", "string", "BLE 特征 UUID", true, None),
+                        param("enable", "boolean", "可选，true 表示订阅，false 表示取消订阅", false, Some("true".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
+                    "bluetooth_ble_read_notifications",
+                    "读取 BLE 会话已缓存的特征通知。",
+                    "",
+                    vec![
+                        param("session_id", "string", "BLE 会话 ID", true, None),
+                        param("limit", "integer", "可选，最大通知条数", false, Some("50".to_string()))
+                    ],
+                    "",
+                    "",
+                ),
+                tool(
                     "browser_click",
                     "按 browser_snapshot 的 ref 点击当前页面元素，包括同源 iframe 内的 ref。",
                     "",
@@ -1659,40 +2053,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("action", "string", "list/create/select/close 之一", true, None),
                         param("index", "integer", "可选，select 或 close 使用的 tab 索引", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "execute_intent",
-                    "执行 Android Intent（activity/broadcast/service）。",
-                    "",
-                    vec![
-                        param("action", "string", "可选，Intent action", false, None),
-                        param("uri", "string", "可选，data URI", false, None),
-                        param("package", "string", "可选，包名", false, None),
-                        param("component", "string", "可选，\"package/class\" 格式", false, None),
-                        param("type", "string", "可选，activity/broadcast/service", false, Some("activity".to_string())),
-                        param("flags", "string", "可选，flag 整数数组 JSON 字符串（或单个整数）", false, None),
-                        param("extras", "string", "可选，extras 的 JSON 对象字符串", false, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "send_broadcast",
-                    "发送广播 Intent。",
-                    "",
-                    vec![
-                        param("action", "string", "必填，广播 action", true, None),
-                        param("uri", "string", "可选，data URI", false, None),
-                        param("package", "string", "可选，包名", false, None),
-                        param("component", "string", "可选，\"package/class\" 格式", false, None),
-                        param("extras", "string", "可选，extras 的 JSON 对象字符串", false, None),
-                        param("extra_key", "string", "可选，单个字符串 extra 的 key", false, None),
-                        param("extra_value", "string", "可选，单个字符串 extra 的 value", false, None),
-                        param("extra_key2", "string", "可选，第二个字符串 extra 的 key", false, None),
-                        param("extra_value2", "string", "可选，第二个字符串 extra 的 value", false, None)
                     ],
                     "",
                     "",

@@ -122,6 +122,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _rendererState.streamParsingCompletedSuccessfully &&
         _rendererState.collectedContent.toString() == widget.content &&
         _rendererState.renderNodes.isNotEmpty) {
+      _rendererState.xmlNodeStreams.clear();
+      _rendererState.xmlMarkdownEventStreams.clear();
       _streamDone = true;
       return;
     }

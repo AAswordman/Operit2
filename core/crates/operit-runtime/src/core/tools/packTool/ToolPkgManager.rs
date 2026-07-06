@@ -10,6 +10,9 @@ use crate::core::tools::packTool::ToolPkgParser::{
     ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 use crate::core::tools::ToolPackage::ToolPackage;
+use crate::plugins::BuiltinPluginAssets::{
+    PluginAsset, BUNDLED_EXTERNAL_PLUGIN_ASSETS, BUILTIN_PLUGIN_ASSETS,
+};
 
 pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>) + Send + Sync>;
 
@@ -380,9 +383,9 @@ impl ToolPkgManager {
                 None
             }
             ToolPkgSourceType::ASSET => {
-                let sourcePath = builtInPackageAssetPath(&runtime.sourcePath);
-                let file = fs::File::open(sourcePath).ok()?;
-                let mut archive = zip::ZipArchive::new(file).ok()?;
+                let asset = bundledPluginAssetByName(&runtime.sourcePath)?;
+                let cursor = std::io::Cursor::new(asset.bytes);
+                let mut archive = zip::ZipArchive::new(cursor).ok()?;
                 let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).ok()?;
@@ -393,12 +396,11 @@ impl ToolPkgManager {
 }
 
 #[allow(non_snake_case)]
-fn builtInPackageAssetPath(assetName: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("assets")
-        .join("plugins")
-        .join("buildin")
-        .join(assetName)
+fn bundledPluginAssetByName(assetName: &str) -> Option<&'static PluginAsset> {
+    BUILTIN_PLUGIN_ASSETS
+        .iter()
+        .chain(BUNDLED_EXTERNAL_PLUGIN_ASSETS.iter())
+        .find(|asset| asset.name == assetName)
 }
 
 #[allow(non_snake_case)]

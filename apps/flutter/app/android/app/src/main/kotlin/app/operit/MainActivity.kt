@@ -69,6 +69,19 @@ class MainActivity : FlutterActivity() {
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (::runtimeRouter.isInitialized &&
+            runtimeRouter.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        ) {
+            return
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
     fun ensureHostEventRuntimeHandle(): Long = ensureRuntimeHost().ensureRuntimeHandle()
 
     fun handleRuntimeHostRequest(methodName: String, payloadJson: String): String {

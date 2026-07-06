@@ -1066,11 +1066,7 @@ async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: By
         Ok(value) => value,
         Err(response) => return response,
     };
-    withRuntimeHostInteractionOrigin(
-        verified.origin(),
-        state.linkDispatcher.call(body),
-    )
-    .await
+    withRuntimeHostInteractionOrigin(verified.origin(), state.linkDispatcher.call(body)).await
 }
 
 async fn watch_snapshot(
@@ -1082,11 +1078,8 @@ async fn watch_snapshot(
         Ok(value) => value,
         Err(response) => return response,
     };
-    withRuntimeHostInteractionOrigin(
-        verified.origin(),
-        state.linkDispatcher.watchSnapshot(body),
-    )
-    .await
+    withRuntimeHostInteractionOrigin(verified.origin(), state.linkDispatcher.watchSnapshot(body))
+        .await
 }
 
 async fn watch_channel_events(
@@ -1239,26 +1232,20 @@ async fn handle_ws_envelope(
             })
         }
         RemoteWsPayload::Call(request) => {
-            withRuntimeHostInteractionOrigin(
-                verified.origin(),
-                async {
-                    let mut core = state.core.lock().await;
-                    RemoteWsResponse::Call(core.call(request.request).await)
-                },
-            )
+            withRuntimeHostInteractionOrigin(verified.origin(), async {
+                let mut core = state.core.lock().await;
+                RemoteWsResponse::Call(core.call(request.request).await)
+            })
             .await
         }
         RemoteWsPayload::WatchSnapshot(request) => {
-            withRuntimeHostInteractionOrigin(
-                verified.origin(),
-                async {
-                    let mut core = state.core.lock().await;
-                    match core.watchSnapshot(request.request).await {
-                        Ok(event) => RemoteWsResponse::WatchSnapshot(event),
-                        Err(error) => RemoteWsResponse::Error(error),
-                    }
-                },
-            )
+            withRuntimeHostInteractionOrigin(verified.origin(), async {
+                let mut core = state.core.lock().await;
+                match core.watchSnapshot(request.request).await {
+                    Ok(event) => RemoteWsResponse::WatchSnapshot(event),
+                    Err(error) => RemoteWsResponse::Error(error),
+                }
+            })
             .await
         }
     }

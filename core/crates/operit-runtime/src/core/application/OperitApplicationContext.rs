@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{
-    AudioPlaybackHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
+    AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
     HostEnvironmentDescriptor, HostRuntimeEventHost, HttpHost, ManagedRuntimeHost,
     RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost,
     TtsSynthesisHost, WebVisitHost,
@@ -34,6 +34,7 @@ pub struct OperitApplicationContext {
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
+    pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
     pub ttsSynthesisHost: Option<Arc<dyn TtsSynthesisHost>>,
     pub ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
@@ -56,6 +57,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
+            bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             managedRuntimeHost: None,
@@ -80,6 +82,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
+            bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             managedRuntimeHost: None,
@@ -107,6 +110,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
+            bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             managedRuntimeHost: None,
@@ -135,6 +139,7 @@ impl OperitApplicationContext {
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
+            bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             managedRuntimeHost: None,
@@ -167,6 +172,7 @@ impl OperitApplicationContext {
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
+            bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             managedRuntimeHost: Some(managedRuntimeHost),
@@ -201,6 +207,12 @@ impl OperitApplicationContext {
     #[allow(non_snake_case)]
     pub fn withAudioPlaybackHost(mut self, audioPlaybackHost: Arc<dyn AudioPlaybackHost>) -> Self {
         self.audioPlaybackHost = Some(audioPlaybackHost);
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withBluetoothHost(mut self, bluetoothHost: Arc<dyn BluetoothHost>) -> Self {
+        self.bluetoothHost = Some(bluetoothHost);
         self
     }
 
