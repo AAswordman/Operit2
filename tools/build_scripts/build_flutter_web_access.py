@@ -9,6 +9,8 @@ from common import (
     REPO_ROOT,
     ensure_node_and_npm,
     ensure_typescript,
+    flutter_command,
+    host_platform,
     prepare_python_command,
     require_command,
     run,
@@ -20,7 +22,8 @@ WASI_SDK_MAJOR_VERSION = "20"
 
 def ensure_wasm_bindgen(version: str) -> Path:
     root = REPO_ROOT / ".ci-tools" / "wasm-bindgen"
-    binary = root / "bin" / "wasm-bindgen"
+    suffix = ".exe" if sys.platform == "win32" else ""
+    binary = root / "bin" / f"wasm-bindgen{suffix}"
     if not binary.exists():
         run(
             [
@@ -39,10 +42,23 @@ def ensure_wasm_bindgen(version: str) -> Path:
 
 
 def ensure_wasi_sdk(version: str) -> Path:
-    root = REPO_ROOT / "target" / "operit-build-tools" / f"wasi-sdk-{version}-macos"
-    clang = root / "bin" / "clang"
+    platform_name = host_platform()
+    if platform_name == "windows":
+        package_name = f"wasi-sdk-{version}.m-mingw"
+        clang_name = "clang.exe"
+    elif platform_name == "macos":
+        package_name = f"wasi-sdk-{version}-macos"
+        clang_name = "clang"
+    elif platform_name == "linux":
+        package_name = f"wasi-sdk-{version}-linux"
+        clang_name = "clang"
+    else:
+        raise RuntimeError(f"Unsupported WASI SDK host platform: {platform_name}")
+
+    root = REPO_ROOT / "target" / "operit-build-tools" / package_name
+    clang = root / "bin" / clang_name
     if not clang.exists():
-        archive = REPO_ROOT / "target" / "operit-build-tools" / f"wasi-sdk-{version}-macos.tar.gz"
+        archive = REPO_ROOT / "target" / "operit-build-tools" / f"{package_name}.tar.gz"
         root.parent.mkdir(parents=True, exist_ok=True)
         archive.parent.mkdir(parents=True, exist_ok=True)
         if root.exists():
@@ -56,7 +72,7 @@ def ensure_wasi_sdk(version: str) -> Path:
                 "--retry",
                 "5",
                 "--retry-all-errors",
-                f"https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{WASI_SDK_MAJOR_VERSION}/wasi-sdk-{version}-macos.tar.gz",
+                f"https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{WASI_SDK_MAJOR_VERSION}/{package_name}.tar.gz",
                 "--output",
                 str(archive),
             ]
@@ -73,7 +89,7 @@ def main() -> int:
     wasi_sdk_version = os.environ.get("WASI_SDK_VERSION", "20.0")
 
     require_command("cargo")
-    require_command("flutter")
+    flutter = flutter_command()
     ensure_node_and_npm()
     prepare_python_command()
 
@@ -85,7 +101,7 @@ def main() -> int:
     env["QUICKJS_WASM_SYS_WASI_SDK_PATH"] = str(wasi_sdk)
 
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
-    run(["flutter", "build", "web", "--release"], cwd=FLUTTER_APP_DIR, env=env)
+    run([flutter, "build", "web", "--release"], cwd=FLUTTER_APP_DIR, env=env)
     return 0
 
 

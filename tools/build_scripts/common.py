@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -90,6 +93,16 @@ def flutter_command() -> str:
     return require_command("flutter")
 
 
+def node_package_command(name: str) -> str:
+    command = f"{name}.cmd" if host_platform() == "windows" else name
+    return require_command(command)
+
+
+def node_bin_command(root: Path, name: str) -> Path:
+    suffix = ".cmd" if host_platform() == "windows" else ""
+    return root / "node_modules" / ".bin" / f"{name}{suffix}"
+
+
 def read_properties(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -117,17 +130,17 @@ def java_properties_value(value: str) -> str:
 
 def ensure_node_and_npm() -> None:
     run(["node", "--version"])
-    run(["npm", "--version"])
+    run([node_package_command("npm"), "--version"])
 
 
 def ensure_typescript(version: str) -> Path:
     root = REPO_ROOT / ".ci-tools" / "typescript"
-    tsc = root / "node_modules" / ".bin" / "tsc"
+    tsc = node_bin_command(root, "tsc")
     if not tsc.exists():
-        require_command("npm")
+        npm = node_package_command("npm")
         run(
             [
-                "npm",
+                npm,
                 "install",
                 "--prefix",
                 str(root),
@@ -141,13 +154,20 @@ def ensure_typescript(version: str) -> Path:
 
 
 def prepare_python_command() -> None:
-    python3 = require_command("python3")
-    venv_bin = REPO_ROOT / ".venv" / "bin"
-    venv_bin.mkdir(parents=True, exist_ok=True)
-    target = venv_bin / "python"
-    if target.exists() or target.is_symlink():
-        target.unlink()
-    target.symlink_to(python3)
+    python = Path(sys.executable)
+    if not python.is_file():
+        raise RuntimeError(f"Current Python executable is not available: {python}")
+    if host_platform() == "windows":
+        target = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if python.resolve() != target.resolve():
+            shutil.copy2(python, target)
+    else:
+        target = REPO_ROOT / ".venv" / "bin" / "python"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(python)
     run([str(target), "--version"])
 
 

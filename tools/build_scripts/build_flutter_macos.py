@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -8,6 +10,7 @@ from common import (
     FLUTTER_APP_DIR,
     build_env_with_typescript,
     ensure_node_and_npm,
+    flutter_command,
     flutter_pub_get,
     generate_dart_proxy_artifacts,
     prepare_python_command,
@@ -47,7 +50,7 @@ def main() -> int:
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
 
     require_command("cargo")
-    require_command("flutter")
+    flutter = flutter_command()
     ensure_node_and_npm()
 
     env = build_env_with_typescript(typescript_version)
@@ -57,7 +60,7 @@ def main() -> int:
     prepare_python_command()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
-    command = ["flutter", "build", "macos", "--release"]
+    command = [flutter, "build", "macos", "--release"]
     if args.build_name:
         command.extend(["--build-name", args.build_name])
     if args.build_number:

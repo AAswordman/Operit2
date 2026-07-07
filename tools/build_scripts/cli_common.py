@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import platform
 import subprocess
@@ -12,6 +14,7 @@ from common import (
     copy_required_file,
     compress_tar_gz,
     compress_zip,
+    host_platform,
     require_command,
     reset_dir,
     run,
@@ -303,6 +306,11 @@ def build_cli_target(target: CliBuildTarget, use_default_target: bool = False) -
 
 def build_cli_platform(target_platform: str, arch_mode: str = "host") -> None:
     if arch_mode == "host":
+        current_platform = host_platform()
+        if target_platform != current_platform:
+            raise RuntimeError(
+                f"{target_platform} CLI host build requires a {target_platform} host; current host is {current_platform}"
+            )
         build_cli_target(cli_target(target_platform, host_arch()), use_default_target=True)
         return
 

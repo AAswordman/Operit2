@@ -171,5 +171,8 @@ plugins/**/.sync_hot_reload_state.json
 *.tgz
 *.7z
 
+# Local build tool caches
+.ci-tools/
+
 
 AGENTS.md

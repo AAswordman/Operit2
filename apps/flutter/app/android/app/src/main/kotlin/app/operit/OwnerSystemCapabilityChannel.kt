@@ -637,13 +637,13 @@ class OwnerSystemCapabilityChannel(
         val devices = ConcurrentHashMap<String, Map<String, Any?>>()
         val receiver =
             object : BroadcastReceiver() {
-                override fun onReceive(context: Context?, intent: Intent?) {
+                override fun onReceive(context: Context?, intent: Intent) {
                     val device =
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            intent?.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
                         } else {
                             @Suppress("DEPRECATION")
-                            intent?.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                         }
                     if (device != null) {
                         devices[device.address] =

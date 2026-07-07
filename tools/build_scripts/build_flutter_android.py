@@ -9,6 +9,7 @@ from common import (
     FLUTTER_APP_DIR,
     RELEASE_DIR,
     copy_required_file,
+    flutter_command,
     flutter_pub_get,
     read_properties,
     run,
@@ -52,7 +53,7 @@ def main() -> int:
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [
-            "flutter",
+            flutter_command(),
             "build",
             "apk",
             "--release",
