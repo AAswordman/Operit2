@@ -1,0 +1,236 @@
+name: macOS Flutter Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_web_assets:
+        description: "Force rebuild web assets before macOS build"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  push:
+    branches:
+      - ci/macos-apple-host
+    paths:
+      - ".github/workflows/macos-flutter-build.yml"
+      - "apps/flutter/app/**"
+      - "apps/flutter/native/**"
+      - "core/**"
+      - "hosts/**"
+      - "plugins/**"
+
+jobs:
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      WEB_BUILD_CACHE_VERSION: v1
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Cache Pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('apps/flutter/app/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+
+      - name: Cache Cargo outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            core/target
+            apps/flutter/native/operit-flutter-bridge/target
+            hosts/apple/target
+            target/operit-build-tools
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-${{ hashFiles('core/Cargo.lock', 'core/crates/**/Cargo.toml', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'hosts/apple/Cargo.lock', 'hosts/apple/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-
+
+      - name: Generate Dart proxy artifacts
+        run: |
+          cargo clean --manifest-path core/crates/operit-core-proxy/Cargo.toml -p operit-core-proxy
+          cargo check --manifest-path core/crates/operit-core-proxy/Cargo.toml --quiet
+          test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
+          test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
+
+      - name: Restore web build bundle
+        id: web-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            apps/flutter/app/build/web
+            apps/flutter/app/assets/web_access
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-web-build-${{ env.WEB_BUILD_CACHE_VERSION }}-${{ hashFiles('apps/flutter/app/pubspec.yaml', 'apps/flutter/app/pubspec.lock', 'apps/flutter/app/lib/**/*.dart', 'apps/flutter/app/web/**', 'apps/flutter/app/hook/build.dart', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'apps/flutter/native/operit-flutter-bridge/src/**', 'core/Cargo.lock', 'core/crates/**/*.rs', 'core/crates/**/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml', 'hosts/web/src/**', 'plugins/packages/**', 'plugins/tools/**') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-web-build-${{ env.WEB_BUILD_CACHE_VERSION }}-
+
+      - name: Decide web asset build
+        id: web-build
+        run: |
+          if [ "${{ steps.web-build-cache.outputs.cache-hit }}" != "true" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.build_web_assets }}" = "true" ]; }; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore TypeScript compiler
+        id: typescript-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-tools/typescript
+          key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
+
+      - name: Install TypeScript compiler
+        run: |
+          node --version
+          npm --version
+          if [ ! -x .ci-tools/typescript/node_modules/.bin/tsc ]; then
+            npm install --prefix .ci-tools/typescript --no-audit --no-fund "typescript@${TYPESCRIPT_VERSION}"
+          fi
+          echo "$PWD/.ci-tools/typescript/node_modules/.bin" >> "$GITHUB_PATH"
+          .ci-tools/typescript/node_modules/.bin/tsc --version
+
+      - name: Save TypeScript compiler
+        if: steps.typescript-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-tools/typescript
+          key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
+
+      - name: Restore wasm-bindgen CLI
+        if: steps.web-build.outputs.needed == 'true'
+        id: wasm-bindgen-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-tools/wasm-bindgen
+          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
+
+      - name: Install wasm-bindgen CLI
+        if: steps.web-build.outputs.needed == 'true'
+        run: |
+          root="$PWD/.ci-tools/wasm-bindgen"
+          if [ ! -x "$root/bin/wasm-bindgen" ]; then
+            rm -rf "$root"
+            cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked --root "$root"
+          fi
+          echo "$root/bin" >> "$GITHUB_PATH"
+          "$root/bin/wasm-bindgen" --version
+
+      - name: Save wasm-bindgen CLI
+        if: steps.web-build.outputs.needed == 'true' && steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-tools/wasm-bindgen
+          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
+
+      - name: Restore WASI SDK
+        if: steps.web-build.outputs.needed == 'true'
+        id: wasi-sdk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
+          key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
+
+      - name: Prepare WASI SDK
+        if: steps.web-build.outputs.needed == 'true'
+        run: |
+          root="$PWD/target/operit-build-tools/wasi-sdk-${WASI_SDK_VERSION}-macos"
+          archive="$PWD/target/operit-build-tools/wasi-sdk-${WASI_SDK_VERSION}-macos.tar.gz"
+          if [ ! -x "$root/bin/clang" ]; then
+            rm -rf "$root"
+            mkdir -p "$root"
+            mkdir -p "$(dirname "$archive")"
+            curl --fail --location --retry 5 --retry-all-errors \
+              "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-${WASI_SDK_VERSION}-macos.tar.gz" \
+              --output "$archive"
+            tar -xf "$archive" -C "$root" --strip-components 1
+          fi
+          echo "QUICKJS_WASM_SYS_WASI_SDK_PATH=$root" >> "$GITHUB_ENV"
+          "$root/bin/clang" --version
+
+      - name: Save WASI SDK
+        if: steps.web-build.outputs.needed == 'true' && steps.wasi-sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
+          key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
+
+      - name: Prepare Python command
+        run: |
+          python3 --version
+          mkdir -p .venv/bin
+          ln -sf "$(command -v python3)" .venv/bin/python
+          .venv/bin/python --version
+
+      - name: Flutter pub get
+        working-directory: apps/flutter/app
+        run: flutter pub get
+
+      - name: Build web assets
+        if: steps.web-build.outputs.needed == 'true'
+        working-directory: apps/flutter/app
+        run: |
+          rustup target add wasm32-unknown-unknown
+          flutter build web --release
+
+      - name: Save web build bundle
+        if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            apps/flutter/app/build/web
+            apps/flutter/app/assets/web_access
+          key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
+
+      - name: Build macOS app
+        working-directory: apps/flutter/app
+        run: flutter build macos --release -v
+
+      - name: Package macOS app
+        working-directory: apps/flutter/app
+        run: |
+          app_path="build/macos/Build/Products/Release/Operit2.app"
+          archive_path="build/macos/Build/Products/Release/Operit2-macos.zip"
+          test -d "$app_path"
+          rm -f "$archive_path"
+          ditto -c -k --keepParent "$app_path" "$archive_path"
+          test -s "$archive_path"
+
+      - name: Upload macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-macos-${{ github.sha }}
+          path: apps/flutter/app/build/macos/Build/Products/Release/Operit2-macos.zip
+          if-no-files-found: error
+          retention-days: 14

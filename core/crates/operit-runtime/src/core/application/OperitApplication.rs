@@ -4,6 +4,7 @@ use crate::core::application::OperitApplicationContext::{
 };
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::tools::AIToolHandler::AIToolHandler;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::data::backup::Operit1SnapshotImportManager::{
     observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
     Operit1ModelConfigImportResult, Operit1ModelConfigSnapshotPreview,
@@ -308,6 +309,7 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn inspectOperit1ModelConfigSnapshot(
         &self,
         bytes: Vec<u8>,
@@ -317,15 +319,14 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
-    pub fn inspectOperit1Snapshot(
-        &self,
-        bytes: Vec<u8>,
-    ) -> Result<Operit1SnapshotPreview, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn inspectOperit1Snapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotPreview, String> {
         Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
             .inspectSnapshot(bytes)
     }
 
     #[allow(non_snake_case)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn inspectOperit1SnapshotFile(
         &self,
         path: String,
@@ -336,6 +337,7 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn importOperit1ModelConfigSnapshot(
         &self,
         bytes: Vec<u8>,
@@ -347,6 +349,7 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn importOperit1Snapshot(
         &self,
         bytes: Vec<u8>,
@@ -363,6 +366,7 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn importOperit1SnapshotFile(
         &self,
         path: String,
@@ -380,9 +384,8 @@ impl OperitApplication {
     }
 
     #[allow(non_snake_case)]
-    pub fn operit1SnapshotImportProgressFlow(
-        &self,
-    ) -> StateFlow<Operit1SnapshotImportProgress> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn operit1SnapshotImportProgressFlow(&self) -> StateFlow<Operit1SnapshotImportProgress> {
         observeOperit1SnapshotImportProgress()
     }
 

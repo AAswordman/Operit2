@@ -115,6 +115,7 @@ pub(crate) struct SourceMethod {
     pub(crate) args: Vec<SourceArg>,
     pub(crate) rust_return_type: String,
     pub(crate) is_async: bool,
+    pub(crate) cfg_attrs: Vec<String>,
     pub(crate) protocol: MethodProtocol,
 }
 

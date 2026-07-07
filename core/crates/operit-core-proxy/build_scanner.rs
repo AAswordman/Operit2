@@ -578,6 +578,7 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let mut args = Vec::new();
     let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
+    let cfg_attrs = cfg_attrs(function);
     let mut has_receiver = false;
 
     for input in function.sig.inputs.iter() {
@@ -618,8 +619,18 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         args,
         rust_return_type,
         is_async,
+        cfg_attrs,
         protocol,
     }
+}
+
+fn cfg_attrs(function: &ImplItemFn) -> Vec<String> {
+    function
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .map(|attr| attr.to_token_stream().to_string())
+        .collect()
 }
 
 fn scan_return_protocol(

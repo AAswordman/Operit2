@@ -27,8 +27,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true
-rusqlite.workspace = true
-lmdb.workspace = true
 
 [dev-dependencies]
 
@@ -38,10 +36,14 @@ serde_json.workspace = true
 zip.workspace = true
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+lmdb.workspace = true
 rquickjs.workspace = true
+rusqlite.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
+lmdb.workspace = true
 rquickjs = { workspace = true, features = ["bindgen"] }
+rusqlite.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

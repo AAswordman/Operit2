@@ -608,7 +608,7 @@ fn render_object_constructor_for_access(
 fn render_call_arm(method: &SourceMethod) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
-    match method.call_protocol() {
+    let arm = match method.call_protocol() {
         Some(CallProtocol::Unit) => format!(
             "        {:?} => {{\n{}            object.{}({}){};\n            Ok(serde_json::Value::Null)\n        }}\n",
             method.name,
@@ -642,7 +642,8 @@ fn render_call_arm(method: &SourceMethod) -> String {
             await_suffix(method)
         ),
         None => String::new(),
-    }
+    };
+    render_cfg_attrs(method) + &arm
 }
 
 fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
@@ -675,6 +676,7 @@ fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
         "        {:?} => {{\n{}            to_core_value({})\n        }}\n",
         method.name, args, value_expr
     )
+    .prepend_with(render_cfg_attrs(method))
 }
 
 fn render_watch_stream_arm(method: &SourceMethod) -> String {
@@ -711,6 +713,7 @@ fn render_json_flow_watch_stream_arm(method: &SourceMethod, fallible: bool) -> S
         "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n            let subscription = flow.subscribeWithCancellation(\n                operit_store::PreferencesDataStore::FlowCancellation::new(),\n                move |value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = serde_json::to_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }},\n            ).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(receiver.withOnClose(move || subscription.cancel()))\n        }}\n",
         method.name, args, flow_expr
     )
+    .prepend_with(render_cfg_attrs(method))
 }
 
 fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
@@ -728,6 +731,7 @@ fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> 
         "        {:?} => {{\n{}            let stateFlow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n            let isFirstEventForSubscriber = isFirstEvent.clone();\n            let subscriptionId = stateFlow.subscribe(move |value| {{\n                let kind = if isFirstEventForSubscriber.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                    operit_link::CoreEventKind::Snapshot\n                }} else {{\n                    operit_link::CoreEventKind::Changed\n                }};\n                if let Ok(value) = serde_json::to_value(value) {{\n                    let _ = sender.send(operit_link::CoreEvent {{\n                        requestId: Some(requestId.clone()),\n                        targetPath: targetPath.clone(),\n                        propertyName: propertyName.clone(),\n                        kind,\n                        value,\n                    }});\n                }}\n            }});\n            Ok(receiver.withOnClose(move || stateFlow.unsubscribe(subscriptionId)))\n        }}\n",
         method.name, args, state_expr
     )
+    .prepend_with(render_cfg_attrs(method))
 }
 
 fn render_text_event_watch_stream_arm(method: &SourceMethod, optional: bool) -> String {
@@ -751,6 +755,7 @@ fn render_text_event_watch_stream_arm(method: &SourceMethod, optional: bool) -> 
         "        {:?} => {{\n{}            let streamChatId = {}.clone();\n            let stream = {};\n            Ok(core_text_event_stream(streamChatId, stream, request))\n        }}\n",
         method.name, args, chat_id_expr, stream_expr
     )
+    .prepend_with(render_cfg_attrs(method))
 }
 
 fn render_string_watch_stream_arm(method: &SourceMethod) -> String {
@@ -760,6 +765,7 @@ fn render_string_watch_stream_arm(method: &SourceMethod) -> String {
         "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(core_string_event_stream(stream, request))\n        }}\n",
         method.name, args, method.name, call_args
     )
+    .prepend_with(render_cfg_attrs(method))
 }
 
 fn render_json_watch_stream_arm(method: &SourceMethod) -> String {
@@ -769,6 +775,25 @@ fn render_json_watch_stream_arm(method: &SourceMethod) -> String {
         "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(core_json_event_stream(stream, request))\n        }}\n",
         method.name, args, method.name, call_args
     )
+    .prepend_with(render_cfg_attrs(method))
+}
+
+fn render_cfg_attrs(method: &SourceMethod) -> String {
+    method
+        .cfg_attrs
+        .iter()
+        .map(|attr| format!("        {attr}\n"))
+        .collect()
+}
+
+trait GeneratedStringExt {
+    fn prepend_with(self, prefix: String) -> String;
+}
+
+impl GeneratedStringExt for String {
+    fn prepend_with(self, prefix: String) -> String {
+        prefix + &self
+    }
 }
 
 fn render_arg_decoders(method: &SourceMethod) -> String {

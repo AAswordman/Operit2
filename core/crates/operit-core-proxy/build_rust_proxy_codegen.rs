@@ -136,10 +136,11 @@ fn render_proxy_factory_method(method: &SourceMethod) -> String {
     let factory = method.factory_protocol().expect("factory protocol");
     let proxy_type = proxy_object_type_name_from_schema_key(&factory.target_schema_key);
     let params = render_proxy_params(method);
-    let mut output = format!(
+    let mut output = render_cfg_attrs(method);
+    output.push_str(&format!(
         "    pub fn {}(&mut self{}) -> {}<'_, C> {{\n",
         method.name, params, proxy_type
-    );
+    ));
     output.push_str("        let mut segments = self.target_path.segments.clone();\n");
     output.push_str(&format!(
         "        segments.push({:?}.to_string());\n",
@@ -162,7 +163,7 @@ fn render_proxy_factory_method(method: &SourceMethod) -> String {
 fn render_proxy_call_method(method: &SourceMethod) -> String {
     let params = render_proxy_params(method);
     let args_json = render_proxy_args_json(method);
-    match method.call_protocol() {
+    let method_code = match method.call_protocol() {
         Some(CallProtocol::Unit | CallProtocol::ResultUnit) => format!(
             "    pub async fn {}(&mut self{}) -> Result<(), operit_link::CoreLinkError> {{\n        self.callGeneratedUnit({:?}, {}).await\n    }}\n\n",
             method.name, params, method.name, args_json
@@ -172,7 +173,8 @@ fn render_proxy_call_method(method: &SourceMethod) -> String {
             method.name, params, value, method.name, args_json
         ),
         None => String::new(),
-    }
+    };
+    render_cfg_attrs(method) + &method_code
 }
 
 fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> String {
@@ -185,10 +187,11 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
         | WatchStreamProtocol::TextEvent { .. } => {
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
-            format!(
+            let method_code = format!(
                 "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}, {})).await\n    }}\n\n",
                 method.name, params, method.name, args_json
-            )
+            );
+            render_cfg_attrs(method) + &method_code
         }
         WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
             let Some(value) = watch.snapshot_type.as_ref() else {
@@ -196,16 +199,18 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
             };
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
-            let mut output = format!(
+            let mut output = render_cfg_attrs(method);
+            output.push_str(&format!(
                 "    pub async fn {}Snapshot(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
                 method.name, params, value, method.name, args_json
-            );
+            ));
             let Some(alias) = method.name.strip_suffix("Flow") else {
                 return output;
             };
             if alias.is_empty() || object.methods.iter().any(|existing| existing.name == alias) {
                 return output;
             }
+            output.push_str(&render_cfg_attrs(method));
             output.push_str(&format!(
                 "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
                 alias, params, value, method.name, args_json
@@ -226,14 +231,20 @@ fn render_proxy_watch_all_method(object: &SourceObject) -> String {
                 .and_then(|watch| watch.snapshot_type.as_ref())
                 .is_some()
         })
-        .map(|method| json_string(&method.name))
+        .map(|method| {
+            format!(
+                "{}        propertyNames.push({});\n",
+                render_cfg_attrs(method),
+                json_string(&method.name)
+            )
+        })
         .collect::<Vec<_>>();
     if watchable.is_empty() {
         return "    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
     }
     format!(
-        "    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        for propertyName in [{}] {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
-        watchable.join(", ")
+        "    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
+        watchable.join("")
     )
 }
 
@@ -269,4 +280,12 @@ fn render_proxy_arg_json_expr(arg: &SourceArg) -> String {
     } else {
         arg.name.clone()
     }
+}
+
+fn render_cfg_attrs(method: &SourceMethod) -> String {
+    method
+        .cfg_attrs
+        .iter()
+        .map(|attr| format!("    {attr}\n"))
+        .collect()
 }

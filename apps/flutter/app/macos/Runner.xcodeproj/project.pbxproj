@@ -209,6 +209,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 33CC10FB2044A3C60003C045 /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
+				33A1B0102D00000200A1B010 /* Build Rust Bridge */,
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
@@ -296,6 +297,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		33A1B0102D00000200A1B010 /* Build Rust Bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Bridge";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(CURRENT_ARCH)/liboperit_flutter_bridge.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$PROJECT_DIR/build_rust_bridge.sh\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -490,6 +511,14 @@
 					"@executable_path/../Frameworks",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(CURRENT_ARCH)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-loperit_flutter_bridge",
+				);
 				SWIFT_VERSION = 5.0;
 			};
 			name = Profile;
@@ -622,6 +651,14 @@
 					"@executable_path/../Frameworks",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(CURRENT_ARCH)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-loperit_flutter_bridge",
+				);
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/OperitFlutterBridge.h;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -643,6 +680,14 @@
 					"@executable_path/../Frameworks",
 				);
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(CURRENT_ARCH)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-loperit_flutter_bridge",
+				);
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/OperitFlutterBridge.h;
 				SWIFT_VERSION = 5.0;
 			};
@@ -711,3 +756,4 @@
 	};
 	rootObject = 33CC10E52044A3C60003C045 /* Project object */;
 }
+
