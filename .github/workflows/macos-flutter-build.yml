@@ -13,9 +13,10 @@ on:
           - "true"
   push:
     branches:
-      - ci/macos-apple-host
+      - main
     paths:
       - ".github/workflows/macos-flutter-build.yml"
+      - "tools/build_scripts/**"
       - "apps/flutter/app/**"
       - "apps/flutter/native/**"
       - "core/**"
@@ -111,45 +112,10 @@ jobs:
           path: .ci-tools/typescript
           key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
 
-      - name: Install TypeScript compiler
-        run: |
-          node --version
-          npm --version
-          if [ ! -x .ci-tools/typescript/node_modules/.bin/tsc ]; then
-            npm install --prefix .ci-tools/typescript --no-audit --no-fund "typescript@${TYPESCRIPT_VERSION}"
-          fi
-          echo "$PWD/.ci-tools/typescript/node_modules/.bin" >> "$GITHUB_PATH"
-          .ci-tools/typescript/node_modules/.bin/tsc --version
-
-      - name: Save TypeScript compiler
-        if: steps.typescript-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .ci-tools/typescript
-          key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
-
       - name: Restore wasm-bindgen CLI
         if: steps.web-build.outputs.needed == 'true'
         id: wasm-bindgen-cache
         uses: actions/cache/restore@v4
-        with:
-          path: .ci-tools/wasm-bindgen
-          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
-
-      - name: Install wasm-bindgen CLI
-        if: steps.web-build.outputs.needed == 'true'
-        run: |
-          root="$PWD/.ci-tools/wasm-bindgen"
-          if [ ! -x "$root/bin/wasm-bindgen" ]; then
-            rm -rf "$root"
-            cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked --root "$root"
-          fi
-          echo "$root/bin" >> "$GITHUB_PATH"
-          "$root/bin/wasm-bindgen" --version
-
-      - name: Save wasm-bindgen CLI
-        if: steps.web-build.outputs.needed == 'true' && steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
         with:
           path: .ci-tools/wasm-bindgen
           key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
@@ -162,22 +128,26 @@ jobs:
           path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
           key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
 
-      - name: Prepare WASI SDK
+      - name: Build Web Access assets
         if: steps.web-build.outputs.needed == 'true'
-        run: |
-          root="$PWD/target/operit-build-tools/wasi-sdk-${WASI_SDK_VERSION}-macos"
-          archive="$PWD/target/operit-build-tools/wasi-sdk-${WASI_SDK_VERSION}-macos.tar.gz"
-          if [ ! -x "$root/bin/clang" ]; then
-            rm -rf "$root"
-            mkdir -p "$root"
-            mkdir -p "$(dirname "$archive")"
-            curl --fail --location --retry 5 --retry-all-errors \
-              "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-${WASI_SDK_VERSION}-macos.tar.gz" \
-              --output "$archive"
-            tar -xf "$archive" -C "$root" --strip-components 1
-          fi
-          echo "QUICKJS_WASM_SYS_WASI_SDK_PATH=$root" >> "$GITHUB_ENV"
-          "$root/bin/clang" --version
+        run: python3 tools/build_scripts/build_web_access.py
+
+      - name: Build and package macOS app
+        run: python3 tools/build_scripts/build_macos.py
+
+      - name: Save TypeScript compiler
+        if: steps.typescript-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-tools/typescript
+          key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
+
+      - name: Save wasm-bindgen CLI
+        if: steps.web-build.outputs.needed == 'true' && steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-tools/wasm-bindgen
+          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
 
       - name: Save WASI SDK
         if: steps.web-build.outputs.needed == 'true' && steps.wasi-sdk-cache.outputs.cache-hit != 'true'
@@ -185,24 +155,6 @@ jobs:
         with:
           path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
           key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
-
-      - name: Prepare Python command
-        run: |
-          python3 --version
-          mkdir -p .venv/bin
-          ln -sf "$(command -v python3)" .venv/bin/python
-          .venv/bin/python --version
-
-      - name: Flutter pub get
-        working-directory: apps/flutter/app
-        run: flutter pub get
-
-      - name: Build web assets
-        if: steps.web-build.outputs.needed == 'true'
-        working-directory: apps/flutter/app
-        run: |
-          rustup target add wasm32-unknown-unknown
-          flutter build web --release
 
       - name: Save web build bundle
         if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
@@ -212,20 +164,6 @@ jobs:
             apps/flutter/app/build/web
             apps/flutter/app/assets/web_access
           key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
-
-      - name: Build macOS app
-        working-directory: apps/flutter/app
-        run: flutter build macos --release -v
-
-      - name: Package macOS app
-        working-directory: apps/flutter/app
-        run: |
-          app_path="build/macos/Build/Products/Release/Operit2.app"
-          archive_path="build/macos/Build/Products/Release/Operit2-macos.zip"
-          test -d "$app_path"
-          rm -f "$archive_path"
-          ditto -c -k --keepParent "$app_path" "$archive_path"
-          test -s "$archive_path"
 
       - name: Upload macOS app artifact
         uses: actions/upload-artifact@v4
