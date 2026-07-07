@@ -128,6 +128,8 @@ pub(crate) struct SourceArg {
 #[derive(Clone, Debug)]
 pub(crate) struct SerializableType {
     pub(crate) full_type: String,
+    pub(crate) supports_serialize: bool,
+    pub(crate) supports_deserialize: bool,
     pub(crate) kind: SerializableTypeKind,
 }
 
@@ -138,6 +140,7 @@ pub(crate) enum SerializableTypeKind {
     },
     TaggedEnum {
         tag_name: String,
+        content_name: Option<String>,
         variants: Vec<SerializableEnumVariant>,
     },
     Enum {
@@ -157,7 +160,34 @@ pub(crate) struct SerializableField {
 pub(crate) struct SerializableEnumVariant {
     pub(crate) name: String,
     pub(crate) json_name: String,
+    pub(crate) fields_are_unnamed: bool,
     pub(crate) fields: Vec<SerializableField>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ErrorTypeDefinition {
+    pub(crate) full_type: String,
+    pub(crate) variants: Vec<ErrorEnumVariant>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ErrorEnumVariant {
+    pub(crate) name: String,
+    pub(crate) fields_kind: ErrorFieldsKind,
+    pub(crate) fields: Vec<ErrorField>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ErrorFieldsKind {
+    Unit,
+    Named,
+    Unnamed,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ErrorField {
+    pub(crate) name: String,
+    pub(crate) ty: String,
 }
 
 #[derive(Clone, Debug)]
@@ -171,9 +201,12 @@ pub(crate) enum MethodProtocol {
 #[derive(Clone, Debug)]
 pub(crate) enum CallProtocol {
     Unit,
-    ResultUnit,
+    ResultUnit { error_type: String },
     Value(String),
-    ResultValue(String),
+    ResultValue {
+        value_type: String,
+        error_type: String,
+    },
 }
 
 #[derive(Clone, Debug)]

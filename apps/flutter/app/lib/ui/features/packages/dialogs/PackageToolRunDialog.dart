@@ -136,7 +136,9 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
             core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
               toolName: '${widget.packageName}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData,
+              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+                value: const core_proxy.StringResultData(value: ''),
+              ),
               error: '缺少必填参数：${missing.join(", ")}',
             );
       });
@@ -177,7 +179,9 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
             core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
               toolName: '${widget.packageName}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData,
+              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+                value: const core_proxy.StringResultData(value: ''),
+              ),
               error: error.toString(),
             );
       });
@@ -229,6 +233,9 @@ String _toolResultText(
   if (!result.success) {
     return result.error ?? '';
   }
-  final value = result.result;
-  return value.value;
+  final value = result.result.value;
+  if (value is core_proxy.StringResultData) {
+    return value.value;
+  }
+  return const JsonEncoder.withIndent('  ').convert(result.result.toJson());
 }

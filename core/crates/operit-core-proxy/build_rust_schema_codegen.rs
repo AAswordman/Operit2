@@ -44,13 +44,14 @@ fn render_schema_methods(methods: &[SourceMethod]) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"name\":{},\"args\":[{}],\"async\":{},\"callable\":{},\"watchable\":{},\"returnType\":{},\"protocol\":{},\"unsupportedReason\":{}}}",
+                "{{\"name\":{},\"args\":[{}],\"async\":{},\"callable\":{},\"watchable\":{},\"returnType\":{},\"errorType\":{},\"protocol\":{},\"unsupportedReason\":{}}}",
                 json_string(&method.name),
                 args,
                 method.is_async,
                 method.call_protocol().is_some(),
                 method.watch_protocol().is_some(),
                 json_string(&method.rust_return_type),
+                option_json_string(method_error_type(method)),
                 render_schema_protocol(&method.protocol),
                 option_json_string(method.unsupported_reason())
             )
@@ -58,6 +59,14 @@ fn render_schema_methods(methods: &[SourceMethod]) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("[{}]", entries)
+}
+
+fn method_error_type(method: &SourceMethod) -> Option<&str> {
+    match method.call_protocol()? {
+        CallProtocol::ResultUnit { error_type } => Some(error_type.as_str()),
+        CallProtocol::ResultValue { error_type, .. } => Some(error_type.as_str()),
+        _ => None,
+    }
 }
 
 fn render_schema_types(serializable_types: &HashMap<String, SerializableType>) -> String {

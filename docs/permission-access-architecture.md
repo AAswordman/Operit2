@@ -104,6 +104,21 @@ Tool Capability
 
 设置分类不新增“权限总表”。现有 `工具与扩展` 分类保留工具、插件、MCP 与 AI 工作模式入口。现有 `工作区` 分类负责工作区路径与授权展示。现有 `访问入口` 分类负责配对设备、远程 session 与 Web Access。
 
+欢迎页的权限授予也按同一原则处理：
+
+```text
+当前实现
+  Flutter 欢迎页写死 Android 权限项。
+  AndroidPlatformChannel 返回 location、bluetoothConnect、bluetoothScan、overlay、batteryOptimization。
+
+目标实现
+  欢迎页只渲染 Host 注册的 onboarding capability requirements。
+  每一项是否需要展示、是否已满足、如何申请、申请后如何验证，都由 Host 提供。
+  Flutter UI 不承诺权限本身，只展示 Host 的声明与校验结果。
+```
+
+Host 是每个权限项的保证方。Android 的蓝牙、定位、悬浮窗、电池优化由 Android host 检查；Windows、Linux、服务器部署也由各自 host 注册自己的能力项。UI 不能把某个权限项写死为所有平台都存在。
+
 ## 3. AI Work Modes
 
 ### readOnly
@@ -181,6 +196,7 @@ pub struct HostEnvironmentDescriptor {
     pub privilege: HostPrivilege,
     pub isolation: HostIsolation,
     pub capabilities: Vec<HostCapability>,
+    pub onboardingRequirements: Vec<HostOnboardingRequirement>,
     pub workspaceRoots: Vec<WorkspaceRootDescriptor>,
 }
 
@@ -212,6 +228,28 @@ pub struct HostCapability {
     pub id: String,
     pub scope: CapabilityScope,
     pub operations: Vec<CapabilityOperation>,
+}
+
+pub struct HostOnboardingRequirement {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub capabilityIds: Vec<String>,
+    pub status: HostRequirementStatus,
+    pub action: HostRequirementAction,
+}
+
+pub enum HostRequirementStatus {
+    Satisfied,
+    Missing,
+    Unavailable,
+}
+
+pub enum HostRequirementAction {
+    RuntimePermission,
+    OpenSystemSettings,
+    HostManaged,
+    None,
 }
 ```
 
@@ -384,6 +422,8 @@ runtime / tool execution
 
 `fullAccess` 关闭单工具确认，但不能越过 Host Capability。Host 进程没有的系统能力，runtime、工具、远程客户端都拿不到。
 
+欢迎页权限项也不例外。它只能触发 Host 暴露的 request action，然后重新读取 Host 的 snapshot。最终状态以 Host 校验结果为准，不以 Flutter 按钮点击结果为准。
+
 ## 7. Personal Mode
 
 个人模式启动时创建内置本机用户：
@@ -492,6 +532,12 @@ apps/flutter/app/lib/ui/features/settings/tools/ToolSettingsPanel.dart
   改成普通视图：当前 AI Work Mode + Host Capability 摘要 + 扩展/MCP设置。
   高级视图展示完整权限链路。
 
+apps/flutter/app/lib/ui/features/onboarding/OnboardingStartupRoute.dart
+  删除写死的 _OnboardingPermissionSnapshot 字段。
+  权限页改成读取 HostOnboardingRequirement 列表。
+  _PermissionTile 按 Host 返回的 title、description、status、action 渲染。
+  用户点击授权时只调用 requirement.id 对应的 Host request action。
+
 apps/flutter/app/lib/ui/features/chat/components/style/input/agent/AgentInputMenuPopup.dart
   删除 forbid / ask / allow。
   改成 readOnly / sandboxWrite / fullAccess。
@@ -518,6 +564,16 @@ apps/flutter/app/lib/core/link_host/LinkHostConfig.dart
 apps/flutter/native/operit-flutter-bridge/src/access.rs
   /link/session、/link/call、/link/watch/channel/* 验证 session 后构造 AccessContext。
   远程 session 到 user/grant 的绑定在这里进入 host access。
+
+apps/flutter/app/android/app/src/main/kotlin/app/operit/AndroidPlatformChannel.kt
+  当前 androidOnboardingPermissionSnapshot 写死 Android 权限 map。
+  改成 Android host 注册 onboarding requirements：
+    android.location
+    android.bluetooth
+    android.overlay
+    android.batteryOptimization
+  每个 requirement 的 status 由 Android API 检查。
+  每个 requirement 的 request action 由 Android host 执行。
 ```
 
 ## 11. Settings UI
@@ -567,7 +623,101 @@ AI 现在能做什么？
 这些能力来自哪个 Host？
 ```
 
-## 12. Legacy Replacement
+## 12. Onboarding Permission Page
+
+欢迎页权限授予页不是独立权限模型，它只是 Host Capability 的首次配置入口。
+
+当前页面问题：
+
+```text
+OnboardingStartupRoute.dart
+  _OnboardingPermissionSnapshot 写死 Android 字段。
+  _OnboardingPermissionAction 写死 location / bluetooth / overlay / battery。
+  _AiSetupPermissionPage 写死四个 PermissionTile。
+
+AndroidPlatformChannel.kt
+  androidOnboardingPermissionSnapshot 返回固定 map。
+  androidOnboardingRequestPermission 根据固定字符串分发 Android 请求。
+```
+
+目标页面模型：
+
+```text
+Host
+  注册 onboarding requirements。
+  检查每一项当前是否满足。
+  提供每一项申请动作。
+
+Flutter
+  读取 requirements。
+  渲染 requirements。
+  调用 request(requirementId)。
+  重新读取 requirements。
+```
+
+目标调用形状：
+
+```text
+hostOnboardingRequirements()
+  -> Vec<HostOnboardingRequirement>
+
+requestHostOnboardingRequirement(id)
+  -> ()
+
+hostOnboardingRequirements()
+  -> Vec<HostOnboardingRequirement>
+```
+
+Android host 示例：
+
+```text
+android.location
+  capabilityIds: system.location
+  status: ACCESS_FINE_LOCATION granted
+  action: RuntimePermission
+
+android.bluetooth
+  capabilityIds: bluetooth.classic, bluetooth.ble
+  status: BLUETOOTH_CONNECT and BLUETOOTH_SCAN granted
+  action: RuntimePermission
+
+android.overlay
+  capabilityIds: android.overlay
+  status: Settings.canDrawOverlays
+  action: OpenSystemSettings
+
+android.batteryOptimization
+  capabilityIds: runtime.background
+  status: PowerManager.isIgnoringBatteryOptimizations
+  action: OpenSystemSettings
+```
+
+这个页面不能承诺“授权后一定拥有某能力”。它只能表达：
+
+```text
+Host 声明这个能力需要一个系统授权项。
+Host 当前检查结果是已满足 / 未满足 / 不可用。
+用户可以触发 Host 提供的申请动作。
+申请后仍以 Host 重新检查结果为准。
+```
+
+Windows / Linux / 企业 Host 可以注册完全不同的欢迎页项：
+
+```text
+windows.admin
+  表示当前 host 是否以管理员身份运行。
+  不能通过 Flutter 按钮提升到管理员。
+
+linux.root
+  表示当前 host 是否以 root 或指定 service account 运行。
+  不能通过 Flutter 按钮提升到 root。
+
+enterprise.workspace
+  表示当前 session 是否有至少一个 workspace grant。
+  申请动作由企业 host 决定。
+```
+
+## 13. Legacy Replacement
 
 删除旧模型：
 
@@ -591,7 +741,7 @@ local-owner
 
 旧工具权限 UI 文案不保留为兼容入口。
 
-## 13. Prohibited Placement
+## 14. Prohibited Placement
 
 不得把以下内容放进 `operit-link`：
 
@@ -613,6 +763,8 @@ AI Work Mode 判定
 fullAccess 判定
 workspace boundary 执行检查
 工具能力判定
+欢迎页权限项的满足状态
+欢迎页权限项的能力保证
 ```
 
 不得把以下概念混在一起：
@@ -626,19 +778,21 @@ fullAccess != root/admin bypass
 remote pairing != enterprise user grant
 ```
 
-## 14. Implementation Order
+## 15. Implementation Order
 
 ```text
 1. 定义 AccessContext、AiWorkMode、WorkspaceGrant、ToolCapabilityDescriptor。
 2. 扩展 HostEnvironmentDescriptor，由各 host 注册 platform / privilege / isolation / capabilities。
-3. 创建个人模式 local-owner，并把本机工作区绑定成 WorkspaceGrant。
-4. 改造 /link/session 与 /link/call，让远程请求携带并绑定 AccessContext。
-5. 改造 ToolExecutionManager，统一执行 capability + context 判定。
-6. 改造文件工具与 PathMapper 的 workspace grant 检查。
-7. 替换 ToolSettingsPanel 和 AgentInputMenuPopup 的旧三态。
-8. 删除旧 ToolPermissionSystem 数据与 UI。
-9. 增加 audit 记录。
-10. 企业模式只实现用户 + 工作区授权。
+3. 增加 HostOnboardingRequirement，由各 host 注册欢迎页权限项。
+4. 改造 OnboardingStartupRoute，让权限页按 Host requirements 渲染。
+5. 创建个人模式 local-owner，并把本机工作区绑定成 WorkspaceGrant。
+6. 改造 /link/session 与 /link/call，让远程请求携带并绑定 AccessContext。
+7. 改造 ToolExecutionManager，统一执行 capability + context 判定。
+8. 改造文件工具与 PathMapper 的 workspace grant 检查。
+9. 替换 ToolSettingsPanel 和 AgentInputMenuPopup 的旧三态。
+10. 删除旧 ToolPermissionSystem 数据与 UI。
+11. 增加 audit 记录。
+12. 企业模式只实现用户 + 工作区授权。
 ```
 
 这不是 UI 改名任务。核心改动是把“工具权限”从一个 UI 开关，改成 host、user、workspace、mode、tool capability 共同参与的执行期权限链路。

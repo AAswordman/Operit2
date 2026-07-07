@@ -28,10 +28,20 @@ fn main() {
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let runtime_src = manifest_dir.join("../operit-runtime/src");
+    let store_src = manifest_dir.join("../operit-store/src");
     let serializable_type_definitions = collect_serializable_type_definitions(&runtime_src);
+    let mut error_type_definitions =
+        collect_error_type_definitions(&runtime_src, "operit_runtime");
+    error_type_definitions.extend(collect_error_type_definitions(&store_src, "operit_store"));
     let serializable_types = serializable_type_definitions
-        .keys()
-        .cloned()
+        .iter()
+        .filter(|(_, ty)| ty.supports_serialize)
+        .map(|(name, _)| name.clone())
+        .collect::<HashSet<_>>();
+    let deserializable_types = serializable_type_definitions
+        .iter()
+        .filter(|(_, ty)| ty.supports_deserialize)
+        .map(|(name, _)| name.clone())
         .collect::<HashSet<_>>();
     let type_registry = collect_type_registry(&runtime_src);
     let object_specs = object_specs(&runtime_src);
@@ -50,13 +60,21 @@ fn main() {
 
     let mut objects = object_specs
         .iter()
-        .map(|spec| scan_object(spec, &serializable_types, &type_registry))
+        .map(|spec| {
+            scan_object(
+                spec,
+                &serializable_types,
+                &deserializable_types,
+                &type_registry,
+            )
+        })
         .collect::<Vec<_>>();
     let factory_specs = discover_factory_object_specs(
         &objects,
         &object_specs,
         &public_object_types,
         &serializable_types,
+        &deserializable_types,
         &type_registry,
     );
     mark_factory_methods(&mut objects, &factory_specs);
@@ -66,10 +84,18 @@ fn main() {
     objects.extend(
         factory_specs
             .iter()
-            .map(|spec| scan_object(spec, &serializable_types, &type_registry)),
+            .map(|spec| {
+                scan_object(
+                    spec,
+                    &serializable_types,
+                    &deserializable_types,
+                    &type_registry,
+                )
+            }),
     );
     let schema_json = build_rust_codegen::render_schema(&objects, &serializable_type_definitions);
-    let generated = build_rust_codegen::render_generated(&objects, &schema_json);
+    let generated =
+        build_rust_codegen::render_generated(&objects, &schema_json, &error_type_definitions);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     fs::write(out_dir.join("generated_core_dispatch.rs"), generated)
         .expect("write generated_core_dispatch.rs");

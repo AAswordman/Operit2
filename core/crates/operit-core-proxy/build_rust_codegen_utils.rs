@@ -12,6 +12,13 @@ pub(crate) fn json_string(value: &str) -> String {
     serde_json_escape(value)
 }
 
+pub(crate) fn error_details_fn_name(full_type: &str) -> String {
+    format!(
+        "generated_core_proxy_error_details_for_{}",
+        dispatch_name_from_schema_key(full_type)
+    )
+}
+
 pub(crate) fn option_json_string(value: Option<&str>) -> String {
     match value {
         Some(value) => serde_json_escape(value),

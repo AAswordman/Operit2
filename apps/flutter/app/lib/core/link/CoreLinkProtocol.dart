@@ -137,6 +137,7 @@ class CoreLinkError implements Exception {
   const CoreLinkError({
     required this.code,
     required this.message,
+    this.details,
     this.location,
     this.backtrace,
   });
@@ -146,6 +147,7 @@ class CoreLinkError implements Exception {
     return CoreLinkError(
       code: json['code'] as String,
       message: json['message'] as String,
+      details: json['details'],
       location: locationJson == null
           ? null
           : CoreLinkErrorLocation.fromJson(locationJson),
@@ -155,6 +157,7 @@ class CoreLinkError implements Exception {
 
   final String code;
   final String message;
+  final Object? details;
   final CoreLinkErrorLocation? location;
   final String? backtrace;
 

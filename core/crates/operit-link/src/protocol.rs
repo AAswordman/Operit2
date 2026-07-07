@@ -234,10 +234,12 @@ pub enum CoreEventKind {
     Completed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreLinkError {
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<CoreLinkErrorLocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -256,6 +258,22 @@ impl CoreLinkError {
         Self {
             code: code.into(),
             message: message.into(),
+            details: None,
+            location: None,
+            backtrace: None,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn withDetails(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: Value,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: Some(details),
             location: None,
             backtrace: None,
         }
@@ -287,6 +305,7 @@ impl CoreLinkError {
         Self {
             code: "INTERNAL_ERROR".to_string(),
             message: message.into(),
+            details: None,
             location: Some(CoreLinkErrorLocation {
                 file: caller.file().to_string(),
                 line: caller.line(),

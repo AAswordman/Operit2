@@ -785,12 +785,12 @@ Widget _screen(
 core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
     packageName: 'demo_toolpkg',
-    displayName: <String, Object?>{
-      'values': <String, Object?>{'default': 'Demo ToolPkg'},
-    },
-    description: <String, Object?>{
-      'values': <String, Object?>{'default': 'DSL test package'},
-    },
+    displayName: core_proxy.LocalizedText(
+      values: <String, String>{'default': 'Demo ToolPkg'},
+    ),
+    description: core_proxy.LocalizedText(
+      values: <String, String>{'default': 'DSL test package'},
+    ),
     version: '1.0.0',
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
@@ -805,9 +805,9 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
         id: 'main',
         runtime: 'compose_dsl',
         screen: 'ui/main.js',
-        title: <String, Object?>{
-          'values': <String, Object?>{'default': 'Main route'},
-        },
+        title: core_proxy.LocalizedText(
+          values: <String, String>{'default': 'Main route'},
+        ),
         keepAlive: true,
       ),
     ],
@@ -817,9 +817,9 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
         routeId: 'main',
         runtime: 'compose_dsl',
         screen: 'ui/main.js',
-        title: <String, Object?>{
-          'values': <String, Object?>{'default': 'Main route'},
-        },
+        title: core_proxy.LocalizedText(
+          values: <String, String>{'default': 'Main route'},
+        ),
         keepAlive: true,
       ),
     ],
@@ -848,12 +848,12 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
 core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
     packageName: 'module_only_toolpkg',
-    displayName: <String, Object?>{
-      'values': <String, Object?>{'default': 'Module ToolPkg'},
-    },
-    description: <String, Object?>{
-      'values': <String, Object?>{'default': 'Module only package'},
-    },
+    displayName: core_proxy.LocalizedText(
+      values: <String, String>{'default': 'Module ToolPkg'},
+    ),
+    description: core_proxy.LocalizedText(
+      values: <String, String>{'default': 'Module only package'},
+    ),
     version: '1.0.0',
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
@@ -868,9 +868,9 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
         id: 'toolbox',
         runtime: 'compose_dsl',
         screen: 'ui/toolbox.js',
-        title: <String, Object?>{
-          'values': <String, Object?>{'default': 'Toolbox module'},
-        },
+        title: core_proxy.LocalizedText(
+          values: <String, String>{'default': 'Toolbox module'},
+        ),
         keepAlive: true,
       ),
     ],

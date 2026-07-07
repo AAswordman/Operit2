@@ -164,13 +164,17 @@ fn render_proxy_call_method(method: &SourceMethod) -> String {
     let params = render_proxy_params(method);
     let args_json = render_proxy_args_json(method);
     let method_code = match method.call_protocol() {
-        Some(CallProtocol::Unit | CallProtocol::ResultUnit) => format!(
+        Some(CallProtocol::Unit | CallProtocol::ResultUnit { .. }) => format!(
             "    pub async fn {}(&mut self{}) -> Result<(), operit_link::CoreLinkError> {{\n        self.callGeneratedUnit({:?}, {}).await\n    }}\n\n",
             method.name, params, method.name, args_json
         ),
-        Some(CallProtocol::Value(value) | CallProtocol::ResultValue(value)) => format!(
+        Some(CallProtocol::Value(value)) => format!(
             "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.callGenerated({:?}, {}).await\n    }}\n\n",
             method.name, params, value, method.name, args_json
+        ),
+        Some(CallProtocol::ResultValue { value_type, .. }) => format!(
+            "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.callGenerated({:?}, {}).await\n    }}\n\n",
+            method.name, params, value_type, method.name, args_json
         ),
         None => String::new(),
     };

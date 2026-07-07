@@ -130,10 +130,10 @@ jobs:
 
       - name: Build Web Access assets
         if: steps.web-build.outputs.needed == 'true'
-        run: python3 tools/build_scripts/build_web_access.py
+        run: python3 tools/build_scripts/build_flutter_web_access.py
 
       - name: Build and package macOS app
-        run: python3 tools/build_scripts/build_macos.py
+        run: python3 tools/build_scripts/build_flutter_macos.py
 
       - name: Save TypeScript compiler
         if: steps.typescript-cache.outputs.cache-hit != 'true'

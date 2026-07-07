@@ -55,6 +55,8 @@ fn render_dart_models(
     types.sort_by(|left, right| left.full_type.cmp(&right.full_type));
 
     let mut output = generated_header();
+    output.push_str("import '../../link/CoreLinkProtocol.dart';\n\n");
+    output.push_str(&render_core_proxy_error_details());
     for ty in types {
         match &ty.kind {
             SerializableTypeKind::Struct { fields } => {
@@ -77,6 +79,62 @@ fn render_dart_models(
             } => {}
         }
     }
+    output
+}
+
+fn render_core_proxy_error_details() -> String {
+    let mut output = String::new();
+    output.push_str("class CoreProxyErrorDetails {\n");
+    output.push_str("  const CoreProxyErrorDetails({\n");
+    output.push_str("    required this.errorType,\n");
+    output.push_str("    required this.message,\n");
+    output.push_str("    this.variant,\n");
+    output.push_str("    this.kind,\n");
+    output.push_str("    this.httpStatus,\n");
+    output.push_str("    this.remoteMessage,\n");
+    output.push_str("    this.fields = const <String, Object?>{},\n");
+    output.push_str("  });\n\n");
+    output.push_str("  factory CoreProxyErrorDetails.fromCoreLinkError(CoreLinkError error) {\n");
+    output.push_str("    final details = error.details;\n");
+    output.push_str("    if (details is Map<String, Object?>) {\n");
+    output.push_str("      return CoreProxyErrorDetails.fromJson(details, message: error.message);\n");
+    output.push_str("    }\n");
+    output.push_str("    return CoreProxyErrorDetails(errorType: error.code, message: error.message);\n");
+    output.push_str("  }\n\n");
+    output.push_str("  factory CoreProxyErrorDetails.fromJson(Map<String, Object?> json, {String? message}) {\n");
+    output.push_str("    final classification = json['classification'];\n");
+    output.push_str("    final fields = json['fields'];\n");
+    output.push_str("    return CoreProxyErrorDetails(\n");
+    output.push_str("      errorType: _stringValue(json['errorType']) ?? 'unknown',\n");
+    output.push_str("      message: _stringValue(json['message']) ?? message ?? '',\n");
+    output.push_str("      variant: _stringValue(json['variant']),\n");
+    output.push_str("      kind: classification is Map<String, Object?> ? _stringValue(classification['kind']) : _stringValue(json['kind']),\n");
+    output.push_str("      httpStatus: _intValue(json['httpStatus']),\n");
+    output.push_str("      remoteMessage: _stringValue(json['remoteMessage']),\n");
+    output.push_str("      fields: fields is Map<String, Object?> ? fields : const <String, Object?>{},\n");
+    output.push_str("    );\n");
+    output.push_str("  }\n\n");
+    output.push_str("  final String errorType;\n");
+    output.push_str("  final String message;\n");
+    output.push_str("  final String? variant;\n");
+    output.push_str("  final String? kind;\n");
+    output.push_str("  final int? httpStatus;\n");
+    output.push_str("  final String? remoteMessage;\n");
+    output.push_str("  final Map<String, Object?> fields;\n\n");
+    output.push_str("  String? stringField(String name) => _stringValue(fields[name]);\n\n");
+    output.push_str("  static String? _stringValue(Object? value) {\n");
+    output.push_str("    if (value is String && value.trim().isNotEmpty) {\n");
+    output.push_str("      return value.trim();\n");
+    output.push_str("    }\n");
+    output.push_str("    return null;\n");
+    output.push_str("  }\n\n");
+    output.push_str("  static int? _intValue(Object? value) {\n");
+    output.push_str("    if (value is int) {\n");
+    output.push_str("      return value;\n");
+    output.push_str("    }\n");
+    output.push_str("    return null;\n");
+    output.push_str("  }\n");
+    output.push_str("}\n\n");
     output
 }
 
@@ -159,10 +217,9 @@ fn render_dart_call_method(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let return_type = match method.call_protocol().expect("call protocol") {
-        CallProtocol::Unit | CallProtocol::ResultUnit => "void".to_string(),
-        CallProtocol::Value(ty) | CallProtocol::ResultValue(ty) => {
-            dart_type(ty, serializable_types)
-        }
+        CallProtocol::Unit | CallProtocol::ResultUnit { .. } => "void".to_string(),
+        CallProtocol::Value(ty) => dart_type(ty, serializable_types),
+        CallProtocol::ResultValue { value_type, .. } => dart_type(value_type, serializable_types),
     };
     let params = render_dart_params(&method.args, serializable_types);
     let args = render_dart_args_map(&method.args, serializable_types);
@@ -399,7 +456,7 @@ fn render_dart_tagged_enum(
         for field in &variant.fields {
             let name = dart_identifier(&field.name);
             if !seen_fields.contains(&name) {
-                let field_type = dart_type(&field.ty, serializable_types);
+                let field_type = dart_tagged_enum_field_type(&field.name, variants, serializable_types);
                 let default_val = dart_default_value(&field_type);
                 output.push_str(&format!("    this.{} = {},\n", name, default_val));
                 seen_fields.push(name);
@@ -439,9 +496,10 @@ fn render_dart_tagged_enum(
         for field in &variant.fields {
             let name = dart_identifier(&field.name);
             if !seen_field_decls.contains(&name) {
+                let field_type = dart_tagged_enum_field_type(&field.name, variants, serializable_types);
                 output.push_str(&format!(
                     "  final {} {};\n",
-                    dart_type(&field.ty, serializable_types),
+                    field_type,
                     name
                 ));
                 seen_field_decls.push(name);
@@ -481,29 +539,65 @@ fn render_dart_tagged_enum(
     output.push_str("    };\n  }\n\n");
     output.push_str("  Map<String, Object?> toJson() {\n");
     output.push_str("    final data = <String, Object?>{\n");
-    let mut seen_json: Vec<String> = Vec::new();
     for variant in variants {
+        output.push_str(&format!(
+            "      if (tag == '{}') ...<String, Object?>{{\n",
+            dart_string_literal(&variant.json_name)
+        ));
         for field in &variant.fields {
-            if seen_json.contains(&field.json_name) {
-                continue;
-            }
-            seen_json.push(field.json_name.clone());
+            let field_name = dart_identifier(&field.name);
+            let field_type = dart_type(&field.ty, serializable_types);
             output.push_str(&format!(
-                "      '{}': {},\n",
+                "        '{}': {},\n",
                 field.json_name,
                 dart_encode_expr(
-                    &dart_identifier(&field.name),
-                    &dart_type(&field.ty, serializable_types),
-                    serializable_types
+                    &dart_tagged_enum_encode_value(&field.name, &field_type, variants, serializable_types),
+                    &field_type,
+                    serializable_types,
                 )
             ));
         }
+        output.push_str("      },\n");
     }
     output.push_str("    };\n");
     output.push_str("    return <String, Object?>{tag: data};\n");
     output.push_str("  }\n");
     output.push_str("}\n\n");
     output
+}
+
+fn dart_tagged_enum_field_type(
+    field_name: &str,
+    variants: &[SerializableEnumVariant],
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let mut field_types = variants
+        .iter()
+        .flat_map(|variant| variant.fields.iter())
+        .filter(|field| field.name == field_name)
+        .map(|field| dart_type(&field.ty, serializable_types))
+        .collect::<Vec<_>>();
+    field_types.sort();
+    field_types.dedup();
+    if field_types.len() == 1 {
+        field_types.remove(0)
+    } else {
+        "Object?".to_string()
+    }
+}
+
+fn dart_tagged_enum_encode_value(
+    field_name: &str,
+    field_type: &str,
+    variants: &[SerializableEnumVariant],
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let field_value = dart_identifier(field_name);
+    if dart_tagged_enum_field_type(field_name, variants, serializable_types) == field_type {
+        field_value
+    } else {
+        format!("({field_value} as {field_type})")
+    }
 }
 
 fn render_dart_params(
@@ -564,9 +658,14 @@ fn reachable_serializable_types(
                 collect_reachable_type(&arg.ty, serializable_types, &mut out);
             }
             match &method.protocol {
-                MethodProtocol::Call(CallProtocol::Value(ty))
-                | MethodProtocol::Call(CallProtocol::ResultValue(ty)) => {
+                MethodProtocol::Call(CallProtocol::Value(ty)) => {
                     collect_reachable_type(ty, serializable_types, &mut out);
+                }
+                MethodProtocol::Call(CallProtocol::ResultValue {
+                    value_type,
+                    ..
+                }) => {
+                    collect_reachable_type(value_type, serializable_types, &mut out);
                 }
                 MethodProtocol::Watch(watch) => {
                     if let Some(snapshot_type) = &watch.snapshot_type {

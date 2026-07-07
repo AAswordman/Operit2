@@ -3,9 +3,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/components/CommonNetworkErrorView.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -253,7 +255,6 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   }
 
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final availableModels = await widget.clients.preferencesModelConfigManager
           .getAvailableProviderModels(providerId: provider.id);
@@ -289,8 +290,14 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
           }
           await _createCustomProviderModel(provider);
       }
-    } catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('$error')));
+    } on CoreLinkError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      await _AddProviderModelErrorDialog.show(
+        context: context,
+        errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+      );
     }
   }
 
@@ -2275,6 +2282,41 @@ class _ConnectionTestErrorDialog extends StatelessWidget {
     return AlertDialog(
       title: Text(l10n.settingsModelConnectionTestSection),
       content: Text(message),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.ok),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddProviderModelErrorDialog extends StatelessWidget {
+  const _AddProviderModelErrorDialog({required this.errorDetails});
+
+  final core_proxy.CoreProxyErrorDetails errorDetails;
+
+  static Future<void> show({
+    required BuildContext context,
+    required core_proxy.CoreProxyErrorDetails errorDetails,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _AddProviderModelErrorDialog(errorDetails: errorDetails),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsModelAddModel),
+      content: SizedBox(
+        width: 520,
+        child: CommonNetworkErrorView(errorDetails: errorDetails),
+      ),
       actions: <Widget>[
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),

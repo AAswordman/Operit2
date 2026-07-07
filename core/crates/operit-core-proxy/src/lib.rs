@@ -146,6 +146,10 @@ fn to_core_value(value: impl serde::Serialize) -> Result<Value, CoreLinkError> {
     serde_json::to_value(value).map_err(|error| CoreLinkError::internal(error.to_string()))
 }
 
+fn core_call_error(message: String, details: Value) -> CoreLinkError {
+    CoreLinkError::withDetails("COMMAND_ERROR", message, details)
+}
+
 fn core_event_stream_channel() -> (
     tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     CoreEventStream,

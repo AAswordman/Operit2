@@ -1,50 +1,21 @@
 #!/usr/bin/env python3
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+from common import (
+    FLUTTER_APP_DIR,
+    REPO_ROOT,
+    ensure_node_and_npm,
+    ensure_typescript,
+    prepare_python_command,
+    require_command,
+    run,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-APP_DIR = REPO_ROOT / "apps" / "flutter" / "app"
+
 WASI_SDK_MAJOR_VERSION = "20"
-
-
-def run(command: list[str], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
-    display = " ".join(command)
-    print(f"+ {display}", flush=True)
-    merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
-    subprocess.run(command, cwd=cwd, env=merged_env, check=True)
-
-
-def require_command(name: str) -> str:
-    path = shutil.which(name)
-    if path is None:
-        raise RuntimeError(f"Required command is not available: {name}")
-    return path
-
-
-def ensure_typescript(version: str) -> Path:
-    root = REPO_ROOT / ".ci-tools" / "typescript"
-    tsc = root / "node_modules" / ".bin" / "tsc"
-    if not tsc.exists():
-        require_command("npm")
-        run(
-            [
-                "npm",
-                "install",
-                "--prefix",
-                str(root),
-                "--no-audit",
-                "--no-fund",
-                f"typescript@{version}",
-            ]
-        )
-    run([str(tsc), "--version"])
-    return tsc.parent
 
 
 def ensure_wasm_bindgen(version: str) -> Path:
@@ -103,8 +74,8 @@ def main() -> int:
 
     require_command("cargo")
     require_command("flutter")
-    run(["node", "--version"])
-    run(["npm", "--version"])
+    ensure_node_and_npm()
+    prepare_python_command()
 
     env = os.environ.copy()
     typescript_bin = ensure_typescript(typescript_version)
@@ -114,7 +85,7 @@ def main() -> int:
     env["QUICKJS_WASM_SYS_WASI_SDK_PATH"] = str(wasi_sdk)
 
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
-    run(["flutter", "build", "web", "--release"], cwd=APP_DIR, env=env)
+    run(["flutter", "build", "web", "--release"], cwd=FLUTTER_APP_DIR, env=env)
     return 0
 
 

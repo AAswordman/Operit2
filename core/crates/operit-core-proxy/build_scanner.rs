@@ -113,6 +113,7 @@ pub(crate) fn discover_factory_object_specs(
     object_specs: &[ObjectSpec],
     public_object_types: &HashMap<String, PublicObjectType>,
     serializable_types: &HashSet<String>,
+    deserializable_types: &HashSet<String>,
     type_registry: &TypeRegistry,
 ) -> Vec<ObjectSpec> {
     let spec_by_schema = object_specs
@@ -150,6 +151,7 @@ pub(crate) fn discover_factory_object_specs(
                 &target_type.type_name,
                 parent_module_path(&target_type.full_type),
                 serializable_types,
+                deserializable_types,
                 type_registry,
             );
             if !has_proxyable_instance_methods(&target_methods) {
@@ -511,6 +513,7 @@ fn function_return_type(function: &ImplItemFn) -> String {
 pub(crate) fn scan_object(
     spec: &ObjectSpec,
     serializable_types: &HashSet<String>,
+    deserializable_types: &HashSet<String>,
     type_registry: &TypeRegistry,
 ) -> SourceObject {
     SourceObject {
@@ -523,6 +526,7 @@ pub(crate) fn scan_object(
             &spec.type_name,
             parent_module_path(&spec.full_type),
             serializable_types,
+            deserializable_types,
             type_registry,
         ),
     }
@@ -533,6 +537,7 @@ fn scan_methods(
     type_name: &str,
     module_path: &str,
     serializable_types: &HashSet<String>,
+    deserializable_types: &HashSet<String>,
     type_registry: &TypeRegistry,
 ) -> Vec<SourceMethod> {
     let content = fs::read_to_string(path).expect("read runtime source");
@@ -541,6 +546,7 @@ fn scan_methods(
         &file,
         module_path,
         serializable_types.clone(),
+        deserializable_types.clone(),
         type_registry.clone(),
     );
     let mut methods = Vec::new();
@@ -651,10 +657,12 @@ fn classify_return_protocol(ty: &str, resolver: &TypeResolver) -> MethodProtocol
     if ty == "()" {
         return MethodProtocol::Call(CallProtocol::Unit);
     }
-    if result_unit(ty) {
-        return MethodProtocol::Call(CallProtocol::ResultUnit);
+    if let Some(error_type) = result_unit_error_type(ty) {
+        return MethodProtocol::Call(CallProtocol::ResultUnit {
+            error_type: error_type.to_string(),
+        });
     }
-    if let Some(inner) = result_value_inner(ty) {
+    if let Some((inner, error_type)) = result_value_parts(ty) {
         if let Some(flow_inner) = flow_inner(inner) {
             return classify_json_watch(
                 flow_inner,
@@ -670,7 +678,10 @@ fn classify_return_protocol(ty: &str, resolver: &TypeResolver) -> MethodProtocol
             );
         }
         return if is_supported_return_type(inner, resolver) {
-            MethodProtocol::Call(CallProtocol::ResultValue(inner.to_string()))
+            MethodProtocol::Call(CallProtocol::ResultValue {
+                value_type: inner.to_string(),
+                error_type: error_type.to_string(),
+            })
         } else {
             MethodProtocol::Unsupported(format!("unsupported Result value type: {inner}"))
         };

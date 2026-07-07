@@ -23,7 +23,13 @@ fn collect_type_registry_from_dir(root: &Path, dir: &Path, registry: &mut TypeRe
         let file = syn::parse_file(&content).expect("parse runtime source");
         let module_path = module_path_for_source(root, &path);
         let resolver =
-            TypeResolver::from_file(&file, &module_path, HashSet::new(), TypeRegistry::default());
+            TypeResolver::from_file(
+                &file,
+                &module_path,
+                HashSet::new(),
+                HashSet::new(),
+                TypeRegistry::default(),
+            );
         for item in &file.items {
             match item {
                 Item::Type(item_type) => {
@@ -73,6 +79,117 @@ pub(crate) fn collect_serializable_type_definitions(
     out
 }
 
+pub(crate) fn collect_error_type_definitions(
+    runtime_src: &Path,
+    crate_name: &str,
+) -> HashMap<String, ErrorTypeDefinition> {
+    let mut out = HashMap::new();
+    collect_error_type_definitions_from_dir(runtime_src, runtime_src, crate_name, &mut out);
+    out
+}
+
+fn collect_error_type_definitions_from_dir(
+    root: &Path,
+    dir: &Path,
+    crate_name: &str,
+    out: &mut HashMap<String, ErrorTypeDefinition>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_error_type_definitions_from_dir(root, &path, crate_name, out);
+            continue;
+        }
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).expect("read runtime source");
+        let file = syn::parse_file(&content).expect("parse runtime source");
+        let module_path = module_path_for_source_with_crate(root, &path, crate_name);
+        let resolver = TypeResolver::from_file(
+            &file,
+            &module_path,
+            HashSet::new(),
+            HashSet::new(),
+            TypeRegistry::default(),
+        );
+        for item in &file.items {
+            let Item::Enum(item_enum) = item else {
+                continue;
+            };
+            if !matches!(item_enum.vis, Visibility::Public(_))
+                || !derives_error(&item_enum.attrs)
+            {
+                continue;
+            }
+            let full_type =
+                full_type_for_source_with_crate(root, &path, &item_enum.ident.to_string(), crate_name);
+            out.insert(
+                full_type.clone(),
+                error_enum_type(full_type, item_enum, &resolver),
+            );
+        }
+    }
+}
+
+fn error_enum_type(
+    full_type: String,
+    item_enum: &ItemEnum,
+    resolver: &TypeResolver,
+) -> ErrorTypeDefinition {
+    let variants = item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let (fields_kind, fields) = match &variant.fields {
+                Fields::Named(fields) => (
+                    ErrorFieldsKind::Named,
+                    fields
+                        .named
+                        .iter()
+                        .filter_map(|field| {
+                            let name = field.ident.as_ref()?.to_string();
+                            Some(ErrorField {
+                                name,
+                                ty: normalize_type(&field.ty, resolver),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                Fields::Unnamed(fields) => (
+                    ErrorFieldsKind::Unnamed,
+                    fields
+                        .unnamed
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| ErrorField {
+                            name: if fields.unnamed.len() == 1 {
+                                "value".to_string()
+                            } else {
+                                format!("value{index}")
+                            },
+                            ty: normalize_type(&field.ty, resolver),
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                Fields::Unit => (ErrorFieldsKind::Unit, Vec::new()),
+            };
+            ErrorEnumVariant {
+                name: variant.ident.to_string(),
+                fields_kind,
+                fields,
+            }
+        })
+        .collect::<Vec<_>>();
+    ErrorTypeDefinition {
+        full_type,
+        variants,
+    }
+}
+
 fn collect_serializable_type_definitions_from_dir(
     root: &Path,
     dir: &Path,
@@ -94,12 +211,18 @@ fn collect_serializable_type_definitions_from_dir(
         let file = syn::parse_file(&content).expect("parse runtime source");
         let module_path = module_path_for_source(root, &path);
         let resolver =
-            TypeResolver::from_file(&file, &module_path, HashSet::new(), TypeRegistry::default());
+            TypeResolver::from_file(
+                &file,
+                &module_path,
+                HashSet::new(),
+                HashSet::new(),
+                TypeRegistry::default(),
+            );
         for item in &file.items {
             match item {
                 Item::Struct(item_struct)
                     if matches!(item_struct.vis, Visibility::Public(_))
-                        && derives_serde_pair(&item_struct.attrs) =>
+                        && derives_serde_value(&item_struct.attrs) =>
                 {
                     let full_type =
                         full_type_for_source(root, &path, &item_struct.ident.to_string());
@@ -110,12 +233,12 @@ fn collect_serializable_type_definitions_from_dir(
                 }
                 Item::Enum(item_enum)
                     if matches!(item_enum.vis, Visibility::Public(_))
-                        && derives_serde_pair(&item_enum.attrs) =>
+                        && derives_serde_value(&item_enum.attrs) =>
                 {
                     let full_type = full_type_for_source(root, &path, &item_enum.ident.to_string());
                     out.insert(
                         full_type.clone(),
-                        serializable_enum_type(full_type, item_enum),
+                        serializable_enum_type(full_type, item_enum, &resolver),
                     );
                 }
                 _ => {}
@@ -148,37 +271,64 @@ fn serializable_struct_type(
     };
     SerializableType {
         full_type,
+        supports_serialize: derives_serialize(&item_struct.attrs),
+        supports_deserialize: derives_deserialize(&item_struct.attrs),
         kind: SerializableTypeKind::Struct { fields },
     }
 }
 
-fn serializable_enum_type(full_type: String, item_enum: &ItemEnum) -> SerializableType {
+fn serializable_enum_type(
+    full_type: String,
+    item_enum: &ItemEnum,
+    resolver: &TypeResolver,
+) -> SerializableType {
     let mapped: Vec<SerializableEnumVariant> = item_enum
         .variants
         .iter()
         .map(|variant| {
             let name = variant.ident.to_string();
-            let fields = match &variant.fields {
-                Fields::Named(fields) => fields
-                    .named
-                    .iter()
-                    .filter_map(|field| {
+            let (fields_are_unnamed, fields) = match &variant.fields {
+                Fields::Named(fields) => {
+                    let fields = fields
+                        .named
+                        .iter()
+                        .filter_map(|field| {
                         let field_name = field.ident.as_ref()?.to_string();
                         Some(SerializableField {
                             name: field_name.clone(),
                             json_name: serde_rename(&field.attrs)
                                 .unwrap_or_else(|| field_name.trim_start_matches("r#").to_string()),
-                            ty: normalize_type(&field.ty, &TypeResolver::default_from(
-                                &[variant],
-                                &full_type,
-                            )),
+                            ty: normalize_type(&field.ty, resolver),
                         })
                     })
-                    .collect(),
-                _ => Vec::new(),
+                        .collect::<Vec<_>>();
+                    (false, fields)
+                }
+                Fields::Unnamed(fields) => {
+                    let fields = fields
+                        .unnamed
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| {
+                        let field_name = if fields.unnamed.len() == 1 {
+                            "value".to_string()
+                        } else {
+                            format!("value{index}")
+                        };
+                        SerializableField {
+                            name: field_name.clone(),
+                            json_name: field_name,
+                            ty: normalize_type(&field.ty, resolver),
+                        }
+                    })
+                        .collect::<Vec<_>>();
+                    (true, fields)
+                }
+                Fields::Unit => (false, Vec::new()),
             };
             SerializableEnumVariant {
                 json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
+                fields_are_unnamed,
                 fields,
                 name,
             }
@@ -190,34 +340,71 @@ fn serializable_enum_type(full_type: String, item_enum: &ItemEnum) -> Serializab
     if unit_only {
         return SerializableType {
             full_type: full_type.clone(),
+            supports_serialize: derives_serialize(&item_enum.attrs),
+            supports_deserialize: derives_deserialize(&item_enum.attrs),
             kind: SerializableTypeKind::Enum {
                 variants: mapped,
                 unit_only,
             },
         };
     }
-    let tag_name = full_type.rsplit("::").next().unwrap_or("type").to_string();
+    let (tag_name, content_name) = serde_tag_content(&item_enum.attrs)
+        .unwrap_or_else(|| (full_type.rsplit("::").next().unwrap_or("type").to_string(), None));
     SerializableType {
         full_type,
+        supports_serialize: derives_serialize(&item_enum.attrs),
+        supports_deserialize: derives_deserialize(&item_enum.attrs),
         kind: SerializableTypeKind::TaggedEnum {
             tag_name,
+            content_name,
             variants: mapped,
         },
     }
 }
 
 fn derives_serde_pair(attrs: &[syn::Attribute]) -> bool {
+    derives_serialize(attrs) && derives_deserialize(attrs)
+}
+
+fn derives_error(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("derive") {
+            continue;
+        }
+        let tokens = attr.meta.to_token_stream().to_string();
+        if tokens.contains("Error") {
+            return true;
+        }
+    }
+    false
+}
+
+fn derives_serde_value(attrs: &[syn::Attribute]) -> bool {
+    derives_serialize(attrs) || derives_deserialize(attrs)
+}
+
+fn derives_serialize(attrs: &[syn::Attribute]) -> bool {
     let mut has_serialize = false;
-    let mut has_deserialize = false;
     for attr in attrs {
         if !attr.path().is_ident("derive") {
             continue;
         }
         let tokens = attr.meta.to_token_stream().to_string();
         has_serialize |= tokens.contains("Serialize");
+    }
+    has_serialize
+}
+
+fn derives_deserialize(attrs: &[syn::Attribute]) -> bool {
+    let mut has_deserialize = false;
+    for attr in attrs {
+        if !attr.path().is_ident("derive") {
+            continue;
+        }
+        let tokens = attr.meta.to_token_stream().to_string();
         has_deserialize |= tokens.contains("Deserialize");
     }
-    has_serialize && has_deserialize
+    has_deserialize
 }
 
 fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
@@ -244,6 +431,7 @@ fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
 pub(crate) struct TypeResolver {
     pub(crate) names: HashMap<String, String>,
     pub(crate) serializable_types: HashSet<String>,
+    pub(crate) deserializable_types: HashSet<String>,
     pub(crate) type_registry: TypeRegistry,
 }
 
@@ -252,6 +440,7 @@ impl TypeResolver {
         file: &syn::File,
         module_path: &str,
         serializable_types: HashSet<String>,
+        deserializable_types: HashSet<String>,
         type_registry: TypeRegistry,
     ) -> Self {
         let mut names = HashMap::new();
@@ -276,6 +465,7 @@ impl TypeResolver {
         Self {
             names,
             serializable_types,
+            deserializable_types,
             type_registry,
         }
     }
@@ -287,6 +477,7 @@ impl TypeResolver {
         Self {
             names: HashMap::new(),
             serializable_types: HashSet::new(),
+            deserializable_types: HashSet::new(),
             type_registry: TypeRegistry::default(),
         }
     }
@@ -392,18 +583,55 @@ pub(crate) fn is_supported_arg_type(ty: &str, resolver: &TypeResolver) -> bool {
     }
     if let Some(inner) = single_generic_arg(ty, "Option").and_then(|inner| inner.strip_prefix('&'))
     {
-        return is_supported_return_type(inner, resolver);
+        return is_supported_arg_type(inner, resolver);
     }
     if let Some(inner) = borrowed_slice_inner(ty) {
         if inner == "std::path::PathBuf" {
             return true;
         }
-        return is_supported_return_type(inner, resolver);
+        return is_supported_arg_type(inner, resolver);
     }
     if let Some(inner) = ty.strip_prefix('&') {
-        return !inner.starts_with("mut") && is_supported_return_type(inner, resolver);
+        return !inner.starts_with("mut") && is_supported_arg_type(inner, resolver);
     }
-    is_supported_return_type(ty, resolver)
+    if is_never_link_value_type(ty) {
+        return false;
+    }
+    if is_primitive_link_value_type(ty)
+        || ty == "serde_json::Value"
+        || is_deserializable_named_value_type(ty, resolver)
+        || is_tuple_arg_type(ty, resolver)
+    {
+        return true;
+    }
+    if let Some(inner) = single_generic_arg(ty, "Option") {
+        return is_supported_arg_type(inner, resolver);
+    }
+    if let Some(inner) = single_generic_arg(ty, "Vec") {
+        return is_supported_arg_type(inner, resolver);
+    }
+    if let Some(inner) = single_generic_arg(ty, "HashSet")
+        .or_else(|| single_generic_arg(ty, "std::collections::HashSet"))
+    {
+        return is_supported_arg_type(inner, resolver);
+    }
+    if let Some(args) = generic_args(ty, "HashMap")
+        .or_else(|| generic_args(ty, "std::collections::HashMap"))
+        .or_else(|| generic_args(ty, "BTreeMap"))
+        .or_else(|| generic_args(ty, "std::collections::BTreeMap"))
+    {
+        return args.len() == 2
+            && is_supported_arg_map_key_type(args[0], resolver)
+            && is_supported_arg_type(args[1], resolver);
+    }
+    if let Some((base, args)) = generic_named_type(ty) {
+        return is_deserializable_named_value_type(base, resolver)
+            && args
+                .iter()
+                .copied()
+                .all(|arg| is_supported_arg_type(arg, resolver));
+    }
+    false
 }
 
 pub(crate) fn is_supported_return_type(ty: &str, resolver: &TypeResolver) -> bool {
@@ -463,6 +691,22 @@ fn is_tuple_value_type(ty: &str, resolver: &TypeResolver) -> bool {
         .all(|item| is_supported_return_type(item, resolver))
 }
 
+fn is_tuple_arg_type(ty: &str, resolver: &TypeResolver) -> bool {
+    let Some(inner) = ty
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return false;
+    };
+    if inner.is_empty() {
+        return true;
+    }
+    split_top_level_args(inner)
+        .iter()
+        .copied()
+        .all(|item| is_supported_arg_type(item, resolver))
+}
+
 fn is_never_link_value_type(ty: &str) -> bool {
     ty.is_empty()
         || ty == "Self"
@@ -498,8 +742,16 @@ fn is_supported_map_key_type(ty: &str, resolver: &TypeResolver) -> bool {
     is_primitive_link_value_type(ty) || is_serializable_named_value_type(ty, resolver)
 }
 
+fn is_supported_arg_map_key_type(ty: &str, resolver: &TypeResolver) -> bool {
+    is_primitive_link_value_type(ty) || is_deserializable_named_value_type(ty, resolver)
+}
+
 fn is_serializable_named_value_type(ty: &str, resolver: &TypeResolver) -> bool {
     resolver.serializable_types.contains(ty)
+}
+
+fn is_deserializable_named_value_type(ty: &str, resolver: &TypeResolver) -> bool {
+    resolver.deserializable_types.contains(ty)
 }
 
 pub(crate) fn single_generic_arg<'a>(ty: &'a str, name: &str) -> Option<&'a str> {
@@ -569,8 +821,7 @@ pub(crate) fn flow_inner(ty: &str) -> Option<&str> {
 }
 
 pub(crate) fn result_value_inner(ty: &str) -> Option<&str> {
-    let args = generic_args(ty, "Result")?;
-    let value = args.first().copied()?;
+    let (value, _) = result_args(ty)?;
     if value == "()" {
         None
     } else {
@@ -578,6 +829,55 @@ pub(crate) fn result_value_inner(ty: &str) -> Option<&str> {
     }
 }
 
+fn serde_tag_content(attrs: &[syn::Attribute]) -> Option<(String, Option<String>)> {
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let mut tag = None;
+        let mut content = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("tag") {
+                let value = meta.value()?;
+                let literal: syn::LitStr = value.parse()?;
+                tag = Some(literal.value());
+            } else if meta.path.is_ident("content") {
+                let value = meta.value()?;
+                let literal: syn::LitStr = value.parse()?;
+                content = Some(literal.value());
+            }
+            Ok(())
+        });
+        if let Some(tag) = tag {
+            return Some((tag, content));
+        }
+    }
+    None
+}
+
+pub(crate) fn result_value_parts(ty: &str) -> Option<(&str, &str)> {
+    let (value, error) = result_args(ty)?;
+    if value == "()" {
+        None
+    } else {
+        Some((value, error))
+    }
+}
+
+pub(crate) fn result_unit_error_type(ty: &str) -> Option<&str> {
+    let (value, error) = result_args(ty)?;
+    (value == "()").then_some(error)
+}
+
 pub(crate) fn result_unit(ty: &str) -> bool {
-    matches!(generic_args(ty, "Result").as_deref(), Some(["()", _]))
+    result_unit_error_type(ty).is_some()
+}
+
+fn result_args(ty: &str) -> Option<(&str, &str)> {
+    let args = generic_args(ty, "Result")?;
+    if args.len() == 2 {
+        Some((args[0], args[1]))
+    } else {
+        None
+    }
 }

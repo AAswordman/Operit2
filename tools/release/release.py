@@ -29,6 +29,7 @@ ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
 CLI_MANIFEST = REPO_ROOT / "apps" / "cli" / "Cargo.toml"
 RUNTIME_MANIFEST = REPO_ROOT / "core" / "crates" / "operit-runtime" / "Cargo.toml"
+BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
 DEFAULT_GITHUB_ENV = SECRETS_DIR / "github.env"
 DEFAULT_RELEASE_REPO = "AAswordman/Operit2"
 SEMVER_RE = re.compile(
@@ -887,98 +888,72 @@ def build_wsl_linux(products, distro, build_name, build_number, cli_arches="host
 
 
 def build_android_app(build_name, build_number):
-    ensure_android_signing()
-    flutter = flutter_command()
-    run([flutter, "pub", "get", "--enforce-lockfile"], FLUTTER_APP_DIR)
     run(
         [
-            flutter,
-            "build",
-            "apk",
-            "--release",
-            "--split-per-abi",
+            sys.executable,
+            BUILD_SCRIPTS_DIR / "build_flutter_android.py",
             "--build-name",
             build_name,
             "--build-number",
             build_number,
+            "--enforce-lockfile",
         ],
-        FLUTTER_APP_DIR,
     )
-
-    apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
-    outputs = {
-        "arm64-v8a": "app-arm64-v8a-release.apk",
-        "armeabi-v7a": "app-armeabi-v7a-release.apk",
-        "x86_64": "app-x86_64-release.apk",
-    }
-    for abi, filename in outputs.items():
-        copy_required_file(apk_dir / filename, DIST_DIR / f"operit2-app-android-{abi}.apk")
 
 
 def build_host_app(build_name, build_number):
-    flutter = flutter_command()
     current_platform = host_platform()
     current_arch = host_arch()
-    run([flutter, "pub", "get", "--enforce-lockfile"], FLUTTER_APP_DIR)
 
     if current_platform == "windows":
         run(
             [
-                flutter,
-                "build",
-                "windows",
-                "--release",
+                sys.executable,
+                BUILD_SCRIPTS_DIR / "build_flutter_windows.py",
                 "--build-name",
                 build_name,
                 "--build-number",
                 build_number,
-            ],
-            FLUTTER_APP_DIR,
+                "--enforce-lockfile",
+                "--archive-path",
+                DIST_DIR / f"operit2-app-windows-{current_arch}.zip",
+            ]
         )
-        release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
-        compress_zip(release_dir, DIST_DIR / f"operit2-app-windows-{current_arch}.zip")
         return
 
     if current_platform == "linux":
         run(
             [
-                flutter,
-                "build",
-                "linux",
-                "--release",
+                sys.executable,
+                BUILD_SCRIPTS_DIR / "build_flutter_linux.py",
                 "--build-name",
                 build_name,
                 "--build-number",
                 build_number,
-            ],
-            FLUTTER_APP_DIR,
+                "--enforce-lockfile",
+                "--archive-path",
+                DIST_DIR / f"operit2-app-linux-{current_arch}.tar.gz",
+            ]
         )
-        bundle = FLUTTER_APP_DIR / "build" / "linux" / "x64" / "release" / "bundle"
-        package = DIST_DIR / f"operit2-app-linux-{current_arch}.tar.gz"
-        if package.exists():
-            package.unlink()
-        run(["tar", "-czf", package, "-C", bundle, "."])
         return
 
     if current_platform == "macos":
         run(
             [
-                flutter,
-                "build",
-                "macos",
-                "--release",
+                sys.executable,
+                BUILD_SCRIPTS_DIR / "build_flutter_macos.py",
                 "--build-name",
                 build_name,
                 "--build-number",
                 build_number,
-            ],
-            FLUTTER_APP_DIR,
+                "--enforce-lockfile",
+                "--archive-path",
+                DIST_DIR / f"operit2-app-macos-{current_arch}.zip",
+            ]
         )
-        app_parent = FLUTTER_APP_DIR / "build" / "macos" / "Build" / "Products" / "Release"
-        package = DIST_DIR / f"operit2-app-macos-{current_arch}.tar.gz"
-        if package.exists():
-            package.unlink()
-        run(["tar", "-czf", package, "-C", app_parent, "operit2.app"])
+        return
+
+    raise RuntimeError(f"Unsupported host app platform: {current_platform}")
 
 
 def vs_installation_path():
@@ -1078,20 +1053,14 @@ def build_cli_target(target, use_default_target=False):
 
 
 def build_host_cli(cli_arches="host"):
-    host_plat = host_platform()
-    host_arch_val = host_arch()
-
-    if cli_arches == "host":
-        host_target = CliBuildTarget(
-            platform=host_plat,
-            arch=host_arch_val,
-            rust_target=CLI_RUST_TARGETS[(host_plat, host_arch_val)],
-        )
-        build_cli_target(host_target, use_default_target=True)
-    else:
-        targets = cli_build_targets_for_platform(host_plat)
-        for target in targets:
-            build_cli_target(target, use_default_target=False)
+    run(
+        [
+            sys.executable,
+            BUILD_SCRIPTS_DIR / "build_cli_current.py",
+            "--arches",
+            cli_arches,
+        ]
+    )
 
 
 def publish_release(tag, repo_value, draft, prerelease, auth):

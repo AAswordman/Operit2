@@ -1,7 +1,10 @@
 use super::build_rust_codegen_utils::*;
 use super::*;
 
-pub(crate) fn render_object_call_dispatch(object: &SourceObject) -> String {
+pub(crate) fn render_object_call_dispatch(
+    object: &SourceObject,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
@@ -16,7 +19,7 @@ pub(crate) fn render_object_call_dispatch(object: &SourceObject) -> String {
         .iter()
         .filter(|method| method.call_protocol().is_some())
     {
-        output.push_str(&render_call_arm(method));
+        output.push_str(&render_call_arm(method, error_types));
     }
     if object.schema_key == "application" {
         output.push_str("        \"coreProxySchema\" => Ok(generated_core_proxy_schema()),\n");
@@ -27,7 +30,10 @@ pub(crate) fn render_object_call_dispatch(object: &SourceObject) -> String {
     output
 }
 
-pub(crate) fn render_object_sync_call_dispatch(object: &SourceObject) -> String {
+pub(crate) fn render_object_sync_call_dispatch(
+    object: &SourceObject,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
@@ -42,7 +48,7 @@ pub(crate) fn render_object_sync_call_dispatch(object: &SourceObject) -> String 
         .iter()
         .filter(|method| !method.is_async && method.call_protocol().is_some())
     {
-        output.push_str(&render_call_arm(method));
+        output.push_str(&render_call_arm(method, error_types));
     }
     if object.schema_key == "application" {
         output.push_str("        \"coreProxySchema\" => Ok(generated_core_proxy_schema()),\n");
@@ -605,7 +611,10 @@ fn render_object_constructor_for_access(
     }
 }
 
-fn render_call_arm(method: &SourceMethod) -> String {
+fn render_call_arm(
+    method: &SourceMethod,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
     let arm = match method.call_protocol() {
@@ -617,13 +626,14 @@ fn render_call_arm(method: &SourceMethod) -> String {
             call_args,
             await_suffix(method)
         ),
-        Some(CallProtocol::ResultUnit) => format!(
-            "        {:?} => {{\n{}            object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(serde_json::Value::Null)\n        }}\n",
+        Some(CallProtocol::ResultUnit { error_type }) => format!(
+            "        {:?} => {{\n{}            object.{}({}){}.map_err(|error| core_call_error(error.to_string(), {}(&error)))?;\n            Ok(serde_json::Value::Null)\n        }}\n",
             method.name,
             args,
             method.name,
             call_args,
-            await_suffix(method)
+            await_suffix(method),
+            error_details_converter(error_type, error_types)
         ),
         Some(CallProtocol::Value(_)) => format!(
             "        {:?} => {{\n{}            to_core_value(object.{}({}){})\n        }}\n",
@@ -633,17 +643,31 @@ fn render_call_arm(method: &SourceMethod) -> String {
             call_args,
             await_suffix(method)
         ),
-        Some(CallProtocol::ResultValue(_)) => format!(
-            "        {:?} => {{\n{}            to_core_value(object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?)\n        }}\n",
+        Some(CallProtocol::ResultValue { error_type, .. }) => format!(
+            "        {:?} => {{\n{}            to_core_value(object.{}({}){}.map_err(|error| core_call_error(error.to_string(), {}(&error)))?)\n        }}\n",
             method.name,
             args,
             method.name,
             call_args,
-            await_suffix(method)
+            await_suffix(method),
+            error_details_converter(error_type, error_types)
         ),
         None => String::new(),
     };
     render_cfg_attrs(method) + &arm
+}
+
+fn error_details_converter(
+    error_type: &str,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+) -> String {
+    if error_type == "String" {
+        return "generated_core_proxy_error_details_for_string".to_string();
+    }
+    let Some(definition) = error_types.get(error_type) else {
+        panic!("core proxy error type is not generated: {error_type}");
+    };
+    error_details_fn_name(&definition.full_type)
 }
 
 fn render_watch_snapshot_arm(method: &SourceMethod) -> String {

@@ -1,21 +1,23 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
+
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 
 class CommonNetworkErrorView extends StatelessWidget {
   const CommonNetworkErrorView({
     super.key,
-    required this.errorText,
+    this.errorDetails,
+    this.errorText,
   });
 
-  final String errorText;
+  final core_proxy.CoreProxyErrorDetails? errorDetails;
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
-    final summary = NetworkErrorSummary.fromRaw(errorText);
+    final summary = NetworkErrorSummary.fromDetails(errorDetails, errorText);
 
     return Semantics(
       liveRegion: true,
@@ -93,10 +95,16 @@ class NetworkErrorSummary {
   final String? detail;
   final IconData icon;
 
-  factory NetworkErrorSummary.fromRaw(String raw) {
-    final cleaned = _SanitizedNetworkError(raw);
-    final statusCode = cleaned.statusCode;
-    final remoteMessage = cleaned.remoteMessage;
+  factory NetworkErrorSummary.fromDetails(
+    core_proxy.CoreProxyErrorDetails? details,
+    String? text,
+  ) {
+    final statusCode = details?.httpStatus;
+    final remoteMessage =
+        details?.remoteMessage ??
+        details?.stringField('value') ??
+        details?.message ??
+        text;
 
     if (statusCode == 400) {
       return NetworkErrorSummary(
@@ -152,7 +160,16 @@ class NetworkErrorSummary {
       );
     }
 
-    if (cleaned.isNetworkFailure) {
+    if (details?.variant == 'ModelListFetch') {
+      return NetworkErrorSummary(
+        title: '模型列表拉取失败',
+        message: '没有拿到供应商返回的模型列表，请检查服务地址、访问密钥和网络连接。',
+        detail: remoteMessage,
+        icon: Icons.wifi_off_rounded,
+      );
+    }
+
+    if (details?.kind == 'network') {
       return NetworkErrorSummary(
         title: '网络连接失败',
         message: '无法连接到模型供应商，请检查网络连接和服务地址。',
@@ -167,78 +184,5 @@ class NetworkErrorSummary {
       detail: remoteMessage,
       icon: Icons.error_outline_rounded,
     );
-  }
-}
-
-class _SanitizedNetworkError {
-  _SanitizedNetworkError(String raw) {
-    final withoutRustDetails = raw
-        .split(RegExp(r'\nRust error location:|\nRust backtrace:'))
-        .first
-        .trim();
-    _visibleText = _stripInternalPrefix(withoutRustDetails);
-    statusCode = _parseStatusCode(_visibleText);
-    remoteMessage = _parseRemoteMessage(_visibleText);
-    isNetworkFailure = _parseNetworkFailure(_visibleText);
-  }
-
-  late final String _visibleText;
-  late final int? statusCode;
-  late final String? remoteMessage;
-  late final bool isNetworkFailure;
-
-  static String _stripInternalPrefix(String value) {
-    return value
-        .replaceFirst(RegExp(r'^INTERNAL_ERROR:\s*'), '')
-        .replaceFirst(RegExp(r'^model list fetch error:\s*'), '')
-        .trim();
-  }
-
-  static int? _parseStatusCode(String value) {
-    final match = RegExp(r'\b(400|401|403|404|408|409|422|429|5\d\d)\b')
-        .firstMatch(value);
-    return match == null ? null : int.parse(match.group(1)!);
-  }
-
-  static String? _parseRemoteMessage(String value) {
-    final jsonText = _extractJsonObject(value);
-    if (jsonText != null) {
-      final Object? decoded;
-      try {
-        decoded = jsonDecode(jsonText);
-      } on FormatException {
-        return null;
-      }
-      if (decoded is Map<String, dynamic>) {
-        final error = decoded['error'];
-        if (error is Map<String, dynamic>) {
-          final message = error['message'];
-          if (message is String && message.trim().isNotEmpty) {
-            return message.trim();
-          }
-        }
-      }
-    }
-
-    final messageMatch = RegExp(r'"message"\s*:\s*"([^"]+)"').firstMatch(value);
-    final message = messageMatch?.group(1)?.trim();
-    return message == null || message.isEmpty ? null : message;
-  }
-
-  static String? _extractJsonObject(String value) {
-    final start = value.indexOf('{');
-    final end = value.lastIndexOf('}');
-    if (start < 0 || end <= start) {
-      return null;
-    }
-    return value.substring(start, end + 1);
-  }
-
-  static bool _parseNetworkFailure(String value) {
-    final pattern = RegExp(
-      r'\b(connection|timeout|network|dns|tls|ssl)\b|failed to connect',
-      caseSensitive: false,
-    );
-    return pattern.hasMatch(value);
   }
 }

@@ -5,17 +5,34 @@ pub(crate) fn full_type_for_source(
     source_path: &Path,
     type_name: &str,
 ) -> String {
+    full_type_for_source_with_crate(runtime_src, source_path, type_name, "operit_runtime")
+}
+
+pub(crate) fn full_type_for_source_with_crate(
+    source_root: &Path,
+    source_path: &Path,
+    type_name: &str,
+    crate_name: &str,
+) -> String {
     format!(
         "{}::{type_name}",
-        module_path_for_source(runtime_src, source_path)
+        module_path_for_source_with_crate(source_root, source_path, crate_name)
     )
 }
 
 pub(crate) fn module_path_for_source(runtime_src: &Path, source_path: &Path) -> String {
+    module_path_for_source_with_crate(runtime_src, source_path, "operit_runtime")
+}
+
+pub(crate) fn module_path_for_source_with_crate(
+    source_root: &Path,
+    source_path: &Path,
+    crate_name: &str,
+) -> String {
     let relative = source_path
-        .strip_prefix(runtime_src)
-        .expect("source path must be inside runtime src");
-    let mut module_path = Vec::from(["operit_runtime".to_string()]);
+        .strip_prefix(source_root)
+        .expect("source path must be inside source root");
+    let mut module_path = Vec::from([crate_name.to_string()]);
     for component in relative.with_extension("").components() {
         module_path.push(component.as_os_str().to_string_lossy().to_string());
     }
